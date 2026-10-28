@@ -47,6 +47,13 @@
     return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
   }
 
+  function getOutcome(outcomeBySession, id) {
+    if (outcomeBySession instanceof Map) return outcomeBySession.get(id);
+    return outcomeBySession && typeof outcomeBySession === 'object' && Object.prototype.hasOwnProperty.call(outcomeBySession, id)
+      ? outcomeBySession[id]
+      : '';
+  }
+
   // "{title}. Status: {statuses}" for an accessible name. A title that already
   // ends in a sentence mark would read "words.. Status", so the mark goes.
   function withStatusSuffix(title, statuses) {
@@ -79,13 +86,7 @@
       ? attention === 'approval' || attention === 'plan_review'
       : approvalSet.has(id);
     const linkedCount = getLinkedCount(source.linkedCounts || source.linkedMap, id);
-    const outcome = source.outcomeBySession instanceof Map
-      ? source.outcomeBySession.get(id)
-      : (
-        source.outcomeBySession && typeof source.outcomeBySession === 'object' && Object.prototype.hasOwnProperty.call(source.outcomeBySession, id)
-          ? source.outcomeBySession[id]
-          : ''
-      );
+    const outcome = getOutcome(source.outcomeBySession, id);
     const lastOutcome = outcome === 'failed' ? 'failed' : (outcome === 'completed' || outcome === 'cancelled' ? 'completed' : '');
     const waitingState = ['approval', 'plan_review', 'input_needed'].includes(attention) ? attention : '';
     const dominantState = waitingState || (isApproval ? 'approval' : (isStreaming ? 'streaming' : (isOpen ? 'open' : 'idle')));
@@ -610,15 +611,38 @@
       scheduleOverflowArrowUpdate();
     }
 
-    function renderSidebarBadges(sessionElements, openIds, streamingIds, approvalIds, linkedCounts, attentionStates, outcomeBySession) {
+    // Everything a row's badges read besides its own markup. The markup (title,
+    // pinned, role, type, provider, outbox) changes only when the chats panel
+    // rebuilds the row, which drops the cached title node. So any pass skips a
+    // row whose facts and locale match its last paint and whose title node is
+    // still mounted: a background stream repaints chrome up to ~20 Hz, and a
+    // sessions render (or a deferred render while the list is hidden) passes
+    // over every row.
+    function runtimeFactsKey(sessionId, openSet, streamingSet, approvalSet, linkedMap, attentionStates, outcomeBySession, localeTag) {
+      return `${localeTag}|${openSet.has(sessionId) ? 1 : 0}${streamingSet.has(sessionId) ? 1 : 0}${approvalSet.has(sessionId) ? 1 : 0}`
+        + `|${attentionStates?.get?.(sessionId) || ''}|${getLinkedCount(linkedMap, sessionId)}|${getOutcome(outcomeBySession, sessionId) || ''}`;
+    }
+
+    function renderSidebarBadges(sessionElements, openIds, streamingIds, approvalIds, linkedCounts, attentionStates, outcomeBySession, options) {
+      const runtimeOnly = options?.runtimeOnly === true;
       const openSet = toIdSet(openIds);
       const streamingSet = toIdSet(streamingIds);
       const approvalSet = toIdSet(approvalIds);
-      const linkedMap = linkedCounts instanceof Map ? linkedCounts : new Map(Object.entries(linkedCounts || {}));
+      // A runtime pass without linked counts keeps each row's own: the count
+      // its last paint wrote (reading every row's data attribute costs more
+      // than the rest of the pass).
+      const linkedFromRows = runtimeOnly && linkedCounts == null;
+      const linkedMap = linkedFromRows ? new Map() : (linkedCounts instanceof Map ? linkedCounts : new Map(Object.entries(linkedCounts || {})));
+      const i18n = globalThis.jennyI18n;
+      const localeTag = String(typeof i18n?.tag === 'function' ? i18n.tag() : '');
       Array.from(sessionElements || []).forEach((element) => {
+        const previous = sidebarBadgeState.get(element);
+        const sessionId = previous ? previous.sessionId : normalizeId(element.dataset.sessionId);
+        if (linkedFromRows) linkedMap.set(sessionId, previous ? previous.linkedCount : element.dataset.sessionLinkedCount);
+        const factsKey = runtimeFactsKey(sessionId, openSet, streamingSet, approvalSet, linkedMap, attentionStates, outcomeBySession, localeTag);
+        if (previous?.factsKey === factsKey && element.contains(previous.titleRow)) return;
         const titleRow = element.querySelector('.conversation-title');
         if (!titleRow) return;
-        const sessionId = normalizeId(element.dataset.sessionId);
         const presentation = resolveSessionPresentation(sessionId, {
           openIds: openSet,
           streamingIds: streamingSet,
@@ -640,7 +664,7 @@
         const uniqueStatusLabels = [...new Set(statusLabels)];
         const labelledTitle = withStatusSuffix(title, uniqueStatusLabels.join(', '));
         const providerName = String(element.dataset.sessionProviderName || '').replace(/\s+/g, ' ').trim().slice(0, 40);
-        const sessionNoun = element.dataset.sessionType === 'plugin'
+        const sessionNoun = element.dataset.sessionRole === 'primary' ? jt('sidebar.chats.primarySession', 'your Jenny chat') : element.dataset.sessionType === 'plugin'
           ? jt('shell.workspaceChrome.pluginSessionType', '{provider} session', { provider: providerName || jt('shell.workspaceChrome.pluginFallback', 'plugin') }) : jt('shell.workspaceChrome.sessionType', 'session');
         const signature = JSON.stringify({
           dominantState: presentation.dominantState,
@@ -654,17 +678,19 @@
         });
         const visibleBadges = titleRow.querySelectorAll('.conversation-state-badge');
         visibleBadges.forEach((node) => node.remove());
-        const previous = sidebarBadgeState.get(element);
-        if (previous?.signature === signature && previous?.titleRow === titleRow && !visibleBadges.length) return;
+        if (previous?.signature === signature && previous?.titleRow === titleRow && !visibleBadges.length) {
+          previous.factsKey = factsKey;
+          return;
+        }
         if (presentation.lastOutcome) element.dataset.sessionLastOutcome = presentation.lastOutcome;
         else delete element.dataset.sessionLastOutcome;
-        // "open" (a tab, nothing louder to say) rings the dot slot (chats-panel.css).
+        // "open" (a tab, nothing louder to say) paints no sidebar dot; the rail tabs read it.
         element.dataset.sessionDominantState = presentation.dominantState;
         element.dataset.sessionLinkedCount = String(presentation.linkedCount);
         const dot = element.querySelector('.session-row__dot');
         if (dot) dot.setAttribute('title', presentation.statusLabel);
         openTarget.setAttribute('aria-label', jt('shell.workspaceChrome.openSessionLabel', 'Open {sessionNoun} {title}{statusSuffix}', { sessionNoun, title: labelledTitle, statusSuffix: '' }));
-        sidebarBadgeState.set(element, { signature, titleRow });
+        sidebarBadgeState.set(element, { signature, titleRow, sessionId, factsKey, linkedCount: presentation.linkedCount });
       });
     }
 

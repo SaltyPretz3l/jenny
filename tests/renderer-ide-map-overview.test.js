@@ -201,3 +201,17 @@ test('createMapOverview: dispose() clears hostEl and is idempotent', (t) => {
   assert.equal(hostEl.innerHTML, '');
   assert.doesNotThrow(() => panel.dispose());
 });
+
+test('deriveOverview ignores ignored-directory bucket pseudo-nodes', () => {
+  const result = deriveOverview({
+    nodes: [
+      { id: 'src/a.js', inbound: 0, outbound: 1 },
+      { id: 'node_modules', bucket: true, dir: 'node_modules', count: 900, inbound: 0, outbound: 0 },
+    ],
+    edges: [],
+    findings: {},
+  });
+  assert.equal(result.fileCount, 1);
+  assert.deepEqual(result.topDirs, [{ dir: 'src', count: 1 }]);
+  assert.deepEqual(result.entryPoints, ['src/a.js']);
+});

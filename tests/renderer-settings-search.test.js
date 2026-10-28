@@ -71,8 +71,8 @@ test('searchSettingsIndex is a case-insensitive substring match over label + des
   const byLabel = searchSettingsIndex(index, 'HISTORY SCOPE');
   assert.ok(byLabel.some((hit) => hit.id === 'contextHistoryScopeSelect'));
 
-  const byDescription = searchSettingsIndex(index, 'second after you stop typing');
-  assert.ok(byDescription.some((hit) => hit.id === 'editorAutoSaveToggle'));
+  const byDescription = searchSettingsIndex(index, 'wait after you stop typing');
+  assert.ok(byDescription.some((hit) => hit.id === 'editorAutoSaveDelayInput'));
 
   const bySectionLabel = searchSettingsIndex(index, 'usage');
   assert.ok(bySectionLabel.some((hit) => hit.kind === 'section' && hit.sectionId === 'usage'));

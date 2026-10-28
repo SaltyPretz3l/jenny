@@ -519,6 +519,8 @@ class CompanionService {
         contextLine,
         sourceKind: followUp.sourceKind,
         sourceId: followUp.sourceId,
+        createdAt: followUp.createdAt,
+        updatedAt: followUp.updatedAt,
         resolvedAt: followUp.resolvedAt,
         deferredUntil: followUp.deferredUntil,
         deferPreset: followUp.deferPreset,

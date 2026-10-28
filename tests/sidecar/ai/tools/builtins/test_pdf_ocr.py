@@ -143,35 +143,47 @@ class _OcrPage:
     def __init__(self, text: str = "recovered", *, fail: bool = False) -> None:
         self._text = text
         self._fail = fail
+        self._textpage = object()
         self.calls: list[dict[str, Any]] = []
 
     def get_textpage_ocr(self, **kwargs: Any) -> Any:
         self.calls.append(kwargs)
         if self._fail:
             raise RuntimeError("No tessdata specified and Tesseract is not installed")
-        text = self._text
+        return self._textpage
 
-        class _TextPage:
-            @staticmethod
-            def extractText() -> str:  # PyMuPDF API name.
-                return text
+    def get_text(self, kind: str, *, textpage: Any | None = None) -> list[tuple[Any, ...]]:
+        assert kind == "words" and textpage is self._textpage
+        return [
+            (10.0 * index, 20.0, 10.0 * index + 8, 32.0, token, 0, 0, index)
+            for index, token in enumerate(self._text.split())
+        ]
 
-        return _TextPage()
+
+def _tesseract_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("JENNY_ENABLE_PDF_OCR_RAPID", "0")
+
+
+def _recovered_text(result: pdf_ocr.OcrPageResult | None) -> str | None:
+    return None if result is None else " ".join(str(word[4]) for word in result.words)
 
 
 def test_session_disabled_by_kill_switch(monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear_env(monkeypatch)
+    _tesseract_only(monkeypatch)
     monkeypatch.setenv("JENNY_ENABLE_PDF_OCR", "0")
     page = _OcrPage()
     session = pdf_ocr.PdfOcrSession()
-    assert session.recover_text(page, page_number=1) is None
+    assert session.recover_words(page, page_number=1) is None
     assert page.calls == []
     assert "JENNY_ENABLE_PDF_OCR=0" in session.unavailable_reason
     assert "OCR is unavailable" in session.note(text_less_pages=[1])
 
 
-def test_session_recovers_text_and_resolves_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear_env(monkeypatch)
+def test_session_recovers_words_and_resolves_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _tesseract_only(monkeypatch)
     resolutions: list[int] = []
 
     def _resolve(**_kwargs: Any) -> pdf_ocr.TessdataResolution:
@@ -181,38 +193,45 @@ def test_session_recovers_text_and_resolves_once(tmp_path: Path, monkeypatch: py
     monkeypatch.setattr(pdf_ocr, "resolve_tessdata", _resolve)
     session = pdf_ocr.PdfOcrSession()
     page = _OcrPage("Total assets 1,234")
-    assert session.recover_text(page, page_number=2) == "Total assets 1,234"
-    assert session.recover_text(_OcrPage("more"), page_number=3) == "more"
+    first = session.recover_words(page, page_number=2)
+    assert first is not None and first.engine == "tesseract" and first.dpi is None
+    assert _recovered_text(first) == "Total assets 1,234"
+    assert _recovered_text(session.recover_words(_OcrPage("more"), page_number=3)) == "more"
     assert len(resolutions) == 1
-    assert page.calls[0]["tessdata"] == str(tmp_path)
-    assert page.calls[0]["language"] == "eng"
-    assert page.calls[0]["full"] is True
+    assert page.calls[0] == {
+        "language": pdf_ocr.OCR_LANGUAGE,
+        "dpi": pdf_ocr.OCR_RENDER_DPI,
+        "full": True,
+        "tessdata": str(tmp_path),
+    }
     assert session.used_pages == [2, 3]
     note = session.note(text_less_pages=[2, 3])
     assert "recovered with OCR" in note and "recognition errors" in note
 
 
-def test_session_engine_failure_degrades_with_reason(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear_env(monkeypatch)
+def test_session_engine_failure_degrades_with_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _tesseract_only(monkeypatch)
     monkeypatch.setattr(
         pdf_ocr, "resolve_tessdata",
         lambda **_k: pdf_ocr.TessdataResolution(tmp_path, "override"),
     )
     session = pdf_ocr.PdfOcrSession()
-    assert session.recover_text(_OcrPage(fail=True), page_number=1) is None
+    assert session.recover_words(_OcrPage(fail=True), page_number=1) is None
     assert session.unavailable_reason.startswith("OCR failed: RuntimeError")
     assert session.used_pages == []
 
 
 def test_session_partial_recovery_note(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _clear_env(monkeypatch)
+    _tesseract_only(monkeypatch)
     monkeypatch.setattr(
         pdf_ocr, "resolve_tessdata",
         lambda **_k: pdf_ocr.TessdataResolution(tmp_path, "override"),
     )
     session = pdf_ocr.PdfOcrSession()
-    assert session.recover_text(_OcrPage("ok"), page_number=1) == "ok"
-    assert session.recover_text(_OcrPage(fail=True), page_number=2) is None
+    assert _recovered_text(session.recover_words(_OcrPage("ok"), page_number=1)) == "ok"
+    assert session.recover_words(_OcrPage(fail=True), page_number=2) is None
     note = session.note(text_less_pages=[1, 2])
     assert "pages 1 only" in note
 
@@ -221,10 +240,21 @@ def test_no_note_when_every_page_has_text() -> None:
     assert pdf_ocr.PdfOcrSession().note(text_less_pages=[]) == ""
 
 
-def test_page_has_text_layer() -> None:
-    assert pdf_ocr.page_has_text_layer("Balance sheet")
-    assert not pdf_ocr.page_has_text_layer("")
-    assert not pdf_ocr.page_has_text_layer(" \n\t ")
+def test_download_failure_reason_carries_no_local_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_env(monkeypatch)
+    cache = tmp_path / "cache"
+    _pin_default_dir(monkeypatch, cache)
+
+    def _refuse(*_args: Any, **_kwargs: Any) -> Any:
+        raise PermissionError(f"[Errno 13] Permission denied: '{cache}'")
+
+    resolution = pdf_ocr.resolve_tessdata(opener=_refuse)
+    assert resolution.directory is None
+    assert "PermissionError" in resolution.reason
+    assert str(tmp_path) not in resolution.reason
+    assert "<path>" in resolution.reason
 
 
 @pytest.mark.skipif(
@@ -232,8 +262,9 @@ def test_page_has_text_layer() -> None:
     reason="English tessdata not installed on this machine",
 )
 def test_real_ocr_recovers_rendered_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    fitz = pytest.importorskip("fitz")
-    _clear_env(monkeypatch)
+    import fitz
+
+    _tesseract_only(monkeypatch)
     # Build a page whose text is baked into a raster image, so it has no text layer.
     source = fitz.open()
     page = source.new_page(width=400, height=200)
@@ -245,7 +276,7 @@ def test_real_ocr_recovers_rendered_text(tmp_path: Path, monkeypatch: pytest.Mon
     assert not target.get_text().strip()
 
     session = pdf_ocr.PdfOcrSession()
-    text = session.recover_text(target, page_number=1)
+    text = _recovered_text(session.recover_words(target, page_number=1))
     assert text is not None
     assert "NET INCOME" in text.upper()
     assert "4521" in text

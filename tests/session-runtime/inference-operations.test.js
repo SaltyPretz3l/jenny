@@ -182,3 +182,19 @@ test('a run-mode change is refused with its own reason on admit and on preflight
   assert.equal(reserved.reason, 'run_mode_changed');
   assert.equal(preflight.lanes.snapshot().active_leases, 0);
 });
+
+test('a lane held only by a quarantined lease answers lane_quarantined, so the sidecar stops polling', () => {
+  const lanes = new RuntimeLaneAdmission();
+  const other = fixture({ lanes, requestId: 'request:2' });
+  const setup = fixture({ lanes });
+  const otherBase = { schema_version: 1, api_version: '2026-10-15', kind: 'inference', request_id: 'request:2',
+    session_id: 'session:1', authority_revision: 'authority:1', operation_id: 'other:1' };
+  assert.equal(other.gateway.handle({ ...otherBase, phase: 'admit', engine_type: 'ollama' }).status, 'granted');
+  assert.equal(setup.admit().reason, 'lane_capacity', 'an active holder is ordinary contention');
+  other.gateway.handle({ ...otherBase, phase: 'settle', status: 'failed', cleanup: 'uncertain',
+    consumption: 'unknown', charge_consumption: true });
+  const quarantined = setup.admit({ operation_id: 'operation:2' });
+  assert.equal(quarantined.status, 'waiting');
+  assert.equal(quarantined.reason, 'lane_quarantined');
+  setup.gateway.close({ producerSettled: true });
+});

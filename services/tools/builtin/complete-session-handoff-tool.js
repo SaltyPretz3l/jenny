@@ -4,6 +4,7 @@ const { normalizeProposalResultMetadata } = require('../../backend/proposal-resu
 const {
   checkLiveCall, producerToolSupported, proposalFailure, resolveSessionProposalDeps, text,
 } = require('./propose-tool-support');
+const { manifestSchema } = require('./tool-result');
 
 const NAME = 'complete_session_handoff';
 const PROPOSAL_ID = /^proposal_[0-9a-f]{64}$/;
@@ -45,12 +46,11 @@ function successMetadata(done) {
 
 module.exports = {
   name: NAME,
-  description: 'Finish preparing a separate chat by handing over its task and background.',
+  ...manifestSchema(NAME),
   category: 'builtin',
   readOnly: true,
   sideEffecting: false,
   workspaceRequired: false,
-  parameters: {},
 
   // The task and background are deliberately not echoed into the tool row.
   summarize() {

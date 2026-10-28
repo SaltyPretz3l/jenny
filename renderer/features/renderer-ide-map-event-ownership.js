@@ -20,8 +20,13 @@
   const SURFACE_SELECTORS = [
     ['overview', '.ide-map-overview'],
     ['findings', '.ide-map-findings'],
+    // The footer row (key + left-out popover) adopts the findings host, which
+    // therefore stays listed first so its chips still classify as findings.
+    ['footer', '.ide-map-footer'],
     ['control', '.ide-map-controls'],
     ['rail', '.ide-map-activity-rail'],
+    // Row 77's Components lens covers the canvas; it scrolls and keys itself.
+    ['components', '.ide-map-components, .ide-components-status, .ide-components-beside'],
   ];
 
   // Generic interactive-control / ARIA-widget sniff, for elements that are
@@ -40,12 +45,19 @@
     '[contenteditable="true"]', '[contenteditable=""]',
   ].join(',');
 
+  // Only the map's own subtree classifies: the IDE chrome around it (the
+  // editor stage is a role="tabpanel") would otherwise read the bare canvas
+  // as a control and disable pan and wheel zoom on it.
+  const MAP_VIEWPORT_SELECTOR = '.ide-map-viewport';
+
   function closestSafe(target, selector) {
     if (!target || typeof target.closest !== 'function') {
       return null;
     }
     try {
-      return target.closest(selector);
+      const hit = target.closest(selector);
+      const viewport = hit && target.closest(MAP_VIEWPORT_SELECTOR);
+      return viewport && hit !== viewport && hit.contains(viewport) ? null : hit;
     } catch (_error) {
       // An invalid/unsupported selector should never throw through a hot
       // event-handling path; treat it as "no match".
@@ -92,20 +104,20 @@
     return 'canvas';
   }
 
-  const CANVAS_POINTER_CATEGORIES = new Set(['canvas', 'node', 'district']);
-  const CANVAS_KEYBOARD_CATEGORIES = new Set(['canvas', 'node', 'district']);
-  const CANVAS_WHEEL_CATEGORIES = new Set(['canvas', 'node', 'district']);
+  // Pointer pans, keyboard shortcuts and wheel zoom all belong to the map
+  // for the same target categories.
+  const CANVAS_CATEGORIES = new Set(['canvas', 'node', 'district']);
 
   function ownsCanvasPointerEvent(target) {
-    return CANVAS_POINTER_CATEGORIES.has(classifyMapEventTarget(target));
+    return CANVAS_CATEGORIES.has(classifyMapEventTarget(target));
   }
 
   function ownsMapKeyboardEvent(target) {
-    return CANVAS_KEYBOARD_CATEGORIES.has(classifyMapEventTarget(target));
+    return CANVAS_CATEGORIES.has(classifyMapEventTarget(target));
   }
 
   function ownsMapWheelZoom(target) {
-    return CANVAS_WHEEL_CATEGORIES.has(classifyMapEventTarget(target));
+    return CANVAS_CATEGORIES.has(classifyMapEventTarget(target));
   }
 
   // event.pointerId is absent on plain mouse events and on many synthetic
@@ -147,9 +159,5 @@
     ownsMapWheelZoom,
     normalizePointerId,
     createPointerIdGate,
-    isContentEditableTarget,
-    isMapNodeTarget,
-    isMapDistrictTarget,
-    isInteractiveControlTarget,
   };
 });

@@ -6,6 +6,9 @@ const AGENT_FLAG = '--agent';
 const WORKSPACE_ROOT_FLAG = '--workspace-root';
 
 const WORKSPACE_ROOT_EXPLICIT_ENV = 'JENNY_TOOLS_WORKSPACE_ROOT_EXPLICIT';
+// Set on the Electron child after launch() checked the preload bundle, so
+// main.js skips its own in-process stamp check (services/main/dev-preload-bundle.js).
+const PRELOAD_CHECKED_ENV = 'JENNY_PRELOAD_BUNDLE_CHECKED';
 
 // Resolve the tools workspace root to forward into the agent profile.
 // Precedence, most explicit first:
@@ -43,6 +46,8 @@ function resolveLaunch({ argv = [], env = {}, cwd }) {
   delete childEnv.ELECTRON_RUN_AS_NODE;
   // Only this launcher's own `--workspace-root` may mark the root explicit.
   delete childEnv[WORKSPACE_ROOT_EXPLICIT_ENV];
+  // Only this launcher's own preload check may vouch for the bundle.
+  delete childEnv[PRELOAD_CHECKED_ENV];
 
   const forwardedArgs = [];
   let agentMode = /^(1|true|yes|on)$/i.test(String(childEnv.JENNY_AGENT_DEV || '').trim());
@@ -163,6 +168,7 @@ function launch() {
     return;
   }
   const { agentMode, env, forwardedArgs } = launchOptions;
+  env[PRELOAD_CHECKED_ENV] = '1';
 
   if (agentMode) {
     console.log(
@@ -197,4 +203,4 @@ if (require.main === module) {
   launch();
 }
 
-module.exports = { resolveLaunch, resolveAgentWorkspaceRoot, resolveChildExitCode };
+module.exports = { PRELOAD_CHECKED_ENV, resolveLaunch, resolveAgentWorkspaceRoot, resolveChildExitCode };

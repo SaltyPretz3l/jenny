@@ -2,19 +2,21 @@
  *
  * Split out of tests/renderer-home-daybook.test.js to keep that file under the
  * 600-line test ratchet. Everything here runs against a STUBBED onAsk, so the
- * launcher's own behaviour (session create, tool overrides, the composer send)
- * is out of the picture and only the delegated handler is under test; the
- * launcher half is pinned in tests/renderer-home-ask-config.test.js.
+ * launcher's own behaviour (session create, the composer send) is out of the
+ * picture and only the delegated handler is under test; the launcher half is
+ * pinned in tests/renderer-home-ask-launcher.test.js.
  *
- * What these tests pin - the three defects this handler owned:
+ * What these tests pin - the defects this handler owned:
  *  - F1: an ask could be fired twice concurrently. startAsk spans two IPC
  *    round-trips and there was no latch anywhere on the path, so a second
  *    Enter inside that window created a second session and a second send.
- *  - F3: Escape ran `target.value = ''` unconditionally, so dismissing the
- *    settings panel while the field had focus destroyed the draft, with no undo.
+ *  - F3: Escape ran `target.value = ''` unconditionally, destroying the draft
+ *    with no undo.
  *  - F5: Enter was the ONLY submit affordance, advertised by a hint that was
  *    invisible until the field had focus. A pointer-only user could not send
  *    from Home at all.
+ *  - IME: an Enter that commits an input-method candidate submitted the
+ *    half-typed question (2026-10-21 review).
  */
 
 const test = require('node:test');
@@ -34,10 +36,6 @@ function createDom() {
   return { dom, window: dom.window, documentRef: dom.window.document };
 }
 
-/* W13 keyboard + submit contract, against a stubbed onAsk so the launcher's own
- * behaviour is out of the picture. These pin the three defects the delegated
- * handler owned: a concurrent double-fire (F1), Escape eating the draft while
- * the settings panel is open (F3), and no pointer path to submit at all (F5). */
 function mountAskLine(t, onAsk) {
   const dom = createDom();
   const infoStrip = dom.documentRef.getElementById('homeInfoStrip');
@@ -123,26 +121,32 @@ test('F1: a synchronous throw out of onAsk still releases the latch', (t) => {
   assert.equal(calls, 2, 'the field is usable again');
 });
 
-test('F3: Escape with the settings panel open closes the panel and keeps the draft', (t) => {
-  const { dom, region, pill, press } = mountAskLine(t, () => true);
-
-  // Stand in for the ask-config panel: the handler keys off the class and the
-  // hidden flag, exactly as the popover primitive maintains them.
-  const panel = dom.documentRef.createElement('div');
-  panel.className = 'inv-popover home-ask__panel';
-  region.querySelector('.home-ask__meta').append(panel);
+test('F3: Escape blurs the field and keeps the draft', (t) => {
+  const { dom, pill, press } = mountAskLine(t, () => true);
 
   pill.value = 'keep me';
   pill.focus();
   press('Escape');
   assert.equal(pill.value, 'keep me', 'the draft survives');
-  assert.equal(dom.documentRef.activeElement, pill,
-    'and the field keeps focus - the popover primitive owns this Escape');
+  assert.notEqual(dom.documentRef.activeElement, pill, 'the field gives up focus');
+});
 
-  panel.hidden = true;
-  press('Escape');
-  assert.equal(pill.value, 'keep me', 'still no clear');
-  assert.notEqual(dom.documentRef.activeElement, pill, 'now it blurs');
+test('IME: an Enter that commits a composition candidate never submits', (t) => {
+  const asks = [];
+  const { pill, press } = mountAskLine(t, (text) => { asks.push(text); return true; });
+
+  pill.value = '日本';
+  const composing = press('Enter', { isComposing: true });
+  // Chromium can report the commit keystroke with isComposing already false
+  // and keyCode 229, the composition-in-progress code.
+  const committing = press('Enter', { keyCode: 229 });
+  assert.deepEqual(asks, [], 'neither Enter starts an ask');
+  assert.equal(composing.defaultPrevented, false, 'the input method keeps the keystroke');
+  assert.equal(committing.defaultPrevented, false);
+  assert.equal(pill.value, '日本', 'the draft is untouched');
+
+  press('Enter');
+  assert.deepEqual(asks, ['日本'], 'a plain Enter after the commit sends');
 });
 
 test('F5: clicking the send button routes through the same onAsk path as Enter', (t) => {

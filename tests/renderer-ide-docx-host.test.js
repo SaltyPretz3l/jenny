@@ -456,3 +456,117 @@ test('every mutation reports an edit, and a vetoed or superseded reload keeps th
   assert.equal(host.querySelector('.ide-docx-doc'), null);
   pane.dispose();
 });
+
+function inputEvent(dom, inputType, { data = null, text = '', range = null } = {}) {
+  const event = new dom.window.Event('beforeinput', { bubbles: true, cancelable: true });
+  Object.defineProperties(event, {
+    inputType: { value: inputType },
+    data: { value: data },
+    dataTransfer: { value: { getData: (type) => (type === 'text/plain' ? text : '') } },
+    getTargetRanges: { value: () => (range ? [range] : []) },
+  });
+  return event;
+}
+
+test('Backspace and Delete remove a whole surrogate pair', async () => {
+  const h = harness();
+  await open(h, 'paragraphs.docx');
+  const doc = h.host.querySelector('.ide-docx-doc:not(.hidden)');
+  placeCaret(h.dom, paragraph(doc, 0), 0);
+  beforeInput(h.dom, doc, 'insertText', '\u{1F600}');
+  assert.equal(paragraph(doc, 0).textContent, '\u{1F600}Quarterly summary');
+  placeCaret(h.dom, paragraph(doc, 0), 2);
+  beforeInput(h.dom, doc, 'deleteContentBackward');
+  assert.equal(paragraph(doc, 0).textContent, 'Quarterly summary');
+  placeCaret(h.dom, paragraph(doc, 0), 0);
+  beforeInput(h.dom, doc, 'insertText', '\u{1F600}');
+  placeCaret(h.dom, paragraph(doc, 0), 0);
+  beforeInput(h.dom, doc, 'deleteContentForward');
+  assert.equal(paragraph(doc, 0).textContent, 'Quarterly summary');
+});
+
+test('an undo back to the saved state still reports an edit for the save fence', async () => {
+  const h = harness();
+  const filePath = await open(h, 'paragraphs.docx');
+  const doc = h.host.querySelector('.ide-docx-doc:not(.hidden)');
+  placeCaret(h.dom, paragraph(doc, 0), 0);
+  beforeInput(h.dom, doc, 'insertText', 'X');
+  assert.deepEqual(h.edits, [filePath]);
+  key(h.dom, doc, 'z', { ctrlKey: true });
+  assert.deepEqual(h.edits, [filePath, filePath]);
+  assert.equal(h.pane.isDirty(filePath), false);
+  assert.deepEqual(h.dirty, [[filePath, true], [filePath, false]]);
+  key(h.dom, doc, 'z', { ctrlKey: true });
+  assert.deepEqual(h.edits, [filePath, filePath], 'a no-op undo is not an edit');
+});
+
+test('spellcheck replacement, word delete and drop act on the browser target range', async () => {
+  const h = harness();
+  await open(h, 'paragraphs.docx');
+  const doc = h.host.querySelector('.ide-docx-doc:not(.hidden)');
+  const pointAt = (offset) => {
+    let remaining = offset;
+    const nodes = Array.from(paragraph(doc, 0).querySelectorAll('.ide-docx-run'), (run) => run.firstChild);
+    for (const node of nodes) {
+      if (remaining <= node.nodeValue.length) return [node, remaining];
+      remaining -= node.nodeValue.length;
+    }
+    throw new Error(`offset ${offset} is outside the paragraph`);
+  };
+  const rangeOver = (start, end) => {
+    const range = h.dom.window.document.createRange();
+    range.setStart(...pointAt(start));
+    range.setEnd(...pointAt(end));
+    return range;
+  };
+  placeCaret(h.dom, paragraph(doc, 0), 17);
+  doc.dispatchEvent(inputEvent(h.dom, 'insertReplacementText', { text: 'Annual', range: rangeOver(0, 9) }));
+  assert.equal(paragraph(doc, 0).textContent, 'Annual summary');
+  placeCaret(h.dom, paragraph(doc, 0), 14);
+  doc.dispatchEvent(inputEvent(h.dom, 'deleteWordBackward', { range: rangeOver(6, 14) }));
+  assert.equal(paragraph(doc, 0).textContent, 'Annual');
+  doc.dispatchEvent(inputEvent(h.dom, 'insertFromDrop', { text: ' report', range: rangeOver(6, 6) }));
+  assert.equal(paragraph(doc, 0).textContent, 'Annual report');
+});
+
+test('the caret follows the sanitized text the model actually inserted', async () => {
+  const h = harness();
+  await open(h, 'paragraphs.docx');
+  const doc = h.host.querySelector('.ide-docx-doc:not(.hidden)');
+  const textNode = paragraph(doc, 1).querySelector('.ide-docx-run').firstChild;
+  select(h.dom, textNode, 6, textNode, 6);
+  beforeInput(h.dom, doc, 'insertText', `a${String.fromCharCode(7)}b`);
+  assert.equal(paragraph(doc, 1).textContent.startsWith('Plain abbold'), true);
+  assert.deepEqual(renderUtils.resolveSelection(h.dom.window.getSelection()).anchor, { blockId: 'b2', offset: 8 });
+});
+
+test('typing before a selected image never moves the selection onto a neighbouring image', async () => {
+  const h = harness();
+  await open(h, 'images-headers.docx');
+  const doc = h.host.querySelector('.ide-docx-doc:not(.hidden)');
+  const body = () => doc.querySelector('.ide-docx-region-body .ide-docx-p');
+  const before = 'Before the picture '.length;
+  placeCaret(h.dom, body(), before);
+  h.dom.window.createImageBitmap = async () => ({ width: 40, height: 20, close() {} });
+  h.host.querySelector('[data-ide-docx-action="insertImage"]').click();
+  const sourceZip = await zipUtils.readZip(fixtureBytes('images-headers.docx'));
+  const bytes = await zipUtils.readEntryBytes(sourceZip, 'word/media/image1.png');
+  const input = h.host.querySelector('.ide-docx-image-input');
+  Object.defineProperty(input, 'files', { configurable: true, value: [{
+    type: 'image/png', size: bytes.length, name: 'inserted.png', arrayBuffer: async () => bytes.buffer,
+  }] });
+  input.dispatchEvent(new h.dom.window.Event('change', { bubbles: true }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const images = () => Array.from(body().querySelectorAll('.ide-docx-img'));
+  assert.equal(images().length, 2);
+  const original = images()[1];
+  original.dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true }));
+  assert.ok(original.classList.contains('is-selected'));
+
+  placeCaret(h.dom, body(), 0);
+  beforeInput(h.dom, doc, 'insertText', 'x');
+  const selected = images().filter((image) => image.classList.contains('is-selected'));
+  assert.ok(selected.every((image) => image === images()[1]), 'the inserted image must not inherit the selection');
+  h.host.querySelector('[data-ide-docx-action="imageLarger"]').click();
+  assert.equal(images()[0].width, 40, 'a resize never lands on the neighbouring image');
+});

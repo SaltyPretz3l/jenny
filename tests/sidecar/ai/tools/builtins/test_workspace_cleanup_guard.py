@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import subprocess
 import time
 from pathlib import Path
 
@@ -13,16 +12,7 @@ from sidecar.ai.error_codes import CMP_TOOL_IO_FAILED
 from sidecar.ai.tools.builtins import workspace_cleanup as cleanup_module
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace_store import DeleteOutcome, GuardedWorkspaceStore
-
-
-def _make_junction(link: Path, target: Path) -> bool:
-    result = subprocess.run(
-        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
-        capture_output=True,
-        check=False,
-        text=True,
-    )
-    return result.returncode == 0
+from tests.sidecar._platform_skips import make_dir_link, windows_only
 
 
 def test_cleanup_noop_when_no_workspace_root() -> None:
@@ -119,7 +109,7 @@ def test_cleanup_isolates_tool_result_failure_from_artifact_report(
     assert result.artifact_sessions_found == 2
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows junctions only")
+@windows_only("junctioned tool-results root quarantine")
 def test_cleanup_quarantines_junctioned_tool_results_root(tmp_path: Path) -> None:
     outside = tmp_path / "elsewhere"
     outside.mkdir()
@@ -128,8 +118,7 @@ def test_cleanup_quarantines_junctioned_tool_results_root(tmp_path: Path) -> Non
     jenny = tmp_path / ".jenny"
     jenny.mkdir()
     junction = jenny / "tool-results"
-    if not _make_junction(junction, outside):
-        pytest.skip("mklink /J not permitted in this environment")
+    make_dir_link(junction, outside)
 
     result = cleanup_module.cleanup_workspace_artifacts(tmp_path)
 
@@ -143,7 +132,7 @@ def test_cleanup_quarantines_junctioned_tool_results_root(tmp_path: Path) -> Non
     os.rmdir(quarantined[0])
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows junctions only")
+@windows_only("junction child quarantine")
 def test_cleanup_quarantines_junction_child_without_deleting_target(tmp_path: Path) -> None:
     results = tmp_path / ".jenny" / "tool-results"
     results.mkdir(parents=True)
@@ -152,8 +141,7 @@ def test_cleanup_quarantines_junction_child_without_deleting_target(tmp_path: Pa
     sentinel = outside / "keep.txt"
     sentinel.write_text("keep", encoding="utf-8")
     junction = results / "old-job"
-    if not _make_junction(junction, outside):
-        pytest.skip("mklink /J not permitted in this environment")
+    make_dir_link(junction, outside)
 
     cleanup_module.cleanup_workspace_artifacts(tmp_path)
 

@@ -80,8 +80,6 @@
     const childrenByDir = deps.childrenByDir instanceof Map ? deps.childrenByDir : new Map();
     const isWin32 = deps.isWin32 === true;
     let blurCommitTimer = null;
-    let currentEdit = null;
-    let currentMessage = '';
 
     function contextFor(edit) {
       const entries = childrenByDir.get(edit?.dirPath || '');
@@ -134,9 +132,7 @@
     }
 
     function rememberResult(edit, result) {
-      currentEdit = edit;
-      currentMessage = result.ok ? '' : result.message;
-      edit.validationMessage = currentMessage;
+      edit.validationMessage = result.ok ? '' : result.message;
     }
 
     function onInput(control) {
@@ -171,9 +167,7 @@
         return;
       }
       control.value = edit.draftName ?? edit.originalName ?? '';
-      currentEdit = edit;
-      currentMessage = String(edit.validationMessage || '');
-      paintControlError(control, currentMessage);
+      paintControlError(control, String(edit.validationMessage || ''));
       if (edit.selectionApplied) {
         return;
       }
@@ -187,14 +181,6 @@
       } else {
         control.select?.();
       }
-    }
-
-    function isInvalid() {
-      return currentEdit === getPendingEdit() && Boolean(currentMessage);
-    }
-
-    function getMessage() {
-      return currentEdit === getPendingEdit() ? currentMessage : '';
     }
 
     function cancelBlurCommit() {
@@ -217,8 +203,6 @@
     function clear() {
       const cancelled = cancelBlurCommit();
       clearControlError(controlFor());
-      currentEdit = null;
-      currentMessage = '';
       return cancelled;
     }
 
@@ -227,8 +211,6 @@
       onInput,
       validate,
       paintError,
-      isInvalid,
-      getMessage,
       queueBlurCommit,
       cancelBlurCommit,
       clear,

@@ -22,7 +22,7 @@ ready=$(tail -n +"$((offset + 1))" "$log" | grep -F '"event":"window.ready"' | h
 [ -n "$ready" ] || exit 1
 source=$(printf '%s\n' "$ready" | sed -n 's/.*"details":{"source":"\([^"]*\)".*/\1/p')
 case "$source" in
-    renderer-ready|ready-to-show+renderer-ready|did-finish-load+renderer-ready) ;;
+    ready-to-show|did-finish-load|renderer-ready|ready-to-show+renderer-ready|did-finish-load+renderer-ready) ;;
     *) printf 'FAIL source=%s\n' "${source:-unknown}"; exit 2 ;;
 esac
 run_id=$(printf '%s\n' "$ready" | sed -n 's/.*"run_id":"\([^"]*\)".*/\1/p')

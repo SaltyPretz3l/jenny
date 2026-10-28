@@ -104,7 +104,8 @@ class CompactionReply(str):
         return reply
 
 
-def _section_heading_re(heading: str) -> re.Pattern[str]:
+def section_heading_re(heading: str) -> re.Pattern[str]:
+    """Compile a tolerant line-start matcher for a mandated section heading."""
     # Small models restyle the mandated headings ("## Intent Summary",
     # "1. Intent Summary:", "**Intent summary:**"): match the name at a line
     # start behind any quote/heading/list/number/bold markup, ignoring case.
@@ -118,8 +119,10 @@ def _section_heading_re(heading: str) -> re.Pattern[str]:
     )
 
 
+_section_heading_re = section_heading_re
+
 _SECTION_HEADING_RES = tuple(
-    _section_heading_re(heading) for heading in COMPACTION_SUMMARY_SECTION_HEADINGS
+    section_heading_re(heading) for heading in COMPACTION_SUMMARY_SECTION_HEADINGS
 )
 
 
@@ -301,7 +304,7 @@ def strip_instruction_echo(text: str) -> str:
     return _INSTRUCTION_ECHO_RE.sub("", text)
 
 
-def _format_messages_block(messages: list[dict[str, Any]]) -> str:
+def format_messages_block(messages: list[dict[str, Any]]) -> str:
     """Render a message list into a readable text block for the LLM."""
     parts: list[str] = []
     for msg in messages:
@@ -357,6 +360,9 @@ def _format_messages_block(messages: list[dict[str, Any]]) -> str:
     return "\n\n".join(parts)
 
 
+_format_messages_block = format_messages_block
+
+
 def build_full_compaction_messages(
     conversation_history: list[dict[str, Any]],
     system_context: str = "",
@@ -379,7 +385,7 @@ def build_full_compaction_messages(
         system += f"\n\n## Additional context\n\n{bounded_system_context}"
     user_block = (
         _CONVERSATION_LABEL
-        + _format_messages_block(conversation_history)
+        + format_messages_block(conversation_history)
         + _TRANSCRIPT_CLOSE
         + "\n\n"
         + COMPACTION_CONVERSATION_END

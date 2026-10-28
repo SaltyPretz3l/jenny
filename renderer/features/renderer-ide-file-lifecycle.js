@@ -20,7 +20,10 @@
   function openFailureMessage(error, path) {
     const name = String(path || '').split('/').pop() || String(path || '');
     const code = String(error?.code || '');
-    if (code.endsWith('0015')) return jt('ide.fileLifecycle.unsupportedDocument', '{name} could not be opened as a document.', { name });
+    if (code.endsWith('0015')) {
+      const message = jt('ide.fileLifecycle.unsupportedDocument', '{name} could not be opened as a document.', { name });
+      return error?.reason ? `${message} ${error.reason}` : message;
+    }
     if (code.endsWith('0016')) return jt('ide.fileLifecycle.documentTooLarge', '{name} is larger than the document size limit.', { name });
     if (code.endsWith('0010')) return jt('ide.fileLifecycle.binaryFile', "{name} is a binary file and can't be shown in the editor.", { name });
     if (code.endsWith('0011')) {
@@ -43,6 +46,14 @@
     if (globalRef.rendererIdeFileOperations) return globalRef.rendererIdeFileOperations;
     if (typeof require === 'function') {
       try { return require('./renderer-ide-file-operations'); } catch (_error) { /* unavailable */ }
+    }
+    return {};
+  }
+
+  function resolveEditorconfig() {
+    if (globalRef.rendererIdeEditorconfig) return globalRef.rendererIdeEditorconfig;
+    if (typeof require === 'function') {
+      try { return require('./renderer-ide-editorconfig'); } catch (_error) { /* unavailable */ }
     }
     return {};
   }
@@ -92,6 +103,9 @@
       getWorkspaceFsApi,
       platform: deps?.platform,
     }) || null;
+    // .editorconfig indent / EOL / save-hygiene overrides (row 82 E2); best-effort.
+    const editorconfig = deps?.editorconfig
+      || resolveEditorconfig().createEditorconfigApplier?.({ getWorkspaceFsApi, editorHost }) || null;
 
     function resolveDocumentPath(path) {
       if (ideStateUtils.isMapTabId?.(path)
@@ -150,7 +164,6 @@
       // finds none. A commit that was refused or failed leaves tabs on the old
       // path: clean ones close, unsaved ones stay open and are marked stale.
       const affected = closeTabsUnder(fromPath, kind, { preservedPaths, renamed: true });
-      closedTabs?.dropUnder(fromPath);
       if (kind !== 'directory' && (wasOpen || affected.length)) {
         return openFile(toPath).then((opened) => {
           if (opened && group) moveToGroup(toPath, group);
@@ -202,11 +215,23 @@
         && ide.dirtyByPath?.[tab.path] !== true) || null;
     }
 
+    // Disposes a path's editor document and its file-operations token together.
+    function disposeDocument(path) {
+      editorHost?.closeDocument(path);
+      editorconfig?.forget(path);
+      fileOperations?.close(path);
+    }
+
+    // Marks a path stale (its editor no longer matches disk) and repaints the strip.
+    function markStale(path) {
+      ideStateUtils.setTabStale?.(getIde(), path, true);
+      renderTabs();
+    }
+
     function discardTransientPreview(ide, tab) {
       if (!tab) return;
       ideStateUtils.closeTab?.(ide, tab.path);
-      editorHost?.closeDocument(tab.path);
-      fileOperations?.close(tab.path);
+      disposeDocument(tab.path);
       closedTabs?.dropPath(tab.path);
     }
 
@@ -247,6 +272,8 @@
         }
         const intent = fileOperations?.beginOpen(normalized, { background: options?.background === true });
         if (!intent) return false;
+        // Warm the .editorconfig chain in parallel with the read (text files only).
+        if (!isImagePath(normalized) && !isDocumentPath(normalized)) editorconfig?.prepare(normalized);
         try {
           if (isImagePath(normalized)) {
             const read = await fileOperations.readImageForOpen(intent);
@@ -276,6 +303,8 @@
               onApplied: () => { committedToken = fileOperations.commitOpen(intent, read.payload); },
             });
             if (!applied || !committedToken) return false;
+            // Resolved off the open path (no await: a root switch must not land mid-open); apply wins later.
+            if (editorconfig) Promise.resolve(editorconfig.prepare(normalized)).then(() => editorconfig.apply(normalized), noop);
           }
         } catch (error) {
           // An open that began under an older root must not touch the new
@@ -306,10 +335,10 @@
       if (options?.background === true) {
         // Its tab may have closed while the document loaded: drop the orphan.
         if (createdDoc && !(ide.openTabs || []).some((tab) => tab.path === normalized)) {
-          editorHost.closeDocument(normalized);
-          fileOperations?.close(normalized);
+          disposeDocument(normalized);
           return false;
         }
+        editorconfig?.apply(normalized);
         restore?.applyPosition(ideStateUtils.getTab?.(ide, normalized));
         return editorHost.hasDocument(normalized);
       }
@@ -319,10 +348,7 @@
       // can fill the strip mid-read (lost race). A document created by THIS
       // call is disposed on refusal; a pre-existing one is left untouched.
       if (!previewToReplace && refuseAtTabCap(ide, normalized)) {
-        if (createdDoc) {
-          editorHost.closeDocument(normalized);
-          fileOperations?.close(normalized);
-        }
+        if (createdDoc) disposeDocument(normalized);
         return false;
       }
       discardTransientPreview(ide, previewToReplace);
@@ -332,6 +358,7 @@
       restore?.recordActivation(normalized);
       onEditorDocumentActivated(normalized);
       chipPicker?.applyDefaults(normalized);
+      editorconfig?.apply(normalized); // after the user defaults so .editorconfig wins
       welcome?.noteOpened(normalized);
       renderTabs();
       schedulePersist();
@@ -369,10 +396,15 @@
       if (ideStateUtils.getTab?.(getIde(), path)?.transientPreview === true) {
         return;
       }
-      if (editorHost.getDocumentKind(path) !== 'file') {
+      // A PDF pane is a 'document' kind: it records only while its page/zoom is readable.
+      const pdfView = editorHost.getPdfViewPosition?.(path) || null;
+      if (editorHost.getDocumentKind(path) !== 'file' && !(pdfView && editorHost.getDocumentKind(path) === 'document')) {
         return;
       }
-      closedTabs.push({ path, viewState: editorHost.getViewState?.(path) || null, group: ideStateUtils.getTab?.(getIde(), path)?.group || '' });
+      closedTabs.push({
+        path, viewState: editorHost.getViewState?.(path) || null, group: ideStateUtils.getTab?.(getIde(), path)?.group || '',
+        ...(pdfView ? { pdfView } : {}),
+      });
     }
 
     function closeTab(path) {
@@ -384,8 +416,7 @@
       // re-activating its document would snap its cursor back to the stashed state.
       const wasActive = ide.activeTabPath === resolvedPath;
       const nextActivePath = ideStateUtils.closeTab?.(ide, resolvedPath) || '';
-      editorHost?.closeDocument(resolvedPath);
-      fileOperations?.close(resolvedPath);
+      disposeDocument(resolvedPath);
       const primaryUnchanged = !wasActive && editorHost?.getActivePath?.() === nextActivePath;
       if (nextActivePath) {
         if (primaryUnchanged) {
@@ -430,6 +461,9 @@
       if (opened && entry.viewState) {
         editorHost?.applyViewState?.(entry.path, entry.viewState);
       }
+      if (opened && entry.pdfView) {
+        editorHost?.restorePdfView?.(entry.path, entry.pdfView);
+      }
     }
 
     // Saves a specific path (defaulting to the active tab). The orchestrator's
@@ -470,6 +504,16 @@
       let releaseSaving = () => {};
       savingSettled = new Promise((resolve) => { releaseSaving = resolve; });
       let hygieneOutcome = { formatStatus: 'disabled', formatReason: '' };
+      // A root reset, a newer save or a reload/close made this write obsolete.
+      const superseded = () => operationEpoch !== lifecycleEpoch
+        || savingToken !== operationToken
+        || !editorHost.hasDocument(path)
+        || !fileOperations.isDocumentCurrent(initialToken);
+      const markSavedClean = () => {
+        ideStateUtils.setTabStale?.(ide, path, false);
+        gitFeature?.requestRefresh();
+        renderTabs();
+      };
       try {
         if (editorHost.getDocumentKind(path) === 'document') {
           // Captured BEFORE the async export: any pane edit during export or
@@ -477,10 +521,7 @@
           // onDocumentEdit), so only the exported state is ever marked saved.
           const editVersionBeforeWrite = fileOperations.getDocumentToken(path)?.editVersion;
           const base64 = await editorHost.getDocumentBytes(path);
-          if (operationEpoch !== lifecycleEpoch
-            || savingToken !== operationToken
-            || !editorHost.hasDocument(path)
-            || !fileOperations.isDocumentCurrent(initialToken)) return false;
+          if (superseded()) return false;
           if (!base64) {
             if (!unattended) {
               showShellErrorToast(jt('ide.fileLifecycle.documentExportFailed', 'The document could not be prepared for saving.'), {
@@ -499,9 +540,7 @@
           if (editVersionBeforeWrite === editVersionAfterWrite) {
             editorHost.markSaved(path, { mtimeMs: result?.mtimeMs });
           }
-          ideStateUtils.setTabStale?.(ide, path, false);
-          gitFeature?.requestRefresh();
-          renderTabs();
+          markSavedClean();
           appendClientLog('INFO', 'ide.save_succeeded', {
             format_status: 'disabled', format_reason: 'document', unattended,
           });
@@ -516,17 +555,14 @@
           // applySaveHygiene is synchronous (returns undefined) unless
           // format-on-save is running; only await the async case so the common
           // path keeps the content snapshot below synchronous w.r.t. live edits.
-          const hygieneResult = saveHygiene.applySaveHygiene(path);
+          const hygieneResult = saveHygiene.applySaveHygiene(path, editorconfig?.hygieneFor(path) || undefined);
           if (hygieneResult && typeof hygieneResult.then === 'function') {
             hygieneOutcome = await hygieneResult || hygieneOutcome;
           } else if (hygieneResult && typeof hygieneResult === 'object') {
             hygieneOutcome = hygieneResult;
           }
         }
-        if (operationEpoch !== lifecycleEpoch
-          || savingToken !== operationToken
-          || !editorHost.hasDocument(path)
-          || !fileOperations.isDocumentCurrent(initialToken)) return false;
+        if (superseded()) return false;
         // Snapshot the content + dirty-version BEFORE the async write so an edit
         // that lands mid-write is not later marked saved against a newer version
         // (matters for unattended auto-save; markSaved uses these snapshots).
@@ -538,9 +574,7 @@
         const accepted = fileOperations.acceptWrite(snapshot, result);
         if (!accepted.current || !editorHost.hasDocument(path)) return false;
         editorHost.markSaved(path, { mtimeMs: result?.mtimeMs, savedVersionId, savedContent: content });
-        ideStateUtils.setTabStale?.(ide, path, false);
-        gitFeature?.requestRefresh();
-        renderTabs();
+        markSavedClean();
         appendClientLog('INFO', 'ide.save_succeeded', {
           format_status: String(hygieneOutcome.formatStatus || 'disabled'),
           format_reason: String(hygieneOutcome.formatReason || ''),
@@ -631,7 +665,8 @@
         const canApply = read?.stale !== true && read?.payload
           && fileOperations.canCommitReload(snapshot, read.payload, reloadOptions);
         if (!canApply) {
-          ideStateUtils.setTabStale?.(getIde(), path, true); renderTabs(); return false;
+          markStale(path);
+          return false;
         }
         const applied = isImage
           ? editorHost.openImageDocument(read.payload)
@@ -647,15 +682,15 @@
               onApplied: () => fileOperations.commitReload(snapshot, read.payload, allowDirty),
             });
         if (!applied || (isImage && !fileOperations.commitReload(snapshot, read.payload))) {
-          ideStateUtils.setTabStale?.(getIde(), path, true); renderTabs(); return false;
+          markStale(path);
+          return false;
         }
         if (getIde().activeTabPath === path) editorHost.activateDocument(path);
         ideStateUtils.setTabStale?.(getIde(), path, false);
         renderTabs();
         return true;
       } catch (error) {
-        ideStateUtils.setTabStale?.(getIde(), path, true);
-        renderTabs();
+        markStale(path);
         appendClientLog('WARN', 'ide.git_discard_reload_failed', {
           error_name: String(error?.name || 'Error').slice(0, 80),
           error_code: String(error?.code || '').slice(0, 80),
@@ -681,6 +716,7 @@
       lifecycleEpoch += 1;
       savingToken = null;
       gitDiscardPath = '';
+      editorconfig?.reset();
       for (const tab of [...(getIde().openTabs || [])]) editorHost?.closeDocument(tab.path);
       editorHost?.showEmpty();
       closedTabs?.clear?.();
@@ -707,7 +743,7 @@
       handleTreeEntryDeleted,
       handleTreeEntryRenamed,
       closeExternalDelete,
-      dispose: () => fileOperations?.dispose(),
+      dispose: () => { editorconfig?.dispose(); fileOperations?.dispose(); },
       fileOperations,
       getDocumentToken: (path) => fileOperations?.getDocumentToken(path) || null,
       isSaving: () => Boolean(savingToken),

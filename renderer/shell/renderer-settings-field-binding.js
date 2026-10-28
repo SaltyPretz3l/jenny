@@ -408,7 +408,9 @@
         const raw = String(target.value == null ? '' : target.value).trim();
         return { value: parseNumber(descriptor, raw === '' ? '' : storedNumber(descriptor, raw)) };
       }
-      return { value: String(target.value == null ? '' : target.value) };
+      // A single-line field commits trimmed, as its owners store it (else the echo never matches); a textarea keeps its text.
+      const text = String(target.value == null ? '' : target.value);
+      return { value: String(target.tagName).toUpperCase() === 'TEXTAREA' ? text : text.trim() };
     }
     if (type === 'click' && target && typeof target.closest === 'function') {
       const preset = target.closest('[data-setting-preset="' + descriptor.id + '"]');
@@ -763,7 +765,6 @@
   }
 
   return {
-    createObjectCoordinator,
     createSettingsAdapterRegistry,
     sharedRegistryFor,
     resolveSettingCopy,
@@ -779,6 +780,5 @@
     setRowBusy,
     bindSettingFields,
     getPath,
-    setPath,
   };
 });

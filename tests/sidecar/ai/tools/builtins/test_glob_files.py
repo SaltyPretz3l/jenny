@@ -14,6 +14,7 @@ from sidecar.ai.tools.builtins.glob_files import (
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
+from tests.sidecar._platform_skips import make_dir_link, windows_only
 
 
 def _guard(tmp_path: Path) -> WorkspaceGuard:
@@ -203,10 +204,7 @@ def test_glob_files_skips_symlink_escape(tmp_path: Path) -> None:
     (outside / "secret.py").write_text("secret\n", encoding="utf-8")
     link_path = tmp_path / "escape_link"
 
-    try:
-        link_path.symlink_to(outside, target_is_directory=True)
-    except (NotImplementedError, OSError):
-        pytest.skip("symlink creation unavailable in this environment")
+    make_dir_link(link_path, outside)
 
     result = glob_files_tool({"pattern": "**/*.py"}, _guard(tmp_path))
 
@@ -232,3 +230,39 @@ def test_glob_files_rejects_static_prefix_traversal(tmp_path: Path) -> None:
         glob_files_tool({"pattern": "../glob_static_prefix_outside/*.py"}, _guard(tmp_path))
 
     assert exc_info.value.code == "CMP-TOOL-0003"
+
+
+@windows_only("directory junction traversal")
+def test_glob_files_does_not_follow_junctions(tmp_path: Path) -> None:
+    (tmp_path / "real").mkdir()
+    (tmp_path / "real" / "a.py").write_text("a\n", encoding="utf-8")
+    # One junction duplicates a directory, the other loops back to the root.
+    make_dir_link(tmp_path / "alias", tmp_path / "real")
+    make_dir_link(tmp_path / "real" / "loop", tmp_path)
+
+    result = glob_files_tool({"pattern": "**/*.py"}, _guard(tmp_path))
+
+    assert result.metadata["scan_complete"] is True
+    assert result.metadata["match_count"] == 1
+    assert result.output.splitlines()[-1] == "real/a.py"
+
+
+def test_glob_files_resolves_containment_per_directory_not_per_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for index in range(20):
+        (tmp_path / "sub").mkdir(exist_ok=True)
+        (tmp_path / "sub" / f"f{index}.py").write_text("x\n", encoding="utf-8")
+    calls: list[Path] = []
+    original = WorkspaceGuard.ensure_within_root
+
+    def counting(self: WorkspaceGuard, path: Path) -> Path:
+        calls.append(path)
+        return original(self, path)
+
+    monkeypatch.setattr(WorkspaceGuard, "ensure_within_root", counting)
+
+    result = glob_files_tool({"pattern": "**/*.py"}, _guard(tmp_path))
+
+    assert result.metadata["match_count"] == 20
+    assert calls == [tmp_path.resolve() / "sub"]

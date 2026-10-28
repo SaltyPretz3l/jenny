@@ -54,7 +54,7 @@ function fakeView(nodes) {
 
 function fakeTransform() {
   const fitCalls = [];
-  return { fitToContent: (bounds) => fitCalls.push(bounds), _fitCalls: fitCalls };
+  return { flyToFit: (bounds) => fitCalls.push(bounds), _fitCalls: fitCalls };
 }
 
 test('chips render real counts from graph.findings (hubs/cycles/orphans)', (t) => {
@@ -100,7 +100,7 @@ test('clicking the hubs chip highlights implicated nodes and announces via aria-
   assert.ok(liveRegion, 'expected an aria-live region');
   assert.match(liveRegion.textContent, /3 hubs/);
 
-  // Frames the implicated nodes via the transform's fitToContent.
+  // Frames the implicated nodes via the transform's flyToFit.
   assert.equal(transform._fitCalls.length, 1);
   const bounds = transform._fitCalls[0];
   assert.equal(bounds.minX <= 0 && bounds.maxX >= 200, true, 'bounds must cover all three hub node x-positions');
@@ -226,4 +226,53 @@ test('clear() empties the host and dispose() removes listeners', (t) => {
   assert.equal(hostEl.innerHTML, '');
   // dispose is idempotent.
   findings.dispose();
+});
+
+test('the live region is re-created after update() rebuilds the chip bar', (t) => {
+  const { hostEl } = setupHost();
+  const dom = hostEl.ownerDocument.defaultView;
+  const graph = makeGraph();
+  const findings = createMapFindings({ hostEl, view: fakeView(graph.nodes), transform: fakeTransform() });
+  t.after(() => findings.dispose());
+
+  findings.update(graph);
+  findings.update(graph);
+  hostEl.querySelector('[data-inv-chip="orphans"]').dispatchEvent(new dom.MouseEvent('click', { bubbles: true }));
+  const live = hostEl.querySelector('[aria-live="polite"]');
+  assert.ok(live, 'a connected live region exists after the rebuild');
+  assert.match(live.textContent, /1 orphan/);
+});
+
+test('chip framing flies to the finding without adopting its box as the clamp bounds', (t) => {
+  const { hostEl } = setupHost();
+  const dom = hostEl.ownerDocument.defaultView;
+  const graph = makeGraph();
+  const fits = [];
+  const flights = [];
+  const transform = { fitToContent: (b) => fits.push(b), flyToFit: (b) => flights.push(b) };
+  const findings = createMapFindings({ hostEl, view: fakeView(graph.nodes), transform });
+  t.after(() => findings.dispose());
+
+  findings.update(graph);
+  hostEl.querySelector('[data-inv-chip="hubs"]').dispatchEvent(new dom.MouseEvent('click', { bubbles: true }));
+  assert.equal(fits.length, 0, 'fitToContent would trap the pan inside the finding box');
+  assert.equal(flights.length, 1);
+});
+
+test('update() and clear() drop the view ring of an active chip', (t) => {
+  const { hostEl } = setupHost();
+  const dom = hostEl.ownerDocument.defaultView;
+  const graph = makeGraph();
+  const view = fakeView(graph.nodes);
+  const findings = createMapFindings({ hostEl, view, transform: fakeTransform() });
+  t.after(() => findings.dispose());
+
+  findings.update(graph);
+  hostEl.querySelector('[data-inv-chip="hubs"]').dispatchEvent(new dom.MouseEvent('click', { bubbles: true }));
+  findings.update(graph);
+  assert.deepEqual(view._highlightCalls.at(-1).ids, [], 'update clears the ring');
+
+  hostEl.querySelector('[data-inv-chip="orphans"]').dispatchEvent(new dom.MouseEvent('click', { bubbles: true }));
+  findings.clear();
+  assert.deepEqual(view._highlightCalls.at(-1).ids, [], 'clear clears the ring');
 });

@@ -26,6 +26,7 @@ const {
   MAX_OUTPUT_CHARS,
 } = require('../services/tools/builtin/verify-tool');
 const { WORKSPACE_TEST_RUNNER_ERROR_CODES } = require('../services/backend/error-codes');
+const { withManifestSchema } = require('../services/tools/tool-manifest-index');
 
 function envelope(code, message = 'refused') {
   return { error: { code, message } };
@@ -59,7 +60,7 @@ function stubService(overrides = {}) {
 
 describe('verify tool contract', () => {
   test('exposes only list and run, and cannot carry a command', () => {
-    const tool = createVerifyTool();
+    const tool = withManifestSchema(createVerifyTool());
     assert.equal(tool.name, 'verify');
     assert.equal(tool.readOnly, false);
     assert.equal(tool.workspaceRequired, true);
@@ -97,6 +98,41 @@ describe('verify tool contract', () => {
     assert.equal(result.metadata.configs[0].last_status, 'failed');
     assert.equal(result.metadata.configs[1].last_status, 'none');
     assert.match(result.content, /npm run lint/);
+  });
+
+  test('list reads last-run statuses from the listing when it carries them', async () => {
+    const service = stubService({
+      listConfigs: { configs: [{ id: 'unit', label: 'Unit', command: 'npm test' }],
+        state: { history: { byConfig: { unit: [{ status: 'failed' }] } } } },
+      serviceOverrides: { getState() { throw new Error('a second scope build is not needed'); } },
+    });
+    const result = await createVerifyTool().execute({ action: 'list' }, { workspaceTestRunnerService: service });
+    assert.equal(result.isError, false, result.content);
+    assert.equal(result.metadata.configs[0].last_status, 'failed');
+  });
+
+  test('a scoped listing without a bound root is a failure, not "no configurations"', async () => {
+    const service = stubService({ listConfigs: { configs: [], available: false, reason: 'root_missing' } });
+    const result = await createVerifyTool().execute({ action: 'list' }, { workspaceTestRunnerService: service });
+    assert.equal(result.isError, true);
+    assert.equal(result.metadata.reason, 'workspace_root_missing');
+    const disabled = await createVerifyTool().execute({ action: 'list' }, {
+      workspaceTestRunnerService: stubService({ listConfigs: { available: false, reason: 'feature_disabled' } }),
+    });
+    assert.equal(disabled.isError, true);
+    assert.equal(disabled.metadata.reason, 'list_failed');
+  });
+
+  test('a throwing listing reports a failure for list and an unverified skip for gate', async () => {
+    const throwing = () => stubService({ serviceOverrides: { listConfigs() { throw new Error('authority changed'); } } });
+    const listed = await createVerifyTool().execute({ action: 'list' }, { workspaceTestRunnerService: throwing() });
+    assert.equal(listed.isError, true);
+    assert.equal(listed.metadata.reason, 'list_failed');
+    assert.match(listed.content, /authority changed/);
+    const gated = await createVerifyTool().execute({ action: 'gate' }, { workspaceTestRunnerService: throwing() });
+    assert.equal(gated.isError, false);
+    assert.equal(gated.metadata.reason, 'gate_threw');
+    assert.match(gated.content, /unverified/);
   });
 
   test('list says so plainly when the workspace has no configurations', async () => {
@@ -231,7 +267,7 @@ describe('verify tool contract', () => {
       assert.deepEqual(runCall[1], { configId: 'unit', includeOutput: true, initiator: 'jenny', gateAttempt: 2 });
       assert.equal(result.metadata.attempt, 2, 'the timeline row can say "attempt 2" without a second call');
       // The attempt is deliberately NOT in the model-facing schema.
-      assert.equal('attempt' in createVerifyTool().parameters.properties, false);
+      assert.equal('attempt' in withManifestSchema(createVerifyTool()).parameters.properties, false);
     });
 
     test('a junk attempt is dropped rather than recorded', async () => {

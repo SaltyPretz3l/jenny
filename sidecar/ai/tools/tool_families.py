@@ -56,6 +56,7 @@ TOOL_FAMILY_NAMES: dict[str, tuple[str, ...]] = {
         "git_log",
         "git_diff",
         "git_show",
+        "report_findings",
         "workspace_change_baseline",
         "workspace_change_delta",
         "worktree_list",
@@ -84,6 +85,11 @@ TOOL_FAMILY_NAMES: dict[str, tuple[str, ...]] = {
         "propose_session",
         "complete_session_handoff",
         "session_message",
+        "sessions_list",
+        "session_status",
+        "session_transcript",
+        "session_stop",
+        "jenny_help",
         "jenny_status",
         "load_skill",
     ),
@@ -129,7 +135,10 @@ RETIRED_TOOL_FAMILY_NAMES: dict[str, tuple[str, ...]] = {
 
 REQUESTED_TOOL_FAMILY_KEYWORDS: dict[str, tuple[str, ...]] = {
     "filesystem": ("file", "files", "filesystem", "workspace", "manifest", "grep", "glob"),
-    "git": ("git", "branch", "commit", "diff", "worktree", "worktrees"),
+    "git": (
+        "git", "branch", "commit", "diff", "worktree", "worktrees",
+        "code review", "review findings",
+    ),
     "diagram": ("mermaid", "diagram", "flowchart"),
     "home": (
         "home",
@@ -251,6 +260,7 @@ TOOL_ALIASES: dict[str, tuple[str, ...]] = {
     "mermaid_generate": ("diagram", "mermaid", "mermaid syntax", "zoomable diagram"),
     "python_execute": ("python", "python runtime", "python sandbox", "execute python"),
     "read_file": ("read file", "file reader"),
+    "report_findings": ("code review", "review findings", "findings", "review my changes"),
     "web_search": ("web search", "live web search", "live web", "internet search"),
     "workspace_manifest_read": ("workspace manifest", "manifest", "project manifest"),
     "browser_open": ("browser open", "open browser", "browser session"),
@@ -304,7 +314,9 @@ TOOL_ALIASES: dict[str, tuple[str, ...]] = {
 
 TOOL_FAMILY_ALIASES: dict[str, tuple[str, ...]] = {
     "filesystem": ("filesystem", "workspace files", "source files"),
-    "git": ("git", "git status", "git diff", "git log", "git worktree", "worktrees"),
+    "git": (
+        "git", "git status", "git diff", "git log", "git worktree", "worktrees", "code review",
+    ),
     "diagram": ("diagram", "diagrams", "mermaid", "mermaid syntax", "flowchart"),
     "home": (
         "home",

@@ -321,3 +321,30 @@ def test_reflect_carries_chat_scope_and_dedupes_only_its_own_chat(
         assert result["proposals"] == [] and result["dropped"]["duplicate"] == 1
     else:
         assert len(result["proposals"]) == 1 and result["proposals"][0]["scope"] == "chat"
+
+def test_a_provider_rejection_reports_its_status_and_code(store: MemoryStore) -> None:
+    # NInfer rejects JSON mode with a 400; the log used to say only "ProviderHttpError".
+    from sidecar.ai.engines.provider_http import ProviderHttpError
+    from sidecar.runtime.memory_reflection import ReflectionInferenceError
+
+    def rejected(**_kwargs: Any) -> str:
+        raise ProviderHttpError(
+            provider="openai-compatible", status_code=400, code="CMP-ENGINE-HTTP",
+            message="openai-compatible request failed with status 400", retryable=False,
+            classification="client_error",
+            body={"error": {"code": "response_format_not_supported"}},
+        )
+
+    with pytest.raises(ReflectionInferenceError) as excinfo:
+        reflect_memories(
+            stack=_stack(store, SimpleNamespace(generate=rejected)),
+            backend=MemoryService(store), request=parse_reflect_request(_params()), logger=LOG,
+        )
+
+    assert str(excinfo.value) == "ProviderHttpError"
+    assert excinfo.value.details["status_code"] == 400
+    assert excinfo.value.details["code"] == "CMP-ENGINE-HTTP"
+    assert excinfo.value.details["classification"] == "client_error"
+    assert excinfo.value.details["provider_error_code"] == "response_format_not_supported"
+    assert "tabs" not in json.dumps(excinfo.value.details)  # no conversation text
+

@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import builtins
 import importlib
-import io
 import zipfile
 from pathlib import Path
 
 import pytest
 
-from sidecar.ai.error_codes import CMP_TOOL_OUTSIDE_WORKSPACE
-from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
 
 
@@ -215,62 +211,99 @@ def test_document_inspect_corrupt_docx_returns_unsupported(tmp_path: Path) -> No
     assert result.metadata["failure"]["reason"] == "document_parse_failed"
 
 
-def test_document_parser_rejects_redirected_handle_after_validation(
+def test_document_parses_the_validated_bytes_without_reopening(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import hashlib
+
     module = importlib.import_module("sidecar.ai.tools.builtins.rich_files.document")
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
     path = workspace_root / "sample.docx"
-    outside = tmp_path / "outside.docx"
     _write_docx(path)
-    _write_docx(outside)
+    validated = hashlib.sha256(path.read_bytes()).hexdigest()
     original_validate = module.validate_rich_file_source
-    original_open = builtins.open
-    original_io_open = io.open
 
-    def validate_then_redirect(**kwargs):
+    def validate_then_swap(**kwargs):
         source = original_validate(**kwargs)
-
-        def redirect(file, *args, **options):
-            target = outside if isinstance(file, (str, Path)) and Path(file) == path else file
-            return original_open(target, *args, **options)
-
-        def redirect_io(file, *args, **options):
-            target = outside if isinstance(file, (str, Path)) and Path(file) == path else file
-            return original_io_open(target, *args, **options)
-
-        monkeypatch.setattr(builtins, "open", redirect)
-        monkeypatch.setattr(io, "open", redirect_io)
+        # A swap or growth after validation never reaches the parser: it reads
+        # the bytes validation hashed, not the file again.
+        path.write_bytes(b"swapped after validation" * 4096)
         return source
 
-    monkeypatch.setattr(module, "validate_rich_file_source", validate_then_redirect)
-    with pytest.raises(ToolExecutionFailure) as exc:
-        module.document_inspect_tool(
-            {"path": "sample.docx"}, WorkspaceGuard(str(workspace_root))
+    monkeypatch.setattr(module, "validate_rich_file_source", validate_then_swap)
+    result = module.document_inspect_tool({"path": "sample.docx"}, WorkspaceGuard(str(workspace_root)))
+
+    assert result.success is True
+    assert result.metadata["source"]["sha256"] == validated
+    assert "Visible opening paragraph" in result.output
+
+
+def _write_long_docx(path: Path, *, paragraphs: int, chars: int) -> list[str]:
+    texts = [f"Paragraph {number:02d} " + "x" * chars for number in range(1, paragraphs + 1)]
+    body = "".join(f"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>" for text in texts)
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(
+            "word/document.xml",
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            f"<w:body>{body}</w:body></w:document>",
         )
-    assert exc.value.code == CMP_TOOL_OUTSIDE_WORKSPACE
+    return texts
 
 
-def test_document_parser_rechecks_byte_limit_after_validation(
+def test_document_continue_cursor_reads_every_paragraph_once_in_order(tmp_path: Path) -> None:
+    # The 2026-10-20 memo had 64 paragraphs; the reader stopped at 20 with no way on.
+    texts = _write_long_docx(tmp_path / "memo.docx", paragraphs=64, chars=300)
+    guard = WorkspaceGuard(str(tmp_path))
+    seen: list[str] = []
+    arguments: dict[str, object] = {"path": "memo.docx"}
+    reads = 0
+    while True:
+        result = _document_tool()(arguments, guard)
+        reads += 1
+        assert result.success is True
+        assert len(result.output) <= 12_000
+        summary = result.metadata["summary"]
+        assert summary["paragraphs"], "every slice makes progress"
+        seen.extend(paragraph["text_excerpt"] for paragraph in summary["paragraphs"])
+        cursor = summary.get("continue_cursor")
+        if cursor is None:
+            assert "continuation_hint" not in summary
+            break
+        assert f"cursor={cursor}" in summary["continuation_hint"]
+        arguments = {"path": "memo.docx", "cursor": cursor}
+        assert reads < 10
+
+    assert seen == texts
+    assert reads > 1
+
+
+def test_document_long_paragraph_keeps_more_than_the_old_400_char_excerpt(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    module = importlib.import_module("sidecar.ai.tools.builtins.rich_files.document")
-    path = tmp_path / "sample.docx"
-    _write_docx(path)
-    limit = path.stat().st_size + 1
-    original_validate = module.validate_rich_file_source
+    _write_long_docx(tmp_path / "memo.docx", paragraphs=1, chars=1_200)
 
-    def validate_then_grow(**kwargs):
-        source = original_validate(**kwargs)
-        path.write_bytes(path.read_bytes() + b"x" * limit)
-        return source
+    result = _document_tool()({"path": "memo.docx"}, WorkspaceGuard(str(tmp_path)))
 
-    monkeypatch.setattr(module.filesystem_content, "MAX_MEDIA_FILE_BYTES", limit)
-    monkeypatch.setattr(module, "validate_rich_file_source", validate_then_grow)
-    with pytest.raises(ToolExecutionFailure, match="size limit"):
-        module.document_inspect_tool(
-            {"path": "sample.docx"}, WorkspaceGuard(str(tmp_path))
-        )
+    paragraph = result.metadata["summary"]["paragraphs"][0]
+    assert paragraph["text_truncated"] is False
+    assert len(paragraph["text_excerpt"]) > 1_200
+    assert "continue_cursor" not in result.metadata["summary"]
+
+
+def test_document_cursor_is_refused_after_the_file_changes(tmp_path: Path) -> None:
+    from sidecar.ai.tools.contracts import ToolExecutionFailure
+
+    target = tmp_path / "memo.docx"
+    _write_long_docx(target, paragraphs=64, chars=300)
+    guard = WorkspaceGuard(str(tmp_path))
+    first = _document_tool()({"path": "memo.docx"}, guard)
+    cursor = first.metadata["summary"]["continue_cursor"]
+    _write_long_docx(target, paragraphs=65, chars=300)
+
+    with pytest.raises(ToolExecutionFailure, match="stale"):
+        _document_tool()({"path": "memo.docx", "cursor": cursor}, guard)
+    with pytest.raises(ToolExecutionFailure, match="invalid for a Word document"):
+        _document_tool()({"path": "memo.docx", "cursor": "pdf:0123456789abcdef:2:17"}, guard)

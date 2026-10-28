@@ -2,6 +2,7 @@ const path = require('path');
 const { sameLocalOrigin } = require('../local-origin');
 const { managedServerAlias, managedServerApiKey, ninferManagedOrigin, resolveManagedServerOwner } = require('./managed-server-owner');
 const { chatgptModelsEnabled } = require('./chatgpt-models-enabled');
+const { buildApiProviderSidecarConfig, buildApiProviderSidecarSecrets } = require('./api-provider-sidecar-config');
 
 const {
   DEFAULT_MANAGED_OLLAMA_FALLBACK_MODEL,
@@ -407,7 +408,7 @@ function getConfiguredOllamaRequestTimeoutSeconds(service) {
 }
 
 function getConfiguredStreamInactivity(service, modelId, engineType) {
-  const cloud = engineType === 'chatgpt' || engineType === 'codex-cli';
+  const cloud = ['chatgpt', 'codex-cli', 'api-provider'].includes(engineType);
   if (service.configService && typeof service.configService.resolveStreamInactivitySeconds === 'function') {
     return service.configService.resolveStreamInactivitySeconds(modelId, {
       cloud,
@@ -564,6 +565,7 @@ const HOSTED_TOOL_CAPABILITY_POLICY = Object.freeze({
   tools_home_enabled: false,
   tools_task_board_enabled: false,
   tools_project_notes_enabled: false,
+  tools_session_directory_enabled: false,
   tools_memory_enabled: false,
   tools_conversations_enabled: false,
   tools_rich_files_enabled: false,
@@ -662,6 +664,7 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
       && sameLocalOrigin(resolveOpenAICompatibleApiUrl(service),
         service.options?.getLlamaServerManager?.()?.getBaseUrl?.()),
     model: configuredModel,
+    ...buildApiProviderSidecarConfig(service, engineType, configuredModel), // row 78: descriptor + limits
     // Ollama keeps the deliberate VRAM-conscious shell clamp. Every other
     // engine reports its own window (or uses the sidecar's bounded fallback).
     context_length: engineType === 'ollama'
@@ -694,6 +697,7 @@ function buildManagedSidecarConfig(service, { telemetrySettings = null } = {}) {
     tools_home_enabled: service.featureFlags?.tools_home_enabled === true,
     tools_task_board_enabled: service.featureFlags?.tools_task_board_enabled === true,
     tools_project_notes_enabled: service.featureFlags?.tools_project_notes_enabled === true,
+    tools_session_directory_enabled: service.featureFlags?.tools_session_directory_enabled !== false,
     tools_memory_enabled: service.featureFlags?.memory_v2_enabled === true,
     tools_conversations_enabled: service.featureFlags?.memory_v2_enabled === true,
     memory_hybrid_recall_enabled: service.featureFlags?.memory_hybrid_recall === true,
@@ -973,6 +977,7 @@ function buildManagedSidecarSecrets(service, { telemetrySettings = null } = {}) 
     && service._chatgptLegacyChoicePending !== true) {
     secrets.chatgpt_access_token = service.chatgptAuthService?.getCachedAccessToken?.() || '';
   }
+  Object.assign(secrets, buildApiProviderSidecarSecrets(service, resolveManagedConfiguredModel(service)));
   // The embedding server's per-launch key (row 41); only its own loopback
   // endpoint receives it, through the catalog config's base_url.
   if (typeof service.semanticCatalogService?.getSidecarSecrets === 'function') {

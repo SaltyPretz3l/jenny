@@ -1,0 +1,157 @@
+/* styles/chat-composer-menus.css - the composer's menus (row 63, 2026-10-19).
+ * One row grammar for the + menu (static rows in index.html) and the run-mode
+ * menu (the inventory context menu's heading, glyph column, trailing check and
+ * footer options). Imported from styles.css right after chat-composer.css. */
+
+/* Row 63: the + menu. One row grammar (glyph, label with an optional muted
+   line beneath, a trailing hint or check) on the popover chrome; rows are
+   flat until hovered, a hairline separates files from commands. */
+.composer-popover.composer-attach-menu {
+  min-width: 248px;
+  padding: var(--space-3);
+}
+
+.composer-add-button svg {
+  stroke-width: 1.8;
+}
+
+.composer-menu-row {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  min-height: 34px;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-footnote);
+  text-align: start;
+  cursor: pointer;
+}
+
+.composer-menu-row:is(:hover, :focus-visible) {
+  background: var(--surface-popover-row-hover);
+}
+
+.composer-menu-row:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: -2px;
+}
+
+.composer-menu-icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  color: var(--text-secondary);
+}
+
+.composer-menu-icon svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.composer-menu-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.composer-menu-label,
+.composer-menu-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-menu-sub {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.composer-menu-kbd {
+  padding: 0 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: var(--font-size-caption);
+}
+
+.composer-menu-check {
+  color: var(--accent);
+}
+
+.composer-menu-separator {
+  position: relative;
+  z-index: 1;
+  height: 1px;
+  margin: var(--space-2) var(--space-3);
+  background: var(--border-subtle);
+}
+
+/* Row 63 composer menus: a muted heading naming what picking does, a leading
+   glyph column, the check at the trailing edge, and a muted footer note. */
+.inv-context-menu-heading {
+  padding: var(--space-2) var(--space-6) var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-weight: 500;
+}
+/* Outranks the primitive's radio-row `[role] > span:first-child { flex: 1 }` (0,3,1). */
+.inv-context-menu-item.inv-context-menu-item--icon[role] > .inv-context-menu-icon {
+  display: inline-flex;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-inline-end: var(--space-4);
+  color: var(--text-secondary);
+}
+.inv-context-menu-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.inv-context-menu-item--icon {
+  justify-content: flex-start;
+  text-align: start;
+}
+.inv-context-menu-item--icon > .inv-context-menu-text,
+.inv-context-menu-item--icon > span:not(.inv-context-menu-icon):not(.inv-context-menu-shortcut) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.inv-context-menu-item--icon[role="menuitemradio"]::before {
+  order: 3;
+  margin-inline: var(--space-4) 0;
+  font-size: var(--font-size-footnote);
+}
+.inv-context-menu-item--icon[aria-checked="true"] .inv-context-menu-text > span:first-child {
+  font-weight: 600;
+}
+.inv-context-menu-item--icon .inv-context-menu-description {
+  line-height: 1.35;
+  white-space: normal;
+}
+.inv-context-menu-footer {
+  margin: var(--space-2) var(--space-6) 0;
+  padding: var(--space-3) 0 var(--space-1);
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  line-height: 1.4;
+}
+.inv-context-menu.composer-run-mode-menu {
+  width: 320px;
+  max-width: calc(100vw - 16px);
+}

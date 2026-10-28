@@ -177,3 +177,59 @@ test('a full repaint mid-composition drops the composing flag, so Enter works ag
   fresh.dispatchEvent(enter);
   assert.equal(enter.defaultPrevented, true, 'Enter is handled again (the stale composing flag no longer blocks it)');
 });
+
+test('Replace keystrokes coalesce into one preview repaint and a status-only change keeps the result rows', async (t) => {
+  const harness = makeHarness(t, { 'h.txt': 'alpha one\nalpha two\n' });
+  await harness.controller.activateIde();
+  await settle();
+  await runFind(harness, 'alpha');
+  const afters = () => [...panelOf(harness).querySelectorAll('.ide-search-replace-after')].map((el) => el.textContent);
+  const replace = replaceInput(harness);
+  for (const value of ['b', 'be', 'bet']) {
+    replace.value = value;
+    replace.dispatchEvent(new harness.dom.window.Event('input', { bubbles: true }));
+  }
+  assert.deepEqual(afters(), ['', ''], 'no synchronous repaint per keystroke');
+  await settle(5);
+  assert.deepEqual(afters(), ['bet', 'bet'], 'one coalesced repaint shows the latest text');
+
+  const results = panelOf(harness).querySelector('.ide-search-results');
+  panelOf(harness).querySelector('[data-ide-replace-match]').click();
+  assert.equal(panelOf(harness).querySelector('.ide-search-status').textContent, 'Replacing…');
+  assert.equal(panelOf(harness).querySelector('.ide-search-results'), results, 'the rows were not rebuilt for a status change');
+  await settle(60);
+  assert.equal(harness.bridge.state.files['h.txt'], 'bet one\nalpha two\n');
+});
+
+test('the include/exclude inputs keep their nodes, focus and caret across result repaints (row 82 X2)', async (t) => {
+  const harness = makeHarness(t, { 'src/a.js': 'alpha one\nalpha two\n', 'lib/b.js': 'alpha three\n' });
+  await harness.controller.activateIde();
+  await settle();
+  toolbarBtn(harness, 'toggle-details').click();
+  await settle(20);
+  const panel = panelOf(harness);
+  const include = panel.querySelector('[data-ide-search-include]');
+  const exclude = panel.querySelector('[data-ide-search-exclude]');
+  include.focus();
+  dispatchInput(harness, include, 'src');
+  include.setSelectionRange(1, 2);
+  await runFind(harness, 'alpha');
+  await settle(400);
+  assert.equal(panel.querySelector('[data-ide-search-include]'), include, 'include input is the same element');
+  assert.equal(panel.querySelector('[data-ide-search-exclude]'), exclude, 'exclude input is the same element');
+  assert.equal(harness.dom.window.document.activeElement, include);
+  assert.equal(include.selectionStart, 1);
+  assert.equal(include.value, 'src');
+  assert.ok(panel.querySelector('.ide-search-results'), 'results painted after the details region');
+  assert.ok(panel.querySelector('.ide-search-details').nextElementSibling.classList.contains('ide-search-status'));
+
+  // A mid-composition include value is never overwritten by a repaint.
+  const win = harness.dom.window;
+  include.dispatchEvent(new win.Event('compositionstart', { bubbles: true }));
+  include.value = 'ソ';
+  harness.state.ui.ide.search.replaceSummary = 'repaint trigger';
+  harness.controller.renderIde?.();
+  await settle(5);
+  assert.equal(panel.querySelector('[data-ide-search-include]').value, 'ソ');
+  assert.equal(harness.state.ui.ide.search.includeText, 'src', 'partial composition not committed');
+});

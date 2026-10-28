@@ -2,7 +2,9 @@
  * group of the Workspace IDE (W5): its own tab strip plus its own Monaco
  * editor showing the SAME models the primary editor host owns. The view only
  * renders and reports intents (activate, close, save, context menu, tab drop)
- * through callbacks; the controller owns group membership and documents. */
+ * through callbacks; the controller owns group membership and documents. Its
+ * strip events come from the shared renderer-ide-tab-strip-events layer, the
+ * same one the primary strip binds. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory();
@@ -12,8 +14,10 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const fallbackJt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
-  // Drag payload type shared with the controller's drop handling.
-  const TAB_MIME = 'application/x-jenny-editor-tab';
+  // Drag payload helpers shared with the primary strip (renderer-ide-tabs).
+  const tabsShared = globalThis.rendererIdeTabs || (typeof require === 'function' ? require('./renderer-ide-tabs') : {});
+  const { TAB_MIME } = tabsShared;
+  const stripEventsShared = globalThis.rendererIdeTabStripEvents || (typeof require === 'function' ? require('./renderer-ide-tab-strip-events') : {});
 
   function createIdeEditorGroupView(deps) {
     const jt = typeof deps?.jt === 'function' ? deps.jt : fallbackJt;
@@ -21,7 +25,7 @@
     const doc = deps.document;
     const editorHost = deps.editorHost;
     const call = (name, ...args) => (typeof deps[name] === 'function' ? deps[name](...args) : undefined);
-    const tabsApi = globalThis.rendererIdeTabs || require('./renderer-ide-tabs');
+    const { revealFirstChangeOnce } = globalThis.rendererIdeEditorHostGroupDiff || require('./renderer-ide-editor-host-group-diff');
 
     // ── DOM (built once) ──
     const stageId = `ideGroupStage-${groupId}`;
@@ -35,6 +39,13 @@
     stripEl.setAttribute('role', 'tablist');
     stripEl.setAttribute('aria-label', jt('ide.groups.groupLabel', 'Editor group {n}', { n: deps.groupNumber }));
     tabbarEl.appendChild(stripEl);
+    // Split / More toolbar after the strip (the count chip lands between them); filled
+    // from the stage-switch markup once that module has loaded (it loads after this one).
+    const actionsEl = doc.createElement('div');
+    actionsEl.className = 'ide-editor-actions';
+    actionsEl.setAttribute('role', 'toolbar');
+    actionsEl.setAttribute('aria-label', jt('ide.tabs.editorActions', 'Editor actions'));
+    tabbarEl.appendChild(actionsEl);
     const reviewEl = doc.createElement('div');
     reviewEl.className = 'ide-diff-toolbar ide-group-review hidden';
     reviewEl.hidden = true;
@@ -56,11 +67,23 @@
     el.appendChild(reviewEl);
     el.appendChild(stageEl);
 
-    const tabStrip = tabsApi.createIdeTabStrip({
+    const tabStrip = tabsShared.createIdeTabStrip({
       getDom: () => ({ ideTabStrip: stripEl }),
       escapeHtml: deps.escapeHtml,
       ariaControls: stageId,
+      getGitDecoration: typeof deps.getGitDecoration === 'function' ? deps.getGitDecoration : undefined,
     });
+
+    let actionsFilled = false;
+    function fillActions() {
+      if (actionsFilled) return;
+      const markup = globalThis.rendererIdeStageSwitch?.editorActionsMarkup;
+      if (typeof markup !== 'function') return;
+      const actionButton = globalThis.inventoryActionButton || (typeof require === 'function' ? require('../inventory/action-button') : null);
+      actionsEl.innerHTML = markup({ actionButton, surfaces: false });
+      actionsFilled = true;
+    }
+    fillActions();
 
     // ── Editor ──
     let editor = null;
@@ -100,8 +123,18 @@
       if (diffSurface) diffEditor?.layout?.();
     }
 
+    // The same diff already showing (render runs on every tab-strip change):
+    // nothing to re-attach, re-option or re-layout.
+    function isShowingDiff(path, surface) {
+      return Boolean(surface && diffSurface && path === currentPath
+        && surface.original === diffSurface.original && surface.modified === diffSurface.modified
+        && surface.placeholderText === diffSurface.placeholderText && surface.inlineDiff === diffSurface.inlineDiff
+        && (surface.placeholderText || !(surface.original && surface.modified) || diffEditor?.getModel()));
+    }
+
     function showDiff(path) {
       const surface = editorHost.getDiffSurface(path);
+      if (isShowingDiff(path, surface)) return;
       if (!diffEl) {
         diffEl = doc.createElement('div'); diffEl.className = 'ide-group-diff';
         diffEditorEl = doc.createElement('div'); diffEditorEl.className = 'ide-diff-editor';
@@ -122,13 +155,7 @@
           if (changed || !diffEditor.getModel()) {
             revealSubscription?.dispose?.();
             diffEditor.setModel({ original: surface.original, modified: surface.modified });
-            revealSubscription = diffEditor.onDidUpdateDiff?.(() => {
-              revealSubscription?.dispose?.(); revealSubscription = null;
-              const change = diffEditor.getLineChanges?.()[0];
-              if (!change) return;
-              const chars = change.charChanges?.[0];
-              diffEditor.getModifiedEditor()?.revealPositionInCenter?.({ lineNumber: chars?.modifiedStartLineNumber || change.modifiedStartLineNumber || 1, column: chars?.modifiedStartColumn || 1 });
-            }) || null;
+            revealSubscription = revealFirstChangeOnce(diffEditor);
           }
         }
       } else {
@@ -203,6 +230,7 @@
         staleByPath[tab.path] = call('getStale', tab.path) === true;
       }
       const active = String(call('getActive') || '');
+      fillActions();
       tabStrip.renderTabs({ openTabs: tabs, activeTabPath: active, dirtyByPath, staleByPath });
       renderEmpty(tabs.length ? '' : String(call('getBoundText') || ''));
       showPath(active);
@@ -231,119 +259,65 @@
       else stageEl.focus?.();
     }
 
-    function layout() {
-      editor?.layout?.();
-      diffEditor?.layout?.();
-    }
-
     // ── Events (delegated on the section) ──
-    const isRtl = () => (el.closest('[dir]')?.getAttribute('dir') || '').toLowerCase() === 'rtl';
-    const tabPathOf = (tabEl) => tabEl?.getAttribute('data-ide-tab') || '';
+    const { hasTabPayload } = tabsShared;
 
     function onClick(event) {
-      if (event.target?.closest?.('[data-ide-group-close]')) { call('onCloseGroup'); return; }
-      const overflowEl = event.target?.closest?.('[data-ide-tab-overflow]');
-      if (overflowEl) { call('onOverflow', overflowEl); return; }
-      const closeEl = event.target?.closest?.('[data-ide-tab-close]');
-      if (closeEl) { call('onClose', closeEl.getAttribute('data-ide-tab-close')); return; }
-      const labelEl = event.target?.closest?.('[data-ide-tab-path]');
-      if (labelEl) call('onActivate', labelEl.getAttribute('data-ide-tab-path'));
-    }
-
-    function onAuxClick(event) {
-      const tabEl = event.button === 1 ? event.target?.closest?.('.ide-tab') : null;
-      if (!tabEl) return;
-      event.preventDefault();
-      call('onClose', tabPathOf(tabEl));
-    }
-
-    function onContextMenu(event) {
-      const tabEl = event.target?.closest?.('.ide-tab');
-      if (!tabEl) return;
-      event.preventDefault();
-      const keyboard = !event.clientX && !event.clientY;
-      call('onContextMenu', tabPathOf(tabEl), keyboard ? { anchorEl: tabEl } : { anchorX: event.clientX, anchorY: event.clientY });
-    }
-
-    function onKeyDown(event) {
-      const key = event.key;
-      if (!stripEl.contains(event.target) || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(key)) return;
-      const labels = [...stripEl.querySelectorAll('.ide-tab-label')];
-      if (!labels.length) return;
-      const index = Math.max(0, labels.indexOf(event.target?.closest?.('.ide-tab-label')));
-      const step = (key === 'ArrowRight') === !isRtl() ? 1 : -1;
-      const next = key === 'Home' ? 0 : key === 'End' ? labels.length - 1 : (index + step + labels.length) % labels.length;
-      event.preventDefault();
-      labels[next].focus();
+      if (event.target?.closest?.('[data-ide-group-close]')) call('onCloseGroup');
     }
 
     function onFocusIn() {
       call('onFocus', groupId);
     }
 
-    // ── Tab drag and drop ──
-    const hasTabPayload = (event) => Array.from(event.dataTransfer?.types || []).includes(TAB_MIME);
+    // The strip events own everything inside the tabbar; the stage below it takes a
+    // dropped tab as the group's last one (the section marks `data-ide-drop="stage"`).
+    const stripEvents = stripEventsShared.createIdeTabStripEvents({
+      root: el,
+      getStrip: () => stripEl,
+      groupId,
+      callbacks: {
+        onActivate: (path) => call('onActivate', path),
+        onClose: (path) => call('onClose', path),
+        onDoubleClick: (path) => call('onDoubleClick', path),
+        onContextMenu: (path, anchor) => call('onContextMenu', path, anchor),
+        onOverflow: (anchorEl) => call('onOverflow', anchorEl),
+        onEditorAction: (action, target) => {
+          if (action === 'split-right') call('onSplit');
+          else if (action === 'more') call('onOverflow', target);
+        },
+        onDropTab: (payload, index) => call('onDropTab', payload, index),
+      },
+    });
 
-    function clearDropMarks() {
-      stripEl.removeAttribute('data-ide-drop');
+    function clearStageMark() {
       el.removeAttribute('data-ide-drop');
     }
 
-    function onDragStart(event) {
-      const tabEl = event.target?.closest?.('.ide-tab');
-      if (!tabEl || !event.dataTransfer) return;
-      event.dataTransfer.setData(TAB_MIME, JSON.stringify({ path: tabPathOf(tabEl), fromGroup: groupId }));
-      event.dataTransfer.effectAllowed = 'move';
-    }
-
-    function onDragOver(event) {
+    function onStageDragOver(event) {
       if (!hasTabPayload(event)) return;
+      if (tabbarEl.contains(event.target)) {
+        clearStageMark();
+        return;
+      }
       event.preventDefault();
       if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-      clearDropMarks();
-      if (tabbarEl.contains(event.target)) stripEl.setAttribute('data-ide-drop', 'tabs');
-      else el.setAttribute('data-ide-drop', 'stage');
+      el.setAttribute('data-ide-drop', 'stage');
     }
 
-    // Index among the strip's tabs by pointer x against each tab's midpoint. A tab
-    // reordered within this group does not count itself (the index is its final place).
-    function dropIndex(clientX, skipPath) {
-      const rtl = isRtl();
-      let index = 0;
-      for (const tabEl of stripEl.querySelectorAll('.ide-tab')) {
-        if (skipPath && tabPathOf(tabEl) === skipPath) continue;
-        const rect = tabEl.getBoundingClientRect();
-        const mid = rect.left + rect.width / 2;
-        if (rtl ? mid > clientX : mid < clientX) index += 1;
-      }
-      return index;
-    }
-
-    function parsePayload(event) {
-      try {
-        const data = JSON.parse(event.dataTransfer?.getData(TAB_MIME) || '');
-        if (!data || typeof data.path !== 'string' || !data.path) return null;
-        return { path: data.path, fromGroup: typeof data.fromGroup === 'string' ? data.fromGroup : '' };
-      } catch (_error) {
-        return null;
-      }
-    }
-
-    function onDrop(event) {
-      clearDropMarks();
-      const payload = parsePayload(event);
+    function onStageDrop(event) {
+      if (tabbarEl.contains(event.target)) return;
+      clearStageMark();
+      const payload = tabsShared.readTabPayload(event);
       if (!payload) return;
       event.preventDefault();
       event.stopPropagation();
-      const own = payload.fromGroup === groupId ? payload.path : '';
-      const index = tabbarEl.contains(event.target) ? dropIndex(event.clientX, own) : (call('getTabs') || []).length;
-      call('onDropTab', payload, index);
+      call('onDropTab', payload, (call('getTabs') || []).length);
     }
 
     const listeners = [
-      ['click', onClick], ['auxclick', onAuxClick], ['contextmenu', onContextMenu], ['keydown', onKeyDown],
-      ['focusin', onFocusIn], ['dragstart', onDragStart], ['dragover', onDragOver], ['dragleave', clearDropMarks],
-      ['dragend', clearDropMarks], ['drop', onDrop],
+      ['click', onClick], ['focusin', onFocusIn], ['dragover', onStageDragOver], ['dragleave', clearStageMark],
+      ['dragend', clearStageMark], ['drop', onStageDrop],
     ];
     for (const [type, handler] of listeners) el.addEventListener(type, handler);
 
@@ -351,6 +325,7 @@
       if (disposed) return;
       disposed = true;
       for (const [type, handler] of listeners) el.removeEventListener(type, handler);
+      stripEvents.dispose();
       contentSubscription?.dispose?.();
       contentSubscription = null;
       if (editor) editorHost.releaseGroupEditor(editor);
@@ -364,7 +339,7 @@
       el.remove();
     }
 
-    return { el, render, showPath, focus, getViewState, forget, layout, dispose };
+    return { el, render, showPath, focus, getViewState, forget, dispose };
   }
 
   return { createIdeEditorGroupView, TAB_MIME };

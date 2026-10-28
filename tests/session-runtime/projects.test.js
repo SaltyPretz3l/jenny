@@ -17,6 +17,7 @@ const { ProjectStore } = require('../../services/projects/project-store');
 const { ProjectService } = require('../../services/projects/project-service');
 const { ProjectWorkspacePool } = require('../../services/projects/project-workspace-pool');
 const { cleanupTrackedResources, trackDirectory } = require('../helpers/resource-cleanup');
+const { linkDirectory } = require('../helpers/platform-skips');
 
 test.afterEach(async () => cleanupTrackedResources());
 
@@ -161,18 +162,13 @@ test('workspace pool uses resolved path fallback when device/inode are unavailab
   assert.equal(pool.isCurrent(captured.authority), true);
 });
 
-test('root binding rejects a benign-named junction that resolves inside .jenny', (t) => {
+test('root binding rejects a benign-named junction that resolves inside .jenny', () => {
   const { directory, service } = fixture();
   service.create({ name: 'Alpha' });
   const target = path.join(directory, '.jenny', 'target');
   const junction = path.join(directory, 'benign-workspace');
   fs.mkdirSync(target, { recursive: true });
-  try {
-    fs.symlinkSync(target, junction, process.platform === 'win32' ? 'junction' : 'dir');
-  } catch (error) {
-    t.skip(`directory link unavailable: ${error.code || error.message}`);
-    return;
-  }
+  linkDirectory(target, junction);
   assert.equal(service.bindRoot('project_alpha', junction).reason, 'invalid_root');
   assert.equal(service.get('project_alpha').root_revision, 0);
 });

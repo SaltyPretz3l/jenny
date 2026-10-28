@@ -388,7 +388,6 @@
       const ui = (state && state.ui) || {};
       return Boolean(
         ui.composerPopoverOpen
-        || ui.commandPopoverOpen
         || (state && state.auth && !state.auth.authenticated)
         || (overlayManager && typeof overlayManager.isOpen === 'function' && overlayManager.isOpen())
       );
@@ -417,7 +416,13 @@
       render();
     }
 
-    function open(trigger) {
+    // open({ scope: 'commands' }) (or open(trigger, { scope })) starts in that scope:
+    // the Workspace's Ctrl+Shift+P / F1 open the palette in the '>' commands scope.
+    function open(trigger, options) {
+      if (trigger && typeof trigger === 'object' && !trigger.nodeType && 'scope' in trigger) {
+        options = trigger;
+        trigger = null;
+      }
       if (!commandPaletteOverlay || !commandPaletteInput) return;
       if (_active) return;
       if (isAnotherOverlayOpen()) return;
@@ -425,7 +430,7 @@
       const openToken = openGate.capture();
       _active = true;
       _query = '';
-      _scopeIndex = 0;
+      _scopeIndex = Math.max(0, SCOPES.findIndex((scope) => scope.id === (options && options.scope)));
       _activeIndex = 0;
       _lastTrigger = trigger || (documentRef && documentRef.activeElement) || null;
       _lastFocus = documentRef ? documentRef.activeElement : null;
@@ -636,6 +641,7 @@
         return;
       }
       _bound = true;
+      activeController = api;
       for (const pill of pills) {
         pill.classList.remove('hidden');
         pill.setAttribute('aria-expanded', 'false');
@@ -657,9 +663,10 @@
       if (_active) close();
       removeAllListeners();
       _bound = false;
+      if (activeController === api) activeController = null;
     }
 
-    return {
+    const api = {
       bind,
       dispose,
       open,
@@ -667,10 +674,16 @@
       toggle,
       isActive,
     };
+    return api;
   }
+
+  // The bound (flag-on) palette, for the Workspace's Ctrl+Shift+P / F1 (mirrors
+  // rendererIdeWorkbenchWiring.getActive); null while the palette is off.
+  let activeController = null;
 
   return {
     createCommandPaletteController,
+    getActive: () => activeController,
     COMMAND_PALETTE_OVERLAY_ID,
     // Shared fuzzy primitives (also used by the IDE Quick Open picker).
     highlightRanges,

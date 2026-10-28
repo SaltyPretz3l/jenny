@@ -295,6 +295,18 @@ test('ingest drops sliced base64 and enforces the aggregate cap whole-attachment
   assert.equal(fs.readFileSync(refs[0].assetPath).length, big.length);
 });
 
+test('ingest refuses base64 whose length does not match the declared byte length', (t) => {
+  const service = makeTempStoreService(t);
+  const data = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(40, 1)]);
+  // Valid, complete base64 of 43 bytes declared as 29: the length rule rejects it
+  // before any decode, the same as a sliced payload.
+  const refs = ingestToolResultAttachments(service, [wireAttachment({
+    id: 'att_long', data_base64: data.toString('base64'), byte_length: 29,
+  })], { sessionId: 'session-a' });
+  assert.deepEqual(refs, []);
+  assert.equal(normalizeWireToolResultAttachment(wireAttachment()).byteLength, 29);
+});
+
 test('persisted refs carry ids and scalars only - never bytes or base64', () => {
   const refs = toPersistedToolResultAttachmentRefs([
     {

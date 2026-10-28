@@ -9,6 +9,7 @@ from pathlib import Path
 
 from sidecar.ai.context.runtime_message_markers import (
     APPROVED_PLAN_OVERLAY_HEADING,
+    DELEGATION_CONTRACT_HEADING,
     PLAN_MODE_OVERLAY_HEADING,
     PLAN_REVISION_OVERLAY_HEADING,
     PROPOSE_MODE_OVERLAY_HEADING,
@@ -78,7 +79,11 @@ def append_mode_runtime_overlays(
     *,
     request_context: object,
 ) -> None:
-    """The request's run-mode overlays: Plan Mode, then Propose mode."""
+    """Request-scoped identity, mode and delegation overlays."""
+    from sidecar.ai.context.primary_chat_overlay import build_primary_chat_overlay
+
+    # Static, so it leads: toggling Plan or Propose mode never moves it.
+    runtime_system_messages.extend(build_primary_chat_overlay(request_context))
     append_plan_mode_runtime_overlay(
         runtime_system_messages,
         plan_mode_active=bool(getattr(request_context, "plan_mode", False)),
@@ -87,6 +92,9 @@ def append_mode_runtime_overlays(
         runtime_system_messages,
         propose_mode_active=bool(getattr(request_context, "propose_mode", False)),
     )
+    contract = str(getattr(request_context, "sub_agent_delegation_contract", "") or "").strip()
+    if contract:
+        runtime_system_messages.append(f"{DELEGATION_CONTRACT_HEADING}\n{contract}")
 
 
 def build_approved_plan_overlay(

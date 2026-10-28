@@ -14,7 +14,7 @@ const assert = require('node:assert/strict');
 
 const { ElectronSessionStore } = require('../services/backend/electron-session-store');
 const { startManagedSidecarChatStream } = require('../services/backend/managed-sidecar-chat');
-const { admitTurnContextRows } = require('../services/backend/managed-sidecar-chat-helpers');
+const { admitReportReservation } = require('../services/backend/session-report-admission');
 const { TerminalCoordinator } = require('../services/backend/chat-stream-terminal-coordinator');
 const { TerminalRepairStore } = require('../services/backend/terminal-repair-store');
 const { ensureSessionTurnActorRegistry } = require('../services/backend/session-turn-actor');
@@ -103,7 +103,7 @@ function attachClient(service, script) {
   return sent;
 }
 
-function setup(t, { script, reporting = true, parent = 'present' } = {}) {
+function setup(t, { script, reporting = true, parent = 'present', sessionRuntime = null } = {}) {
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-linked-report-'));
   trackDirectory(userDataPath);
   const store = new ElectronSessionStore(path.join(userDataPath, 'sessions.json'));
@@ -122,7 +122,8 @@ function setup(t, { script, reporting = true, parent = 'present' } = {}) {
   const service = createService(store, userDataPath);
   const sent = attachClient(service, script);
   service.chatMessages = createChatMessagingService({
-    backendService: { sessionStore: store }, scheduleReconcile: false, serviceOptions: { notifierOptions: { intervalMs: 0 } },
+    backendService: { sessionStore: store, ...(sessionRuntime ? { sessionRuntime } : {}) },
+    scheduleReconcile: false, serviceOptions: { notifierOptions: { intervalMs: 0 } },
   });
   t.after(() => service.chatMessages.dispose());
   if (parent === 'archived') store.setSessionMeta(PARENT, { archived_at: new Date().toISOString() });
@@ -210,6 +211,24 @@ test('a failed child turn reports failed with the visible partial answer', async
   assert.equal(env.parentMail().inbox.length, 1);
 });
 
+// 2026-10-27: a spawned child's first turn failed while its model loaded (model_busy) and the
+// parent never heard, because the slot was reserved only after the model resolved.
+test('a turn that fails while its model loads still reports failed to the parent', async (t) => {
+  const env = setup(t);
+  env.service._resolveModel = async () => {
+    throw Object.assign(new Error('Model initialization is already in progress.'), {
+      error_code: 'CMP-AI-0002', category: 'model_busy', retryable: true,
+    });
+  };
+  await env.run();
+  assert.equal(env.sent.length, 0, 'inference never started');
+  const [record] = env.child().outbox;
+  assert.equal(record.envelope.report.outcome, 'failed');
+  assert.equal(record.envelope.report.error_code, 'CMP-AI-0002');
+  assert.equal(env.child().report_reservations.length, 0);
+  assert.equal(env.parentMail().inbox.length, 1);
+});
+
 test('a failed turn with no answer reports the synthesized line', async (t) => {
   const env = setup(t, { script: async () => { throw Object.assign(new Error('Nope.'), { retryable: false }); } });
   await env.run();
@@ -217,6 +236,29 @@ test('a failed turn with no answer reports the synthesized line', async (t) => {
   assert.equal(record.envelope.report.outcome, 'failed');
   assert.equal(record.envelope.body, 'The turn failed before it produced an answer.');
   assert.equal(record.envelope.report.error_code, null);
+});
+
+// 2026-10-27 (F6): a child turn that stops on its context budget is resumed by Jenny; its parent is not
+// woken by the half-finished report (the report still lands in the parent's inbox).
+test('a budget-stopped child turn resumes the child instead of waking the parent', async (t) => {
+  const submits = [];
+  const sessionRuntime = {
+    hasSessionWork: () => false,
+    submitApplicationTurn: async (request, options) => {
+      submits.push({ request, options });
+      return { ok: true, work_id: 'work_resume', turn_id: 'turn_resume' };
+    },
+  };
+  const env = setup(t, { sessionRuntime, script: async ({ note }) => {
+    note('chat.token', { delta: 'Reviewed three commits so far.', role: 'assistant' });
+    note('chat.done', { resumable_stop: 'context_budget' });
+  } });
+  await env.run();
+  for (let i = 0; i < 3; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(env.parentMail().inbox.length, 1, 'the report is delivered');
+  assert.equal(submits.length, 1, 'one resume, and no wake of the parent');
+  assert.equal(submits[0].request.sessionId, CHILD);
+  assert.match(submits[0].request.prompt, /^resume/);
 });
 
 // ---------- awaiting a decision ----------
@@ -287,17 +329,16 @@ test('a handoff preparation turn never reserves and never reports', async (t) =>
 test('a checkpoint resume reuses its turn id and reserves no second slot (the new turn reserved exactly once)', async (t) => {
   const env = setup(t);
   const identity = { turnId: 'turn_resume_1' };
-  const admit = (extra = {}) => admitTurnContextRows(env.service, {
-    sessionId: CHILD, turnId: identity.turnId, userMessageId: 'user_x', preparedMessages: [], lease: null,
-    previousKinds: { sessionMessages: true, sessionHandoff: false }, brandNew: true, ...extra,
+  const admit = (extra = {}) => admitReportReservation(env.service, {
+    sessionId: CHILD, turnId: identity.turnId, lease: null, ...extra,
   });
   admit();
   assert.equal(env.child().report_reservations.length, 1);
-  admit({ resumed: true, brandNew: false });
+  admit({ resumed: true });
   assert.equal(env.child().report_reservations.length, 1, 'idempotent by turn id');
   const second = { turnId: 'turn_resume_2' };
   identity.turnId = second.turnId;
-  admit({ resumed: true, brandNew: false });
+  admit({ resumed: true });
   assert.equal(env.child().report_reservations.length, 1, 'a resume never reserves');
   admit();
   assert.equal(env.child().report_reservations.length, 2, 'a new turn identity does');

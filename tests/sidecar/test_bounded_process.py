@@ -25,6 +25,7 @@ if str(ROOT) not in sys.path:
 
 from scripts.checks import bounded_process  # noqa: E402
 from scripts.checks.bounded_process import resolve_executable, run_bounded  # noqa: E402
+from tests.sidecar._platform_skips import windows_only  # noqa: E402
 
 # Prints nothing and exits immediately; used for the happy paths.
 _ECHO_STDIN = "import sys; sys.stdout.write('[' + sys.stdin.read() + ']')"
@@ -99,10 +100,7 @@ def test_run_bounded_closes_stdin_when_there_is_no_input() -> None:
     assert completed.stdout == "[]"
 
 
-@pytest.mark.skipif(
-    not sys.platform.startswith("win"),
-    reason="tree kill is taskkill-based; on POSIX kill_tree only reaps the direct child",
-)
+@windows_only("taskkill-based tree kill; POSIX kill_tree only reaps the direct child")
 def test_run_bounded_kills_the_whole_tree_when_the_ceiling_fires(tmp_path: Path) -> None:
     pid_file = tmp_path / "grandchild.pid"
     started = time.monotonic()
@@ -182,7 +180,7 @@ def test_run_bounded_reaps_the_child_when_the_wait_is_interrupted(monkeypatch, t
             _kill_if_alive(int(pid_file.read_text(encoding="utf-8")))
 
 
-@pytest.mark.skipif(not sys.platform.startswith("win"), reason="taskkill is Windows-only")
+@windows_only("taskkill")
 def test_kill_tree_says_so_when_taskkill_fails(monkeypatch, capsys) -> None:
     # A silent taskkill failure is the worst case: descendants survive while the
     # caller reports a clean tree kill. The fallback must still run, and must

@@ -16,6 +16,7 @@ import pytest
 
 from sidecar.ai.engines import codex_cli
 from sidecar.ai.engines.codex_cli import CodexCliEngine, CodexCliProcessResult
+from tests.sidecar._platform_skips import posix_only
 
 
 def _chunks(data: bytes, size: int) -> list[bytes]:
@@ -218,7 +219,7 @@ def test_posix_teardown_kills_a_sigterm_resistant_member_after_the_root_exits(
 
 
 @pytest.mark.slow
-@pytest.mark.skipif(os.name != "posix", reason="POSIX process groups only")
+@posix_only("process groups")
 def test_posix_timeout_reaps_a_sigterm_resistant_child_of_a_clean_root(tmp_path: Path) -> None:
     pid_file = tmp_path / "child.pid"
     child = "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)"

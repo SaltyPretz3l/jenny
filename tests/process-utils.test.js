@@ -98,24 +98,18 @@ describe('isPortOpen', () => {
     assert.equal(result, false, `expected isPortOpen(${port}) === false for a closed port`);
   });
 
-  test('returns false for a low port with nothing listening', async (t) => {
-    // The old comment claimed port 1 "is privileged and will always refuse a
-    // connection in test envs". That is a POSIX fact, not a Windows one: Windows
-    // does not reserve ports below 1024, and an unprivileged process binds
-    // 127.0.0.1:1 here successfully (measured). So prove the premise rather than
-    // assume it -- take the port, release it, and only then probe.
+  test('returns false right after the listener on that port closes', async () => {
+    // Prove the premise rather than assume it: take an OS-assigned port (binding a
+    // fixed low port needs root on POSIX), release it, and only then probe.
     const probe = net.createServer();
-    const bound = await new Promise((resolve) => {
-      probe.once('error', () => resolve(false));
-      probe.listen(1, '127.0.0.1', () => resolve(true));
+    await new Promise((resolve, reject) => {
+      probe.once('error', reject);
+      probe.listen(0, '127.0.0.1', resolve);
     });
-    if (!bound) {
-      t.skip('port 1 is already in use on this host');
-      return;
-    }
+    const { port } = probe.address();
     await new Promise((resolve) => probe.close(resolve));
-    const result = await procUtils.isPortOpen(1);
-    assert.equal(result, false, 'expected isPortOpen(1) === false');
+    const result = await procUtils.isPortOpen(port);
+    assert.equal(result, false, `expected isPortOpen(${port}) === false`);
   });
 });
 
@@ -478,6 +472,16 @@ describe('synchronous process identity helpers', () => {
     assert.equal(calls[0].command, 'powershell.exe');
     assert.match(calls[0].args.at(-1), /ProcessId=321/);
     assert.equal(calls[0].options.timeout, 1000);
+  });
+
+  test('identity probes accept a longer timeout only when the caller raises it', () => {
+    const timeouts = [];
+    const spawnSyncImpl = (_command, _args, options) => { timeouts.push(options.timeout); return { status: 0, stdout: '1' }; };
+    procUtils.getProcessStartTimeSync(555, { platform: 'win32', spawnSyncImpl, timeoutMs: 8000 });
+    procUtils.getProcessStartTimeSync(555, { platform: 'win32', spawnSyncImpl, timeoutMs: 999_999 });
+    procUtils.getProcessCommandLineSync(555, { platform: 'win32', spawnSyncImpl, timeoutMs: 8000, maxTimeoutMs: 8000 });
+    procUtils.getProcessCommandLineSync(555, { platform: 'win32', spawnSyncImpl });
+    assert.deepEqual(timeouts, [8000, 30_000, 8000, 500]);
   });
 
   test('processCommandMatchesStored normalizes quoting, whitespace, and case', () => {

@@ -54,6 +54,7 @@ function buildRouterHarness({
     handleStreamReset: record('handleStreamReset'),
     handleContextCompacted: record('handleContextCompacted'),
     handleContextUsage: record('handleContextUsage'),
+    handleToolProgress: record('handleToolProgress'),
     handleDelta: record('handleDelta'),
     handleQuestionBatch: record('handleQuestionBatch'),
     handleMessageUpdated: record('handleMessageUpdated'),
@@ -391,4 +392,20 @@ test('typed activity events are dropped during flush and are no-op dispatches ot
     });
     assert.deepEqual(result, { buffered: false, terminal: false }, payload.type);
   }
+});
+
+// tool_progress: a running image render's phase, step and preview frame. Like
+// tool_output_chunk it only patches the live row: never buffered or replayed.
+test('tool_progress routes to handleToolProgress and is dropped, never buffered, when the pipeline would buffer', async () => {
+  const live = buildRouterHarness();
+  const progress = { type: 'tool_progress', sessionId: 'session-1', streamId: 'stream-image', callId: 'call-1', phase: 'sample', step: 3, steps: 20 };
+  const routed = await live.router.handleStreamPayload(progress);
+  assert.equal(live.invocationsOf('handleToolProgress').length, 1);
+  assert.deepEqual({ terminal: routed.terminal, buffered: routed.buffered }, { terminal: false, buffered: false });
+
+  const buffering = buildRouterHarness({ shouldBufferStreamEvent: () => true });
+  const dropped = await buffering.router.handleStreamPayload(progress);
+  assert.equal(dropped.buffered, false);
+  assert.equal(buffering.buffered.length, 0);
+  assert.equal(buffering.invocationsOf('handleToolProgress').length, 0);
 });

@@ -1,8 +1,7 @@
 """Synthetic and builtin tool handlers.
 
-``_tool_timeout_for_runtime`` and ``_merge_result_metadata`` remain hub-owned.
-Imports of ``tool_execution`` must stay function-local to avoid the hub's
-circular import.
+``_tool_timeout_for_runtime`` remains hub-owned. Imports of ``tool_execution``
+must stay function-local to avoid the hub's circular import.
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_BACKGROUND_NOT_FOUND,
     CMP_TOOL_EXECUTION_FAILED,
 )
-from sidecar.ai.routing import harness_helpers as _harness_helpers
+from sidecar.ai.routing import tool_execution_results as _results
 from sidecar.ai.routing import tool_observation as _tool_observation
 from sidecar.ai.tools.trusted_attachments import strip_attachment_shaped_metadata
 from sidecar.runtime.tool_execution_support import (
@@ -26,9 +25,49 @@ from sidecar.runtime.tool_execution_support import (
 if TYPE_CHECKING:
     from sidecar.runtime.tool_execution_support import ToolExecutionOutcome
 
-MAX_RESPONSE_CHARS = _harness_helpers.MAX_RESPONSE_CHARS
+# The results module shares the harness response cap; reading it there keeps
+# this leaf inside the import fan-out budget.
+MAX_RESPONSE_CHARS = _results.MAX_RESPONSE_CHARS
 KIND_TOOL_EXECUTION_FAILED = _tool_observation.KIND_TOOL_EXECUTION_FAILED
 KIND_TOOL_EXECUTION_OBSERVED = _tool_observation.KIND_TOOL_EXECUTION_OBSERVED
+
+
+def audit_settled(
+    runtime: Any | None,
+    call: Any,
+    tool_name: str,
+    *,
+    succeeded: bool,
+    error_code: str | None = None,
+    summary: str | None = None,
+) -> None:
+    """Record one synthetic tool's observed/failed audit event (no-op without a runtime)."""
+    if runtime is None:
+        return
+    runtime.audit(
+        KIND_TOOL_EXECUTION_OBSERVED if succeeded else KIND_TOOL_EXECUTION_FAILED,
+        tool_call_id=str(call.call_id or ""),
+        tool_name=tool_name,
+        error_code=None if succeeded else (error_code or None),
+        summary=summary
+        or (
+            f"tool_execution_observed {tool_name}"
+            if succeeded
+            else f"tool_execution_failed {tool_name}"
+        ),
+    )
+
+
+def _require_monitor_manager(kernel: Any) -> Any:
+    manager = getattr(kernel, "_monitor_manager", None)
+    if manager is None:
+        raise ToolExecutionFailure(
+            code=CMP_TOOL_EXECUTION_FAILED,
+            message="monitor runtime is unavailable",
+            retryable=True,
+        )
+    return manager
+
 
 def _execute_monitor_tool(
     *,
@@ -42,16 +81,7 @@ def _execute_monitor_tool(
     runtime: Any | None,
     outcome_type: Any,
 ) -> ToolExecutionOutcome:
-    from sidecar.ai.routing import tool_execution as _te_hub
-
-    _merge_result_metadata = _te_hub._merge_result_metadata
-    manager = getattr(kernel, "_monitor_manager", None)
-    if manager is None:
-        raise ToolExecutionFailure(
-            code=CMP_TOOL_EXECUTION_FAILED,
-            message="monitor runtime is unavailable",
-            retryable=True,
-        )
+    manager = _require_monitor_manager(kernel)
     config = getattr(kernel, "_config", None)
     execution_context = getattr(
         getattr(runtime, "request_context", None), "execution_context", None
@@ -80,14 +110,8 @@ def _execute_monitor_tool(
         tool_call_id=str(call.call_id or ""),
         notification_writer=getattr(runtime, "notification_writer", None),
     )
-    metadata = _merge_result_metadata(result.metadata, audit_metadata)
-    if runtime is not None:
-        runtime.audit(
-            KIND_TOOL_EXECUTION_OBSERVED,
-            tool_call_id=str(call.call_id or ""),
-            tool_name="monitor",
-            summary="tool_execution_observed monitor",
-        )
+    metadata = _results.merge_result_metadata(result.metadata, audit_metadata)
+    audit_settled(runtime, call, "monitor", succeeded=True)
     return outcome_type(
         tool_name="monitor",
         output=sanitize_tool_output(
@@ -141,16 +165,7 @@ def _execute_check_monitor_tool(
     request_id: str = "",  # uniform synthetic-handler signature; unused here.
     session_id: str | None = None,
 ) -> ToolExecutionOutcome:
-    from sidecar.ai.routing import tool_execution as _te_hub
-
-    _merge_result_metadata = _te_hub._merge_result_metadata
-    manager = getattr(kernel, "_monitor_manager", None)
-    if manager is None:
-        raise ToolExecutionFailure(
-            code=CMP_TOOL_EXECUTION_FAILED,
-            message="monitor runtime is unavailable",
-            retryable=True,
-        )
+    manager = _require_monitor_manager(kernel)
     monitor_id = str(tool_arguments.get("monitor_id") or "").strip()
     if not monitor_id:
         raise ToolExecutionFailure(
@@ -169,14 +184,11 @@ def _execute_check_monitor_tool(
             message=f"no monitor found with id: {monitor_id}",
             retryable=False,
         )
-    metadata = _merge_result_metadata({"monitor": digest}, audit_metadata)
-    if runtime is not None:
-        runtime.audit(
-            KIND_TOOL_EXECUTION_OBSERVED,
-            tool_call_id=str(call.call_id or ""),
-            tool_name="check_monitor",
-            summary="tool_execution_observed check_monitor",
-        )
+    # Polling is read-only; the derived-effects fallback cannot see this tool.
+    metadata = _results.merge_result_metadata(
+        {"monitor": digest, "effects": "none"}, audit_metadata
+    )
+    audit_settled(runtime, call, "check_monitor", succeeded=True)
     return outcome_type(
         tool_name="check_monitor",
         output=sanitize_tool_output(
@@ -203,36 +215,10 @@ def _execute_delegate_synthetic_tool(  # mirrors synthetic tool dispatch.
     request_id: str = "",  # uniform synthetic-handler signature; unused here.
     session_id: str | None = None,
 ) -> ToolExecutionOutcome:
+    # Looked up on the hub at call time so tests can patch the executor there.
     from sidecar.ai.routing import tool_execution as _te_hub
 
-    return _execute_subagent_synthetic_tool(
-        executor=_te_hub.execute_delegate_tool,
-        tool_name="delegate",
-        kernel=kernel,
-        call=call,
-        tool_arguments=tool_arguments,
-        visible_tool_arguments=visible_tool_arguments,
-        audit_metadata=audit_metadata,
-        runtime=runtime,
-        outcome_type=outcome_type,
-    )
-
-
-def _execute_subagent_synthetic_tool(  # shared synthetic settlement fields.
-    *,
-    executor: Any,
-    tool_name: str,
-    kernel: Any,
-    call: ToolCallRequest,
-    tool_arguments: dict[str, object],
-    visible_tool_arguments: dict[str, object],
-    audit_metadata: dict[str, object] | None,
-    runtime: Any | None,
-    outcome_type: Any,
-) -> ToolExecutionOutcome:
-    from sidecar.ai.routing import tool_execution as _te_hub
-
-    outcome = executor(
+    outcome = _te_hub.execute_delegate_tool(
         router=kernel,
         arguments=tool_arguments,
         runtime=runtime,
@@ -240,22 +226,17 @@ def _execute_subagent_synthetic_tool(  # shared synthetic settlement fields.
         visible_tool_arguments=visible_tool_arguments,
         call_id=call.call_id,
     )
-    outcome_metadata = _te_hub._merge_result_metadata(
+    outcome_metadata = _results.merge_result_metadata(
         dict(outcome.metadata or {}),
         audit_metadata,
     )
-    if runtime is not None:
-        runtime.audit(
-            KIND_TOOL_EXECUTION_OBSERVED if outcome.success else KIND_TOOL_EXECUTION_FAILED,
-            tool_call_id=str(call.call_id or ""),
-            tool_name=tool_name,
-            error_code=None if outcome.success else (str(outcome.error_code or "") or None),
-            summary=(
-                f"tool_execution_observed {tool_name}"
-                if outcome.success
-                else f"tool_execution_failed {tool_name}"
-            ),
-        )
+    audit_settled(
+        runtime,
+        call,
+        "delegate",
+        succeeded=bool(outcome.success),
+        error_code=str(outcome.error_code or ""),
+    )
     return outcome_type(
         tool_name=outcome.tool_name,
         output=outcome.output,
@@ -348,11 +329,22 @@ def execute_tool_search(
             call_id=call.call_id,
         )
 
+    # Assembling the full contract is the expensive part: do it only once a
+    # query has matched, and at most once per call.
+    schema_map: dict[str, dict[str, Any]] | None = None
+
+    def schema_for(name: str) -> dict[str, Any] | None:
+        nonlocal schema_map
+        if schema_map is None:
+            schema_map = kernel._build_full_tool_schema_map()
+        return schema_map.get(name)
+
     result = handle_tool_search(
         dict(call.arguments),
         search_index=resolution_context.search_index,
-        full_schema_map=kernel._build_full_tool_schema_map(),
+        schema_for=schema_for,
         un_deferred_set=resolution_context.un_deferred_names,
+        excluded_names=getattr(resolution_context, "retired_names", frozenset()),
     )
     return tool_outcome_from_handler_result(
         call.tool_id,

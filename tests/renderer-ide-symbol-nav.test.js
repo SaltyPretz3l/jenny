@@ -517,3 +517,27 @@ test('workspace-root commit closes the symbol picker and rejects the old-root in
   nav.dispose();
   assert.equal(listeners.has('ide:workspace-root-committed'), false, 'dispose removes the root listener');
 });
+
+test('O2: two concurrent requests make one worker call', async (t) => {
+  const model = createModel();
+  let navigationTreeCalls = 0;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const nav = createRenderHarness(model, async () => {
+    navigationTreeCalls += 1;
+    await gate;
+    return sampleTree();
+  });
+  t.after(() => nav.dispose());
+  // The Outline and the breadcrumbs ask for the same (model, version) at once.
+  const first = nav.getNavigationTree('src/file.ts');
+  const second = nav.getNavigationTree('src/file.ts');
+  release();
+  const [a, b] = await Promise.all([first, second]);
+  assert.equal(navigationTreeCalls, 1);
+  assert.equal(a, b);
+  // A new version is a new request.
+  model.setVersionId(2);
+  await nav.getNavigationTree('src/file.ts');
+  assert.equal(navigationTreeCalls, 2);
+});

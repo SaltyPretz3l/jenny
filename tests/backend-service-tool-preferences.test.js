@@ -45,6 +45,10 @@ async function createToolPreferenceService(title, tempPrefix) {
     defaultModel: 'mock-v1',
   });
   markManagedSidecarReady(service);
+  // These pins cover the composer toggles only. The row 69 session-directory gate adds its own
+  // deny-list entries for an unlinked chat (tests/session-directory-tool-gate.test.js); its kill
+  // switch keeps it out of the payloads asserted here.
+  service.featureFlags = { ...service.featureFlags, session_directory_tool_gate: false };
   const created = await service.createSession({
     title,
     preferences: {

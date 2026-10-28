@@ -8,3 +8,10 @@ DEFAULT_MAX_DEFINITIONS = 20
 DEFAULT_MAX_REFERENCES = 100
 MAX_LSP_MESSAGE_CHARS = 500
 MAX_LSP_NAME_CHARS = 200
+
+
+def bounded_item_limit(value: object, *, default: int) -> int:
+    """A positive integer capped at MAX_LSP_ITEMS; anything else is the default."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        return default
+    return min(value, MAX_LSP_ITEMS)

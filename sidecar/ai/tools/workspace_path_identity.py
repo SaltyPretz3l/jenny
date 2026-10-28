@@ -192,6 +192,9 @@ def resolve_workspace_leaf(
     try:
         parent_stat = real_parent.stat(follow_symlinks=False)
         leaf_stat = leaf_path.lstat()
+        # Judge and mutate the on-disk name: an 8.3 alias such as JENNY~1 must
+        # not reach the reserved-path checks as a different spelling.
+        leaf_path = real_parent / _on_disk_leaf_name(real_parent, normalized.name, leaf_stat)
     except FileNotFoundError as error:
         raise ToolExecutionFailure(
             code=CMP_TOOL_INVALID_PATH,
@@ -208,7 +211,7 @@ def resolve_workspace_leaf(
     return WorkspaceLeafIdentity(
         root=root,
         leaf_path=leaf_path,
-        relative_path=normalized.relative_to(root).as_posix(),
+        relative_path=leaf_path.relative_to(root).as_posix(),
         parent_identity=NodeIdentity.from_stat(parent_stat),
         leaf_identity=NodeIdentity.from_stat(leaf_stat),
         is_link_object=link_object,
@@ -300,6 +303,68 @@ def _reject_link_ancestors(parent: Path, root: Path) -> None:
                 message="workspace mutation path parent does not exist",
                 retryable=False,
             ) from error
+
+
+def _on_disk_leaf_name(real_parent: Path, name: str, leaf_stat: os.stat_result) -> str:
+    """Return an existing leaf's on-disk spelling without dereferencing it.
+
+    Windows accepts 8.3 aliases (``JENNY~1`` for ``.jenny``, or any short name
+    set with ``fsutil file setshortname``), so every leaf is expanded rather
+    than only names containing ``~``.  Neither lookup follows a reparse point
+    at the leaf: a link keeps its own name.  POSIX has no aliases.
+    """
+
+    if os.name != "nt":
+        return name
+    expected = NodeIdentity.from_stat(leaf_stat)
+    long_path = _windows_long_path(real_parent / name)
+    if long_path is not None:
+        candidate = os.path.basename(long_path)
+        if candidate and _is_same_leaf(real_parent / candidate, expected):
+            return candidate
+    # GetLongPathNameW can fail past MAX_PATH; fall back to the directory
+    # listing and fail closed unless exactly one entry is the captured object.
+    try:
+        with os.scandir(real_parent) as entries:
+            matches = [
+                entry.name
+                for entry in entries
+                if _is_same_leaf(Path(entry.path), expected)
+            ]
+    except OSError as error:
+        raise _identity_failure("failed to read workspace mutation leaf name") from error
+    exact = [match for match in matches if match.casefold() == name.casefold()]
+    if len(exact) == 1:
+        return exact[0]
+    if len(matches) == 1:
+        return matches[0]
+    raise _identity_failure("failed to read workspace mutation leaf name")
+
+
+def _is_same_leaf(path: Path, expected: NodeIdentity) -> bool:
+    try:
+        return NodeIdentity.from_stat(os.lstat(path)).same_object(expected)
+    except OSError:
+        return False
+
+
+def _windows_long_path(path: Path) -> str | None:
+    import ctypes  # Windows-only API, loaded only on Windows.
+    from ctypes import wintypes  # Windows-only definitions.
+
+    get_long_path = ctypes.WinDLL("kernel32", use_last_error=True).GetLongPathNameW
+    get_long_path.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+    get_long_path.restype = wintypes.DWORD
+    capacity = 1_024
+    for _attempt in range(2):
+        buffer = ctypes.create_unicode_buffer(capacity)
+        length = get_long_path(str(path), buffer, capacity)
+        if length == 0:
+            return None
+        if length < capacity:
+            return buffer.value
+        capacity = length + 1
+    return None
 
 
 def _unsafe_store_component(part: str) -> bool:

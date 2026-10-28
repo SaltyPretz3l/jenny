@@ -46,23 +46,6 @@ function notRepoToplevelResult(op) {
   };
 }
 
-// Per-call "is this root inside a git work tree at all" detection (no
-// caching) — moved here alongside the toplevel check to keep
-// workspace-git-service.js under the project's file-size cap. Interprets a
-// "not a git repository" failure as a clean miss; a genuine spawn failure
-// (git missing / aborted) is surfaced as `{ failure }` for the caller to
-// fold into its own structured execution-failure shape.
-async function detectIsRepo(exec, root, { signal = null } = {}) {
-  const r = await exec(root, ['rev-parse', '--is-inside-work-tree'], { signal });
-  if (r.success) {
-    return { isRepo: r.stdout.trim() === 'true' };
-  }
-  if (/not a git repository/i.test(r.message || r.stderr || '')) {
-    return { isRepo: false };
-  }
-  return { failure: r };
-}
-
 // Typed HEAD probe (failure-oracle hardening; the ONLY HEAD probe — the
 // legacy boolean `hasHead` collapsed EVERY non-success into "no HEAD", so an
 // aborted/timed-out/failed `rev-parse` was indistinguishable from a genuinely
@@ -119,9 +102,8 @@ async function realpathSafe(fsImpl, targetPath) {
   }
 }
 
-// Realpaths both sides, then compares. Exported separately from
-// checkRootIsToplevel so callers/tests can exercise the comparison logic
-// against injected fs stubs without spawning git.
+// Realpaths both sides, then compares. Exported so tests can exercise the
+// comparison logic against injected fs stubs without spawning git.
 async function resolveAndCompare(fsImpl, root, toplevel) {
   const [rootReal, toplevelReal] = await Promise.all([
     realpathSafe(fsImpl, root),
@@ -130,37 +112,30 @@ async function resolveAndCompare(fsImpl, root, toplevel) {
   return pathsEqual(rootReal, toplevelReal);
 }
 
-// Runs `git rev-parse --show-toplevel` via the caller's exec (the service's
-// own `_exec`, so tests can spy/stub it exactly like every other git call)
-// and reports whether `root` IS that toplevel. Never throws: a spawn
-// failure surfaces as `{ failure }`, matching detectIsRepo's contract so the
-// caller can fold it into the same _execFailure shape.
-async function checkRootIsToplevel(exec, root, { signal = null, fs: fsImpl = fsPromises } = {}) {
-  const r = await exec(root, ['rev-parse', '--show-toplevel'], { signal });
+// Row 82 G1: one spawn answers both questions. Inside a work tree git prints
+// "true" then the toplevel. Inside `.git` or a bare repository it prints "false"
+// and then fails on --show-toplevel ("must be run in a work tree"): that stays the
+// clean { isRepo: false } miss the split probe reported. "Not a git repository"
+// is a clean miss; anything else (abort, timeout, git missing) is { failure }.
+async function detectRepoScope(exec, root, { signal = null, fs: fsImpl = fsPromises, isCurrent = null } = {}) {
+  const r = await exec(root, ['rev-parse', '--is-inside-work-tree', '--show-toplevel'], { signal });
+  const [inside = '', toplevelLine = ''] = String(r.stdout || '').split(/\r?\n/);
+  if (inside.trim() === 'false') return { isRepo: false };
   if (!r.success) {
-    return { failure: r };
+    return /not a git repository/i.test(r.message || r.stderr || '') ? { isRepo: false } : { failure: r };
   }
-  const toplevel = String(r.stdout || '').trim();
+  if (inside.trim() !== 'true') return { isRepo: false };
+  if (typeof isCurrent === 'function' && !isCurrent()) return { stale: true };
+  const toplevel = toplevelLine.trim();
   const isToplevel = await resolveAndCompare(fsImpl, root, toplevel);
-  return { isToplevel, toplevel };
-}
-
-async function detectRepoScope(exec, root, options = {}) {
-  const detected = await detectIsRepo(exec, root, options);
-  if (detected.failure || !detected.isRepo) return detected;
-  if (typeof options.isCurrent === 'function' && !options.isCurrent()) return { stale: true };
-  const scope = await checkRootIsToplevel(exec, root, options);
-  if (scope.failure) return scope;
-  return { isRepo: true, isToplevel: scope.isToplevel, toplevel: scope.toplevel };
+  return { isRepo: true, isToplevel, toplevel };
 }
 
 module.exports = {
   normalizePathForComparison,
   pathsEqual,
   resolveAndCompare,
-  detectIsRepo,
   detectRepoScope,
   probeHeadState,
-  checkRootIsToplevel,
   notRepoToplevelResult,
 };

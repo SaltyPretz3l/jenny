@@ -18,6 +18,8 @@ const {
 const {
   readsNewerSchema,
   enterNewerSchemaFreeze,
+  isSessionFileShape,
+  sessionRecordOf,
 } = require('./session-storage-guards');
 const {
   createIndexStore,
@@ -348,13 +350,9 @@ async function runSplitLayoutMigrationAsync(self, { batchSize = SPLIT_MIGRATION_
         enterNewerSchemaFreeze(self, raw.schema_version, filePath);
         continue;
       }
-      const sessionRecord =
-        raw && typeof raw === 'object' && !Array.isArray(raw) && raw.session
-          ? raw.session
-          : raw;
-      if (!sessionRecord || typeof sessionRecord !== 'object' || Array.isArray(sessionRecord)) {
-        continue;
-      }
+      // Not a chat: skipped and left as it is (a later read quarantines it).
+      if (!isSessionFileShape(raw)) continue;
+      const sessionRecord = sessionRecordOf(raw);
       const sessionId = String(
         sessionRecord.id || path.basename(entry.name, '.json') || ''
       ).trim();

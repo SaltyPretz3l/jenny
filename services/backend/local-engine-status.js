@@ -361,6 +361,12 @@ async function initializeManagedSidecarWithTimeout(service, options = {}) {
     ) {
       return existing.promise;
     }
+    // A config refresh (no explicit model) yields to an explicit load: wait for
+    // it to settle once, then start this flight instead of failing as busy.
+    if (existing.configRefresh && options.requestedModel && !options.waitedForConfigRefresh) {
+      await existing.promise.catch(() => null);
+      return initializeManagedSidecarWithTimeout(service, { ...options, waitedForConfigRefresh: true });
+    }
     throw createInitializeBusyError(existing.requestedModel, requestedModel);
   }
 
@@ -468,6 +474,7 @@ async function initializeManagedSidecarWithTimeout(service, options = {}) {
     process: processGeneration,
     requestedModel,
     requestedEngineType,
+    configRefresh: !options.requestedModel,
     promise: null,
   };
   flight.promise = Promise.resolve().then(async () => {

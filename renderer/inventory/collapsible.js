@@ -301,6 +301,8 @@
     rootEl.__invCollapsibleHandlersInstalled = true;
 
     rootEl.addEventListener('click', function (event) {
+      // A synthetic event dispatched on the document itself has no Element target.
+      if (!event.target || typeof event.target.closest !== 'function') return;
       var triggerEl = event.target.closest('[data-inv-collapsible]');
       if (!triggerEl || triggerEl.classList.contains('tool-call-header')) return;
       event.preventDefault();
@@ -308,6 +310,8 @@
     });
 
     rootEl.addEventListener('keydown', function (event) {
+      // A synthetic event dispatched on the document itself has no Element target.
+      if (!event.target || typeof event.target.closest !== 'function') return;
       var triggerEl = event.target.closest('[data-inv-collapsible]');
       if (!triggerEl || triggerEl.classList.contains('tool-call-header')) return;
       if (event.key !== 'Enter' && event.key !== ' ') return;

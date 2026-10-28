@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-import sys
 from dataclasses import dataclass, field
 from typing import Any, Callable, cast
 
@@ -19,7 +18,9 @@ from sidecar.ai.tools.builtins.skills import configure_skill_tool, load_skill_to
 from sidecar.ai.tools.catalog import (
     BUILTIN_MCP_SERVER_NAME,
     BUILTIN_MCP_SURFACE,
+    bool_config_flag,
     build_tool_catalog,
+    manifest_platform_supported,
 )
 from sidecar.ai.tools.contracts import ToolHandlerResult
 from sidecar.ai.tools.distill import configure_distill
@@ -83,6 +84,9 @@ git_status_tool = _lazy_tool_handler("sidecar.ai.tools.builtins.git_ops", "git_s
 git_log_tool = _lazy_tool_handler("sidecar.ai.tools.builtins.git_ops", "git_log_tool")
 git_diff_tool = _lazy_tool_handler("sidecar.ai.tools.builtins.git_ops", "git_diff_tool")
 git_show_tool = _lazy_tool_handler("sidecar.ai.tools.builtins.git_ops", "git_show_tool")
+report_findings_tool = _lazy_tool_handler(
+    "sidecar.ai.tools.builtins.review_findings", "report_findings_tool"
+)
 glob_files_tool = _lazy_tool_handler("sidecar.ai.tools.builtins.glob_files", "glob_files_tool")
 grep_search_tool = _lazy_tool_handler(
     "sidecar.ai.tools.builtins.grep_search", "grep_search_tool"
@@ -125,42 +129,26 @@ class ToolDefinition:
     input_schema: dict[str, Any] = field(default_factory=dict)
 
 
-def _extract_flag_enabled(
-    config: Any | None,
-    key: str,
-    *,
-    default: bool = True,
-) -> bool:
-    value = config.get(key) if isinstance(config, dict) else getattr(config, key, None)
-    return value if isinstance(value, bool) else default
-
-
 def build_tool_bindings(
     *,
     config: Any | None = None,
     include_shell: bool | None = None,
+    configure: bool = True,
 ) -> dict[str, ToolHandler]:
+    """Bind the builtin handlers *config* enables.
+
+    ``configure=False`` only computes the binding set: it skips every
+    ``configure_*`` call, which would otherwise reset process-global tool
+    settings (healing, distill, shell security, LSP, ...) to *config*.
+    """
     shell_enabled = (
         include_shell
         if include_shell is not None
-        else _extract_flag_enabled(config, "tools_shell_enabled", default=False)
+        else bool_config_flag(config, "tools_shell_enabled", default=False)
     )
-    configure_grep_search(config)
-    configure_filesystem_tools(config)
-    configure_git_tools(config)
-    configure_distill(config)
-    configure_tool_call_healing(config)
-    configure_skill_tool(config)
-    lsp_enabled = _extract_flag_enabled(config, "tools_lsp_enabled", default=False)
-    _configure_lsp_bindings(config, enabled=lsp_enabled)
-    from sidecar.ai.feature_flags import normalize_feature_flags
-
-    raw_flags = (
-        config.get("feature_flags", {})
-        if isinstance(config, dict)
-        else getattr(config, "feature_flags", {})
-    )
-    configure_shell_security(normalize_feature_flags(raw_flags or {}))
+    lsp_enabled = bool_config_flag(config, "tools_lsp_enabled", default=False)
+    if configure:
+        _configure_tool_settings(config, lsp_enabled=lsp_enabled)
 
     bindings: dict[str, ToolHandler] = {
         "read_file": read_file_tool,
@@ -169,6 +157,7 @@ def build_tool_bindings(
         "git_log": git_log_tool,
         "git_diff": git_diff_tool,
         "git_show": git_show_tool,
+        "report_findings": report_findings_tool,
         "workspace_change_baseline": workspace_change_baseline_tool,
         "workspace_change_delta": workspace_change_delta_tool,
         "write_file": write_file_tool,
@@ -180,11 +169,13 @@ def build_tool_bindings(
         config=config,
         lsp_enabled=lsp_enabled,
         shell_enabled=shell_enabled,
+        configure=configure,
     )
     _add_knowledge_bindings(
         bindings,
         config=config,
-        enabled=_extract_flag_enabled(config, "tools_knowledge_enabled", default=False),
+        enabled=bool_config_flag(config, "tools_knowledge_enabled", default=False),
+        configure=configure,
     )
     return filter_desktop_tool_bindings(
         filter_host_tool_bindings(bindings, config),
@@ -192,23 +183,41 @@ def build_tool_bindings(
     )
 
 
+def _configure_tool_settings(config: Any | None, *, lsp_enabled: bool) -> None:
+    configure_grep_search(config)
+    configure_filesystem_tools(config)
+    configure_git_tools(config)
+    configure_distill(config)
+    configure_tool_call_healing(config)
+    configure_skill_tool(config)
+    _configure_lsp_bindings(config, enabled=lsp_enabled)
+    from sidecar.ai.feature_flags import normalize_feature_flags
+
+    raw_flags = (
+        config.get("feature_flags", {})
+        if isinstance(config, dict)
+        else getattr(config, "feature_flags", {})
+    )
+    configure_shell_security(normalize_feature_flags(raw_flags or {}))
+
+
 def _add_file_operation_bindings(
     bindings: dict[str, ToolHandler],
     *,
     config: Any | None,
 ) -> None:
-    if _extract_flag_enabled(config, "tools_glob_enabled", default=True):
+    if bool_config_flag(config, "tools_glob_enabled", default=True):
         bindings["glob_files"] = glob_files_tool
-    if _extract_flag_enabled(config, "tools_grep_enabled", default=True):
+    if bool_config_flag(config, "tools_grep_enabled", default=True):
         bindings["grep_search"] = grep_search_tool
-    if _extract_flag_enabled(config, "tools_edit_file_enabled", default=True):
+    if bool_config_flag(config, "tools_edit_file_enabled", default=True):
         bindings["edit_file"] = edit_file_tool
         # Plan Plus: suggestions validate with edit_file's matching, so they share
         # its flag; the manifest's propose_mode_only keeps them out of other modes.
         bindings["propose_change"] = propose_change_tool
-    if _extract_flag_enabled(config, "tools_delete_file_enabled", default=True):
+    if bool_config_flag(config, "tools_delete_file_enabled", default=True):
         bindings["delete_file"] = delete_file_tool
-    if _extract_flag_enabled(config, "tools_move_file_enabled", default=True):
+    if bool_config_flag(config, "tools_move_file_enabled", default=True):
         bindings["move_file"] = move_file_tool
 
 
@@ -218,6 +227,7 @@ def _add_runtime_feature_bindings(
     config: Any | None,
     lsp_enabled: bool,
     shell_enabled: bool,
+    configure: bool = True,
 ) -> None:
     if lsp_enabled:
         bindings["lsp"] = lsp_tool
@@ -226,17 +236,19 @@ def _add_runtime_feature_bindings(
         bindings["run_temp_script"] = run_temp_script_tool
         bindings["check_background_job"] = check_background_job_tool
         bindings["stop_background_job"] = stop_background_job_tool
-    if _extract_flag_enabled(config, "tools_web_enabled", default=False):
+    if bool_config_flag(config, "tools_web_enabled", default=False):
         from sidecar.ai.tools.builtins.web import (
             configure_web_tools,
             fetch_url_tool,
             web_search_tool,
         )
 
-        configure_web_tools(config)
+        if configure:
+            configure_web_tools(config)
         bindings["web_search"] = web_search_tool
         bindings["fetch_url"] = fetch_url_tool
-    if sys.platform == "win32" and _extract_flag_enabled(
+    # The manifest's availability.platforms is the single platform source.
+    if manifest_platform_supported("python_execute") and bool_config_flag(
         config,
         "tools_python_runtime_enabled",
         default=False,
@@ -246,30 +258,31 @@ def _add_runtime_feature_bindings(
             python_execute_tool,
         )
 
-        configure_python_runtime(config)
+        if configure:
+            configure_python_runtime(config)
         bindings["python_execute"] = python_execute_tool
-    if _extract_flag_enabled(config, "tools_todo_enabled", default=False):
+    if bool_config_flag(config, "tools_todo_enabled", default=False):
         from sidecar.ai.tools.builtins.todo import todo_read_tool, todo_write_tool
 
         bindings["todo_write"] = todo_write_tool
         bindings["todo_read"] = todo_read_tool
-    if _extract_flag_enabled(config, "tools_connections_enabled", default=True):
+    if bool_config_flag(config, "tools_connections_enabled", default=True):
         from sidecar.ai.tools.builtins.connections import (
             build_connections_tool,
         )
 
         bindings["connections_list"] = build_connections_tool(config)
-    if _extract_flag_enabled(config, "tools_mermaid_enabled", default=False):
+    if bool_config_flag(config, "tools_mermaid_enabled", default=False):
         from sidecar.ai.tools.builtins.mermaid import mermaid_generate_tool
 
         bindings["mermaid_generate"] = mermaid_generate_tool
-    if _extract_flag_enabled(config, "tools_workspace_manifest_enabled", default=False):
+    if bool_config_flag(config, "tools_workspace_manifest_enabled", default=False):
         from sidecar.ai.tools.builtins.workspace_manifest_tool import (
             workspace_manifest_read_tool,
         )
 
         bindings["workspace_manifest_read"] = workspace_manifest_read_tool
-    if _extract_flag_enabled(config, "tools_load_skill_enabled", default=True):
+    if bool_config_flag(config, "tools_load_skill_enabled", default=True):
         bindings["load_skill"] = load_skill_tool
 
 
@@ -278,7 +291,14 @@ def _add_knowledge_bindings(
     *,
     config: Any | None,
     enabled: bool,
+    configure: bool = True,
 ) -> None:
+    if not configure:
+        if enabled:
+            bindings["knowledge_search"] = knowledge_search_tool
+            bindings["knowledge_view"] = knowledge_view_tool
+            bindings["knowledge_exec"] = knowledge_exec_tool
+        return
     from sidecar.ai.semantic.runtime import configure_semantic_catalog
     from sidecar.ai.tools.builtins.knowledge.roots import (
         configure_knowledge_tools,
@@ -333,8 +353,11 @@ def build_default_registry(
     *,
     config: Any | None = None,
     include_shell: bool | None = None,
+    configure: bool = True,
 ) -> dict[str, ToolDefinition]:
-    bindings = build_tool_bindings(config=config, include_shell=include_shell)
+    bindings = build_tool_bindings(
+        config=config, include_shell=include_shell, configure=configure
+    )
     descriptors = build_tool_catalog(
         config=config,
         bound_names=bindings.keys(),

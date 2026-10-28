@@ -30,6 +30,7 @@ from sidecar.ai.tools.builtins.owned_process import (
 from sidecar.ai.tools.builtins.shell import run_command_tool
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
+from tests.sidecar._platform_skips import posix_only, windows_only
 
 
 def _guard(tmp_path: Path) -> WorkspaceGuard:
@@ -143,7 +144,7 @@ def test_background_process_saturation_refuses_before_spawn(
         shell_background_module._active_jobs.clear()
 
     try:
-        for _ in range(4):
+        for _ in range(shell_background_module.MAX_BACKGROUND_JOBS):
             shell_background_module.start_background_job(
                 ["fake"],
                 cwd=tmp_path,
@@ -159,7 +160,7 @@ def test_background_process_saturation_refuses_before_spawn(
                 timeout_seconds=30,
             )
         assert raised.value.code == CMP_TOOL_CAP_EXCEEDED
-        assert spawned == 4
+        assert spawned == shell_background_module.MAX_BACKGROUND_JOBS
     finally:
         release.set()
         _wait_until(lambda: not shell_background_module._active_jobs)
@@ -276,7 +277,7 @@ def test_stale_running_status_is_reconciled_after_restart(
     assert persisted["state"] == "failed"
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows-specific safe liveness probe")
+@windows_only("safe liveness probe")
 def test_windows_pid_liveness_never_uses_os_kill(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -551,7 +552,7 @@ def test_windows_bootstrap_preserves_cmd_command_string(
     )
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows Job bootstrap race oracle")
+@windows_only("Job bootstrap race oracle")
 def test_windows_target_cannot_start_before_job_assignment(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -605,7 +606,7 @@ def test_windows_target_cannot_start_before_job_assignment(
     assert marker.read_text(encoding="utf-8") == "started"
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows Job bootstrap refusal oracle")
+@windows_only("Job bootstrap refusal oracle")
 def test_windows_job_assignment_refusal_never_releases_target(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -667,7 +668,7 @@ def test_owned_process_drains_blocking_stdout_and_stderr_concurrently(
     assert service.snapshot().active == 0
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX supervisor transport")
+@posix_only("supervisor transport")
 def test_posix_owned_process_stdin_is_closed_and_cleanup_is_proven(
     tmp_path: Path,
 ) -> None:
@@ -699,7 +700,7 @@ def test_posix_owned_process_stdin_is_closed_and_cleanup_is_proven(
     assert again.stdout.strip() == "ready"
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX descendant escape regression")
+@posix_only("descendant escape regression")
 def test_posix_detached_child_is_swept_before_cleanup_is_proven(tmp_path: Path) -> None:
     pid_file = tmp_path / "detached-child.pid"
     parent = tmp_path / "spawn-detached.py"
@@ -739,7 +740,7 @@ def test_posix_detached_child_is_swept_before_cleanup_is_proven(tmp_path: Path) 
                 pass
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX supervisor proof contract")
+@posix_only("supervisor proof contract")
 def test_posix_killed_supervisor_leaves_the_slot_quarantined(tmp_path: Path) -> None:
     service = OwnedProcessService(max_active=1, max_queued=0)
     owned = service.spawn(

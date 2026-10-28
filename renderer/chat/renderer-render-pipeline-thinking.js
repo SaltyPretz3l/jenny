@@ -513,15 +513,24 @@
             ).trim(),
           }
           : { ...outcomeMessage, id: baseTargetMessage.id };
+        const spriteInput = spriteActivityUtils.gatherSpriteActivityInput({ state, runtimeSendController: getRuntimeSendController() }, sessionId, {
+          messages,
+          streamId: targetMessage.streamId,
+          status: baseTargetMessage.status,
+          outcome: normalizeSpritePhase(outcomeMessage),
+        });
         const { activity: spriteActivity } = spriteTracker.derive(
-          spriteActivityUtils.gatherSpriteActivityInput({ state, runtimeSendController: getRuntimeSendController() }, sessionId, {
-            messages,
-            streamId: targetMessage.streamId,
-            status: baseTargetMessage.status,
-            outcome: normalizeSpritePhase(outcomeMessage),
-          }),
+          spriteInput,
           { turnKey: `${sessionId}|${getLatestUserMessageId(messages)}`, visible: true },
         );
+        // A just-ran tool counts for a short window only: look again once it closes,
+        // so a quick tool followed by silence does not keep its form until the next event.
+        if (spriteInput.runningTools.some((tool) => tool.justRan) && !spriteRuntime.justRanTimer) {
+          spriteRuntime.justRanTimer = windowRef.setTimeout?.(() => {
+            spriteRuntime.justRanTimer = 0;
+            reconcileLayout();
+          }, spriteActivityUtils.JUST_RAN_MS + 20) || 0;
+        }
         applyAssistantSprite(targetMessage, targetYValue, thinkingState, spriteActivity);
       };
 
@@ -559,6 +568,8 @@
       chatTimeline?.removeEventListener?.('load', reconcileLayout, true);
       windowRef.removeEventListener?.('resize', reconcileLayout);
       unsubscribeTypedActivity?.();
+      if (spriteRuntime.justRanTimer) windowRef.clearTimeout?.(spriteRuntime.justRanTimer);
+      spriteRuntime.justRanTimer = 0;
       hideAssistantSprite({ clearTarget: true, reason: 'disposed' });
       spriteMorph?.dispose();
       disposed = true;

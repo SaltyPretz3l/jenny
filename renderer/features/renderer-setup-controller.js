@@ -153,6 +153,7 @@
     var showToastMessage = typeof callbacks.showToastMessage === 'function' ? callbacks.showToastMessage : noop;
     var showShellErrorToast = typeof callbacks.showShellErrorToast === 'function' ? callbacks.showShellErrorToast : noop;
     var setActiveView = typeof callbacks.setActiveView === 'function' ? callbacks.setActiveView : noop;
+    var renderAfterSetupChange = typeof callbacks.renderAfterSetupChange === 'function' ? callbacks.renderAfterSetupChange : noop;
 
     if (!state.setup) {
       state.setup = makeDefaultState();
@@ -213,6 +214,9 @@
       if (disposed || !payload) return state.setup;
       state.setup = mergeSetupPayload(state.setup, payload);
       maybeAutoFinishSetup(computeCanFinish(state.setup));
+      try { renderAfterSetupChange(); } catch (error) {
+        appendClientLog('WARN', 'setup.render_after_change_failed', { message: error && error.message ? error.message : String(error) });
+      }
       return state.setup;
     }
 

@@ -296,11 +296,9 @@ def _delegation_contract_for_research(
     plain_text_mode = report_mode == SUB_AGENT_REPORT_MODE_PLAIN_TEXT
     return build_delegation_contract_payload(
         goal="Read-only research for the parent agent using bounded tool access.",
-        context=(
-            f"parent_request_id={parent_context.request_id}; "
-            f"parent_agent_id={_parent_agent_id(parent_context)}; "
-            f"mode={parent_context.mode}"
-        ),
+        # No per-turn ids here: the contract is a leading runtime overlay, and
+        # identical text across children keeps the engine's prefix cache warm.
+        context=f"mode={parent_context.mode}",
         boundaries=(
             "Read-only research; no file mutation, shell execution, browser control, or writes.",
             "Do not add renderer surfaces, JSON-RPC notifications, or persisted event kinds.",
@@ -329,7 +327,9 @@ def _delegation_contract_for_research(
             "Fail closed when the request exceeds the delegated read-only boundary.",
         ),
         return_format=(
-            "one concise, nonblank plain-text answer; do not return JSON"
+            "one concise, nonblank plain-text answer; do not return JSON. The parent sees "
+            f"only the first {_delegation_contract.MAX_DELEGATE_ANSWER_CHARS:,} characters; "
+            "lead with the result."
             if plain_text_mode
             else (
                 'one JSON object: {"status":"completed|partial",'
@@ -339,19 +339,15 @@ def _delegation_contract_for_research(
     )
 
 
-def _format_delegation_contract_message(contract: dict[str, Any]) -> dict[str, object]:
-    return {
-        "role": "system",
-        "content": (
-            "Sub-agent delegation contract\n"
-            f"Goal: {contract.get('goal', '')}\n"
-            f"Context: {contract.get('context', '')}\n"
-            f"Boundaries: {list(contract.get('boundaries', ()))}\n"
-            f"Tasks: {list(contract.get('tasks', ()))}\n"
-            f"Verification: {list(contract.get('verification', ()))}\n"
-            f"Return format: {contract.get('return_format', '')}"
-        ),
-    }
+def _format_delegation_contract_overlay(contract: dict[str, Any]) -> str:
+    return (
+        f"Goal: {contract.get('goal', '')}\n"
+        f"Context: {contract.get('context', '')}\n"
+        f"Boundaries: {list(contract.get('boundaries', ()))}\n"
+        f"Tasks: {list(contract.get('tasks', ()))}\n"
+        f"Verification: {list(contract.get('verification', ()))}\n"
+        f"Return format: {contract.get('return_format', '')}"
+    )
 
 
 def _child_loop_runtime(  # noqa: PLR0913 - explicit isolated child runtime dependencies.
@@ -706,6 +702,10 @@ def invoke_sub_agent(  # noqa: PLR0913
         parent_context=parent_context,
         report_mode=child_context.sub_agent_report_mode,
     )
+    child_context = replace(
+        child_context,
+        sub_agent_delegation_contract=_format_delegation_contract_overlay(delegation_contract),
+    )
     child_runtime = _child_loop_runtime(
         parent_runtime=runtime,
         child_context=child_context,
@@ -714,7 +714,7 @@ def invoke_sub_agent(  # noqa: PLR0913
         absolute_deadline=absolute_deadline,
         event_sink=event_sink,
     )
-    child_messages = [_format_delegation_contract_message(delegation_contract), *messages]
+    child_messages = list(messages)
     try:
         decision, failure_result = _run_child_decision(
             router=router,

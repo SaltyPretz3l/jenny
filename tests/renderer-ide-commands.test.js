@@ -3,7 +3,8 @@
 /* Tier 1.5: IDE palette command source + the "?" shortcuts overlay
  * (renderer-ide-commands). Unit-tests the command list gating and run-dispatch
  * with a fake editor host, plus the overlay open path on the real inventory
- * help-overlay primitive under jsdom. */
+ * help-overlay primitive under jsdom. Row 82: the chorded rows register from the
+ * keydown handler into the same registry, so buildCommands composes both. */
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -31,14 +32,18 @@ function buildCommands(overrides) {
   const reopenCalls = [];
   const openFileMapCalls = [];
   let activeView = 'ide';
-  const commands = createIdeCommands({
+  const state = { ui: { activeView } };
+  const options = {
     getActiveView: () => activeView,
     editorHost: host,
     toggleMinimap: () => host.toggleMinimap(),
     reopenClosedTab: () => { reopenCalls.push(true); },
     openFileMap: () => { openFileMapCalls.push(true); },
     ...overrides,
-  });
+  };
+  const commands = createIdeCommands(options);
+  // The keymap rows (reopen, bookmarks, Find in Files, preview, ...) join the same registry.
+  createViewKeydownHandler({ ...options, state, ideCommands: commands, windowRef: { document: options.document || null } });
   return {
     commands,
     openFileMapCalls,
@@ -57,30 +62,34 @@ test('getCommandItems is empty unless the IDE view is active', () => {
   assert.deepEqual(commands.getCommandItems(), []);
 });
 
-test('getCommandItems lists the Workspace commands when on the IDE view', () => {
-  const { commands } = buildCommands();
+test('getCommandItems lists the palette-only Workspace commands when on the IDE view', () => {
+  const commands = createIdeCommands({ getActiveView: () => 'ide', editorHost: fakeEditorHost() });
   const items = commands.getCommandItems();
   const ids = items.map((i) => i.id);
   assert.deepEqual(ids, [
     'ide:format-document',
     'ide:go-to-symbol',
-    'ide:go-to-symbol-workspace',
     'ide:find-references',
-    'ide:find-in-files',
     'ide:open-file-map',
     'ide:reveal-in-map',
     'ide:show-blast-radius',
     'ide:open-preview',
-    'ide:preview-active-file',
     'ide:toggle-exploded-view',
     'ide:toggle-minimap',
-    'ide:reopen-closed-tab',
-    'ide:toggle-bookmark',
-    'ide:next-bookmark',
-    'ide:prev-bookmark',
-    'ide:list-bookmarks',
   ]);
   assert.ok(items.every((i) => i.group === 'Workspace'), 'all rows are in the Workspace group');
+});
+
+test('the keymap rows join the same palette list once the handler is built', () => {
+  const { commands } = buildCommands({
+    toggleBookmark: () => {}, nextBookmark: () => {}, prevBookmark: () => {}, listBookmarks: () => {},
+    workspaceSymbolPicker: () => {}, previewActiveFile: () => {},
+  });
+  const ids = commands.getCommandItems().map((i) => i.id);
+  for (const id of ['ide:go-to-symbol-workspace', 'ide:find-in-files', 'ide:preview-active-file', 'ide:reopen-closed-tab',
+    'ide:toggle-bookmark', 'ide:next-bookmark', 'ide:prev-bookmark', 'ide:list-bookmarks']) {
+    assert.ok(ids.includes(id), `${id} is listed`);
+  }
 });
 
 test('command run() dispatches to the right editor-host action ids', () => {
@@ -123,7 +132,7 @@ test('openHelpOverlay renders the shortcuts catalog and Esc closes it', () => {
   const host = doc.getElementById('ideHelpOverlay');
   assert.ok(host && !host.hidden, 'the IDE help overlay opens on its own host');
   assert.equal(commands.isHelpOpen(), true);
-  assert.match(host.textContent, /Reopen the last closed tab/);
+  assert.match(host.textContent, /View: Reopen Closed Editor/, 'the registry bindings lead the catalog');
   assert.match(host.textContent, /Open this shortcuts overlay/);
   // Chip 7 discoverability entries: Find in Files, the Quick Open :line / @symbol
   // modes, and the double-click-to-pin gesture must all appear in the catalog.
@@ -185,27 +194,6 @@ test('Ctrl+S inside a pane-owned save target defers to the pane', () => {
   outsideEvent.target = { closest: () => null };
   handler(outsideEvent);
   assert.equal(saves, 2, 'a target outside an owned pane keeps the capture-phase save');
-});
-
-test('Ctrl+Backslash falls through while the chat dock flag is disabled and binds after hydration', () => {
-  let enabled = false;
-  let toggles = 0;
-  const handler = createViewKeydownHandler({
-    state: { ui: { activeView: 'ide' } },
-    chatDock: { toggle: () => { toggles += 1; } },
-    isChatDockEnabled: () => enabled,
-  });
-
-  const disabledEvent = fakeKeyEvent('\\', { ctrl: true });
-  handler(disabledEvent);
-  assert.equal(disabledEvent.defaultPrevented, false, 'flag-off does not consume the shortcut');
-  assert.equal(toggles, 0);
-
-  enabled = true;
-  const enabledEvent = fakeKeyEvent('\\', { ctrl: true });
-  handler(enabledEvent);
-  assert.equal(enabledEvent.defaultPrevented, true, 'late flag hydration enables the shortcut');
-  assert.equal(toggles, 1);
 });
 
 test('Ctrl+E opens the recently-edited jump list (and Ctrl+P stays Quick Open)', () => {
@@ -422,9 +410,7 @@ test('Escape with modifiers or off the IDE view does not exit Preview', () => {
 
 test('ide:open-preview / ide:preview-active-file are present and dispatch to their callbacks', () => {
   const calls = { open: 0, previewActive: 0 };
-  const commands = createIdeCommands({
-    getActiveView: () => 'ide',
-    editorHost: fakeEditorHost(),
+  const { commands } = buildCommands({
     openPreviewSurface: () => { calls.open += 1; },
     previewActiveFile: () => { calls.previewActive += 1; },
   });
@@ -443,9 +429,7 @@ test('ide:open-preview / ide:preview-active-file are present and dispatch to the
 
 test('bookmark palette commands run() dispatch to their callbacks', () => {
   const calls = { toggle: 0, next: 0, prev: 0, list: 0 };
-  const commands = createIdeCommands({
-    getActiveView: () => 'ide',
-    editorHost: fakeEditorHost(),
+  const { commands } = buildCommands({
     toggleBookmark: () => { calls.toggle += 1; },
     nextBookmark: () => { calls.next += 1; },
     prevBookmark: () => { calls.prev += 1; },
@@ -575,7 +559,7 @@ test('"?" opens the IDE shortcuts overlay; a focused editor still types it', asy
   await settle();
   const host = doc.getElementById('ideHelpOverlay');
   assert.ok(host && !host.hidden, 'overlay opens when no input is focused');
-  assert.match(host.textContent, /Reopen the last closed tab/);
+  assert.match(host.textContent, /View: Reopen Closed Editor/);
 });
 
 test('Ctrl+Shift+F reveals Search in its stack and focuses the input (end-to-end)', async (t) => {

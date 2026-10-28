@@ -166,7 +166,7 @@ test('exploded derives from the active tab viewMode and excludes the other surfa
   assert.equal(h.controller.getEffectiveSurface(), 'editor');
 });
 
-test('noteEditorActivation resets preview/file_map to the editor cluster; suppression is one-shot', (t) => {
+test('noteEditorActivation resets preview/file_map to the editor cluster; suppression spans one restore open', async (t) => {
   const h = makeHarness();
   t.after(() => h.controller.dispose());
   h.controller.activate('file_map');
@@ -174,11 +174,25 @@ test('noteEditorActivation resets preview/file_map to the editor cluster; suppre
   assert.equal(h.ide.activeStageSurface, 'editor', 'document activation pulls the stage back');
 
   h.controller.activate('preview');
-  h.controller.suppressNextActivationReset();
-  h.controller.noteEditorActivation();
-  assert.equal(h.ide.activeStageSurface, 'preview', 'suppressed once for the bootstrap restore');
+  const result = await h.controller.suppressActivationResetDuring(async () => {
+    h.controller.noteEditorActivation();
+    h.controller.noteEditorActivation(); // the lifecycle hook and the window event both fire per open
+    return true;
+  });
+  assert.equal(result, true, 'the guarded open result passes through');
+  assert.equal(h.ide.activeStageSurface, 'preview', 'suppressed for the whole restore open');
   h.controller.noteEditorActivation();
   assert.equal(h.ide.activeStageSurface, 'editor', 'the suppression does not persist');
+});
+
+test('a failed restore open lifts the suppression so the next real activation still resets', async (t) => {
+  const h = makeHarness();
+  t.after(() => h.controller.dispose());
+  h.controller.activate('preview');
+  await assert.rejects(h.controller.suppressActivationResetDuring(async () => { throw new Error('open failed'); }));
+  assert.equal(await h.controller.suppressActivationResetDuring(() => false), false, 'a refused open settles too');
+  h.controller.noteEditorActivation();
+  assert.equal(h.ide.activeStageSurface, 'editor');
 });
 
 test('the ide:active-file-changed window event drives the reset (diff/ghost-edit channel)', (t) => {

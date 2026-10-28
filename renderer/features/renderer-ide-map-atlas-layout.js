@@ -7,8 +7,9 @@
  *     ordered parents-before-children (safe paint order). fileCount is
  *     subtree-inclusive; langMix is [{ cls, count }] desc by count;
  *     health = { capRed, capAmber, hubs, cycles, orphans } subtree counts.
- *   positions: { [id]: {x, y} }   file-node CENTERS in content space
- *   buckets:   [{ key, label, count }]  ignored-dir rollups — footer chips
+ *   positions: { [id]: {x, y, w} }   file-node CENTERS in content space;
+ *     w is that file's tile width (per district, see below).
+ *   buckets:   [{ key, label, count }]  ignored-dir rollups — the footer's not-mapped rows
  *     in the view (screen space), never fake spatial cards.
  *   bounds:    { minX, minY, maxX, maxY }
  *
@@ -16,7 +17,20 @@
  * ancestor: their files join that ancestor's grid, so a pathological deep
  * tree can't nest unreadably. Root files live in the '.' district.
  *
- * Determinism: same graph -> byte-identical output (no Date/random). Kept
+ * opts (all optional): { maxDepth, fileSizeCap, aspect, availWidth,
+ *   measureLabel }.
+ *   - aspect / availWidth steer ONLY the top-level pack: aspect is the target
+ *     width:height (clamped 0.6-3.2, default 1.4), availWidth (content px)
+ *     lets a row that fits the viewport fill it. Nested districts keep 1.4.
+ *   - measureLabel(text, 'tile'|'header') -> content px (the view passes a
+ *     canvas measurer; the default is estimateLabelWidth).
+ * Tile width: on graphs of <= WIDE_TILE_LIMIT files a district's tiles are
+ * the 75th-percentile measured name + TILE_CHROME, clamped TILE_W..TILE_W_MAX;
+ * bigger graphs keep TILE_W. A district is never narrower than its header row.
+ * Files grid non-tests first, then tests, A-Z by label (importance is not
+ * an ordering input).
+ *
+ * Determinism: same graph + opts -> byte-identical output (no Date/random). Kept
  * pure so it unit-tests without a DOM. UMD, mirroring the repo's style.
  */
 (function (root, factory) {
@@ -44,15 +58,34 @@
   // and between top-level districts.
   const ITEM_GAP = 16;
   const ROOT_GAP = 28;
-  // Target width:height ratio for packed content at every level.
+  // Target width:height ratio for packed content at every level; the top
+  // level may override it via opts.aspect, clamped to [ASPECT_MIN, ASPECT_MAX].
   const ASPECT = 1.4;
+  const ASPECT_MIN = 0.6;
+  const ASPECT_MAX = 3.2;
+  // Wide tiles: widest a tile may grow, the graph size above which tiles stay
+  // TILE_W, and the padding (dot, gutters) added to the measured name.
+  const TILE_W_MAX = 220;
+  const WIDE_TILE_LIMIT = 400;
+  const TILE_CHROME = 30;
+  // Header row chrome (count chip, language bar, gutters) added to the name,
+  // sized as this many header-font digits so it scales with the font.
+  const HEADER_CHROME_SAMPLE = '0'.repeat(14);
   // Nesting cap: dirs deeper than this flatten into their depth-cap ancestor.
   const MAX_DEPTH = 3;
+  // One collator for every sort (same order as String#localeCompare, which
+  // builds a fresh collator per call).
+  const compareText = new Intl.Collator().compare;
   // The repo's file-size policy ceiling (scripts/checks/check_file_size.py);
   // health derivation colors headroom against it. Override via opts.
   const FILE_SIZE_CAP = 1015;
   const CAP_AMBER_HEADROOM = 30;
   const CAP_RED_HEADROOM = 2;
+
+  // Fallback text measurer (~7.44 px per char at the tile font).
+  function estimateLabelWidth(text) {
+    return Math.ceil(String(text).length * 7.44);
+  }
 
   // Language classing shared with the view (view resolves this module so the
   // dot/tile tint and the district language bar agree on one mapping).
@@ -90,10 +123,15 @@
     return slash === -1 ? key : key.slice(slash + 1);
   }
 
+  // A file's display name: label, else the last path segment of its id.
+  function fileLabelOf(node) {
+    return String(node.label || lastSegment(String(node.id)));
+  }
+
   function makeDistrict(key, depth, parentKey) {
     return {
       key,
-      label: key === '.' ? jt('ide.map.atlas.root', '(root)') : lastSegment(key),
+      label: key === '.' ? jt('ide.map.atlas.topLevel', 'Top level') : lastSegment(key),
       depth,
       parentKey,
       files: [],
@@ -103,7 +141,7 @@
       langCounts: new Map(),
       health: { capRed: 0, capAmber: 0, hubs: 0, cycles: 0, orphans: 0 },
       // filled by packing:
-      x: 0, y: 0, w: 0, h: 0, cells: null, flattened: false,
+      x: 0, y: 0, w: 0, h: 0, cells: null, flattened: false, tileW: TILE_W,
     };
   }
 
@@ -163,8 +201,9 @@
     district.fileCount = total;
   }
 
-  // Grid a district's DIRECT files into near-square local cells.
-  function gridFiles(district) {
+  // Grid a district's DIRECT files into near-square local cells. ctx =
+  // { measure, wide }: wide districts size tiles to the p75 measured name.
+  function gridFiles(district, ctx) {
     const n = district.files.length;
     if (!n) {
       district.cells = [];
@@ -172,29 +211,44 @@
       district.gridH = 0;
       return;
     }
-    district.files.sort((a, b) => {
-      const di = (b.importance || 0) - (a.importance || 0);
-      if (di !== 0) return di;
-      return String(a.id).localeCompare(String(b.id));
+    const keyed = district.files.map((node) => ({ node, label: fileLabelOf(node) }));
+    keyed.sort((a, b) => {
+      const dt = (a.node.isTest === true ? 1 : 0) - (b.node.isTest === true ? 1 : 0);
+      if (dt !== 0) return dt;
+      const dl = compareText(a.label, b.label);
+      if (dl !== 0) return dl;
+      return compareText(String(a.node.id), String(b.node.id));
     });
-    const cols = Math.max(1, Math.ceil(Math.sqrt((n * CELL_H) / CELL_W)));
+    district.files = keyed.map((k) => k.node);
+    let tileW = TILE_W;
+    if (ctx.wide) {
+      const widths = keyed.map((k) => ctx.measure(k.label, 'tile')).sort((a, b) => a - b);
+      const p75 = widths[Math.min(n - 1, Math.floor(n * 0.75))];
+      tileW = Math.min(TILE_W_MAX, Math.max(TILE_W, Math.ceil(p75 + TILE_CHROME)));
+    }
+    const cellW = tileW + (CELL_W - TILE_W);
+    const cols = Math.max(1, Math.ceil(Math.sqrt((n * CELL_H) / cellW)));
     const rows = Math.ceil(n / cols);
+    district.tileW = tileW;
     district.cells = district.files.map((node, i) => ({
       node,
-      lx: (i % cols) * CELL_W + CELL_W / 2,
+      lx: (i % cols) * cellW + cellW / 2,
       ly: Math.floor(i / cols) * CELL_H + CELL_H / 2,
     }));
-    district.gridW = cols * CELL_W;
+    district.gridW = cols * cellW;
     district.gridH = rows * CELL_H;
   }
 
-  // Shelf-pack rectangles (w/h in) left-to-right into rows targeting ASPECT.
+  // Shelf-pack rectangles (w/h in) left-to-right into rows targeting `aspect`.
+  // availW > 0 lets a single row that fits within it fill it (no wrap).
   // Mutates each item's px/py (local offsets). Returns the packed extent.
-  function shelfPack(items, gap) {
+  function shelfPack(items, gap, aspect, availW) {
     if (!items.length) return { w: 0, h: 0 };
     const totalArea = items.reduce((s, it) => s + it.w * it.h, 0);
     const maxW = items.reduce((m, it) => Math.max(m, it.w), 0);
-    const targetW = Math.max(maxW, Math.ceil(Math.sqrt(totalArea * ASPECT)));
+    const rowW = items.reduce((s, it) => s + it.w, 0) + gap * (items.length - 1);
+    const fill = availW > 0 ? Math.min(availW, rowW) : 0;
+    const targetW = Math.max(maxW, fill, Math.ceil(Math.sqrt(totalArea * aspect)));
     let cursorX = 0;
     let shelfY = 0;
     let shelfH = 0;
@@ -217,13 +271,13 @@
   // Post-order sizing: children first, then pack [file grid, ...children]
   // inside this district. Children sort by subtree size desc (better packing)
   // then key asc (deterministic).
-  function sizeDistrict(district) {
-    gridFiles(district);
+  function sizeDistrict(district, ctx) {
+    gridFiles(district, ctx);
     const children = Array.from(district.children.values()).sort((a, b) => {
       const df = b.fileCount - a.fileCount;
-      return df !== 0 ? df : a.key.localeCompare(b.key);
+      return df !== 0 ? df : compareText(a.key, b.key);
     });
-    for (const child of children) sizeDistrict(child);
+    for (const child of children) sizeDistrict(child, ctx);
     const items = [];
     if (district.gridW > 0) {
       items.push({ kind: 'grid', w: district.gridW, h: district.gridH });
@@ -231,7 +285,7 @@
     for (const child of children) {
       items.push({ kind: 'district', district: child, w: child.w, h: child.h });
     }
-    const packed = shelfPack(items, ITEM_GAP);
+    const packed = shelfPack(items, ITEM_GAP, ASPECT, 0);
     district.items = items;
     district.w = Math.max(packed.w, 0) + 2 * DISTRICT_PAD;
     district.h = DISTRICT_HEADER + Math.max(packed.h, 0) + DISTRICT_PAD;
@@ -240,6 +294,9 @@
       district.w = Math.max(district.w, 2 * DISTRICT_PAD + CELL_W);
       district.h = Math.max(district.h, DISTRICT_HEADER + DISTRICT_PAD + CELL_H);
     }
+    // The header row (name + chrome) must fit the box.
+    const headerName = district.key === '.' ? district.label : `${district.label}/`;
+    district.w = Math.max(district.w, Math.ceil(ctx.measure(headerName, 'header') + ctx.measure(HEADER_CHROME_SAMPLE, 'header')));
   }
 
   // Pre-order placement: assign absolute x/y from parent origin + packed
@@ -256,6 +313,7 @@
           positions[cell.node.id] = {
             x: contentX + it.px + cell.lx,
             y: contentY + it.py + cell.ly,
+            w: district.tileW,
           };
         }
       } else {
@@ -267,15 +325,24 @@
   function toLangMix(langCounts) {
     return Array.from(langCounts.entries())
       .map(([cls, count]) => ({ cls, count }))
-      .sort((a, b) => (b.count - a.count) || a.cls.localeCompare(b.cls));
+      .sort((a, b) => (b.count - a.count) || compareText(a.cls, b.cls));
   }
 
-  // graph: { nodes, findings? } (engine shape). opts: { maxDepth?, fileSizeCap? }.
+  // graph: { nodes, findings? } (engine shape). opts: see the header comment.
   function layout(graph, opts) {
     const o = opts || {};
     const cap = Number(o.fileSizeCap) > 0 ? Number(o.fileSizeCap) : FILE_SIZE_CAP;
     const maxDepth = Number(o.maxDepth) > 0 ? Number(o.maxDepth) : MAX_DEPTH;
     const allNodes = graph && Array.isArray(graph.nodes) ? graph.nodes : [];
+    const aspect = Number(o.aspect) > 0 ? Math.min(ASPECT_MAX, Math.max(ASPECT_MIN, Number(o.aspect))) : ASPECT;
+    const availWidth = Number(o.availWidth) > 0 ? Number(o.availWidth) : 0;
+    const userMeasure = typeof o.measureLabel === 'function' ? o.measureLabel : null;
+    const measure = userMeasure
+      ? (text, kind) => {
+        const v = Number(userMeasure(text, kind));
+        return Number.isFinite(v) && v >= 0 ? v : estimateLabelWidth(text);
+      }
+      : estimateLabelWidth;
 
     const buckets = [];
     const fileNodes = [];
@@ -291,7 +358,7 @@
         fileNodes.push(node);
       }
     }
-    buckets.sort((a, b) => (b.count - a.count) || a.key.localeCompare(b.key));
+    buckets.sort((a, b) => (b.count - a.count) || compareText(a.key, b.key));
 
     if (!fileNodes.length) {
       return {
@@ -309,6 +376,7 @@
       orphans: new Set(Array.isArray(findings.orphans) ? findings.orphans : []),
     };
 
+    const ctx = { measure, wide: fileNodes.length <= WIDE_TILE_LIMIT };
     const { rootHolder } = buildTree(fileNodes, maxDepth);
     aggregate(rootHolder, findingSets, cap);
 
@@ -316,11 +384,11 @@
     // districts; pack them with the wider ROOT_GAP and no enclosing frame.
     const topLevel = Array.from(rootHolder.children.values()).sort((a, b) => {
       const df = b.fileCount - a.fileCount;
-      return df !== 0 ? df : a.key.localeCompare(b.key);
+      return df !== 0 ? df : compareText(a.key, b.key);
     });
-    for (const d of topLevel) sizeDistrict(d);
+    for (const d of topLevel) sizeDistrict(d, ctx);
     const topItems = topLevel.map((d) => ({ kind: 'district', district: d, w: d.w, h: d.h }));
-    shelfPack(topItems, ROOT_GAP);
+    shelfPack(topItems, ROOT_GAP, aspect, availWidth);
 
     const positions = {};
     const districts = [];
@@ -363,13 +431,12 @@
     districtKeyOf,
     TILE_W,
     TILE_H,
-    CELL_W,
-    CELL_H,
+    TILE_W_MAX,
+    WIDE_TILE_LIMIT,
+    TILE_CHROME,
+    estimateLabelWidth,
     DISTRICT_HEADER,
     DISTRICT_PAD,
-    ITEM_GAP,
-    ROOT_GAP,
-    ASPECT,
     MAX_DEPTH,
     FILE_SIZE_CAP,
   };

@@ -1,0 +1,188 @@
+/* styles/settings-api-providers.css
+ *
+ * Settings > Models API-key providers (row 78, variant A) and the one-line
+ * hint under a provider row in Composer's model picker. Rows reuse the
+ * settings-field row and badge primitives; only the editor indent, the
+ * enable list and the pin row live here. Tokens only, no literal colors.
+ */
+
+/* The editor opens in place under its provider row. */
+.api-providers-editor {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) 0 var(--space-4) var(--space-6);
+  border-inline-start: 2px solid var(--border-subtle);
+}
+
+.api-providers-editor .settings-field {
+  border-bottom-color: transparent;
+}
+
+.api-providers-field {
+  margin: 0;
+  min-width: 0;
+}
+
+.api-providers-field .inv-text-field-control {
+  width: min(320px, 100%);
+  min-height: 30px;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-input-background);
+  color: var(--text-primary);
+  font-size: var(--font-size-footnote);
+}
+
+.api-providers-field--short .inv-text-field-control {
+  width: 180px;
+}
+
+.api-providers-field .inv-text-field-control:focus-visible,
+.api-providers-number .inv-text-field-control:focus-visible {
+  outline: 2px solid var(--focus-outline);
+  outline-offset: 1px;
+}
+
+.api-providers-key-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.api-providers-host {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* Enable list: search and load on top, one row per model, add-by-id below. */
+.api-providers-models {
+  max-width: 760px;
+  margin: var(--space-3) 0 var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.api-providers-models-head,
+.api-providers-models-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--font-size-footnote);
+  color: var(--text-muted);
+}
+
+.api-providers-models-head {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.api-providers-models-foot {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.api-providers-models-head .api-providers-field {
+  flex: 1 1 auto;
+}
+
+.api-providers-models-head .api-providers-field .inv-text-field-control {
+  width: 100%;
+}
+
+.api-providers-grow {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.api-providers-models-list {
+  max-height: 280px;
+  overflow: auto;
+}
+
+.api-providers-model {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-1) var(--space-4);
+  align-items: center;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--font-size-body);
+}
+
+.api-providers-model:last-child {
+  border-bottom: 0;
+}
+
+.api-providers-model[hidden] {
+  display: none;
+}
+
+.api-providers-model-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-footnote);
+  color: var(--text-primary);
+}
+
+.api-providers-model-meta {
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.api-providers-source {
+  border-bottom: 1px dotted var(--text-muted);
+  cursor: help;
+}
+
+.api-providers-source[data-source="fallback"] {
+  color: var(--state-warning, var(--text-secondary));
+  border-bottom-color: currentColor;
+}
+
+.api-providers-pin {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
+  font-size: var(--font-size-footnote);
+  color: var(--text-secondary);
+}
+
+.api-providers-number {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.api-providers-number .inv-text-field-control {
+  width: 110px;
+  min-height: 28px;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-input-background);
+  color: var(--text-primary);
+  font-size: var(--font-size-footnote);
+}
+
+.api-providers-empty {
+  margin: 0;
+  padding: var(--space-4);
+  font-size: var(--font-size-footnote);
+  color: var(--text-muted);
+}
+
+/* Composer picker: one line under a provider row that cannot run as listed. */
+.composer-model-picker-hint {
+  display: block;
+  white-space: normal;
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+}

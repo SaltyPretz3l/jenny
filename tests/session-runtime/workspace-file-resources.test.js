@@ -10,6 +10,7 @@ const { VersionedWorkspaceFileService } = require('../../services/versioned-work
 const { PhysicalPathResolver } = require('../../services/session-runtime/physical-paths');
 const { ResourceBroker, filesystemResource } = require('../../services/session-runtime/resource-broker');
 const { cleanupTrackedResources, createTrackedTempDir } = require('../helpers/resource-cleanup');
+const { linkDirectory } = require('../helpers/platform-skips');
 
 function deferred() {
   let resolve;
@@ -213,7 +214,7 @@ test('a declared but unavailable admission provider fails before file IO', async
   assert.equal(rootContext.releaseCount, 1);
 });
 
-test('a junction retarget during root preparation cannot escape the admitted file identity', async (t) => {
+test('a junction retarget during root preparation cannot escape the admitted file identity', async () => {
   const root = createTrackedTempDir('jenny-admitted-link-');
   const first = path.join(root, 'first');
   const second = path.join(root, 'second');
@@ -222,13 +223,7 @@ test('a junction retarget during root preparation cannot escape the admitted fil
   fs.mkdirSync(second);
   fs.writeFileSync(path.join(first, 'file.txt'), 'A');
   fs.writeFileSync(path.join(second, 'file.txt'), 'B');
-  const linkType = process.platform === 'win32' ? 'junction' : 'dir';
-  try {
-    fs.symlinkSync(first, alias, linkType);
-  } catch (error) {
-    t.skip(`directory-link creation unavailable: ${error.code || error.message}`);
-    return;
-  }
+  linkDirectory(first, alias);
 
   const runtime = createRuntime();
   const heldSecond = await runtime.broker.acquire({
@@ -244,7 +239,7 @@ test('a junction retarget during root preparation cannot escape the admitted fil
         swapped = true;
         if (process.platform === 'win32') fs.rmdirSync(alias);
         else fs.unlinkSync(alias);
-        fs.symlinkSync(second, alias, linkType);
+        linkDirectory(second, alias);
       }
       return result;
     },

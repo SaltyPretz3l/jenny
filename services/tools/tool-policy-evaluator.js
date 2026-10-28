@@ -46,7 +46,9 @@ const DEFAULT_TOOL_DEFAULTS = Object.freeze({
   // Plan Plus: records a suggestion for review and writes nothing.
   propose_change: 'auto',
   run_command: 'ask',
+  run_temp_script: 'ask',
   monitor: 'ask',
+  check_monitor: 'auto',
   create_artifact: 'ask',
   // Home writes only touch Jenny's own Home surfaces, every write is
   // attributed and one-click-undoable, and deletes self-gate behind an
@@ -90,6 +92,14 @@ const DEFAULT_TOOL_DEFAULTS = Object.freeze({
   memory: 'auto',
   recall_tool_output: 'auto',
   conversations_recent: 'auto',
+  // Session directory (row 69): the reads only project facts of chats in the caller's scope. Stopping
+  // another chat cancels work the user started, so it always asks; user rules may still override.
+  sessions_list: 'auto',
+  session_status: 'auto',
+  session_transcript: 'auto',
+  session_stop: 'ask',
+  // Row 69 W4b: reads the bundled app guide only.
+  jenny_help: 'auto',
   conversation_open: 'auto',
   conversations_search: 'auto',
 });
@@ -174,7 +184,7 @@ function canonicalizeLegacyMap(value) {
   for (const key in value) {
     if (!Object.hasOwn(value, key)) continue;
     const decision = value[key];
-    if (typeof key !== 'string' || !key.trim()) continue;
+    if (!key.trim()) continue;
     if (!VALID_DECISIONS.has(decision)) continue;
     const normalizedName = boundedPolicyText(key, MAX_POLICY_TOOL_NAME_CHARS, '');
     if (!normalizedName) continue;
@@ -215,7 +225,7 @@ function normalizeRuleList(value) {
       freezeRule({
         id,
         decision,
-          reason: boundedPolicyMetadataText(entry.reason, MAX_POLICY_REASON_CHARS, 'Rule matched'),
+        reason: boundedPolicyMetadataText(entry.reason, MAX_POLICY_REASON_CHARS, 'Rule matched'),
         match: {
           tool_id: normalizeOptionalMatchText(match.tool_id, MAX_POLICY_TOOL_NAME_CHARS),
           action,
@@ -286,8 +296,9 @@ function evaluatePolicy({ descriptor, args = {}, mode = '', snapshot }) {
   const hasActions = isNonEmptyPlainObject(descriptor && descriptor.actions);
   const unresolvable = hasActions && !action;
 
-  if (!descriptor || typeof descriptor.name !== 'string') {
+  if (!descriptor || typeof descriptor.name !== 'string' || !descriptor.name.trim()) {
     return buildPolicyDecision({
+      action,
       descriptor: descriptor || {},
       snapshot: normalizedSnapshot,
       mode,
@@ -301,6 +312,7 @@ function evaluatePolicy({ descriptor, args = {}, mode = '', snapshot }) {
   const ruleHit = firstRuleHit(normalizedSnapshot.rules, { descriptor, args, mode });
   if (ruleHit && (!unresolvable || ruleHit.decision === 'deny')) {
     return buildPolicyDecision({
+      action,
       descriptor,
       snapshot: normalizedSnapshot,
       mode,
@@ -318,6 +330,7 @@ function evaluatePolicy({ descriptor, args = {}, mode = '', snapshot }) {
   );
   if (legacy && (!unresolvable || legacy.decision === 'deny')) {
     return buildPolicyDecision({
+      action,
       descriptor,
       snapshot: normalizedSnapshot,
       mode,
@@ -332,6 +345,7 @@ function evaluatePolicy({ descriptor, args = {}, mode = '', snapshot }) {
   const actionDefault = unresolvable ? undefined : DEFAULT_TOOL_DEFAULTS[actionDefaultName];
   if (actionDefault) {
     return buildPolicyDecision({
+      action,
       descriptor,
       snapshot: normalizedSnapshot,
       mode,
@@ -349,6 +363,7 @@ function evaluatePolicy({ descriptor, args = {}, mode = '', snapshot }) {
   // specific action default.
   if (!unresolvable && action && effectiveSideEffecting(descriptor, args) === false) {
     return buildPolicyDecision({
+      action,
       descriptor,
       snapshot: normalizedSnapshot,
       mode,
@@ -363,6 +378,7 @@ function evaluatePolicy({ descriptor, args = {}, mode = '', snapshot }) {
   // reasoning; scripts and executable types keep the ask default.
   if (!unresolvable && descriptor.name === 'create_artifact' && isSafeDocument(args)) {
     return buildPolicyDecision({
+      action,
       descriptor,
       snapshot: normalizedSnapshot,
       mode,
@@ -377,6 +393,7 @@ function evaluatePolicy({ descriptor, args = {}, mode = '', snapshot }) {
   const fallbackDefault = unresolvable ? undefined : DEFAULT_TOOL_DEFAULTS[fallbackDefaultName];
   if (fallbackDefault) {
     return buildPolicyDecision({
+      action,
       descriptor,
       snapshot: normalizedSnapshot,
       mode,
@@ -389,6 +406,7 @@ function evaluatePolicy({ descriptor, args = {}, mode = '', snapshot }) {
 
   if (!unresolvable && !action && descriptor.read_only === true) {
     return buildPolicyDecision({
+      action,
       descriptor,
       snapshot: normalizedSnapshot,
       mode,
@@ -401,6 +419,7 @@ function evaluatePolicy({ descriptor, args = {}, mode = '', snapshot }) {
 
   if (!unresolvable && (action || descriptor.side_effecting === true)) {
     return buildPolicyDecision({
+      action,
       descriptor,
       snapshot: normalizedSnapshot,
       mode,
@@ -412,6 +431,7 @@ function evaluatePolicy({ descriptor, args = {}, mode = '', snapshot }) {
   }
 
   return buildPolicyDecision({
+    action,
     descriptor,
     snapshot: normalizedSnapshot,
     mode,
@@ -429,6 +449,7 @@ function buildPolicyDecision({
   descriptor = {},
   snapshot,
   mode = '',
+  action = '',
   decision,
   stage,
   matched_rule_id: matchedRuleId,
@@ -438,6 +459,7 @@ function buildPolicyDecision({
   const payload = normalizePolicyDecisionPayload({
     descriptor,
     mode,
+    action,
     decision,
     stage,
     matchedRuleId,
@@ -453,12 +475,14 @@ function buildPolicyDecision({
 function normalizePolicyDecisionPayload({
   descriptor = {},
   mode = '',
+  action = '',
   decision,
   stage,
   matchedRuleId,
   reason,
   snapshotVersion,
 }) {
+  const normalizedAction = boundedPolicyText(action, 80, '');
   return {
     decision: VALID_DECISIONS.has(decision) ? decision : 'ask',
     stage: boundedPolicyText(stage, 80, 'tool_default'),
@@ -469,6 +493,9 @@ function normalizePolicyDecisionPayload({
     tool_family: boundedPolicyText(descriptor.tool_family, 80, ''),
     source_kind: boundedPolicyText(descriptor.source_kind, 80, ''),
     mode: boundedPolicyText(mode, 80, ''),
+    // Mirrors sidecar/ai/tools/policy.py: the action is part of the decision
+    // (and its id) only when the call declared one.
+    ...(normalizedAction ? { action: normalizedAction } : {}),
   };
 }
 
@@ -483,6 +510,7 @@ function buildPolicyDecisionId(decision) {
     decision.stage,
     decision.matched_rule_id || '',
     decision.reason,
+    ...(decision.action ? [decision.action] : []),
   ].join('|');
   return `policy_${crypto.createHash('sha256').update(payload, 'utf8').digest('hex').slice(0, 16)}`;
 }
@@ -498,6 +526,7 @@ function buildPolicyDecisionMetadata(decision) {
       source_kind: decision.source_kind,
     },
     mode: decision.mode,
+    action: decision.action,
     decision: decision.decision,
     stage: decision.stage,
     matchedRuleId: decision.matched_rule_id,
@@ -610,7 +639,10 @@ function ruleMatches(rule, { descriptor, args, mode }) {
     if (!mode || !m.mode.includes(mode)) return false;
   }
   if (m.path_prefix) {
-    const pathArg = String(args.file_path || args.path || '').trim();
+    // Same argument order as policy.py: `path`, then `file_path` only when
+    // `path` is absent.
+    const rawPath = args.path == null ? args.file_path : args.path;
+    const pathArg = String(rawPath ?? '').trim();
     if (!pathPrefixMatches(pathArg, m.path_prefix)) return false;
   }
   return true;

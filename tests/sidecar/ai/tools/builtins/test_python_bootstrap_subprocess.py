@@ -183,6 +183,9 @@ def test_windows_launch_gate_assigns_before_resuming(monkeypatch: pytest.MonkeyP
     ], "the child must be assigned to the job while still suspended, then resumed"
     assert spawn_kwargs["creationflags"] & 0x00000004, "the child must start suspended"
     assert "start_new_session" not in spawn_kwargs
+    assert spawn_kwargs["stdin"] is subprocess.DEVNULL, (
+        "the sidecar's stdin is the JSON-RPC pipe; a bootstrap step must not inherit it"
+    )
     assert (completed.stdout, completed.stderr, completed.returncode) == ("out", "err", 0)
 
 
@@ -201,6 +204,7 @@ def test_posix_launch_uses_a_fresh_session(monkeypatch: pytest.MonkeyPatch) -> N
     bootstrap_subprocess.run(["python", "-c", "pass"], timeout=1)
     assert spawn_kwargs.get("start_new_session") is True
     assert "creationflags" not in spawn_kwargs
+    assert spawn_kwargs["stdin"] is subprocess.DEVNULL
 
 
 def test_timeout_kills_the_tree_before_draining(monkeypatch: pytest.MonkeyPatch) -> None:

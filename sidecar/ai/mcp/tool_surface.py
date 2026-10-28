@@ -128,7 +128,8 @@ def _tool_text(candidate: Any) -> tuple[str, str]:
     return name, description
 
 
-def summarize_tools(raw_tools: Any) -> tuple[list[dict[str, Any]], int]:
+def summarize_tools(raw_tools: Any) -> list[dict[str, Any]]:
+    """Normalized, sorted rows; any malformed tool rejects the whole surface."""
     if not isinstance(raw_tools, list):
         raise ToolSurfaceError("tool_surface_exceeded")
     if len(raw_tools) > MAX_TOOLS:
@@ -171,7 +172,7 @@ def summarize_tools(raw_tools: Any) -> tuple[list[dict[str, Any]], int]:
             row["read_only_claim"] = True
         rows.append(row)
     rows.sort(key=lambda row: (row["name"], row["schema_digest"]))
-    return rows, 0
+    return rows
 
 
 def tools_digest(rows: list[dict[str, Any]], *, read_only_claims: bool = False) -> str:

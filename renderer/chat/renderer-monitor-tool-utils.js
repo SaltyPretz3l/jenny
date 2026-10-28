@@ -51,12 +51,13 @@
     const escapeHtml = typeof opts.escapeHtml === 'function'
       ? opts.escapeHtml
       : fallbackEscapeHtml;
-    const description = monitor.description || opts.summary || 'Monitor';
+    const description = monitor.description || opts.summary
+      || jt('chat.toolShell.monitorDefaultTitle', 'Monitor');
     const timeoutLabel = monitor.timeoutMs > 0 ? `${Math.round(monitor.timeoutMs / 1000)}s` : '';
     const metaParts = [
       monitor.state,
       timeoutLabel ? jt('chat.toolShell.monitorTimeout', 'timeout {duration}', { duration: timeoutLabel }) : '',
-      monitor.persistent ? 'persistent' : '',
+      monitor.persistent ? jt('chat.toolShell.monitorPersistent', 'persistent') : '',
       jtn('chat.toolShell.monitorEventCount', monitor.eventCount, { count: monitor.eventCount }, '{count} event', '{count} events'),
       monitor.droppedEventCount > 0 ? jt('chat.toolShell.monitorDroppedCount', '{count} dropped', { count: monitor.droppedEventCount }) : '',
       monitor.terminalReason,

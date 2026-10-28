@@ -98,7 +98,10 @@ test('persistRuntimePreferences routes through the injected setSessionPreference
   }, 'preferences are mapped to the snake_case persistence contract');
 });
 
-test('composer compaction activity follows the active session and uses the existing polite status host', () => {
+// Compaction is told by the inline activity row, the timeline divider and a
+// toast (renderer-stream-activity-row.js, renderer-manual-compaction-divider.js):
+// the composer status host never carries it.
+test('a pending compaction no longer shows in the composer status host', () => {
   const previousCoordinator = global.rendererCompactionCoordinator;
   global.rendererCompactionCoordinator = require('../renderer/shell/renderer-settings-compaction-section.js');
   const classes = new Set(['hidden']);
@@ -120,16 +123,8 @@ test('composer compaction activity follows the active session and uses the exist
   try {
     const { controller } = makeController({}, { state, composerStatusNotice: host });
     controller.renderComposerStatusNotice();
-    assert.equal(classes.has('hidden'), false);
-    assert.match(host.innerHTML, /Compacting context/);
-
-    state.currentSessionId = 's2';
-    controller.renderComposerStatusNotice();
     assert.equal(classes.has('hidden'), true);
-
-    state.currentSessionId = 's1';
-    controller.renderComposerStatusNotice();
-    assert.equal(classes.has('hidden'), false);
+    assert.doesNotMatch(host.innerHTML, /Compacting/);
   } finally {
     global.rendererCompactionCoordinator = previousCoordinator;
   }
@@ -479,33 +474,26 @@ test('two panes: a notice keyed to a session neither pane shows renders nowhere'
   assert.equal(paneOneHost.classes.has('hidden'), true);
 });
 
-test('pane 1\'s host renders its own session\'s compaction progress; pane 0 keeps its own', (t) => {
+test('neither pane\'s host carries compaction: the inline activity row tells it', (t) => {
   withPaneVisibility(t);
   const previousCoordinator = global.rendererCompactionCoordinator;
   global.rendererCompactionCoordinator = require('../renderer/shell/renderer-settings-compaction-section.js');
   t.after(() => { global.rendererCompactionCoordinator = previousCoordinator; });
   const paneZeroHost = fakeNoticeHost();
   const paneOneHost = fakeNoticeHost();
-  const applied = [];
   const state = {
     currentSessionId: 'sess-1', runtimeDraft: {},
     panes: { panes: [{ paneId: 0, sessionId: 'sess-1' }, { paneId: 1, sessionId: 'sess-2' }], focusedPaneId: 0 },
     ui: { activeView: 'chat', composerStatusNotice: '', composerStatusNoticeOwner: '' },
-    compactionActivities: new Map([['sess-2', {
-      sessionId: 'sess-2', state: 'pending', pending: true, message: 'Compacting context…', tone: 'pending',
-    }]]),
+    compactionActivities: new Map([
+      ['sess-1', { sessionId: 'sess-1', state: 'pending', pending: true, message: 'Compacting context…', tone: 'pending' }],
+      ['sess-2', { sessionId: 'sess-2', state: 'success', pending: false, message: 'Compacted.', tone: 'success' }],
+    ]),
   };
-  const { controller } = makeController({
-    applyActivityAttributes: (node, snapshot) => applied.push([node, snapshot ? snapshot.state : null]),
-  }, { state, composerStatusNotice: paneZeroHost });
+  const { controller } = makeController({}, { state, composerStatusNotice: paneZeroHost });
   controller.renderComposerStatusNotice();
   controller.renderComposerStatusNotice({ node: paneOneHost, sessionId: 'sess-2' });
-  assert.equal(paneZeroHost.classes.has('hidden'), true, 'pane 0 (sess-1) is not compacting');
-  assert.equal(paneOneHost.classes.has('hidden'), false);
-  assert.match(paneOneHost.innerHTML || paneOneHost.textContent, /Compacting context/);
-  assert.deepEqual(applied.filter(([node]) => node === paneOneHost).map(([, value]) => value), ['pending'], 'pane 1\'s host is marked busy');
-
-  state.compactionActivities.set('sess-2', { sessionId: 'sess-2', state: 'success', pending: false, message: 'Compacted.', tone: 'success' });
-  controller.renderComposerStatusNotice({ node: paneOneHost, sessionId: 'sess-2' });
-  assert.match(paneOneHost.innerHTML || paneOneHost.textContent, /Compacted\./, 'the settled result replaces the progress');
+  assert.equal(paneZeroHost.classes.has('hidden'), true);
+  assert.equal(paneOneHost.classes.has('hidden'), true);
+  assert.doesNotMatch(paneZeroHost.innerHTML + paneOneHost.innerHTML, /Compact/);
 });

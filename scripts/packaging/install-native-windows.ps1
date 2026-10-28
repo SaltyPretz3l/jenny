@@ -20,7 +20,9 @@ if (-not $ProbeLog) {
     $logPath = Join-Path $logDir 'install-native-windows.log'
     [IO.File]::WriteAllText($logPath, '', $utf8)
 }
-$successSources = @('renderer-ready', 'ready-to-show+renderer-ready', 'did-finish-load+renderer-ready')
+# The window reveals at first paint since 2026-10-19 (ready-to-show / did-finish-load); the
+# renderer-ready forms are earlier builds.
+$successSources = @('ready-to-show', 'did-finish-load', 'renderer-ready', 'ready-to-show+renderer-ready', 'did-finish-load+renderer-ready')
 
 $profileDir = Join-Path $env:APPDATA 'jenny'
 $shellLog = Join-Path $profileDir 'logs\shell.log'

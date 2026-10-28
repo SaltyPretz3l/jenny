@@ -17,7 +17,7 @@
   z-index: 3;
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 85%, transparent);
+  border-bottom: 1px solid var(--cal-hairline);
   background: color-mix(in srgb, var(--bg-surface) 88%, var(--bg-base));
 }
 
@@ -45,8 +45,8 @@
   min-width: 0;
   min-height: 104px;
   padding: var(--space-2);
-  border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 85%, transparent);
-  border-inline-start: 1px solid color-mix(in srgb, var(--border-subtle) 85%, transparent);
+  border-bottom: 1px solid var(--cal-hairline);
+  border-inline-start: 1px solid var(--cal-hairline);
   cursor: pointer;
 }
 
@@ -55,11 +55,11 @@
 }
 
 .cal-month__cell--weekend {
-  background: color-mix(in srgb, var(--bg-base) 22%, transparent);
+  background: var(--cal-tint-weekend);
 }
 
 .cal-month__cell--outside {
-  background: color-mix(in srgb, var(--bg-base) 45%, transparent);
+  background: var(--cal-tint-offhours);
 }
 
 .cal-month__cell--outside .cal-month__daynum {

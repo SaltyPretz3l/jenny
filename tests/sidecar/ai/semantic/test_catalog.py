@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 
 import pytest
@@ -15,6 +14,7 @@ from sidecar.ai.error_codes import (
 )
 from sidecar.ai.semantic.catalog import CatalogRootSpec, SemanticCatalog, StepResult
 from sidecar.ai.semantic.store import CatalogStore
+from tests.sidecar._platform_skips import make_dir_link, requires_file_symlinks
 from tests.sidecar.ai.semantic.fakes import FakeClock, FakeProvider, refused, unavailable
 
 QUERY_TEMPLATE = "query: {text}"
@@ -311,24 +311,12 @@ def test_model_switch_drops_old_vectors_only_after_full_coverage(
     assert new.status()["coverage"]["other_models"] == {}
 
 
-def test_links_escaping_the_root_are_never_read(tmp_path: Path) -> None:
+def _links_escaping_the_root_are_never_read(tmp_path: Path, make_link) -> None:
     root = tmp_path / "root"
     _write(root, "inside.md", "Inside note.")
     outside = tmp_path / "outside"
     _write(outside, "secret.md", "TOP SECRET outside content.")
-    made_link = False
-    try:
-        os.symlink(outside / "secret.md", root / "linked-secret.md")
-        made_link = True
-    except (OSError, NotImplementedError):
-        pass
-    if sys.platform == "win32":
-        import _winapi
-
-        _winapi.CreateJunction(str(outside), str(root / "junction"))
-        made_link = True
-    if not made_link:
-        pytest.skip("the OS refused to create a symlink or junction")
+    make_link(root, outside)
     provider = FakeProvider()
     catalog = _catalog(tmp_path, provider=provider)
 
@@ -336,6 +324,20 @@ def test_links_escaping_the_root_are_never_read(tmp_path: Path) -> None:
 
     assert result.counts["documents"] == 1
     assert not any("TOP SECRET" in text for call in provider.calls for text in call)
+
+
+def test_directory_links_escaping_the_root_are_never_read(tmp_path: Path) -> None:
+    _links_escaping_the_root_are_never_read(
+        tmp_path, lambda root, outside: make_dir_link(root / "junction", outside)
+    )
+
+
+@requires_file_symlinks()
+def test_file_links_escaping_the_root_are_never_read(tmp_path: Path) -> None:
+    _links_escaping_the_root_are_never_read(
+        tmp_path,
+        lambda root, outside: os.symlink(outside / "secret.md", root / "linked-secret.md"),
+    )
 
 
 def test_binary_and_oversize_files_are_skipped_with_reasons(

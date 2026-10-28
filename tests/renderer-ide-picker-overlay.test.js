@@ -160,3 +160,38 @@ test('picker-overlay keeps caller row ids and drops aria-activedescendant when t
   overlay.refresh();
   assert.equal(input().hasAttribute('aria-activedescendant'), false);
 });
+
+test('arrow keys move the selection over the kept matches without recomputing them', (t) => {
+  let computeCalls = 0;
+  const { dom, stage, overlay, input } = setupRows(() => { computeCalls += 1; return ['alpha', 'beta', 'gamma']; });
+  t.after(() => overlay.dispose());
+  overlay.open();
+  const baseline = computeCalls;
+  const press = (key) => input().dispatchEvent(new dom.window.KeyboardEvent('keydown', { key, bubbles: true }));
+  const selected = () => [...stage.querySelectorAll('.ide-picker-row--selected')].map((row) => row.textContent);
+
+  press('ArrowDown');
+  press('ArrowDown');
+  assert.deepEqual(selected(), ['gamma']);
+  press('ArrowDown');
+  assert.deepEqual(selected(), ['alpha'], 'wraps forward');
+  press('ArrowUp');
+  assert.deepEqual(selected(), ['gamma'], 'wraps backward');
+  assert.equal(computeCalls, baseline, 'no fuzzy re-score per arrow key');
+  assert.equal(stage.querySelectorAll('[aria-selected="true"]').length, 1);
+  assert.equal(input().getAttribute('aria-activedescendant'), stage.querySelector('[aria-selected="true"]').id);
+
+  input().value = 'a';
+  input().dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  assert.equal(computeCalls, baseline + 1, 'typing still recomputes');
+  assert.deepEqual(selected(), ['alpha'], 'typing resets the selection');
+});
+
+test('a single match keeps its selection on arrow keys', (t) => {
+  const { dom, stage, overlay, input } = setupRows(() => ['only']);
+  t.after(() => overlay.dispose());
+  overlay.open();
+  input().dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+  assert.equal(stage.querySelectorAll('.ide-picker-row--selected').length, 1);
+  assert.equal(stage.querySelectorAll('[data-test-row]').length, 1);
+});

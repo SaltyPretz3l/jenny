@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import sys
 from dataclasses import dataclass
 from functools import cached_property
@@ -36,12 +35,6 @@ from sidecar.ai.tools.tool_search import (
     build_deferred_tool_entry,
     hidden_unexposed_tool_names,
 )
-from sidecar.runtime.diagnostics import log_event
-
-logger = logging.getLogger(__name__)
-
-_DEFAULT_OFF_CONFIG_FLAGS: frozenset[str] = frozenset()
-_CONFIG_FLAG_PREREQUISITES: dict[str, tuple[str, ...]] = {}
 
 RUNTIME_UNAVAILABLE_REASON = "runtime/backend unavailable"
 CONFIG_DISABLED_REASON = "config disabled"
@@ -93,9 +86,7 @@ def tool_preference_set(
     if not isinstance(tool_preferences, dict):
         return frozenset()
     value = tool_preferences.get(key)
-    if isinstance(value, tuple):
-        return frozenset(str(item).strip() for item in value if str(item).strip())
-    if isinstance(value, list):
+    if isinstance(value, (tuple, list)):
         return frozenset(str(item).strip() for item in value if str(item).strip())
     return frozenset()
 
@@ -293,35 +284,13 @@ def blocked_tool_metadata(reason: str | None) -> dict[str, Any]:
     return {}
 
 
-def _bool_config_gate(config: Any | None, key: str, *, default: bool) -> bool:
-    value = _catalog.config_value(config, key, default)
-    if isinstance(value, bool):
-        return value
-    log_event(
-        logger,
-        logging.WARNING,
-        component="ai.tools",
-        event="ai.tools.config_gate_invalid",
-        message=f"Tool config gate '{key}' has non-bool value; failing closed.",
-        status="failure",
-        data={"key": key, "value_type": type(value).__name__},
-    )
-    return False
-
-
 def _tools_enabled(config: Any | None) -> bool:
-    return _bool_config_gate(config, "tools_enabled", default=True)
+    return _catalog.bool_config_flag(config, "tools_enabled", default=True)
 
 
 def _config_flag_enabled(config: Any | None, key: str | None) -> bool:
-    if not key:
-        return True
-    if not _bool_config_gate(config, key, default=key not in _DEFAULT_OFF_CONFIG_FLAGS):
-        return False
-    return all(
-        _bool_config_gate(config, prerequisite, default=False)
-        for prerequisite in _CONFIG_FLAG_PREREQUISITES.get(key, ())
-    )
+    # An absent manifest config flag reads as enabled; a malformed one fails closed.
+    return not key or _catalog.bool_config_flag(config, key, default=True)
 
 
 def _workspace_root_present(context: ToolAssemblyContext) -> bool:

@@ -13,6 +13,7 @@ const { ResourceBroker, capacityResource } = require('../../services/session-run
 const { ToolExecutor } = require('../../services/tools/tool-executor');
 const { ToolRegistry } = require('../../services/tools/tool-registry');
 const { createVerifyTool } = require('../../services/tools/builtin/verify-tool');
+const { withManifestSchema } = require('../../services/tools/tool-manifest-index');
 const {
   createToolTestRunnerService,
   requireToolTestRunnerExecutionPort,
@@ -112,7 +113,7 @@ function integratedFixture({ runTestCommand, continuation = false } = {}) {
     requestId: 'request_test', signal: controller.signal,
   });
   const registry = new ToolRegistry();
-  registry.registerTool(createVerifyTool());
+  registry.registerTool(withManifestSchema(createVerifyTool()));
   const executor = new ToolExecutor({ registry, permissionStore: policyStore,
     pathPolicy: {}, logger() {} });
   const gateway = continuation ? new (require('../../services/session-runtime/resource-operations').ToolResourceOperations)({

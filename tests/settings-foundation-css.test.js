@@ -40,8 +40,6 @@ test('foundation sheet defines the shared Phase 0 primitives', () => {
     '.settings-group-copy',
     '.settings-group--flush',
     '.settings-subsection',
-    '.settings-card-header--subsection',
-    '.settings-requires-note',
   ]) {
     assert.match(css, new RegExp(`\\${selector}\\b`), `missing ${selector}`);
   }

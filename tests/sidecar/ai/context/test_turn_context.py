@@ -70,6 +70,19 @@ def test_only_personality_blocks_stay_leading() -> None:
     assert trailing == (active_file,)
 
 
+@pytest.mark.usefixtures("flag_on")
+def test_profile_overview_rides_the_trailing_row_locally_and_leads_on_cloud() -> None:
+    # Row 69: the primary chat's volatile overview is per-turn data.
+    personality = {"kind": "personality", "content": "Warm."}
+    overview = {"kind": "profile_overview", "content": "## Profile Overview\nProjects: 2"}
+
+    assert "profile_overview" not in tc.LEADING_CONTEXT_BLOCK_KINDS
+    assert tc.split_context_blocks(_config("ollama"), (personality, overview)) == (
+        (personality,), (overview,))
+    assert tc.split_context_blocks(_config("chatgpt"), (personality, overview)) == (
+        (personality, overview), ())
+
+
 def test_row_is_placed_before_the_latest_user_message() -> None:
     row = tc.build_turn_context_row(["## Workspace Manifest\nsrc/"])
     history = [

@@ -28,6 +28,7 @@
     'renderTestRunner',
     'renderTestOutput',
     'renderActivity',
+    'renderOutline', // row 82 O1: an optional view, self-gated like the rest
   ]);
 
   function createIdeLayout(deps) {

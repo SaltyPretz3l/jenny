@@ -358,6 +358,50 @@ test('a typography change retunes registered editors and remeasures Monaco fonts
   assert.equal(applied.length, 1, 'unregistered editors must not be retuned');
 });
 
+test('E1: with a custom font set, an observer pass keeps it', async (t) => {
+  const dom = new JSDOM(
+    '<style>:root { --font-family-mono: "Cascadia Code", monospace; }'
+    + ':root[data-typography="editorial"] { --font-family-mono: "Cascadia Mono", monospace; }</style>',
+    { pretendToBeVisual: true, url: 'file:///C:/dev/jenny/index.html' }
+  );
+  installDomGlobals(dom, t);
+  const monacoUtils = loadRendererMonacoEditorUtils();
+  const previousUtils = globalThis.rendererMonacoEditorUtils;
+  const previousState = globalThis.rendererIdeState;
+  globalThis.rendererMonacoEditorUtils = monacoUtils;
+  globalThis.rendererIdeState = require('../renderer/features/renderer-ide-state');
+  t.after(() => {
+    globalThis.rendererMonacoEditorUtils = previousUtils;
+    globalThis.rendererIdeState = previousState;
+  });
+  const editorPrefs = require('../renderer/features/renderer-ide-editor-prefs');
+  dom.window.monaco = { editor: { remeasureFonts() {} } };
+  // The IDE editor follows the IDE preference; an artifact editor follows the token.
+  const ideOptions = {};
+  const ideEditor = { updateOptions(options) { Object.assign(ideOptions, options); } };
+  const artifactOptions = {};
+  const artifactEditor = { updateOptions(options) { Object.assign(artifactOptions, options); } };
+  const unregisterIde = monacoUtils.registerMonacoFontConsumer(ideEditor, dom.window.document);
+  const unregisterArtifact = monacoUtils.registerMonacoFontConsumer(artifactEditor, dom.window.document);
+  t.after(() => { unregisterIde(); unregisterArtifact(); });
+  const ide = { fontFamily: 'Fira Code' };
+  editorPrefs.applyEditorPrefs(ide, { setEditorOptions: (options) => ideEditor.updateOptions(options) }, null);
+  assert.equal(ideOptions.fontFamily, 'Fira Code');
+
+  dom.window.document.documentElement.dataset.typography = 'editorial';
+  await new Promise((resolve) => { dom.window.queueMicrotask(resolve); });
+  await new Promise((resolve) => { dom.window.queueMicrotask(resolve); });
+  assert.equal(ideOptions.fontFamily, 'Fira Code', 'the custom family survives the typography change');
+  assert.equal(normalizeFontStack(artifactOptions.fontFamily), '"Cascadia Mono", monospace');
+
+  // Clearing the custom family puts the IDE editor back on the token at the next pass.
+  ide.fontFamily = '';
+  dom.window.document.documentElement.dataset.typography = 'technical';
+  await new Promise((resolve) => { dom.window.queueMicrotask(resolve); });
+  await new Promise((resolve) => { dom.window.queueMicrotask(resolve); });
+  assert.equal(normalizeFontStack(ideOptions.fontFamily), '"Cascadia Code", monospace');
+});
+
 test('every Monaco create site opts in to the mono token and unregisters on dispose', () => {
   // Source-level on purpose: Monaco never instantiates under JSDOM (it takes
   // the textarea fallback), so the helpers above can be fully green while a
@@ -380,9 +424,9 @@ test('every Monaco create site opts in to the mono token and unregisters on disp
 
   // Each create call must hand its options through the wrapper.
   assert.match(artifactSource, /editor\.create\(host, withMonacoFontFamily\(\{/);
-  assert.match(ideSource, /editor\.create\(host, fonts\.withFont\(\{/);
+  assert.match(ideSource, /editor\.create\(host, fonts\.withFont\(/);
   assert.match(ideSource, /editor\.createDiffEditor\(diffEditorEl, fonts\.withFont\(/);
-  assert.match(ideSource, /editor\.create\(el, fonts\.withFont\(\{/); // a secondary editor group (row 40 W5)
+  assert.match(ideSource, /editor\.create\(el, fonts\.withFont\(/); // a secondary editor group (row 40 W5)
 
   // And each must release its registration, or the observer reaches a
   // torn-down editor.

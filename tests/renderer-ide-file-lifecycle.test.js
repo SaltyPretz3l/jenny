@@ -71,6 +71,8 @@ function makeLifecycle({
   const canonicalPathFor = (requestedPath) => canonicalPaths[requestedPath.toLowerCase()] || requestedPath;
   const api = {
     readText: async ({ path }) => {
+      // The lifecycle's .editorconfig lookup is not a document read: keep it out of the counters.
+      if (path.endsWith('.editorconfig')) return { ok: false, code: 'CMP-WORKSPACEFS-0004', message: 'ENOENT', details: {} };
       readTextCalls.push(path);
       if (readHook) await readHook(path, readTextCalls.length);
       if (readFailure) return readFailure;
@@ -453,6 +455,38 @@ test('reopen skips a vanished file (no view-state apply) but reopens a present o
   await ctx2.lifecycle.reopenClosedTab();
   await tick();
   assert.equal(ctx2.editorHost.applyViewStateCount, 1, 'mutation pair: a present file restores its view state');
+});
+
+test('a closed PDF tab remembers its page and zoom and reopen re-applies them', async () => {
+  const ctx = makeLifecycle({ files: new Set(['a.js', 'pane.js']) });
+  const restored = [];
+  let position = { page: 4, zoom: 1.5 };
+  ctx.editorHost.getPdfViewPosition = (path) => (path === 'pane.js' ? position : null);
+  ctx.editorHost.restorePdfView = (path, view) => { restored.push({ path, view }); return true; };
+
+  // A code tab never carries a pdfView, and the entry shape stays unchanged.
+  assert.equal(await ctx.lifecycle.openFile('a.js'), true);
+  ctx.lifecycle.closeTab('a.js');
+  assert.deepEqual(ctx.closedTabs.peek(), { path: 'a.js', viewState: { cursor: 1 }, group: '' });
+  await ctx.lifecycle.reopenClosedTab();
+  await tick();
+  assert.deepEqual(restored, [], 'no PDF restore for a code tab');
+
+  // A PDF-pane (document kind; a text path stands in for the fake host) tab is recorded with its pdfView and re-applied on reopen.
+  assert.equal(await ctx.lifecycle.openFile('pane.js'), true);
+  ctx.docs.set('pane.js', { kind: 'document', value: '', mtime: 0 });
+  ctx.lifecycle.closeTab('pane.js');
+  assert.deepEqual(ctx.closedTabs.peek().pdfView, { page: 4, zoom: 1.5 });
+  await ctx.lifecycle.reopenClosedTab();
+  await tick();
+  assert.deepEqual(restored, [{ path: 'pane.js', view: { page: 4, zoom: 1.5 } }]);
+
+  // A document tab with no valid PDF position is still not recorded.
+  position = null;
+  ctx.docs.set('pane.js', { kind: 'document', value: '', mtime: 0 });
+  const before = ctx.closedTabs.pushCount;
+  ctx.lifecycle.closeTab('pane.js');
+  assert.equal(ctx.closedTabs.pushCount, before);
 });
 
 test('root reset clears the closed-tab stack', async () => {

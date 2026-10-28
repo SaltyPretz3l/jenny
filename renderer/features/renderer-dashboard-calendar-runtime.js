@@ -147,9 +147,13 @@
       const anchor = gridModule.listWeekDays(visibleWeek)[3];
       const delta = railNav.dataset.calRailNav === 'next' ? 1 : -1;
       const targetMonth = new Date(anchor.getFullYear(), anchor.getMonth() + delta, 1);
+      // The rail titles a week by its Wednesday's month; the week holding the
+      // 4th always has its Wednesday (1st..7th) in the target month, whereas the
+      // week holding a Thu-Sat 1st would title itself the previous month.
+      const targetDay = new Date(targetMonth.getFullYear(), targetMonth.getMonth(), 4);
       return {
         handled: true,
-        weekOffset: gridModule.computeWeekOffsetForDate(nowProvider(), targetMonth),
+        weekOffset: gridModule.computeWeekOffsetForDate(nowProvider(), targetDay),
         pendingFocusSelector: `[data-cal-rail-nav="${railNav.dataset.calRailNav}"]`,
         pendingAnnounce: targetMonth.toLocaleDateString(globalThis.jennyI18n?.tag?.(), { month: 'long', year: 'numeric' }),
         preserveQuickAdd: true,

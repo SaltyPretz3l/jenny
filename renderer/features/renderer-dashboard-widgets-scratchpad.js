@@ -61,6 +61,7 @@
     // after the next render" flag (used after add/switch so focus lands on the
     // freshly-built node, not a node about to be replaced by the echo repaint).
     let localActiveId = null;
+    let lastConfigActiveId = null;
     let lastScratchpad = null;
     let renamingNoteId = null;
     let statusTimer = null;
@@ -150,35 +151,57 @@
           }
         }, STATUS_CLEAR_MS);
         // Never hold a Node test process (or the app) open on this cosmetic timer.
-        if (statusTimer && typeof statusTimer.unref === 'function') {
-          statusTimer.unref();
-        }
+        statusTimer.unref?.();
       }
     }
 
-    function setSaving(body) {
+    function setMeta(body, text) {
       const meta = body.querySelector('[data-scratchpad-meta]');
-      if (meta) {
-        meta.textContent = jt('common.saving', 'Saving…');
+      if (meta && meta.textContent !== text) {
+        meta.textContent = text;
       }
     }
 
-    function syncMeta(body, activeNote, text) {
-      const countEl = body.querySelector('[data-scratchpad-count]');
-      if (countEl) {
-        const len = String(text || '').length;
-        if (len >= COUNT_VISIBLE_AT) {
-          countEl.textContent = `${len}/${MAX_NOTE_CHARS}`;
-          countEl.dataset.state = len >= MAX_NOTE_CHARS ? 'danger' : '';
-        } else {
-          countEl.textContent = '';
-          countEl.dataset.state = '';
-        }
+    function syncSavedAt(body, activeNote) {
+      const rel = relativeTime(activeNote?.updatedAt, nowProvider());
+      setMeta(body, rel ? jt('dashboard.widgets.scratchpad.savedAt', 'Saved · {time}', { time: rel }) : '');
+    }
+
+    // A pad write settled. Failure replaces "Saving…" with the error (the draft
+    // stays pending and retries on the next edit, blur or note action); success
+    // refreshes "Saved · …" unless a newer draft is already queued, which also
+    // clears a "Saving…" whose write needed no echo (a draft for a deleted note).
+    function settleSave(body, saved) {
+      if (saved === false) {
+        setMeta(body, '');
+        setNote(body, jt('dashboard.scratchpad.actions.saveNoteFailed', 'Could not save the note.'), true);
+        return;
       }
-      const metaEl = body.querySelector('[data-scratchpad-meta]');
-      if (metaEl) {
-        const rel = relativeTime(activeNote?.updatedAt, nowProvider());
-        metaEl.textContent = rel ? jt('dashboard.widgets.scratchpad.savedAt', 'Saved · {time}', { time: rel }) : '';
+      const active = getActiveNote(lastScratchpad);
+      if (saved === true && active && actions?.pendingDraftFor?.(active.id) == null) {
+        syncSavedAt(body, active);
+      }
+    }
+
+    function syncCount(body, text) {
+      const countEl = body.querySelector('[data-scratchpad-count]');
+      if (!countEl) {
+        return;
+      }
+      const len = String(text || '').length;
+      const visible = len >= COUNT_VISIBLE_AT;
+      const label = visible ? `${len}/${MAX_NOTE_CHARS}` : '';
+      const state = visible && len >= MAX_NOTE_CHARS ? 'danger' : '';
+      if (countEl.textContent !== label) countEl.textContent = label;
+      if (countEl.dataset.state !== state) countEl.dataset.state = state;
+    }
+
+    // `hasDraft`: unsaved text is on screen, so leave the meta alone ("Saving…"
+    // while queued, blank after a failed write) rather than claim "Saved".
+    function syncMeta(body, activeNote, text, hasDraft) {
+      syncCount(body, text);
+      if (!hasDraft) {
+        syncSavedAt(body, activeNote);
       }
     }
 
@@ -208,11 +231,31 @@
     function tabLabel(note, index) {
       const title = String(note?.title || '').trim();
       const generated = /^Note (\d+)$/.exec(title);
-      return generated ? jt('dashboard.widgets.scratchpad.noteNumber', 'Note {number}', { number: generated[1] }) : title || jt('dashboard.widgets.scratchpad.noteNumber', 'Note {number}', { number: index + 1 });
+      if (title && !generated) {
+        return title;
+      }
+      return jt('dashboard.widgets.scratchpad.noteNumber', 'Note {number}', { number: generated ? generated[1] : index + 1 });
+    }
+
+    // The active tab gets a rename pencil; every tab past the one-note floor
+    // gets a close ×. Both sit at tabIndex -1 (reached via hover / right-click
+    // / Delete) so the roving-tabindex arrow nav still cycles only the tab
+    // buttons, never these controls.
+    function tabControl(noteId, kind, glyph, ariaLabel, title) {
+      return actionButton({
+        plain: true,
+        className: `dashboard-scratchpad__tab-${kind}`,
+        label: glyph,
+        ariaLabel,
+        tabIndex: -1,
+        title,
+        dataset: { [`scratchpad-${kind}`]: noteId },
+      });
     }
 
     function buildTabsHtml(notes, activeId) {
       const atFloor = notes.length <= 1;
+      const renameLabel = jt('dashboard.widgets.scratchpad.renameNote', 'Rename note');
       const tabs = notes.map((note, index) => {
         const label = tabLabel(note, index);
         const selected = note.id === activeId;
@@ -227,21 +270,8 @@
           title: jt('dashboard.widgets.scratchpad.doubleClickRename', '{label} — double-click to rename', { label }),
           dataset: { 'scratchpad-tab': note.id },
         });
-        // The active tab gets a rename pencil; every tab past the one-note floor
-        // gets a close ×. Both sit at tabIndex -1 (reached via hover / right-click
-        // / Delete) so the roving-tabindex arrow nav still cycles only the tab
-        // buttons, never these controls.
-        const tabControl = (kind, glyph, ariaLabel, title) => actionButton({
-          plain: true,
-          className: `dashboard-scratchpad__tab-${kind}`,
-          label: glyph,
-          ariaLabel,
-          tabIndex: -1,
-          title,
-          dataset: { [`scratchpad-${kind}`]: note.id },
-        });
-        const edit = selected ? tabControl('edit', '✎', jt('dashboard.widgets.scratchpad.renameNote', 'Rename note'), jt('dashboard.widgets.scratchpad.renameNote', 'Rename note')) : '';
-        const close = atFloor ? '' : tabControl('close', '×', jt('dashboard.widgets.scratchpad.deleteNamedNote', 'Delete {label}', { label }), jt('dashboard.widgets.scratchpad.deleteNote', 'Delete note'));
+        const edit = selected ? tabControl(note.id, 'edit', '✎', renameLabel, renameLabel) : '';
+        const close = atFloor ? '' : tabControl(note.id, 'close', '×', jt('dashboard.widgets.scratchpad.deleteNamedNote', 'Delete {label}', { label }), jt('dashboard.widgets.scratchpad.deleteNote', 'Delete note'));
         const wrapClass = 'dashboard-scratchpad__tab-wrap'
           + (note.id === newNoteId ? ' dashboard-scratchpad__tab-wrap--new' : '');
         return `<div class="${wrapClass}">` + tab + edit + close + '</div>';
@@ -263,9 +293,7 @@
         + tabs + add + '</div>';
     }
 
-    function buildFooterHtml(opts) {
-      const markdownOn = opts && opts.markdownOn === true;
-      const inPreview = opts && opts.previewMode === true;
+    function buildFooterHtml(markdownOn, inPreview) {
       const previewToggle = markdownOn
         ? actionButton({
           plain: true,
@@ -315,13 +343,9 @@
         return '<div class="dashboard-scratchpad__preview-empty">' + escapeHtml(jt('dashboard.widgets.scratchpad.nothingToPreview', 'Nothing to preview yet.')) + '</div>';
       }
       if (markdownModule && typeof markdownModule.renderPreviewHtml === 'function') {
-        return markdownModule.renderPreviewHtml(String(text || ''), {
-          actionButton,
-          escapeHtml: typeof textField.escapeHtml === 'function' ? textField.escapeHtml : null,
-        });
+        return markdownModule.renderPreviewHtml(String(text || ''), { actionButton, escapeHtml });
       }
-      const esc = typeof textField.escapeHtml === 'function' ? textField.escapeHtml(String(text || '')) : '';
-      return '<div class="dashboard-scratchpad__preview-line">' + esc + '</div>';
+      return '<div class="dashboard-scratchpad__preview-line">' + escapeHtml(String(text || '')) + '</div>';
     }
 
     function buildPreviewHtml(text) {
@@ -416,6 +440,18 @@
 
     // ---- interactions ------------------------------------------------------
 
+    // Settle a note action: show its { error } in the footer, else hand the
+    // result to `onOk` (optional).
+    function runNoteAction(body, pending, onOk) {
+      void Promise.resolve(pending).then((result) => {
+        if (result && result.error) {
+          setNote(body, result.error, true);
+          return;
+        }
+        onOk?.(result);
+      });
+    }
+
     function switchTo(body, noteId) {
       if (!noteId || !actions?.setActiveNote) {
         return;
@@ -426,37 +462,33 @@
       }
       // setActiveNote flushes the outgoing note's pending save first (the queued
       // save is pinned to the OLD note id), then persists the pointer.
-      void Promise.resolve(actions.setActiveNote(noteId)).then((result) => {
-        if (result && result.error) {
-          setNote(body, result.error, true);
-          return;
-        }
-        if (result?.ok !== true) return;
-        localActiveId = noteId;
-        previewMode = false;
-        focusAfterRender = true;
-        renderMulti(body, lastScratchpad);
+      runNoteAction(body, actions.setActiveNote(noteId), (result) => {
+        if (result?.ok === true) adoptActive(body, noteId);
       });
+    }
+
+    // Select `noteId` after a switch/add/delete settled: back to the editable
+    // textarea, focus it, and re-render now — the config echo already repainted
+    // with the OLD active id, so this makes the right note selected before any
+    // input can fire and consumes the focus flag immediately.
+    function adoptActive(body, noteId) {
+      localActiveId = noteId;
+      previewMode = false;
+      focusAfterRender = renamingNoteId == null;
+      renderMulti(body, lastScratchpad);
     }
 
     function addNote(body) {
       if (!actions?.addNote) {
         return;
       }
-      void Promise.resolve(actions.addNote()).then((result) => {
-        if (result && result.error) {
-          setNote(body, result.error, true);
-          return;
-        }
+      runNoteAction(body, actions.addNote(), (result) => {
         if (result && result.activeNoteId) {
-          localActiveId = result.activeNoteId;
-          newNoteId = result.activeNoteId;     // play the grow-in once
-          previewMode = false;
-          focusAfterRender = true;
-          // The config echo already repainted with the OLD active id; re-render
-          // now so the new note is selected before any input can fire and the
-          // focus flag is consumed immediately (mirrors switchTo()).
-          renderMulti(body, lastScratchpad);
+          // Play the grow-in once. The write's echo already rebuilt the strip
+          // (before this id was known), so force one more strip build to show it.
+          newNoteId = result.activeNoteId;
+          body.dataset.scratchpadTabsKey = '';
+          adoptActive(body, result.activeNoteId);
         }
       });
     }
@@ -465,18 +497,11 @@
       if (!actions?.deleteNote) {
         return;
       }
-      void Promise.resolve(actions.deleteNote(noteId)).then((result) => {
-        if (result && result.error) {
-          setNote(body, result.error, true);
-          return;
-        }
-        if (result && result.activeNoteId) {
-          localActiveId = result.activeNoteId;
-          previewMode = false;
-          focusAfterRender = true;
-          // Re-render now (the echo already repainted with the pre-delete active
-          // id) so the surviving note is selected and focus is consumed.
-          renderMulti(body, lastScratchpad);
+      const activeBefore = resolveActiveId(lastScratchpad);
+      runNoteAction(body, actions.deleteNote(noteId), (result) => {
+        // Deleting a background tab keeps the active note, its view and focus.
+        if (result && result.activeNoteId && result.activeNoteId !== activeBefore) {
+          adoptActive(body, result.activeNoteId);
         }
       });
     }
@@ -484,13 +509,17 @@
     // Quick-delete entry point for the per-tab × and the Delete key. A note with
     // content routes through a one-item confirm (reuse the context menu) so a
     // stray click can't drop written text; an empty note deletes immediately.
-    function requestDelete(body, noteId, anchorX, anchorY) {
+    function requestDelete(body, noteId, anchor) {
       const notes = getNotes(lastScratchpad);
       const note = notes.find((n) => n.id === noteId);
       if (!note) {
         return;
       }
-      const hasText = String(note.text || '').trim() !== '';
+      // The active note's live field may hold text its save hasn't persisted yet.
+      const live = noteId === resolveActiveId(lastScratchpad)
+        ? body.querySelector('#homeScratchpadInput')?.value
+        : undefined;
+      const hasText = String(live ?? note.text ?? '').trim() !== '';
       if (!hasText || !contextMenu?.show) {
         deleteNote(body, noteId);
         return;
@@ -500,8 +529,8 @@
         items: [
           { label: jt('dashboard.widgets.scratchpad.deleteNamedNoteQuoted', 'Delete “{label}”', { label }), action: () => deleteNote(body, noteId) },
         ],
-        anchorX,
-        anchorY,
+        anchorX: anchor.x,
+        anchorY: anchor.y,
         rootEl: body,
       });
     }
@@ -547,11 +576,7 @@
       const value = input ? input.value : '';
       renamingNoteId = null;
       if (commit && actions?.renameNote) {
-        void Promise.resolve(actions.renameNote(noteId, value)).then((result) => {
-          if (result && result.error) {
-            setNote(body, result.error, true);
-          }
-        });
+        runNoteAction(body, actions.renameNote(noteId, value));
       }
       // Force a strip rebuild so the inline input is replaced even when the title
       // is unchanged (an unchanged title leaves the render-key untouched, so the
@@ -563,9 +588,9 @@
     }
 
     // Toggle a `- [ ]`/`- [x]` checklist line from the preview, persist, and
-    // re-render. Optimistic: the in-memory note text is updated and the preview
-    // repainted immediately, then the debounced writer is flushed so the change
-    // lands without waiting on the echo (which reconciles afterward).
+    // re-render. Optimistic: the preview repaints from a local copy of the note
+    // immediately (shared app state only changes through the echo), then the
+    // debounced writer is flushed so the change lands without waiting.
     function toggleCheck(body, lineIndex) {
       if (!markdownModule || typeof markdownModule.toggleChecklistLine !== 'function') {
         return;
@@ -573,8 +598,13 @@
       // Settle any in-flight/pending pad save FIRST (e.g. edits made right before
       // entering preview, flushed on the textarea's focusout) so the toggle lands
       // on the latest reconciled text, never a stale pre-echo snapshot — then
-      // read, toggle, persist.
-      Promise.resolve(actions?.flushSave?.()).then(() => {
+      // read, toggle, persist. A failed settle leaves an unsaved draft the toggle
+      // would overwrite, so stop and say so instead.
+      Promise.resolve(actions?.flushSave?.()).then((saved) => {
+        if (saved === false) {
+          settleSave(body, false);
+          return;
+        }
         const note = getActiveNote(lastScratchpad);
         if (!note) {
           return;
@@ -584,25 +614,29 @@
         if (nextText === current) {
           return;
         }
-        note.text = nextText;
+        lastScratchpad = {
+          ...lastScratchpad,
+          notes: getNotes(lastScratchpad).map((n) => (n === note ? { ...n, text: nextText } : n)),
+        };
         renderMulti(body, lastScratchpad);
         if (actions?.queueSave) {
           actions.queueSave(nextText, note.id);
-          actions.flushSave?.();
+          void Promise.resolve(actions.flushSave?.()).then((ok) => settleSave(body, ok));
         }
       });
     }
 
-    function openActionsMenu(body, anchorX, anchorY) {
+    function openActionsMenu(body, anchor) {
       if (!contextMenu?.show || !buildScratchpadMenu) {
         return;
       }
       const ta = body.querySelector('#homeScratchpadInput');
-      const text = ta ? ta.value : '';
+      const active = getActiveNote(lastScratchpad);
+      // In markdown preview the textarea is gone; act on the note's saved text.
+      const text = ta ? ta.value : String(active?.text || '');
       const selection = ta && typeof ta.selectionStart === 'number'
         ? String(ta.value).slice(ta.selectionStart, ta.selectionEnd)
         : '';
-      const active = getActiveNote(lastScratchpad);
       const documentRef = body.ownerDocument;
       // Pin state for the active note.
       const pins = Array.isArray(lastScratchpad?.pins) ? lastScratchpad.pins : [];
@@ -611,8 +645,8 @@
         : {};
       const present = (items) => contextMenu.show({
         items,
-        anchorX,
-        anchorY,
+        anchorX: anchor.x,
+        anchorY: anchor.y,
         rootEl: body,
         onActionError: (error) => setNote(body, String(error?.message || error || jt('dashboard.widgets.scratchpad.actionFailed', 'Action failed.')), true),
       });
@@ -634,7 +668,7 @@
       }
     }
 
-    function openTabMenu(body, noteId, anchorX, anchorY) {
+    function openTabMenu(body, noteId, anchor) {
       if (!contextMenu?.show) {
         return;
       }
@@ -650,31 +684,30 @@
             action: isLast ? undefined : () => deleteNote(body, noteId),
           },
         ],
-        anchorX,
-        anchorY,
+        anchorX: anchor.x,
+        anchorY: anchor.y,
         rootEl: body,
       });
     }
 
+    // Pointer position when the event has one, else just below `fallbackEl`
+    // (keyboard paths pass a null event).
     function menuAnchor(event, fallbackEl) {
-      const x = event && event.clientX ? event.clientX : 0;
-      const y = event && event.clientY ? event.clientY : 0;
-      if (x || y) {
-        return { x, y };
+      if (event?.clientX || event?.clientY) {
+        return { x: event.clientX || 0, y: event.clientY || 0 };
       }
-      const rect = fallbackEl && typeof fallbackEl.getBoundingClientRect === 'function'
-        ? fallbackEl.getBoundingClientRect()
-        : null;
+      const rect = fallbackEl?.getBoundingClientRect?.();
       return { x: rect ? rect.left : 0, y: rect ? rect.bottom : 0 };
     }
 
+    // Delegated listeners are bound once per body (render() calls this first);
+    // the WeakMap entry identifies this widget's live binding.
     function bindBody(body) {
-      if (body.dataset.scratchpadBound === '1' && BODY_TEARDOWNS.get(body) === bodyTeardown) {
+      if (bodyTeardown && BODY_TEARDOWNS.get(body) === bodyTeardown) {
         return;
       }
       BODY_TEARDOWNS.get(body)?.();
       bodyTeardown?.();
-      body.dataset.scratchpadBound = '1';
 
       function handleInput(event) {
         const target = event.target;
@@ -684,14 +717,18 @@
         // Auto-grow first: it is presentation only, so it must not depend on a
         // save pipeline being wired.
         autosizeField(target);
+        syncCount(body, target.value);
         if (!actions) {
           return;
         }
-        setNote(body, '', false);
-        setSaving(body);
+        // Per keystroke: touch the status line only when it actually changes.
+        if (body.querySelector('[data-scratchpad-note]')?.textContent) {
+          setNote(body, '', false);
+        }
+        setMeta(body, jt('common.saving', 'Saving…'));
         const noteId = body.querySelector('.dashboard-scratchpad__tab[aria-selected="true"]')
           ?.dataset.scratchpadTab || '';
-        actions.queueSave(target.value, noteId);
+        actions.queueSave(target.value, noteId, (saved) => settleSave(body, saved));
       }
 
       function handleClick(event) {
@@ -714,8 +751,7 @@
         }
         const closeBtn = target.closest('[data-scratchpad-close]');
         if (closeBtn) {
-          const anchor = menuAnchor(event, closeBtn);
-          requestDelete(body, closeBtn.dataset.scratchpadClose, anchor.x, anchor.y);
+          requestDelete(body, closeBtn.dataset.scratchpadClose, menuAnchor(event, closeBtn));
           return;
         }
         const tab = target.closest('[data-scratchpad-tab]');
@@ -739,8 +775,7 @@
         }
         const menuBtn = target.closest('[data-scratchpad-actions]');
         if (menuBtn) {
-          const anchor = menuAnchor(event, menuBtn);
-          openActionsMenu(body, anchor.x, anchor.y);
+          openActionsMenu(body, menuAnchor(event, menuBtn));
         }
       }
 
@@ -755,14 +790,14 @@
         const tab = event.target?.closest?.('[data-scratchpad-tab]');
         if (tab) {
           event.preventDefault();
-          const anchor = menuAnchor(event, tab);
-          openTabMenu(body, tab.dataset.scratchpadTab, anchor.x, anchor.y);
+          openTabMenu(body, tab.dataset.scratchpadTab, menuAnchor(event, tab));
         }
       }
 
       function handleKeydown(event) {
         const target = event.target;
         if (target?.dataset?.scratchpadRename != null) {
+          if (event.isComposing) return;
           if (event.key === 'Enter') {
             event.preventDefault();
             endRename(body, true, target);
@@ -786,13 +821,11 @@
           }
         } else if ((event.key === 'F10' && event.shiftKey) || event.key === 'ContextMenu') {
           event.preventDefault();
-          const anchor = menuAnchor(null, tab);
-          openTabMenu(body, tab.dataset.scratchpadTab, anchor.x, anchor.y);
+          openTabMenu(body, tab.dataset.scratchpadTab, menuAnchor(null, tab));
         } else if (event.key === 'Delete') {
           event.preventDefault();
           if (getNotes(lastScratchpad).length > 1) {
-            const anchor = menuAnchor(null, tab);
-            requestDelete(body, tab.dataset.scratchpadTab, anchor.x, anchor.y);
+            requestDelete(body, tab.dataset.scratchpadTab, menuAnchor(null, tab));
           }
         } else if (event.key === 'F2') {
           event.preventDefault();
@@ -813,8 +846,8 @@
         // Persist the pad the moment the textarea loses focus, so the last
         // <600ms of typing survives a click-away AND a capture-from-anywhere
         // write (which reads shared state) can never race this debounce.
-        if (target?.id === 'homeScratchpadInput') {
-          actions.flushSave?.();
+        if (target?.id === 'homeScratchpadInput' && actions?.flushSave) {
+          void Promise.resolve(actions.flushSave()).then((saved) => settleSave(body, saved));
         }
       }
 
@@ -835,7 +868,6 @@
           clearTimeout(statusTimer);
           statusTimer = null;
         }
-        delete body.dataset.scratchpadBound;
         if (BODY_TEARDOWNS.get(body) === teardown) BODY_TEARDOWNS.delete(body);
         if (bodyTeardown === teardown) bodyTeardown = null;
       };
@@ -860,42 +892,45 @@
           })
           + '</div>'
           + '</div>';
-        bindBody(body);
         return;
       }
       const textarea = body.querySelector('#homeScratchpadInput');
-      const documentRef = body.ownerDocument;
-      if (textarea && documentRef?.activeElement !== textarea && textarea.value !== text) {
+      if (textarea && body.ownerDocument.activeElement !== textarea && textarea.value !== text) {
         textarea.value = text;
         autosizeField(textarea);
       }
     }
 
     function renderMulti(body, scratchpad) {
-      const notes = getNotes(scratchpad);
-      if (notes.length === 0) {
+      const activeNote = getActiveNote(scratchpad);
+      if (!activeNote) {
         return;
       }
-      const activeId = resolveActiveId(scratchpad);
-      const activeNote = notes.find((note) => note.id === activeId) || notes[0];
-      const text = String(activeNote?.text ?? '');
+      const notes = getNotes(scratchpad);
+      const activeId = activeNote.id;
+      // A queued or failed-save draft is newer than the persisted text: show it,
+      // never repaint the older text over it (the next keystroke would save that).
+      const draft = actions?.pendingDraftFor?.(activeId) ?? null;
+      const text = draft ?? String(activeNote.text ?? '');
       const key = tabsKeyFor(notes, activeId);
       const markdownOn = markdownEnabled(scratchpad);
+      if (!markdownOn) {
+        previewMode = false;
+      }
       const showPreview = markdownOn && previewMode;
-      const wantView = showPreview ? 'preview' : 'edit';
+      // markdownOn is part of the view: it decides the footer's Preview toggle
+      // and the field placeholder, which only a rebuild writes.
+      const wantView = showPreview ? 'preview' : (markdownOn ? 'edit-md' : 'edit');
 
       const existing = body.querySelector('#homeScratchpadInput');
-      // Rebuild on a mode change, a view flip (edit⇄preview), or a missing
-      // textarea in edit mode. The view dataset is what lets the preview toggle
-      // swap the field for the preview pane (the textarea still exists at that
-      // moment, so the sync path alone would never switch views).
-      // needsRebuild is provably false during an open rename (the textarea still
-      // exists, mode/view are unchanged), so the rebuild path can't run then; the
-      // strip-only sync path below is the single guard that protects the live
-      // rename input (its `renamingNoteId == null` condition skips the rebuild).
+      // Rebuild on a mode change, a view flip (edit⇄preview, markdown on/off), or
+      // when the view's own node is missing (e.g. after the registry replaced a
+      // body whose render threw). The view dataset is what lets the preview
+      // toggle swap the field for the preview pane (the textarea still exists at
+      // that moment, so the sync path alone would never switch views).
       const needsRebuild = body.dataset.scratchpadMode !== 'multi'
         || body.dataset.scratchpadView !== wantView
-        || (!showPreview && !existing);
+        || !(showPreview ? body.querySelector('[data-scratchpad-preview]') : existing);
       if (needsRebuild) {
         body.dataset.scratchpadMode = 'multi';
         body.dataset.scratchpadView = wantView;
@@ -905,37 +940,27 @@
           + ' role="tabpanel" aria-label="' + escapeHtml(jt('dashboard.widgets.scratchpad.noteContent', 'Note content')) + '">'
           + (showPreview ? buildPreviewHtml(text) : buildFieldHtml(text, markdownOn))
           + '</div>'
-          + buildFooterHtml({ markdownOn, previewMode })
+          + buildFooterHtml(markdownOn, previewMode)
           + '</div>';
         body.dataset.scratchpadTabsKey = key;
         lastPreviewText = showPreview ? text : null;
-        bindBody(body);
-        applyFieldSettings(body, scratchpad, true); // fresh DOM ⇒ always apply
-        syncMeta(body, activeNote, text);
+        // The fresh DOM has no rename input, so no rename is open any more.
+        renamingNoteId = null;
         scrollActiveTabIntoView(body, activeId);
-        if (focusAfterRender && !showPreview) {
-          focusAfterRender = false;
-          focusTextarea(body);
-        }
-        return;
-      }
-
-      const documentRef = body.ownerDocument;
-      if (showPreview) {
+      } else if (showPreview) {
         // Only rebuild the preview when the text actually changed (see lastPreviewText).
         if (lastPreviewText !== text) {
-          const previewEl = body.querySelector('[data-scratchpad-preview]');
-          if (previewEl) {
-            previewEl.innerHTML = renderPreviewInner(text);
-          }
+          body.querySelector('[data-scratchpad-preview]').innerHTML = renderPreviewInner(text);
           lastPreviewText = text;
         }
-      } else if (documentRef?.activeElement !== existing && existing.value !== text) {
+      } else if (body.ownerDocument.activeElement !== existing && existing.value !== text) {
         // Note switch / echoed save: the new text needs a fresh measurement.
         existing.value = text;
         autosizeField(existing);
       }
-      if (renamingNoteId == null && body.dataset.scratchpadTabsKey !== key) {
+      // The strip-only sync is the single guard that protects a live rename
+      // input (its `renamingNoteId == null` condition skips the rebuild).
+      if (!needsRebuild && renamingNoteId == null && body.dataset.scratchpadTabsKey !== key) {
         const strip = body.querySelector('.dashboard-scratchpad__tabs');
         if (strip) {
           strip.outerHTML = buildTabsHtml(notes, activeId);
@@ -943,8 +968,8 @@
         }
         body.dataset.scratchpadTabsKey = key;
       }
-      applyFieldSettings(body, scratchpad);
-      syncMeta(body, activeNote, text);
+      applyFieldSettings(body, scratchpad, needsRebuild); // fresh DOM ⇒ always apply
+      syncMeta(body, activeNote, text, draft !== null);
       if (focusAfterRender && !showPreview) {
         focusAfterRender = false;
         focusTextarea(body);
@@ -961,6 +986,12 @@
         bindBody(body);
         const scratchpad = ctx?.state?.homeConfig?.scratchpad;
         lastScratchpad = scratchpad;
+        // Another writer (the pin popover's Open in Home) moved the persisted
+        // active note: adopt it over this widget's last local pick.
+        if (scratchpad?.activeNoteId !== lastConfigActiveId) {
+          lastConfigActiveId = scratchpad?.activeNoteId;
+          localActiveId = null;
+        }
         if (getNotes(scratchpad).length > 0) {
           renderMulti(body, scratchpad);
         } else {

@@ -5,12 +5,14 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+const { windowsOnly } = require('./helpers/platform-skips');
+
 // Pure-function tests for scripts/dev/jenny-dev-deps.ps1. The dev launcher
 // itself is never executed here (it runs pip/npm and starts the app); only the
 // function-only file is dot-sourced against temp directories.
 
 const DEPS_SCRIPT = path.resolve(__dirname, '..', 'scripts', 'dev', 'jenny-dev-deps.ps1');
-const SKIP = process.platform === 'win32' ? false : 'Windows PowerShell only';
+const SKIP = windowsOnly('powershell.exe 5.1');
 
 function runPowerShell(script, env) {
   const childEnv = { ...process.env, ...env };

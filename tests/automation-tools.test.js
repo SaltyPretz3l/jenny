@@ -8,6 +8,7 @@ const assert = require('node:assert/strict');
 
 const { AutomationService } = require('../services/automation-service');
 const { createDefaultRegistry } = require('../services/tools');
+const { TOOL_ERROR_CODES } = require('../services/backend/error-codes');
 const {
   executeElectronToolRequest,
 } = require('../services/backend/electron-tool-bridge');
@@ -212,6 +213,34 @@ describe('AutomationService read-only projection', () => {
     assert.deepEqual(result.automation.automation_runs[0].artifacts, [
       { artifact_id: 'artifact_project_health', kind: 'report', title: 'Project Health' },
     ]);
+  });
+
+  test('redacts run summary and reason and never exposes result_ref to tools', async () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-automation-redact-workspace-'));
+    trackDirectory(workspaceRoot);
+    writeScheduledTasks(workspaceRoot, [createAutomationRecord({
+      automation_runs: [{
+        run_id: 'run_02',
+        status: 'failed',
+        reason: 'timeout',
+        started_at: '2026-05-19T10:00:00.000Z',
+        completed_at: '2026-05-19T10:00:07.000Z',
+        summary: `Could not read ${path.join(workspaceRoot, 'private', 'plan.md')} before timeout.`,
+        result_ref: path.join(workspaceRoot, 'automations', 'run_02.json'),
+      }],
+    })]);
+    const service = makeAutomationService(workspaceRoot);
+
+    const listed = await service.listAutomations();
+    const read = await service.readAutomation('automation:project_health');
+    const exposed = JSON.stringify({ listed, read });
+
+    assert.equal(exposed.includes('result_ref'), false);
+    assert.equal(exposed.includes('private'), false);
+    assert.equal(exposed.includes(path.basename(workspaceRoot)), false);
+    assert.match(listed.automations[0].latest_run.summary, /\[redacted\]/);
+    assert.match(read.automation.automation_runs[0].summary, /\[redacted\]/);
+    assert.equal(read.automation.automation_runs[0].reason, 'timeout');
   });
 
   test('returns a structured not_found result for missing automation ids', async () => {
@@ -481,8 +510,22 @@ describe('automation_list and automation_read tools', () => {
 
     assert.equal(readId, 'automation:missing');
     assert.equal(result.isError, true);
+    assert.equal(result.errorCode, TOOL_ERROR_CODES.EXECUTION_FAILED, 'not CMP-TOOL-0005 Unknown tool');
     assert.equal(result.metadata.result_kind, 'automation_read');
     assert.equal(result.metadata.reason, 'not_found');
+  });
+
+  test('automation_read rejects a non-string id without calling the service', async () => {
+    const registry = createDefaultRegistry({ toolsAutomationsEnabled: true });
+    const tool = registry.getTool('automation_read');
+    let calls = 0;
+    const result = await tool.execute({ automation_id: { id: 'automation:x' } }, {
+      automationService: { async readAutomation() { calls += 1; return { success: true }; } },
+    });
+    assert.equal(result.isError, true);
+    assert.equal(result.metadata.reason, 'invalid_arguments');
+    assert.equal(calls, 0);
+    assert.equal(tool.summarize({ automation_id: { id: 'x' } }), 'Read automation details');
   });
 
   test('automation_read includes the bounded definition and run history in model-visible content', async () => {

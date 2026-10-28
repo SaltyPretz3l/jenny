@@ -27,7 +27,9 @@ from sidecar.runtime.process_job import WindowsJobObject
 logger = logging.getLogger(__name__)
 
 _CONTENT_LENGTH = "content-length"
-_DEFAULT_REQUEST_TIMEOUT_SECONDS = 5.0
+_DEFAULT_REQUEST_TIMEOUT_SECONDS = 15.0
+# A cold server indexes the workspace during initialize; a timeout stops it.
+_DEFAULT_INITIALIZE_TIMEOUT_SECONDS = 30.0
 _DEFAULT_CLOSE_TIMEOUT_SECONDS = 2.0
 _DEFAULT_STDERR_TAIL_CHARS = 4_000
 _DEFAULT_MAX_MESSAGE_BYTES = 8_000_000
@@ -120,6 +122,7 @@ def _terminate_lsp_posix_group(
 @dataclass(frozen=True)
 class LSPProcessSessionLimits:
     request_timeout_seconds: float = _DEFAULT_REQUEST_TIMEOUT_SECONDS
+    initialize_timeout_seconds: float = _DEFAULT_INITIALIZE_TIMEOUT_SECONDS
     close_timeout_seconds: float = _DEFAULT_CLOSE_TIMEOUT_SECONDS
     stderr_tail_chars: int = _DEFAULT_STDERR_TAIL_CHARS
     max_message_bytes: int = _DEFAULT_MAX_MESSAGE_BYTES
@@ -171,6 +174,9 @@ class LSPProcessSession:
         self._command = tuple(str(part) for part in command)
         self._workspace_root = Path(workspace_root)
         self._request_timeout_seconds = max(0.001, float(resolved_limits.request_timeout_seconds))
+        self._initialize_timeout_seconds = max(
+            0.001, float(resolved_limits.initialize_timeout_seconds)
+        )
         self._close_timeout_seconds = max(0.001, float(resolved_limits.close_timeout_seconds))
         self._stderr_tail_chars = max(0, int(resolved_limits.stderr_tail_chars))
         self._max_message_bytes = max(1, int(resolved_limits.max_message_bytes))
@@ -206,6 +212,9 @@ class LSPProcessSession:
         }
         if os.name == "nt":
             popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            # The server runs in the workspace; cmd.exe and Node's libuv honor this variable,
+            # so the server's own bare-name launches skip a repository's go.exe or node.exe.
+            popen_kwargs["env"] = {**os.environ, "NoDefaultCurrentDirectoryInExePath": "1"}
         else:
             popen_kwargs["start_new_session"] = True
         try:
@@ -265,7 +274,12 @@ class LSPProcessSession:
                 "method": str(method),
                 "params": params or {},
             }
-            deadline = time.monotonic() + self._request_timeout_seconds
+            timeout_seconds = (
+                self._initialize_timeout_seconds
+                if method == "initialize"
+                else self._request_timeout_seconds
+            )
+            deadline = time.monotonic() + timeout_seconds
             self._write_message(process, payload, deadline=deadline)
             while True:
                 remaining = deadline - time.monotonic()

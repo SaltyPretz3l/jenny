@@ -17,10 +17,10 @@
  * desired host to #chatView and the open entry points are inert. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./renderer-ide-chip-picker'), require('../chat/chat-scroll-utils'));
+    module.exports = factory(require('./renderer-ide-chat-session-picker'), require('../chat/chat-scroll-utils'));
     return;
   }
-  root.rendererIdeChatDock = factory(root.rendererIdeChipPicker, root.chatScrollUtils);
+  root.rendererIdeChatDock = factory(root.rendererIdeChatSessionPicker, root.chatScrollUtils);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (chatSessionPickerModule, scrollUtils) {
   'use strict';
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
@@ -82,6 +82,7 @@
       getDom, appendClientLog, focusChatInput: () => resolveChatNodes().chatInput?.focus?.(), workbench, ...deps.changesView,
       // Outside the Workspace the chat is on screen in the Chat view: nothing there is unread.
       isChatOnScreen: () => state.ui?.activeView !== 'ide' || workbench?.isVisible('chat') === true,
+      isActive: () => state.ui?.activeView === 'ide',
     }) || null;
     const anchorRegistry = typeof scrollUtils?.createLogicalScrollAnchorRegistry === 'function'
       ? scrollUtils.createLogicalScrollAnchorRegistry({ cap: 32 })
@@ -189,11 +190,16 @@
       pendingAnchorRestore = null;
     }
 
+    // The element whose rows the logical scroll anchor is measured against.
+    function anchorTarget(nodes) {
+      return nodes.chatTimeline || nodes.chatThreadScroll;
+    }
+
     function captureAnchor(sessionId, surface, nodes) {
       const key = anchorKey(sessionId, surface);
       if (disposed || !key || !anchorRegistry || !nodes.chatThreadScroll) return false;
       try {
-        return anchorRegistry.capture(key, nodes.chatThreadScroll, nodes.chatTimeline || nodes.chatThreadScroll);
+        return anchorRegistry.capture(key, nodes.chatThreadScroll, anchorTarget(nodes));
       } catch (error) {
         appendClientLog('WARN', 'ide_chat_dock.anchor_capture_failed', {
           surface,
@@ -203,7 +209,10 @@
       }
     }
 
-    function scheduleAnchorRestore(sessionId, surface, fallbackSessionId, fallbackSurface) {
+    // `transition`: prepareAnchorTransition()'s result, or null for no move.
+    function scheduleAnchorRestore(transition) {
+      if (!transition) return;
+      const { sessionId, surface, fallbackSessionId, fallbackSurface } = transition;
       const key = anchorKey(sessionId, surface);
       const fallbackKey = anchorKey(fallbackSessionId, fallbackSurface);
       if (disposed || !key || !anchorRegistry) return;
@@ -231,7 +240,7 @@
             return outcome;
           };
           let outcome = armIfRestored(
-            anchorRegistry.restore(key, nodes.chatThreadScroll, nodes.chatTimeline || nodes.chatThreadScroll)
+            anchorRegistry.restore(key, nodes.chatThreadScroll, anchorTarget(nodes))
           );
           // The first visit to a surface has no surface-specific snapshot yet.
           // Reuse the just-captured source anchor so responsive reparenting does
@@ -242,11 +251,7 @@
             && fallbackKey !== key
           ) {
             outcome = armIfRestored(
-              anchorRegistry.restore(
-                fallbackKey,
-                nodes.chatThreadScroll,
-                nodes.chatTimeline || nodes.chatThreadScroll
-              )
+              anchorRegistry.restore(fallbackKey, nodes.chatThreadScroll, anchorTarget(nodes))
             );
           }
           if (outcome !== 'missing' && outcome !== 'unavailable' && state.ui) {
@@ -372,12 +377,7 @@
       const anchorTransition = prepareAnchorTransition(nodes, dockBody, targetSurface);
       if (docked && dockBody) {
         if (movable.every((node) => node.parentNode === dockBody)) {
-            if (anchorTransition) scheduleAnchorRestore(
-              anchorTransition.sessionId,
-              anchorTransition.surface,
-              anchorTransition.fallbackSessionId,
-              anchorTransition.fallbackSurface
-            );
+          scheduleAnchorRestore(anchorTransition);
           return false;
         }
         const focusedBeforeMove = captureMovableFocus(movable, doc);
@@ -398,12 +398,7 @@
           focusedBeforeMove.focus?.();
         }
         appendClientLog('INFO', 'ide_chat_dock.host_reconciled', { host: 'dock' });
-        if (anchorTransition) scheduleAnchorRestore(
-          anchorTransition.sessionId,
-          anchorTransition.surface,
-          anchorTransition.fallbackSessionId,
-          anchorTransition.fallbackSurface
-        );
+        scheduleAnchorRestore(anchorTransition);
         return true;
       }
       const host = resolveRestoreHost(nodes, dockBody, movable);
@@ -417,12 +412,7 @@
         return false;
       }
       if (movable.every((node) => node.parentNode === host)) {
-          if (anchorTransition) scheduleAnchorRestore(
-            anchorTransition.sessionId,
-            anchorTransition.surface,
-            anchorTransition.fallbackSessionId,
-            anchorTransition.fallbackSurface
-          );
+        scheduleAnchorRestore(anchorTransition);
         return false;
       }
       // Focus check BEFORE the move (reparenting drops focus to <body>).
@@ -445,12 +435,7 @@
       notifySubagentMonitorRehost();
       notifyComposerRehost('chat');
       appendClientLog('INFO', 'ide_chat_dock.host_reconciled', { host: 'chat' });
-      if (anchorTransition) scheduleAnchorRestore(
-        anchorTransition.sessionId,
-        anchorTransition.surface,
-        anchorTransition.fallbackSessionId,
-        anchorTransition.fallbackSurface
-      );
+      scheduleAnchorRestore(anchorTransition);
       return true;
     }
 

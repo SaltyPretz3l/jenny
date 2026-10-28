@@ -125,6 +125,8 @@ def python_execute_tool(
         payload, trusted_attachments = format_python_output(
             sandbox_result.payload,
             sandbox_result.work_dir,
+            workspace_root=workspace_root,
+            arguments=arguments,
         )
         success = payload.get("error") is None and sandbox_result.returncode == 0
         return ToolHandlerResult(

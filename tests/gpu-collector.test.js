@@ -9,6 +9,7 @@ const { spawn } = require('node:child_process');
 const { createGpuCollector } = require('../services/performance/gpu-collector');
 const { systemPowerShellPath } = require('../services/artifact-open-with');
 const { sanitizeSpawnEnv } = require('../services/backend/sanitize-spawn-env');
+const { windowsOnly } = require('./helpers/platform-skips');
 const helper = path.join(__dirname, '../services/performance/gpu-memory-win32.ps1');
 const identity = { pid: 10, createdAt: '123' };
 const csv = 'GPU-other, 00000000:03:00.0, 8192, 4096, 4096\nGPU-managed, 00000000:01:00.0, 32768, 31744, 1024\n';
@@ -206,7 +207,7 @@ test('packaging unpacks the fixed helper and static native boundary uses English
   assert.match(text, /4096/); assert.match(text, /processes.Count>=256/); assert.match(text, /adapters.Count>=16/);
   assert.match(fs.readFileSync(path.join(__dirname, '../services/performance/gpu-collector.js'), 'utf8'), /app\.asar\.unpacked/);
 });
-test('win32-only real hidden helper compiles and reports readiness without requests or windows', { skip: process.platform !== 'win32' }, async t => {
+test('win32-only real hidden helper compiles and reports readiness without requests or windows', { skip: windowsOnly('PowerShell GPU helper') }, async t => {
   const c = spawn(systemPowerShellPath(), ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helper],
     { windowsHide: true, shell: false, stdio: ['pipe', 'pipe', 'pipe'], env: sanitizeSpawnEnv(process.env) });
   t.after(() => c.kill());

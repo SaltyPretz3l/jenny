@@ -68,6 +68,7 @@ const TOOL_NETWORK_CLASSIFICATION = Object.freeze({
   todo_read: NETWORK_NONE,
   connections_list: NETWORK_NONE,
   mermaid_generate: NETWORK_NONE,
+  report_findings: NETWORK_NONE,
   lsp: NETWORK_POSSIBLE,
   exit_plan_mode: NETWORK_NONE,
   ask_user: NETWORK_NONE,
@@ -76,6 +77,13 @@ const TOOL_NETWORK_CLASSIFICATION = Object.freeze({
   propose_session: NETWORK_NONE,
   complete_session_handoff: NETWORK_NONE,
   session_message: NETWORK_POSSIBLE,
+  // Session directory (row 69): local session index, runtime store and transcript reads only.
+  sessions_list: NETWORK_NONE,
+  session_status: NETWORK_NONE,
+  session_transcript: NETWORK_NONE,
+  session_stop: NETWORK_NONE,
+  // Bundled app guide (row 69 W4b): reads config/app-guide only.
+  jenny_help: NETWORK_NONE,
   jenny_status: NETWORK_NONE,
   tool_search: NETWORK_NONE,
   load_skill: NETWORK_NONE,

@@ -44,6 +44,9 @@
 
     const windowRef = globalRef.window || globalRef;
     const ideStateUtils = resolveModule('rendererIdeState', './renderer-ide-state');
+    const isDiffTab = (path) => ideStateUtils.isDiffTabId?.(path) === true;
+    const isPreviewTab = (path) => ideStateUtils.isPreviewTabId?.(path) === true;
+    const isReviewTab = (path) => isDiffTab(path) || isPreviewTab(path);
     const editorHostUtils = resolveModule('rendererIdeEditorHost', './renderer-ide-editor-host');
     const tabsUtils = resolveModule('rendererIdeTabs', './renderer-ide-tabs');
     const wiringUtils = resolveModule('rendererIdeExplorerWiring', './renderer-ide-explorer-wiring');
@@ -100,8 +103,7 @@
     const lifecycleCurrent = (epoch) => !disposed && epoch === lifecycleEpoch;
     // Runtime file-tab MRU for the Ctrl+E jump list (extracted sibling).
     const ideMru = mruUtils.createIdeMru?.({
-      isDiffTabId: (path) => ideStateUtils.isDiffTabId?.(path) === true,
-      isPreviewTabId: (path) => ideStateUtils.isPreviewTabId?.(path) === true,
+      isDiffTabId: isDiffTab, isPreviewTabId: isPreviewTab,
     }) || { record: noop, getRecentFiles: () => [] };
     const getRecentFiles = () => ideMru.getRecentFiles(getIde().openTabs);
     function getIde() {
@@ -130,7 +132,7 @@
     const editorHost = editorHostUtils.createIdeEditorHost?.({
       getDocumentWorkspaceId: (path) => fileLifecycle?.fileOperations?.getDocumentToken(path)?.rootId || '',
       getDom,
-      log: (...args) => appendClientLog(...args),
+      log: appendClientLog,
       onDirtyChange(path, dirty) {
         fileLifecycle?.noteDirty(path, dirty); ideStateUtils.setTabDirty?.(getIde(), path, dirty);
         renderTabs();
@@ -144,7 +146,7 @@
       onCursorActivity(info) {
         // Cursor choke point -> nav-bookmarks facade (drops the null non-file
         // diff/preview case; nav-history coalesces the rest).
-        statusBar?.render();
+        statusBar?.render(); qol?.outline?.noteCursor(); // the Outline follows any group's cursor
         // A focused group's cursor (W7) feeds the status bar only.
         if (editorHost?.getFocusedGroupPath?.()) return;
         navBookmarks?.recordCursorNav(info);
@@ -166,14 +168,14 @@
         editorPrefsUtils.applyEditorPrefs?.(getIde(), editorHost, chipPicker);
         selectionIntents?.registerActions();
         wordWrap?.registerAction(monacoApi);
-        debugInspector?.registerActions(); runScripts?.registerActions();
+        debugInspector?.registerActions(); runScripts?.registerActions(); ideCommands?.registerMonacoKeymap(monacoApi); // row 82: Ctrl+K chords
         symbolNav?.handleMonacoReady(monacoApi);
       },
     }) || null;
     // Git gutter change-bars: a green/blue/red strip vs HEAD on the active editor
     // (self-contained module - owns its git client, debounce, and lifecycle).
     const gutterDecorations = resolveModule('rendererIdeGutterDecorations', './renderer-ide-gutter-decorations')
-      .createIdeGutterDecorations?.({ editorHost, windowRef, appendClientLog }) || null;
+      .createIdeGutterDecorations?.({ editorHost, windowRef, appendClientLog, getDom, getIde, showToastMessage, refreshGit: () => gitFeature?.refreshNow() }) || null; // + row 82 G2 peek and blame
     // Cursor-navigation glue behind ONE facade (file-size ceiling): Go
     // Back/Forward history + runtime line bookmarks. Controller feeds the cursor
     // choke point, glyph click, prune + spreads its thunks; reveal = search open.
@@ -189,16 +191,16 @@
         editorHost, getDom, windowRef, escapeHtml, appendClientLog,
         onOpenFile: (path) => openFile(path),
       }) || null;
-    // Debounced auto-save (default-OFF via the per-user autoSaveEnabled pref).
+    // Auto-save (default-OFF; the per-user autoSaveMode pref picks delay/focus/window).
     // Saves the edited path (a secondary group's file too) through saveFile, so the
     // mtime-conflict + stale guards hold; the module skips non-file/stale tabs and
-    // is cancelled on tab switch/close (debounce + gating live in the module).
+    // re-validates the path when it fires (debounce + gating live in the module).
     const autoSave = autoSaveUtils.createIdeAutoSave?.({
       editorHost,
       getIde: () => getIde(),
       saveFile: (path) => (fileLifecycle ? fileLifecycle.saveFile(path, { unattended: true }) : false),
       isSaving: () => fileLifecycle?.isSaving() === true,
-      isEnabled: () => getIde().autoSaveEnabled === true,
+      getMode: () => getIde().autoSaveMode,
     }) || null;
     // Word-wrap toggle (Alt+Z action + statusbar) lives in editor-prefs for the cap.
     const wordWrap = editorPrefsUtils.createWordWrapController?.({
@@ -207,7 +209,7 @@
       commitPreference: (key, value) => commitEditorPreference(key, value),
       requestStatusRender: () => statusBar?.render(),
     }) || null;
-    const tabStrip = tabsUtils.createIdeTabStrip?.({ getDom, escapeHtml }) || null;
+    const tabStrip = tabsUtils.createIdeTabStrip?.({ getDom, escapeHtml, getGitDecoration: (path) => gitFeature?.getDecoration(path) || null }) || null;
     const tabRestore = resolveModule('rendererIdeTabRestore', './renderer-ide-tab-restore')
       .createIdeTabRestore?.({ getDom, escapeHtml, editorHost, getWorkspaceFsApi, registerCleanup }) || null;
     // Workbench (row 40 W3): the layout tree of splits and stacks. Every panel is a
@@ -232,51 +234,34 @@
       },
       // New chat activity while that chat was off screen.
       unread: { chat: () => ideChatDock?.hasUnread?.() === true, 'chat-2': () => workspaceChats?.hasSecondUnread() === true },
-      labels: { run: () => runScripts?.getRunLabel?.() || '' }, // F5: the Run tab names its task
-      viewActions: (id) => terminalActions(id), onViewAction: (id, name) => runTerminalAction(id, name),
+      labels: { run: () => runScripts?.getRunLabel?.() || '' }, labelOverride: (id) => terminals?.labelOf(id) || '', // F5: the Run tab names its task; T2: a renamed terminal
+      // Terminal headers (F3, T2): +, the shell-profile chevron and Kill, plus Rename in the More menu; the set owns them.
+      viewActions: (id) => terminals?.viewActions(id) || [], onViewAction: (id, name, el) => terminals?.runViewAction(id, name, el), viewMenuItems: (id) => terminals?.menuItems(id) || [],
       getGroupElement: (id) => editorGroups?.getElement(id) || null, getEditorGroups: () => editorGroups,
     }) || null;
     function problemCount() {
       return problemsPanel?.getBadgeCount?.() || 0;
     }
-    // Terminal headers (F3): + opens the next of four terminals beside this one; Kill ends this one.
-    let terminalNear = 'terminal';
-    function terminalActions(id) {
-      if (!terminals || !(layoutModel?.terminalSlot?.(id) > 0)) return [];
-      const icons = workbenchWiringUtils.ACTION_ICONS || {};
-      return [
-        ...(terminals.canAdd() ? [{ name: 'new-terminal', label: jt('ide.terminal.new', 'New Terminal'), icon: icons.add }] : []),
-        { name: 'kill-terminal', label: jt('ide.terminal.kill', 'Kill Terminal'), icon: icons.trash },
-      ];
-    }
-    function runTerminalAction(id, name) {
-      if (name === 'new-terminal') {
-        terminalNear = id;
-        terminals?.newTerminal({ start: true });
-      } else if (name === 'kill-terminal') {
-        terminals?.closeTerminal(id);
-      }
-    }
     // Palette New Terminal and Ctrl+Shift+`: the + path, offered only while the + is.
     const newTerminalAction = () => (terminals?.canAdd() ? () => terminals.newTerminal({ start: true, near: workbenchWiring?.groupBinding?.boundTerminal() || '' }) : undefined); // W7c: beside the focused group's terminal
     const panelDeps = (id) => workbenchWiring?.viewDeps(id) || {};
     const bottomPanel = workbenchWiring?.bottomPanel || null;
-    const showPanel = (id) => workbenchWiring?.showPanel(id) === true;
+    const showPanel = (id, options) => workbenchWiring?.showPanel(id, options) === true;
     const explorer = wiringUtils.createIdeExplorerWiring?.({
       getDom, escapeHtml, getIde, getWorkspaceFsApi, openFile,
       buildFileContextMenuItems, buildPathUtilityMenuItems, schedulePersist,
       getWorkspaceRootApi, showShellErrorToast, appendClientLog, panelDeps,
-      showToastMessage: (...args) => showToastMessage(...args),
+      showToastMessage,
       getChooseWorkspaceRoot: () => chooseWorkspaceRoot, getProjectSwitcher, peekProjectSwitcher,
       getFileLifecycle: () => fileLifecycle, getSearchPanel: () => searchPanel,
       getCloseOrchestrator: () => closeOrchestrator, getConfirmDialog: () => confirmDialog,
       getGitFeature: () => gitFeature, getTerminalPanel: () => terminals, getBottomPanel: () => bottomPanel,
-      getFeatureFlags: () => state?.features?.featureFlags,
+      getFeatureFlags: () => state?.features?.featureFlags, getEditorHost: () => editorHost, getEditorGroups: () => editorGroups, getProblemsPanel: () => problemsPanel, getRunScripts: () => runScripts,
     }) || null;
     const tree = explorer?.tree || null;
-    // Preview / File map toggles at the end of the editor tab row (qol is built later; thunks).
+    // Editor toolbar at the end of the tab row: Preview / File map, Split, More (qol is built later; thunks).
     const stageSwitch = stageSwitchUtils.createIdeStageSwitch?.({
-      getMountEl: () => getDom().ideStageSwitch, actionButton,
+      getMountEl: () => getDom().ideStageSwitch, actionButton, onSplit: () => editorGroups?.splitActive('right'), onMore: (el) => tabsController?.showAllTabsMenu(el),
       onToggle: (surface) => qol?.stageSurface?.toggle(surface),
       getActiveSurface: () => qol?.stageSurface?.getEffectiveSurface() || 'editor',
     }) || null;
@@ -288,7 +273,7 @@
       getIde: () => getIde(),
       getWorkspaceFsApi,
       editorHost, getFileOperations: () => fileLifecycle?.fileOperations, schedulePersist: () => schedulePersist(), flushPersist: () => flushPersist(),
-      onOpenResult: handleSearchResultOpen, appendClientLog, showShellErrorToast: (...args) => showShellErrorToast(...args),
+      onOpenResult: handleSearchResultOpen, appendClientLog, showShellErrorToast,
       renderTabs: () => renderTabs(),
       isSaving: () => fileLifecycle?.isSaving() === true,
       // Find-in-Folder reveals Search wherever it lives.
@@ -298,14 +283,16 @@
 
     const ptyTerminalPanelUtils = resolveModule('rendererIdePtyTerminalPanel', './renderer-ide-pty-terminal-panel');
     // Up to four terminals, one PTY panel per terminal view; the layout says which exist.
-    const terminals = resolveModule('rendererIdeTerminalWiring', './renderer-ide-terminal-wiring').createIdeTerminalSet?.({
+    const terminals = resolveModule('rendererIdeTerminalSet', './renderer-ide-terminal-set').createIdeTerminalSet?.({
       ptyTerminalPanelUtils, model: layoutModel || {}, viewDeps: panelDeps,
       baseDeps: {
-        getDom, getIde: () => getIde(), appendClientLog, getWorkspacePtyApi,
-        showError: (message, meta) => showShellErrorToast(message, meta), toErrorMessage: (...args) => toErrorMessage(...args),
+        getDom, getIde: () => getIde(), appendClientLog, getWorkspacePtyApi, getWorkspaceRootPath: () => String(state.workspaceRoot?.path || ''),
+        showError: (message, meta) => showShellErrorToast(message, meta), toErrorMessage,
       },
+      actionIcons: workbenchWiringUtils.ACTION_ICONS || {}, commitPreference: (key, value) => commitEditorPreference(key, value), requestRender: () => renderIde(),
       listTerminalViews: () => workbenchWiring?.listViews() || [],
-      addTerminalView: (id, near) => workbenchWiring?.addView(id, near || (workbenchWiring.isVisible(terminalNear) ? terminalNear : 'terminal')),
+      // near: the requested neighbour; else the terminal whose + was pressed last, while it shows.
+      addTerminalView: (id, near, last) => workbenchWiring?.addView(id, near || (last && workbenchWiring.isVisible(last) ? last : 'terminal')),
       removeTerminalView: (id) => workbenchWiring?.removeView(id),
       revealView: (id, options) => workbenchWiring?.showPanel(id, options),
     }) || null;
@@ -325,12 +312,11 @@
         onOpenProblems: () => bottomPanel?.open('problems'),
         onToggleBottomPanel: () => bottomPanel?.toggle(), onOpenRun: () => bottomPanel?.open('run'),
         getEol: (path) => editorHost?.getEol(path) || 'lf',
-        getTabSize: () => editorHost?.getTabSize?.() || 2,
-        onPickTabSize: (anchor) => chipPicker?.openTabSizePicker(anchor),
+        getTabSize: () => editorHost?.getTabSize?.() || 2, getIndentInfo: (path) => editorHost?.getIndentInfo?.(path), getEncodingInfo: (path) => editorHost?.getEncodingInfo?.(path),
+        onPickTabSize: (anchor) => chipPicker?.openTabSizePicker(anchor), onPickIndentation: (anchor) => chipPicker?.openIndentationPicker(anchor), onPickLanguage: (anchor) => chipPicker?.openLanguagePicker(anchor), onPickEncoding: (anchor) => chipPicker?.openEncodingInfo(anchor),
         onPickEol: (anchor) => chipPicker?.openEolPicker(anchor),
         isDirty: (path) => editorHost?.isDirty(path) === true,
-        isDiffTab: (path) => ideStateUtils.isDiffTabId?.(path) === true
-          || ideStateUtils.isPreviewTabId?.(path) === true,
+        isDiffTab: isReviewTab,
         getDocumentKind: (path) => editorHost?.getDocumentKind(path) || '',
         isLargeFile: (path) => editorHost?.isLargeFile?.(path) === true,
         onGoToLine: () => editorHost?.triggerGoToLine(),
@@ -347,17 +333,17 @@
         closeOthers: (path) => closeOrchestrator?.requestCloseOthers(path),
         closeAll: () => closeOrchestrator?.requestCloseAll(),
         closeSaved: () => closeOrchestrator?.requestCloseSaved(),
+        closeToRight: (path) => closeOrchestrator?.requestCloseToRight(path), reopenClosedTab: () => reopenClosedTab(), onCloseSurface: (surface) => qol?.stageSurface?.toggle(surface),
         openUnsavedCompare: (path) => openUnsavedCompare(path),
         isDirty: (path) => editorHost?.isDirty(path) === true,
-        isDiffTabId: (path) => ideStateUtils.isDiffTabId?.(path) === true,
-        isPreviewTabId: (path) => ideStateUtils.isPreviewTabId?.(path) === true,
+        isDiffTabId: isDiffTab, isPreviewTabId: isPreviewTab,
         buildExtraMenuItems: (path, opts) => [...(opts?.review ? [] : buildFileContextMenuItems(path)), ...(editorGroups?.moveMenuItems(path) || [])],
         revealInExplorer: (path) => revealInExplorer(path), onDropTab: (payload, index) => editorGroups?.moveToGroup(payload.path, '', index),
         schedulePersist: () => schedulePersist(),
         renderTabs: () => renderTabs(),
-        showShellErrorToast: (...args) => showShellErrorToast(...args),
-        showToastMessage: (...args) => showToastMessage(...args),
-        toErrorMessage: (...args) => toErrorMessage(...args),
+        showShellErrorToast,
+        showToastMessage,
+        toErrorMessage,
       },
     }) || null;
 
@@ -368,7 +354,7 @@
       requestCloseTab: (path) => requestCloseTab(path), saveFile: (path) => saveFile(path), revealInExplorer: (path) => revealInExplorer(path),
       onActivated: (path) => ideMru.record(path), renderReviewBar: (el, path) => diffController?.renderToolbarFor(el, path),
       getBoundGroups: () => workbenchWiring?.groupBinding?.boundGroups() || [], getBoundText: (id) => workbenchWiring?.groupBinding?.boundText(id) || '', unbindGroup: (id) => workbenchWiring?.groupBinding?.unbindGroup(id),
-      schedulePersist: () => schedulePersist(), requestRender: () => renderIde(),
+      schedulePersist: () => schedulePersist(), requestRender: () => renderIde(), getGitDecoration: (path) => gitFeature?.getDecoration(path) || null, reopenClosedTab: () => reopenClosedTab(),
     }) || null;
 
     const previewController = previewControllerUtils.createIdePreviewController?.({
@@ -402,10 +388,8 @@
       escapeHtml,
       actionButton: typeof actionButton === 'function' ? actionButton : null,
       getFsApi: () => getWorkspaceFsApi(),
-      buildShortcutsHtml: () => ideShortcutsUtils.buildIdeShortcutsHtml?.() || '',
-      onOpenFile: (path) => {
-        openFile(path);
-      },
+      buildShortcutsHtml: () => ideShortcutsUtils.buildIdeShortcutsHtml?.(ideCommands?.registry) || '',
+      onOpenFile: (path) => { openFile(path); },
       onChooseFolder: () => chooseWorkspaceRoot(),
       // Projects v2: "Your projects" rows + "Switch project…" share the lazy switcher.
       getProjects: () => peekProjectSwitcher?.()?.getProjects?.() || [], getProjectSwitcher,
@@ -415,7 +399,7 @@
     // intents). Prefill-only; registered against Monaco in onMonacoReady.
     const selectionIntents = selectionIntentsUtils.createIdeSelectionIntents?.({
       editorHost,
-      isDiffTabId: (path) => ideStateUtils.isDiffTabId?.(path) === true,
+      isDiffTabId: isDiffTab,
       onSendToJenny, onNotice: (message) => showToastMessage(message, { dedupeKey: 'ide-selection-intents' }),
     }) || null;
 
@@ -427,7 +411,7 @@
       sendTerminalCommand: (builder) => terminals?.sendCommand?.(builder) ?? false,
       // Its own terminal (never the user's shell) when the terminal set is up.
       openTaskTerminal: terminals ? (near) => terminals.openTaskTerminal(near) : undefined, captureTaskTarget: () => workbenchWiring?.groupBinding?.boundTerminal(),
-      isDiffTabId: (path) => ideStateUtils.isDiffTabId?.(path) === true,
+      isDiffTabId: isDiffTab,
       getClipboardApi: () => windowRef.jennyShell?.clipboard || null,
     }) || null;
 
@@ -447,49 +431,41 @@
     const closeOrchestrator = closeOrchestratorUtils.createIdeCloseOrchestrator?.({
       getIde: () => getIde(),
       isDirty: (path) => editorHost?.isDirty(path) === true,
-      isDiffTabId: (path) => ideStateUtils.isDiffTabId?.(path) === true,
-      isPreviewTabId: (path) => ideStateUtils.isPreviewTabId?.(path) === true,
+      isDiffTabId: isDiffTab, isPreviewTabId: isPreviewTab,
       forceClose: (path) => closeTab(path),
       saveFile: (path) => saveFile(path),
       getDocumentRevision: (path) => { const snapshot = fileLifecycle?.fileOperations?.captureReload?.(path, { allowDirty: true }); return snapshot ? `${snapshot.documentId}:${snapshot.editVersion}` : null; },
       confirmClose: (payload) => (confirmDialog
         ? confirmDialog.confirmClose(payload)
         : Promise.resolve('cancel')),
+      onCloseRefused: () => showShellErrorToast(jt('ide.tabs.actionFailed', 'The tab action failed.'), { dedupeKey: 'ide:tab:close-refused' }), onExitDiscard: (paths) => qol?.hotExit?.discardBackups?.(paths),
     }) || null;
 
-    // IDE palette commands (Format / Go to Symbol / Find References / Toggle
-    // Minimap / Reopen Closed Tab) + the "?" shortcuts overlay. getCommandItems
-    // is empty off the IDE view; the overlay shares renderer-ide-shortcuts.
+    // The IDE command registry (row 82) with its palette-only rows (Format / Go to
+    // Symbol / Find References / File Map / layout) + the "?" shortcuts overlay. The
+    // chorded commands register from the keydown handler below; getCommandItems is
+    // empty off the IDE view; the overlay is generated from the registry's bindings.
     const ideCommands = commandsUtils.createIdeCommands?.({
       document: windowRef.document || null,
-      getActiveView: () => state.ui?.activeView || '',
+      getActiveView: () => state.ui?.activeView || '', getIde, isRepo: () => gitFeature?.isRepo?.() === true,
       editorHost, appendClientLog,
       toggleMinimap: () => editorPrefsUtils.toggleMinimap?.(getIde(), editorHost, commitEditorPreference, () => statusBar?.render()),
-      reopenClosedTab: () => reopenClosedTab(), showPanel,
       layoutActions: workbenchWiring ? {
-        togglePrimarySide: () => workbenchWiring.togglePrimarySide(), togglePanel: () => bottomPanel?.toggle(), resetLayout: () => workbenchWiring.resetLayout(),
-        get newTerminal() { return newTerminalAction(); },
-        // Editor groups need Monaco: the rows show once it has loaded (getters, read per palette open).
-        get splitRight() { return editorHost?.getMonaco?.() ? () => editorGroups?.splitActive('right') : undefined; },
-        get splitDown() { return editorHost?.getMonaco?.() ? () => editorGroups?.splitActive('down') : undefined; },
+        resetLayout: () => workbenchWiring.resetLayout(),
+        // Editor groups need Monaco: the row shows once it has loaded (a getter, read per palette open).
         get focusNextGroup() { return editorHost?.getMonaco?.() ? () => editorGroups?.focusNextGroup() : undefined; },
         // Keyboard move (W4): the menu for the panel focus was last in, anchored on its tab.
         moveView: () => { const wb = workbenchWiring.workbench; const viewId = wb?.getFocusedView?.(); return viewId ? wb.openMoveMenu(viewId) : false; },
-        // Read per palette open: the flag can hydrate after the controller is built.
-        get toggleChat() { return state?.features?.featureFlags?.ide_chat_dock === true ? () => ideChatDock?.toggle() : undefined; },
       } : null,
-      workspaceSymbolPicker: () => symbolNav?.openPicker(), openFileMap: () => qol?.mapController?.openFileMap(), revealInMap: () => qol?.revealActiveFileInMap?.(), showBlastRadius: () => qol?.blastActiveFileInMap?.(), toggleExplodedView: () => qol?.explodeController?.toggleActiveTab(), openPreviewSurface: () => qol?.stageSurface?.activate('preview'), previewActiveFile: () => qol?.previewStage?.open(getIde().activeTabPath || ''),
-      ...(navBookmarks?.bookmarkActions),
+      openFileMap: () => qol?.mapController?.openFileMap(), revealInMap: () => qol?.revealActiveFileInMap?.(), showBlastRadius: () => qol?.blastActiveFileInMap?.(), toggleExplodedView: () => qol?.explodeController?.toggleActiveTab(), openPreviewSurface: () => qol?.stageSurface?.activate('preview'),
       helpOverlayFactory: helpOverlayUtils.createHelpOverlay,
-      buildShortcutsHtml: () => ideShortcutsUtils.buildIdeShortcutsHtml?.() || '',
+      buildShortcutsHtml: (registry) => ideShortcutsUtils.buildIdeShortcutsHtml?.(registry) || '',
     }) || null;
 
     // Single-tab closes (×, middle-click, Ctrl+F4, context Close) route through
     // the orchestrator; degrades to a direct force-close if it is unavailable.
     function requestCloseTab(path) {
-      if (closeOrchestrator) {
-        return closeOrchestrator.requestClose(path);
-      }
+      if (closeOrchestrator) return closeOrchestrator.requestClose(path);
       closeTab(path);
       return undefined;
     }
@@ -503,6 +479,7 @@
       actionButton: typeof actionButton === 'function' ? actionButton : null,
       popover: typeof popoverUtils === 'function' ? popoverUtils : popoverUtils?.default,
       onAfterChange: (change) => { void editorPrefsUtils.persistChipChange?.(getIde(), change, commitEditorPreference); },
+      requestStatusRender: () => statusBar?.render(), getIndentDefaults: () => ({ insertSpaces: getIde().insertSpaces !== false, tabSize: Number(getIde().tabSize) || 2 }), // row 82 per-tab language/indent picks
     }) || null;
 
     // Breadcrumb clicks / "Reveal in Explorer": reveal Files wherever it lives,
@@ -526,7 +503,7 @@
     // Diff review-tab flows live in renderer-ide-diff-controller (extracted
     // for the file-size ceiling); same editorHost/diff-tab plumbing.
     const diffController = diffControllerUtils.createIdeDiffController?.({
-      showDiffTab: (id) => editorGroups?.activateInGroup(id) || editorHost.activateDocument(id),
+      showDiffTab,
       getIde: () => getIde(),
       getDom,
       getWorkspaceFsApi,
@@ -536,10 +513,11 @@
       escapeHtml,
       callbacks: {
         renderTabs: () => renderTabs(),
-        showShellErrorToast: (...args) => showShellErrorToast(...args), appendClientLog,
+        showShellErrorToast, appendClientLog,
       },
     }) || null;
 
+    function showDiffTab(id) { return editorGroups?.activateInGroup(id) || editorHost.activateDocument(id); }
     // W7c: a diff opened from a bound chat (origin.pane) lands in that chat's group.
     function openDiffFrom(origin, open, id) {
       return workbenchWiring?.groupBinding ? workbenchWiring.groupBinding.openDiffFrom(origin?.pane, open, id) : open();
@@ -548,15 +526,13 @@
       return openDiffFrom(origin, () => (diffController ? diffController.openChangeDiff(change) : false), diffController?.changeDiffId(change));
     }
 
-    function openUnsavedCompare(path) {
-      return diffController ? diffController.openUnsavedCompare(path) : false;
-    }
+    function openUnsavedCompare(path) { return diffController ? diffController.openUnsavedCompare(path) : false; }
 
     // Git client + status store + Source Control panel; the tree + statusbar read its getters.
     const gitFeature = gitFeatureUtils.createIdeGitFeature?.({
-      showDiffTab: (id) => editorGroups?.activateInGroup(id) || editorHost.activateDocument(id),
+      showDiffTab, openFile,
       windowRef, getDom, getIde, editorHost, getWorkspaceFsApi, getFileLifecycle: () => fileLifecycle, onDeleteUntracked: (path) => tree?.deleteEntry(path, 'file'), confirmDialog, escapeHtml,
-      appendClientLog, showShellErrorToast, renderTabs, schedulePersist, requestRender: renderIde, showPanel,
+      appendClientLog, showShellErrorToast, showToastMessage, renderTabs, schedulePersist, requestRender: renderIde, showPanel,
       onChange: () => { tree?.applyGitDecorations(); statusBar?.render(); gutterDecorations?.refreshActive(); },
       // F8 (row 40 W6): rows Jenny changed carry a marker that opens her turn in Changes.
       getJennyChange: (path) => workspaceChats?.jennyChangeFor(path) || null,
@@ -576,6 +552,7 @@
       callbacks: {
         getCurrentBranch: () => gitFeature?.getBranch() || '',
         getDirtyCount: () => gitFeature?.getDirtyCount() || 0,
+        getUnsavedCount: () => gitFeature?.getUnsavedCount?.() || 0,
         // Ahead/behind come from the status store snapshot (no new IPC), exposed
         // as a getter on the git feature like getBranch / getDirtyCount.
         getAheadBehind: () => gitFeature?.getAheadBehind?.() || { ahead: 0, behind: 0 },
@@ -589,14 +566,14 @@
     // host's diagnostics surface (getMarkers/onMarkersChanged) for open files;
     // rows reveal through the same open-then-revealPosition path search uses.
     const problemsPanel = problemsPanelUtils.createIdeProblemsPanel?.({
-      getDom, getIde, escapeHtml, editorHost, requestRender: renderIde,
+      getDom, getIde, escapeHtml, editorHost, requestRender: renderIde, getTaskProblems: () => runScripts?.getTaskProblems?.() || null, // R2: the Tasks source
       ...panelDeps('problems'),
       onReveal: (path, line, column) => handleSearchResultOpen(path, line, column),
     }) || null;
     const runScripts = resolveModule('rendererIdeRunScripts', './renderer-ide-run-scripts').createIdeRunScripts?.({
       getDom, escapeHtml, editorHost, getWorkspaceFsApi, appendClientLog, showToastMessage, saveFile: (path) => saveForLaunch(path),
       ...panelDeps('run'),
-      isDiffTabId: (p) => ideStateUtils.isDiffTabId?.(p) === true || ideStateUtils.isPreviewTabId?.(p) === true,
+      isDiffTabId: isReviewTab,
       openRunPanel: (near) => workbenchWiring?.groupBinding?.revealTask('run', near) || bottomPanel?.open('run'), getRunTarget: () => workbenchWiring?.groupBinding?.boundTerminal() || '', onAskJenny: onSendToJenny,
       // The statusbar, and the Run tab's "Run: <script>" label (workbench chrome only).
       onRunStateChange: () => { statusBar?.render(); if (state.ui?.activeView === 'ide') workbenchWiring?.render(); },
@@ -651,14 +628,15 @@
       renderProblems: () => problemsPanel?.renderPanel(),
       renderRun: () => runScripts?.renderRunPanel(),
       renderTestRunner: () => testRunnerWiring?.render(),
-      renderTestOutput: () => testOutputPanel?.render(),
+      renderTestOutput: () => testOutputPanel?.render(), renderOutline: () => qol?.outline?.render(),
       renderActivity: () => {if(state.features?.featureFlags?.activity_monitor === true) activityView?.bind();activityView?.render();},
       chatDock: ideChatDock,
     }) || null;
     async function handleSearchResultOpen(path, line, column, origin) {
       const opened = await openFile(path, origin?.pane === undefined ? undefined : { group: workbenchWiring?.groupBinding?.chatTarget(origin.pane) }); // W7c: a bound chat's group
-      const normalized = ideStateUtils.normalizeIdeRelativePath?.(path) || '';
-      if (opened) editorHost?.revealPosition(normalized, line, column); // a grouped file's group editor included
+      // Reveal at the canonical document key: a case-different spelling opens the same document.
+      const canonical = fileLifecycle?.fileOperations?.resolvePath?.(path) || ideStateUtils.normalizeIdeRelativePath?.(path) || '';
+      if (opened) editorHost?.revealPosition(canonical, line, column); // a grouped file's group editor included
       return opened === true;
     }
 
@@ -670,7 +648,9 @@
       navBookmarks?.prune((ide.openTabs || []).map((tab) => tab.path));
       // The primary strip shows the primary group; each secondary group renders its own.
       const primaryTabs = ide.openTabs.filter((tab) => !tab.group);
-      tabStrip?.renderTabs({ openTabs: primaryTabs, activeTabPath: ide.activeTabPath, dirtyByPath: ide.dirtyByPath, staleByPath: ide.staleByPath || {} });
+      // Preview / File Map on stage reads as a real tab after the file tabs.
+      const surfaceTab = stageSwitchUtils.surfaceTabFor?.(qol?.stageSurface?.getEffectiveSurface?.() || 'editor') || null;
+      tabStrip?.renderTabs({ openTabs: primaryTabs, activeTabPath: ide.activeTabPath, dirtyByPath: ide.dirtyByPath, staleByPath: ide.staleByPath || {}, surfaceTab });
       tabRestore?.render(ide);
       editorGroups?.renderViews();
       const dom = getDom();
@@ -688,22 +668,21 @@
         getIde: () => getIde(),
         getWorkspaceIdeApi, getTabRestore: () => tabRestore,
         ideStateUtils,
-        appendClientLog, showToastMessage: (...args) => showToastMessage(...args),
+        appendClientLog, showToastMessage,
         onHydrated: (ide) => welcome?.seedRecent((ide.openTabs || []).map((tab) => tab.path)),
-        onLateHydrated: (ide) => { if (!activated || disposed) return; renderIde(); if (ide.activeTabPath) { qol?.stageSurface?.suppressNextActivationReset(); void openFile(ide.activeTabPath); } },
+        onLateHydrated: (ide) => { if (!activated || disposed) return; renderIde(); if (ide.activeTabPath) void openRestoredTab(ide.activeTabPath); },
         onPreferenceCommitted: () => statusBar?.render(),
-        onPreferenceError: (key) => showShellErrorToast(jt('ide.controller.preferenceSaveFailed', 'That editor preference could not be saved. Your previous setting is still active.'), { title: jt('ide.controller.preferenceSaveFailedTitle', 'Editor Setting Not Saved'), dedupeKey: `ide:preference:${String(key || 'unknown')}` }),
+        onPreferenceError: notifyPreferenceSaveFailed,
       }) || null;
+    function notifyPreferenceSaveFailed(key) { showShellErrorToast(jt('ide.controller.preferenceSaveFailed', 'That editor preference could not be saved. Your previous setting is still active.'), { title: jt('ide.controller.preferenceSaveFailedTitle', 'Editor Setting Not Saved'), dedupeKey: `ide:preference:${String(key || 'unknown')}` }); }
     function flushPersist() { return persistence?.flushPersist(); }
     function schedulePersist() { persistence?.schedulePersist(); }
     function commitEditorPreference(key, value) {
       if (persistence) return persistence.commitPreference(key, value);
-      showShellErrorToast(jt('ide.controller.preferenceSaveFailed', 'That editor preference could not be saved. Your previous setting is still active.'), { title: jt('ide.controller.preferenceSaveFailedTitle', 'Editor Setting Not Saved'), dedupeKey: `ide:preference:${String(key || 'unknown')}` });
+      notifyPreferenceSaveFailed(key);
       return Promise.resolve({ updated: false, code: 'workspace_ide_settings_unavailable' });
     }
-    function hydratePersistedState() {
-      return persistence ? persistence.hydratePersistedState() : Promise.resolve();
-    }
+    function hydratePersistedState() { return persistence ? persistence.hydratePersistedState() : Promise.resolve(); }
 
     // QoL chrome (breadcrumb nav + Ctrl+Tab MRU + save-time hygiene) behind one
     // collector so features add no per-module wiring to this at-ceiling controller;
@@ -714,8 +693,8 @@
       onOpenFile: (p) => openFile(p), activateTab: (p) => activateTab(p),
       onRevealInExplorer: (p) => revealInExplorer(p, { expandSelf: true }), onOpenSymbolPicker: () => editorHost?.runAction('editor.action.quickOutline'),
       getWorkspaceId: () => String(state.workspace?.activeWorkspaceId || ''), getFeatureFlags: () => state.features?.featureFlags || {}, sendToJenny: (payload) => onSendToJenny(payload), getGitDecoration: (p) => gitFeature?.getDecoration(p), subscribeGitChange: (fn) => gitFeature?.subscribe(fn), ideStateUtils, requestRender: () => renderIde(), activityBus: state.workspaceActivityBus || null, getActiveSessionId: () => String(state.currentSessionId || ''), // Shared bus + active-session accessor for the map controller's presenter
-      getWorkspaceRootContext: () => state.workspaceRoot || null, chooseWorkspaceRoot: (...args) => chooseWorkspaceRoot(...args), getChangeLedger: () => getChangeLedger(), openChangeDiff: (change) => openChangeDiff(change), openChangesPanel: () => ideChatDock?.openChanges?.({}), showShellErrorToast: (...args) => showShellErrorToast(...args), // Root context is the canonical File Map identity, never 'default'
-      schedulePersist: () => schedulePersist(), getFileOperations: () => fileLifecycle?.fileOperations,
+      getWorkspaceRootContext: () => state.workspaceRoot || null, chooseWorkspaceRoot: (...args) => chooseWorkspaceRoot(...args), getChangeLedger: () => getChangeLedger(), openChangeDiff: (change) => openChangeDiff(change), openChangesPanel: () => ideChatDock?.openChanges?.({}), showShellErrorToast, // Root context is the canonical File Map identity, never 'default'
+      schedulePersist: () => schedulePersist(), getFileOperations: () => fileLifecycle?.fileOperations, showToastMessage, getWorkbenchWiring: () => workbenchWiring, getSymbolNav: () => symbolNav, // the Outline view's host and TS/JS tree
     }) || null;
 
     // The open-tab document lifecycle (open / activate / save / close / reopen +
@@ -747,9 +726,9 @@
         onEditorDocumentActivated: () => qol?.stageSurface?.noteEditorActivation(),
         activateMapStage: () => qol?.mapController?.openFileMap(),
         schedulePersist: () => schedulePersist(), requestRender: () => renderIde(),
-        showShellErrorToast: (...args) => showShellErrorToast(...args),
-        showToastMessage: (...args) => showToastMessage(...args),
-        toErrorMessage: (...args) => toErrorMessage(...args), appendClientLog,
+        showShellErrorToast,
+        showToastMessage,
+        toErrorMessage, appendClientLog,
       }) || null;
 
     // Thin facade: the rest of the controller keeps calling these by name; each
@@ -764,25 +743,21 @@
       return editorGroups?.openInGroup(rel) || (editorGroups && options?.preview !== true ? editorGroups.openFollowingFocus(rel, open, options?.group) : open());
     }
     function activateTab(path) {
-      autoSave?.cancel();
       workbenchWiring?.workbench?.showEditor?.();
       if (editorGroups?.activateInGroup(path)) return;
       fileLifecycle?.activateTab(path);
     }
-    function closeTab(path) {
-      autoSave?.cancel();
-      fileLifecycle?.closeTab(path);
+    function closeTab(path) { fileLifecycle?.closeTab(path); }
+    // Restore opens (hydrate, late hydrate, root commit) must not reset a persisted
+    // preview/file_map surface: the stage machine ignores activations until it settles.
+    function openRestoredTab(path) {
+      const stage = qol?.stageSurface;
+      return stage?.suppressActivationResetDuring ? stage.suppressActivationResetDuring(() => openFile(path)) : openFile(path);
     }
-    function reopenClosedTab() {
-      return fileLifecycle ? fileLifecycle.reopenClosedTab() : Promise.resolve();
-    }
-    function saveFile(targetPath) {
-      return fileLifecycle ? fileLifecycle.saveFile(targetPath) : Promise.resolve(false);
-    }
+    function reopenClosedTab() { return fileLifecycle ? fileLifecycle.reopenClosedTab() : Promise.resolve(); }
+    function saveFile(targetPath) { return fileLifecycle ? fileLifecycle.saveFile(targetPath) : Promise.resolve(false); }
     function saveForLaunch(targetPath) { return fileLifecycle ? fileLifecycle.saveForLaunch(targetPath) : Promise.resolve(false); }
-    function saveActiveFile(options) {
-      return fileLifecycle ? fileLifecycle.saveActiveFile(options) : Promise.resolve(false);
-    }
+    function saveActiveFile(options) { return fileLifecycle ? fileLifecycle.saveActiveFile(options) : Promise.resolve(false); }
 
     // External-change watcher (workspaceFs.onChange) lives in a sibling module
     // for the file-size ceiling. The clean-delete close routes back through
@@ -793,7 +768,7 @@
       getWorkspaceFsApi,
       editorHost, fileOperations: fileLifecycle?.fileOperations,
       ideStateUtils,
-      showToastMessage: (...args) => showToastMessage(...args),
+      showToastMessage,
       renderTabs: () => renderTabs(), appendClientLog,
       onTreeExternalChanges: (changes, opts) => { tree?.handleExternalChanges(changes, opts); quickOpen?.handleExternalChanges(changes, opts); },
       onExternalDelete: (path) => fileLifecycle?.closeExternalDelete(path),
@@ -818,20 +793,17 @@
       ];
     }
 
-    // View-scoped shortcuts (capture phase on #ideView). Ctrl+W is reserved by
-    // Electron's default-menu close-window accelerator, which fires before the
-    // renderer - tab close rides Ctrl+F4 instead. The handler body lives in
-    // renderer-ide-commands (file-size ceiling); the controller keeps the
-    // addEventListener/removeEventListener wiring below.
+    // View-scoped keymap (capture phase on #ideView; row 82). The dispatcher and the
+    // keymap / palette / status-bar command rows live in renderer-ide-commands and its
+    // registrars (file-size ceiling); the controller keeps the listener wiring below.
     const handleViewKeydown = commandsUtils.createViewKeydownHandler?.({
-      state,
-      saveActiveFile,
-      tabsController,
-      quickOpen,
-      bottomPanel, newTerminal: () => newTerminalAction()?.(),
+      state, getIde, saveActiveFile, saveFile, tabsController, quickOpen, editorHost, workbenchWiring, chipPicker, appendClientLog, showToastMessage, isRepo: () => gitFeature?.isRepo?.() === true,
+      bottomPanel, newTerminal: () => newTerminalAction()?.(), canAddTerminal: () => terminals?.canAdd?.() === true, terminals, getActiveTerminalViewId: () => terminals?.activeViewId?.() || workbenchWiring?.workbench?.getActiveView?.('terminal') || 'terminal',
+      revealInExplorer, chooseWorkspaceRoot: () => chooseWorkspaceRoot(), getWorkspaceRoot: () => state.workspaceRoot || null, getClipboardApi: () => windowRef.jennyShell?.clipboard || null, getCloseOrchestrator: () => closeOrchestrator, getFileLifecycle: () => fileLifecycle, problemsPanel, runScripts,
+      commitEditorPreference, applyEditorPrefs: () => editorPrefsUtils.applyEditorPrefs?.(getIde(), editorHost, chipPicker), previewActiveFile: () => qol?.previewStage?.open(getIde().activeTabPath || ''),
       chatDock: ideChatDock, isChatDockEnabled: () => state?.features?.featureFlags?.ide_chat_dock === true,
-      mruSwitcher: qol?.mruSwitcher || null, editorGroups,
-      reopenClosedTab, showPanel,
+      mruSwitcher: qol?.mruSwitcher || null, editorGroups, getOutlineView: () => qol?.outline || null,
+      reopenClosedTab, showPanel, gitFeature, gutterDecorations, openEditorSettings: () => callbacks.openSettingsSection?.('editor'),
       workspaceSymbolPicker: () => symbolNav?.openPicker(),
       navBack: () => navBookmarks?.back(),
       navForward: () => navBookmarks?.forward(),
@@ -854,7 +826,7 @@
       welcome?.bindEvents();
       // Capture-phase so the save shortcut wins even when focus sits in the
       // tree or a panel; Monaco's own Ctrl+S command covers editor focus.
-      dom.ideView.addEventListener('keydown', handleViewKeydown, true);
+      const unbindViewKeys = commandsUtils.bindViewKeydown(dom.ideView, handleViewKeydown);
       explorer?.bindAll(); stageSwitch?.bindEvents(); editorGroups?.bindEvents();
       searchPanel?.bindEvents();
       diffController?.bindEvents(); terminals?.bindEvents();
@@ -883,7 +855,7 @@
         confirmDialog?.dispose();
         ideCommands?.disposeHelp();
         chipPicker?.dispose();
-        dom.ideView.removeEventListener('keydown', handleViewKeydown, true);
+        unbindViewKeys();
         // Flush any pending persist before teardown (clears the timer internally).
         persistence?.flushIfPending();
         persistence?.dispose();
@@ -939,13 +911,7 @@
           if (!lifecycleCurrent(epoch)) return;
           renderIde();
           watchController?.start();
-          const ide = getIde();
-          if (ide.activeTabPath) {
-            // Hydrate-time restore must not reset a persisted preview/file_map
-            // surface — suppress the stage machine's activation reset once.
-            qol?.stageSurface?.suppressNextActivationReset();
-            await openFile(ide.activeTabPath);
-          }
+          if (getIde().activeTabPath) await openRestoredTab(getIde().activeTabPath); qol?.noteHydrated?.(); // hot exit restores after the tabs
         });
       }
       renderIde();
@@ -960,13 +926,16 @@
 
     async function handleWorkspaceRootCommitted({ context } = {}) { if (disposed) return;
       const epoch = ++lifecycleEpoch;
+      // Root-owned UI clears synchronously, before the hydrate await (and even if it throws).
       fileLifecycle?.resetForRoot(context); ideStateUtils.resetIdeRootState?.(getIde()); tree?.resetForRoot?.(); searchPanel?.resetForRoot?.(); diffController?.resetForRoot?.(); quickOpen?.invalidate(); ideMru?.clear?.(); navBookmarks?.resetForRoot?.(); tabsController?.resetForRoot?.(); editorGroups?.resetForRoot(); testRunnerWiring?.resetForRoot?.(); activityView?.clearOutput(); runScripts?.resetForRoot?.(); gitFeature?.resetForRoot?.(); // Git presentation must not survive a root switch.
+      welcome?.clearRecent(); qol?.handleWorkspaceRootCommitted?.({ context });
       // The decoupled composer singletons (@-mention autocomplete, active-file consent) hear root commits only via this window event — they have no controller wire by design.
       try { windowRef.dispatchEvent?.(new windowRef.CustomEvent('ide:workspace-root-committed', { detail: { context } })); } catch (_error) { /* stub windows without CustomEvent */ }
-      await persistence?.hydrateForContext(context); if (!lifecycleCurrent(epoch)) return; watchController?.start(); qol?.handleWorkspaceRootCommitted?.({ context });
-      await Promise.allSettled([Promise.resolve(welcome?.render({ hasRoot: Boolean(context?.rootPath) })), Promise.resolve(tree?.refreshRoot())]);
+      // keepLive: a tab opened in the new root while the hydrate awaited keeps its tab.
+      await persistence?.hydrateForContext(context, { keepLive: true }); if (!lifecycleCurrent(epoch)) return; watchController?.start();
+      await Promise.resolve(welcome?.render({ hasRoot: Boolean(context?.rootPath) })).catch(noop);
       if (!lifecycleCurrent(epoch)) return;
-      renderIde(); if (getIde().activeTabPath) await openFile(getIde().activeTabPath);
+      renderIde(); if (getIde().activeTabPath) await openRestoredTab(getIde().activeTabPath); if (lifecycleCurrent(epoch)) qol?.noteHydrated?.();
     }
 
     return {

@@ -31,7 +31,6 @@
   }
 
   function createIdeTree(deps) {
-    const getDom = typeof deps?.getDom === 'function' ? deps.getDom : () => ({});
     const getIde = typeof deps?.getIde === 'function' ? deps.getIde : () => ({});
     const getApi = typeof deps?.getWorkspaceFsApi === 'function' ? deps.getWorkspaceFsApi : () => null;
     // Host + active-gate are injectable so the single explorer instance can
@@ -78,6 +77,9 @@
     const treeMutations = resolveModule('rendererIdeTreeMutations', './renderer-ide-tree-mutations');
     const treeKeyboard = resolveModule('rendererIdeTreeKeyboard', './renderer-ide-tree-keyboard');
     const treeClipboard = resolveModule('rendererIdeTreeClipboard', './renderer-ide-tree-clipboard');
+    const treeFilterMod = resolveModule('rendererIdeTreeFilter', './renderer-ide-tree-filter');
+    const treeBadgesMod = resolveModule('rendererIdeTreeBadges', './renderer-ide-tree-badges');
+    const { findRow } = resolveModule('rendererIdeTreeDnd', './renderer-ide-tree-dnd');
     const confirmDeleteMany = typeof deps?.confirmDeleteMany === 'function' ? deps.confirmDeleteMany : null;
     const selection = selectionUtils.createIdeTreeSelection();
     const childrenByDir = new Map(); // dirPath ('' = root) -> entries[]
@@ -103,6 +105,16 @@
     let focusedPath = '';
     let focusAfterRender = false;
     let clipboard = null;
+    // Filter + problem/ignored badges live in their own modules; the tree only
+    // forwards render, listing, root and watcher signals to them.
+    const treeBadges = treeBadgesMod.createIdeTreeBadges?.({
+      getEditorHost: deps?.getEditorHost, getRootEpoch: () => rootEpoch, requestRepaint: () => render(), checkIgnored: deps?.checkIgnored,
+      getMarkers: deps?.getMarkers, getTaskProblems: deps?.getTaskProblems, subscribeGitStatus: deps?.subscribeGitStatus, isDirectoryExpanded: deps?.isDirectoryExpanded,
+    });
+    const treeFilter = treeFilterMod.createIdeTreeFilter?.({
+      getIde, escapeHtml, childrenByDir, getMountEl, selection, render,
+      getFocusedPath: () => focusedPath, setFocusedPath: (value) => { focusedPath = value; },
+    });
     const { parentDirOf, nameOf } = treeMarkup; const { buildTreeMarkup, buildProjectNudge } = treeMarkup.createIdeTreeMarkup({
       // Tier-2 git slice: (relPath, kind) -> git state string | null. Defaults to
       // no decoration so the tree renders exactly as before when git is off.
@@ -112,19 +124,16 @@
       hasChooseRoot: () => Boolean(onChooseWorkspaceRoot), onLazyLoad: loadDirectory,
       isSelected: (path) => selection.has(path),
       isCut: (path) => clipboard?.isCut(path) === true,
-      getProjectTitle, getProjectNudge,
+      getProjectTitle, getProjectNudge, filter: treeFilter, badges: treeBadges,
     });
-    const editSession = treeEdit.createIdeTreeEditSession?.({
+    const editSession = treeEdit.createIdeTreeEditSession({
       getPendingEdit: () => pendingEdit,
       getMountEl,
       childrenByDir,
       isWin32: globalRef.process?.platform === 'win32'
         || /^Win/i.test(String(globalRef.navigator?.platform || '')),
-    }) || {
-      repaint: noop, onInput: () => ({ ok: true }), validate: () => ({ ok: true }),
-      paintError: noop, queueBlurCommit: (fn) => setTimeout(fn, 0), clear: () => false,
-    };
-    const { commitEdit, deleteEntry, moveEntry, toMessage } = treeMutations.createIdeTreeMutations({
+    });
+    const { commitEdit, copyEntry, deleteEntry, moveEntry, toMessage } = treeMutations.createIdeTreeMutations({
       getApi, getMutationContext: deps?.getMutationContext, preflightMutation: deps?.preflightMutation, commitMutationPreflight: deps?.commitMutationPreflight,
       cancelMutationPreflight: deps?.cancelMutationPreflight, confirmDelete: deps?.confirmDelete, showError, appendClientLog, onOpenFile,
       onEntryRenamed: (fromPath, toPath, kind, meta) => {
@@ -142,24 +151,22 @@
       // selection; successful rename/delete wrappers settle membership below.
       cancelEdit, pruneStaleDirState: (path) => pruneStaleDirState(path, { dropSelection: false }),
       refreshDirectory, render, editSession });
-    clipboard = treeClipboard.createIdeTreeClipboard?.({
+    clipboard = treeClipboard.createIdeTreeClipboard({
       selection, getFocusedPath: () => focusedPath, getRootEpoch: () => rootEpoch,
-      getRenderedRows: renderedRows, moveEntry, deleteEntry, getApi,
-      getMutationContext: deps?.getMutationContext, refreshDirectory, render, showError,
+      getRenderedRows: renderedRows, moveEntry, deleteEntry, copyEntry, getApi,
+      refreshDirectory, render, showError,
       onNotify: (message) => showError(message, {
         title: jt('ide.explorer.workspace', 'Workspace'), dedupeKey: 'ide:tree:paste',
       }),
       parentDirOf, nameOf, showUndoToast: deps?.showUndoToast,
-    }) || {
-      copy: noop, cut: noop, paste: noop, duplicate: noop, isCut: () => false,
-      hasContent: () => false, clear: noop, bindEvents: noop, dispose: noop,
-    };
+    });
     const { syncRovingFocus, handleKeydown } = treeKeyboard.createIdeTreeKeyboard({
       getMountEl, getIde,
       getFocusedPath: () => focusedPath,
       setFocusedPath: (value) => { focusedPath = value; },
       setFocusAfterRender: (value) => { focusAfterRender = value; },
       toggleDir, onOpenFile, selection, render,
+      onOpenFilter: () => treeFilter?.open(), onOpenToSide: deps?.onOpenToSide,
       onBeginRename: beginRename,
       onDeleteSelection: deleteSelection,
       onNotify: (message) => showError(message, {
@@ -171,7 +178,8 @@
       onClipboardDuplicate: clipboard.duplicate,
       commitEdit, cancelEdit, editSession,
     });
-    async function loadDirectory(dirPath) {
+    // `deferRender`: a batch caller renders once after all its listings land.
+    async function loadDirectory(dirPath, { deferRender = false } = {}) {
       const epoch = rootEpoch;
       if (loadingDirs.has(dirPath)) {
         return;
@@ -199,6 +207,7 @@
         });
         if (epoch !== rootEpoch) return;
         childrenByDir.set(dirPath, Array.isArray(result?.entries) ? result.entries : []);
+        treeBadges?.noteListedDirectory(dirPath, childrenByDir.get(dirPath));
         if (result?.truncated) {
           truncatedDirs.add(dirPath);
         } else {
@@ -222,6 +231,8 @@
           rootError = message;
           rootNeedsChoose = noRoot;
         } else {
+          // A failed re-list drops the old listing so the error row shows.
+          childrenByDir.delete(dirPath);
           errorByDir.set(dirPath, message);
         }
         appendClientLog('WARN', 'ide.tree_list_failed', {
@@ -230,7 +241,7 @@
       } finally {
         if (epoch === rootEpoch) {
           loadingDirs.delete(dirPath);
-          render();
+          if (!deferRender) render();
           if (!rootNeedsChoose && refreshQueuedDirs.delete(dirPath)) refreshDirectory(dirPath);
         }
       }
@@ -245,13 +256,13 @@
       refreshQueuedDirs.clear();
     }
 
-    async function refreshDirectory(dirPath) {
+    // The old listing stays painted until the new one replaces it (no
+    // "Loading…" flash; loadDirectory updates the truncated flag on success).
+    async function refreshDirectory(dirPath, options) {
       // A load for this dir is already in flight: queue instead of dropping.
       if (loadingDirs.has(dirPath)) { refreshQueuedDirs.add(dirPath); return; }
-      childrenByDir.delete(dirPath);
-      truncatedDirs.delete(dirPath);
       errorByDir.delete(dirPath);
-      await loadDirectory(dirPath);
+      await loadDirectory(dirPath, options);
     }
 
     function collapseAllDirs() {
@@ -264,15 +275,28 @@
       render();
     }
 
-    // Re-lists only already-cached directories - never expands lazily-loaded
-    // depth, so a refresh can't trigger a full-workspace walk.
+    // Re-lists the root and the expanded cached directories, then renders once.
+    // Collapsed cached listings are dropped and re-list on their next expand,
+    // so a refresh never walks lazily-loaded depth.
     async function refreshLoadedDirectories() {
-      const dirs = [...childrenByDir.keys()];
-      if (!dirs.length) {
+      treeBadges?.invalidateIgnored();
+      if (!childrenByDir.size) {
         await loadDirectory('');
         return;
       }
-      await Promise.all(dirs.map((dir) => refreshDirectory(dir)));
+      const epoch = rootEpoch;
+      const expandedDirs = getIde().expandedDirs;
+      const dirs = [];
+      for (const dir of [...childrenByDir.keys()]) {
+        if (dir === '' || expandedDirs?.has(dir)) {
+          dirs.push(dir);
+        } else {
+          childrenByDir.delete(dir);
+          truncatedDirs.delete(dir);
+        }
+      }
+      await Promise.all(dirs.map((dir) => refreshDirectory(dir, { deferRender: true })));
+      if (epoch === rootEpoch) render();
     }
 
     // Drops cached listings + persisted expansion for a deleted/renamed dir
@@ -344,10 +368,12 @@
       return true;
     }
 
+    // Returns true after a markup swap, false when the markup was already
+    // current, and undefined when the explorer is not on screen.
     function render({ restorePanelFocus = true } = {}) {
       const panel = getMountEl() || null;
       if (!panel || !isActivePanel()) {
-        return;
+        return undefined;
       }
       const markup = buildTreeMarkup();
       // __jennyIdeRailMarkup marks what is CURRENTLY rendered in this host (an
@@ -361,14 +387,16 @@
         // in-panel focus must hand it back (lazy loads re-render the same
         // expansion twice - Loading row, then children).
         const doc = panel.ownerDocument;
+        treeFilter?.beforeSwap();
         const hadFocus = focusAfterRender
-          || Boolean(restorePanelFocus && doc && panel.contains(doc.activeElement));
+          || Boolean(restorePanelFocus && doc && !treeFilter?.ownsFocus() && panel.contains(doc.activeElement));
         const editHadFocus = Boolean(doc?.activeElement?.matches?.('[data-ide-tree-edit-control]'));
         const previousScrollTop = isMountedIn(panel) ? panel.scrollTop : ownScrollTop;
         focusAfterRender = false;
         panel.innerHTML = markup;
         panel.__jennyIdeRailMarkup = markup;
         syncRovingFocus(panel, hadFocus);
+        treeFilter?.afterSwap(panel);
         const editControl = panel.querySelector('[data-ide-tree-edit-control]');
         if (editControl) {
           // A blur-held invalid edit row stays open UNFOCUSED; only a fresh
@@ -382,7 +410,18 @@
         }
         panel.scrollTop = previousScrollTop;
         ownScrollTop = previousScrollTop;
+        return true;
       }
+      return false;
+    }
+
+    // Adds `path` to the expansion set and starts its listing when uncached.
+    // `changed` says whether the set grew; `load` is the listing promise.
+    function expandDir(path) {
+      const ide = getIde();
+      const changed = !ide.expandedDirs.has(path);
+      ide.expandedDirs.add(path);
+      return { changed, load: childrenByDir.has(path) ? null : loadDirectory(path) };
     }
 
     function toggleDir(path) {
@@ -390,40 +429,26 @@
       if (ide.expandedDirs.has(path)) {
         ide.expandedDirs.delete(path);
       } else {
-        ide.expandedDirs.add(path);
-        if (!childrenByDir.has(path)) {
-          loadDirectory(path);
-        }
+        expandDir(path);
       }
       schedulePersist();
       render();
     }
 
     function beginCreate(dirPath, mode) {
-      const ide = getIde();
-      if (dirPath && !ide.expandedDirs.has(dirPath)) {
-        ide.expandedDirs.add(dirPath);
+      if (dirPath && expandDir(dirPath).changed) {
         schedulePersist();
-      }
-      if (dirPath && !childrenByDir.has(dirPath)) {
-        loadDirectory(dirPath);
       }
       pendingEdit = { mode, dirPath, originalName: '' };
       render();
     }
 
     function resolveTargetDir() {
-      const panel = getMountEl() || null;
-      const row = panel
-        ? [...panel.querySelectorAll('[data-ide-tree-path]')]
-          .find((candidate) => candidate.dataset.ideTreePath === focusedPath)
-        : null;
+      const row = renderedRows().find((candidate) => candidate.path === focusedPath);
       if (!row) {
         return '';
       }
-      return row.dataset.ideTreeKind === 'directory'
-        ? focusedPath
-        : parentDirOf(focusedPath);
+      return row.kind === 'directory' ? focusedPath : parentDirOf(focusedPath);
     }
 
     function beginRename(path, kind) {
@@ -472,20 +497,24 @@
       if (targets.length < 2) {
         return;
       }
-      if (confirmDeleteMany) {
-        const count = targets.length;
-        const confirmed = await confirmDeleteMany(count);
+      // One confirmation for the batch when the host offers it, else per item.
+      const skipConfirm = Boolean(confirmDeleteMany);
+      if (skipConfirm) {
+        const confirmed = await confirmDeleteMany(targets.length);
         if (!confirmed || rootEpochAtEntry !== rootEpoch) return;
-        for (const target of targets) {
-          if (rootEpochAtEntry !== rootEpoch) return;
-          await deleteEntry(target.path, target.kind, { skipConfirm: true });
-        }
-        return;
       }
       for (const target of targets) {
         if (rootEpochAtEntry !== rootEpoch) return;
-        await deleteEntry(target.path, target.kind);
+        await deleteEntry(target.path, target.kind, { skipConfirm });
       }
+    }
+
+    function createMenuItems(dirPath) {
+      return [
+        { label: jt('ide.tree.newFile', 'New File'), action: () => beginCreate(dirPath, 'create-file') },
+        { label: jt('ide.tree.newFolder', 'New Folder'), action: () => beginCreate(dirPath, 'create-directory') },
+        { separator: true },
+      ];
     }
 
     function cancelEdit() {
@@ -540,6 +569,8 @@
           toggleGeneratedDirectories();
         } else if (action === 'cycle-sort') {
           cycleSortMode();
+        } else if (action === 'toggle-filter') {
+          treeFilter?.toggle();
         } else if (action === 'project-menu') {
           onOpenProjectMenu(headerAction);
         } else if (action === 'project-nudge') {
@@ -559,10 +590,7 @@
         return;
       }
       if (event.shiftKey) {
-        const panel = getMountEl();
-        const renderedPaths = [...panel.querySelectorAll('[data-ide-tree-path]')]
-          .map((renderedRow) => renderedRow.dataset.ideTreePath);
-        selection.extendRange(renderedPaths, row.dataset.ideTreePath);
+        selection.extendRange(renderedRows().map((rendered) => rendered.path), row.dataset.ideTreePath);
         render();
         return;
       }
@@ -591,22 +619,7 @@
       if (row) {
         const path = row.dataset.ideTreePath;
         const kind = row.dataset.ideTreeKind;
-        const items = [];
-        if (kind === 'directory') {
-          items.push(
-            { label: jt('ide.tree.newFile', 'New File'), action: () => beginCreate(path, 'create-file') },
-            { label: jt('ide.tree.newFolder', 'New Folder'), action: () => beginCreate(path, 'create-directory') },
-            { separator: true }
-          );
-        }
-        if (kind !== 'directory') {
-          const parentPath = parentDirOf(path);
-          items.push(
-            { label: jt('ide.tree.newFile', 'New File'), action: () => beginCreate(parentPath, 'create-file') },
-            { label: jt('ide.tree.newFolder', 'New Folder'), action: () => beginCreate(parentPath, 'create-directory') },
-            { separator: true }
-          );
-        }
+        const items = createMenuItems(kind === 'directory' ? path : parentDirOf(path));
         const deleteItem = { label: jt('common.delete', 'Delete'), action: () => deleteEntry(path, kind) };
         items.push(
           { label: jt('common.rename', 'Rename'), action: () => beginRename(path, kind) },
@@ -659,11 +672,7 @@
       if (rootError) {
         return;
       }
-      const items = [
-        { label: jt('ide.tree.newFile', 'New File'), action: () => beginCreate('', 'create-file') },
-        { label: jt('ide.tree.newFolder', 'New Folder'), action: () => beginCreate('', 'create-directory') },
-        { separator: true },
-      ];
+      const items = createMenuItems('');
       if (clipboard.hasContent()) {
         items.push(
           { label: jt('ide.tree.paste', 'Paste'), shortcutHint: 'Ctrl+V', action: () => clipboard.paste('') },
@@ -718,6 +727,7 @@
         return;
       }
       boundHosts = hosts;
+      treeBadges?.bind();
       clipboard?.bindEvents?.();
       for (const host of hosts) {
         host.addEventListener('click', handleClick);
@@ -739,6 +749,8 @@
         host.removeEventListener('scroll', handleHostScroll);
       }
       boundHosts = [];
+      treeBadges?.dispose();
+      treeFilter?.dispose();
       editSession.clear();
       clipboard?.dispose?.();
       contextMenu?.hide?.();
@@ -747,10 +759,8 @@
     // Spring expansion is intentionally transient until a drop lands inside
     // it; the DnD owner decides when that expansion becomes persisted state.
     function expandDirForDrag(path) {
-      const ide = getIde();
-      if (ide.expandedDirs.has(path)) return;
-      ide.expandedDirs.add(path);
-      if (!childrenByDir.has(path)) loadDirectory(path);
+      if (getIde().expandedDirs.has(path)) return;
+      expandDir(path);
       render();
     }
 
@@ -768,7 +778,6 @@
     // survives those re-renders.
     async function revealPath(path, { expandSelf = false, focus = true } = {}) {
       const epoch = rootEpoch;
-      const ide = getIde();
       const segments = String(path || '').split('/').filter(Boolean);
       if (!segments.length) {
         return;
@@ -779,13 +788,9 @@
       const pendingLoads = [];
       for (const segment of segments.slice(0, expandCount)) {
         prefix = prefix ? `${prefix}/${segment}` : segment;
-        if (!ide.expandedDirs.has(prefix)) {
-          ide.expandedDirs.add(prefix);
-          changed = true;
-        }
-        if (!childrenByDir.has(prefix)) {
-          pendingLoads.push(loadDirectory(prefix));
-        }
+        const expanded = expandDir(prefix);
+        changed = expanded.changed || changed;
+        if (expanded.load) pendingLoads.push(expanded.load);
       }
       if (changed) {
         schedulePersist();
@@ -798,16 +803,15 @@
       if (epoch !== rootEpoch) return;
       focusedPath = segments.join('/');
       focusAfterRender = focus;
-      // Force the tabindex/focus routing even when the markup is unchanged.
       const panel = getMountEl() || null;
-      if (panel) {
-        panel.__jennyIdeRailMarkup = '';
+      // Unchanged markup (nothing expanded or loaded): retarget the roving
+      // tabindex on the rows already painted instead of swapping them all.
+      if (render({ restorePanelFocus: focus }) === false) {
+        focusAfterRender = false;
+        syncRovingFocus(panel, focus);
       }
-      render({ restorePanelFocus: focus });
       if (!focus && panel) {
-        const row = [...panel.querySelectorAll('[data-ide-tree-path]')]
-          .find((candidate) => candidate.dataset.ideTreePath === focusedPath);
-        row?.scrollIntoView?.({ block: 'nearest' });
+        findRow(panel, focusedPath)?.scrollIntoView?.({ block: 'nearest' });
       }
     }
 
@@ -817,6 +821,8 @@
       selection.clear();
       clipboard.clear();
       rootEpoch += 1;
+      treeBadges?.reset();
+      treeFilter?.reset();
       childrenByDir.clear();
       loadingDirs.clear();
       refreshQueuedDirs.clear();
@@ -838,6 +844,7 @@
     // directories. A truncated batch means "too much changed" - drop every
     // cached listing and let expanded dirs lazily re-list on render.
     async function handleExternalChanges(changes, { truncated = false } = {}) {
+      treeBadges?.noteExternalChanges(changes);
       if (truncated) {
         childrenByDir.clear();
         truncatedDirs.clear();
@@ -856,14 +863,16 @@
           pruneStaleDirState(relPath);
         }
         const parent = parentDirOf(relPath);
-        // loadingDirs: a refresh already in flight deletes its childrenByDir
-        // entry before awaiting, so a second batch mid-refresh must still see
-        // the dir as refresh-worthy (refreshDirectory queues it - see UIUX-012).
+        // loadingDirs: a first listing still in flight has no cache entry yet,
+        // so a batch mid-load must still see the dir as refresh-worthy
+        // (refreshDirectory queues it - see UIUX-012).
         if (childrenByDir.has(parent) || loadingDirs.has(parent) || parent === '') {
           dirsToRefresh.add(parent);
         }
       }
-      await Promise.all([...dirsToRefresh].map((dir) => refreshDirectory(dir)));
+      const epoch = rootEpoch;
+      await Promise.all([...dirsToRefresh].map((dir) => refreshDirectory(dir, { deferRender: true })));
+      if (epoch !== rootEpoch) return;
       for (const dir of dirsToRefresh) {
         const entries = childrenByDir.get(dir);
         if (!entries) continue;
@@ -874,6 +883,7 @@
           }
         }
       }
+      render();
     }
 
     return {
@@ -881,6 +891,7 @@
       bindEvents,
       cancelPendingEdit: cancelEdit,
       clipboard,
+      copyEntry,
       deleteEntry,
       dispose,
       expandDirForDrag,

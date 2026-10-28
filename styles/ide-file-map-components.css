@@ -1,0 +1,106 @@
+/* styles/ide-file-map-components.css - the File Map's Components lens (row 77
+ * phase 3): renderer/features/renderer-ide-map-components-lens.js. Boxes read
+ * like atlas district headers (mono name, file count, language bar); links are
+ * one SVG layer under the boxes. The atlas's language tokens
+ * (.ide-atlas-langseg--*) and bucket chips come from ide-file-map.css. */
+
+/* Lens switch in the controls bar (inventory segmented control, compact). */
+.ide-map-controls .ide-map-lens { flex: none; }
+/* Components mode hides the atlas-only controls. */
+.ide-map-viewport.is-components .ide-map-layers,
+.ide-map-viewport.is-components .ide-map-hide-tests,
+.ide-map-viewport.is-components .ide-map-findings,
+.ide-map-viewport.is-components .ide-map-footer,
+.ide-map-viewport.is-components .ide-map-activity-rail { display: none !important; }
+.ide-map-viewport.is-components { cursor: default; }
+
+.ide-map-components {
+  position: absolute; inset: 0; z-index: 4; overflow: auto;
+  padding: 62px 24px 96px; box-sizing: border-box;
+  background: var(--bg-base);
+}
+.ide-components-head {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 14px;
+  max-width: 1280px; margin: 0 auto 26px;
+}
+.ide-components-crumbs { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 6px; font-family: var(--font-family-mono, ui-monospace, monospace); font-size: var(--font-size-body); }
+.ide-components-crumb { border: 0; padding: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; }
+.ide-components-crumb:hover { text-decoration: underline; }
+.ide-components-crumb[aria-current] { color: var(--text-primary); font-weight: 500; cursor: default; text-decoration: none; }
+.ide-components-crumb-sep { color: var(--text-muted); }
+.ide-components-caption { color: var(--text-muted); font-size: var(--font-size-footnote); }
+
+.ide-components-diagram { position: relative; max-width: 1280px; margin: 0 auto; display: flex; flex-direction: column; gap: 58px; }
+.ide-components-row { position: relative; z-index: 1; display: flex; flex-wrap: wrap; justify-content: center; gap: 22px 30px; }
+.ide-components-row-label { width: 100%; text-align: center; margin-bottom: -10px; color: var(--text-muted); font-size: var(--font-size-caption); }
+
+/* A box reads like an atlas district header: mono name, count, language bar. */
+.ide-components-box {
+  position: relative; box-sizing: border-box; display: flex; flex-direction: column; gap: 7px;
+  width: var(--box-w, 180px); padding: 11px 14px 12px;
+  border: 1px solid var(--line); border-radius: 12px;
+  background: color-mix(in srgb, var(--text-primary) 3.5%, var(--bg-base));
+  color: var(--text-secondary); font: inherit; text-align: start; cursor: zoom-in;
+  transition: border-color var(--transition-fast), opacity var(--transition-fast);
+}
+.ide-components-box:hover, .ide-components-box:focus-visible, .ide-components-box.is-hover {
+  outline: none; border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+.ide-components-box--loose { border-style: dashed; background: var(--bg-base); }
+.ide-components-box.is-dim { opacity: 0.32; }
+.ide-components-name {
+  color: var(--text-primary); font-family: var(--font-family-mono, ui-monospace, monospace); font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ide-components-box--loose .ide-components-name { color: var(--text-secondary); font-weight: 400; }
+.ide-components-meta { display: flex; align-items: center; gap: 10px; color: var(--text-muted); font-size: var(--font-size-caption); }
+.ide-components-meta .ide-atlas-langbar { flex: 1 1 auto; max-width: 7em; }
+.ide-components-extra { color: var(--accent-cyan); font-size: var(--font-size-caption); }
+.ide-components-extra.is-match { color: var(--accent); }
+
+.ide-components-arrows { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.ide-components-arrow { fill: none; stroke: color-mix(in srgb, var(--text-muted) 60%, transparent); transition: opacity var(--transition-fast); }
+.ide-components-arrow.is-out { stroke: var(--accent); }
+.ide-components-arrow.is-in { stroke: var(--accent-cyan); }
+.ide-components-arrow.is-dim { opacity: 0.12; }
+.ide-components-arrow-head { fill: color-mix(in srgb, var(--text-muted) 60%, transparent); }
+.ide-components-arrow-head--out { fill: var(--accent); }
+.ide-components-arrow-head--in { fill: var(--accent-cyan); }
+
+/* One status line, bottom-left: what the hovered box links to. */
+.ide-components-status {
+  position: absolute; inset-inline-start: 16px; bottom: 14px; z-index: 6; max-width: 52%;
+  color: var(--text-muted); font-size: var(--font-size-footnote); line-height: 1.5;
+}
+.ide-components-status b { color: var(--text-primary); font-weight: 500; font-family: var(--font-family-mono, ui-monospace, monospace); }
+.ide-components-status .is-out { color: var(--accent); }
+.ide-components-status .is-in { color: var(--accent-cyan); }
+
+/* Leaf view: the box's files, one row each; a row hands off to the atlas. */
+.ide-components-files { max-width: 980px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 2px 24px; }
+.ide-components-file {
+  display: flex; align-items: center; gap: 9px; min-width: 0; padding: 5px 8px;
+  border: 0; border-radius: var(--radius-xs, 6px); background: none; color: var(--text-secondary);
+  font-family: var(--font-family-mono, ui-monospace, monospace); font-size: var(--font-size-footnote); text-align: start; cursor: pointer;
+}
+.ide-components-file:hover, .ide-components-file:focus-visible { outline: none; background: color-mix(in srgb, var(--text-primary) 5%, transparent); color: var(--text-primary); }
+.ide-components-file-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--atlas-lang, var(--text-muted)); }
+.ide-components-file-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ide-components-file-dir { flex: none; margin-inline-start: auto; color: var(--text-muted); font-size: var(--font-size-caption); }
+.ide-components-file.is-match .ide-components-file-name { color: var(--accent); }
+.ide-components-more {
+  grid-column: 1 / -1; justify-self: start; margin-top: 8px; padding: 5px 8px;
+  border: 0; background: none; color: var(--accent); font-family: inherit; font-size: var(--font-size-footnote); cursor: pointer;
+}
+.ide-components-more:hover, .ide-components-more:focus-visible { text-decoration: underline; }
+
+.ide-components-empty { max-width: 460px; margin: 120px auto 0; text-align: center; color: var(--text-secondary); line-height: 1.55; }
+.ide-components-empty-title { margin: 0 0 6px; color: var(--text-primary); font-size: var(--font-size-heading); font-weight: 500; }
+.ide-components-empty p { margin: 0 0 14px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ide-components-box,
+  .ide-components-arrow {
+    transition: none;
+  }
+}

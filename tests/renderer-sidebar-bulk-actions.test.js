@@ -120,8 +120,9 @@ test('row keyboard selection keeps current-chat identity and activity separate a
   assert.equal(open.getAttribute('aria-checked'), 'true');
   assert.equal(open.getAttribute('aria-current'), 'page');
   assert.equal(row.querySelector('.session-row__dot'), dot);
-  assert.equal(menu.hidden, true);
-  assert.equal(menu.tabIndex, -1);
+  // CSS owns hiding the menu while selecting; the controller only marks the row.
+  assert.equal(row.classList.contains('sidebar-bulk-selecting'), true);
+  assert.equal(menu.hidden, false);
   let contextMenus = 0;
   h.groups.addEventListener('contextmenu', () => contextMenus++);
   open.dispatchEvent(new h.dom.window.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
@@ -131,8 +132,33 @@ test('row keyboard selection keeps current-chat identity and activity separate a
   assert.equal(h.doc.activeElement, h.control('select'));
   assert.equal(open.hasAttribute('role'), false);
   assert.equal(open.getAttribute('aria-label'), 'Open a');
+  assert.equal(row.classList.contains('sidebar-bulk-selecting'), false);
   assert.equal(menu.hidden, false);
   assert.equal(menu.tabIndex, open.tabIndex);
+});
+
+test('idle repaints skip rows already painted idle, but still paint newly created rows', t => {
+  const h = harness(t);
+  const first = h.groups.querySelector('.conversation-item');
+  const open = first.querySelector('[data-session-open]');
+  h.groups.dispatchEvent(new h.dom.window.Event('sidebar-rendered'));
+  assert.equal(first.classList.contains('sidebar-bulk-selecting'), false);
+  // An idle row that was painted once is left alone on later idle repaints.
+  open.setAttribute('role', 'checkbox');
+  h.groups.dispatchEvent(new h.dom.window.Event('sidebar-rendered'));
+  assert.equal(open.getAttribute('role'), 'checkbox');
+  // A row the panel creates after that still gets its first idle paint.
+  h.groups.insertAdjacentHTML('beforeend', '<li class="conversation-item session-row" data-session-id="c"><button class="session-row__open" data-session-open="c" role="checkbox">c</button></li>');
+  h.groups.dispatchEvent(new h.dom.window.Event('sidebar-rendered'));
+  assert.equal(h.groups.querySelector('[data-session-id="c"] [data-session-open]').hasAttribute('role'), false);
+  // Entering selection repaints every row, and leaving it repaints them back.
+  h.control('select').click();
+  assert.equal(first.classList.contains('sidebar-bulk-selecting'), true);
+  assert.equal(open.getAttribute('role'), 'checkbox');
+  open.removeAttribute('role');
+  h.control('done').click();
+  assert.equal(first.classList.contains('sidebar-bulk-selecting'), false);
+  assert.equal(open.hasAttribute('role'), false);
 });
 
 test('confirmation preserves the toolbar and selection; Cancel, Escape and outside dismissal never delete', t => {

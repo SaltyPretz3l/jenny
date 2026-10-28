@@ -145,8 +145,13 @@
       if (!resultsEl) {
         return;
       }
+      matches = call('computeMatches', readQuery()) || [];
+      render();
+    }
+
+    // Paint the kept matches (no recompute).
+    function render() {
       const query = readQuery();
-      matches = call('computeMatches', query) || [];
       selectedIndex = Math.max(0, Math.min(selectedIndex, matches.length - 1));
       let markup;
       if (call('isLoading', query) === true) {
@@ -160,6 +165,10 @@
         markup += call('renderTrailingStatus', matches, query) || '';
       }
       resultsEl.innerHTML = markup;
+      syncSelection();
+    }
+
+    function syncSelection() {
       syncOptionAttributes();
       const selected = resultsEl.querySelector(selectedRowSelector);
       if (selected && selected.scrollIntoView) {
@@ -167,12 +176,25 @@
       }
     }
 
+    // Arrow keys move over the kept matches: only the previously and newly
+    // selected rows are rebuilt (the caller's markup owns the selected classes),
+    // never a re-score of the whole data set. Falls back to a repaint when the
+    // rows do not map 1:1 onto the matches (a loading status is showing).
     function moveSelection(delta) {
       if (!matches.length) {
         return;
       }
+      const previous = selectedIndex;
       selectedIndex = (selectedIndex + delta + matches.length) % matches.length;
-      refresh();
+      const rows = rowSelector && resultsEl ? resultsEl.querySelectorAll(rowSelector) : [];
+      if (rows.length !== matches.length) {
+        render();
+        return;
+      }
+      for (const index of new Set([previous, selectedIndex])) {
+        rows[index].outerHTML = call('buildRowMarkup', matches[index], index, index === selectedIndex);
+      }
+      syncSelection();
     }
 
     function submit() {

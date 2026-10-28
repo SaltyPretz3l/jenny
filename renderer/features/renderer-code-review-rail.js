@@ -120,6 +120,8 @@
     let pageEl = null;
     let workingTreeEl = null;
     let pendingFocus = false;
+    // A chat findings list's Show in diff (row 64): handed to the Working tree page on the next render.
+    let pendingFindings = null;
     // Closure-scope so the opener cannot leak into serializable UI state.
     let previousFocusEl = null;
 
@@ -208,6 +210,7 @@
       capturePreviousFocus();
       pageScope = 'this_chat';
       ownerSessionId = '';
+      pendingFindings = null;
       pendingReveal = {
         scope,
         toolCallId: normalizeId(payload?.toolCallId),
@@ -239,7 +242,7 @@
      * The session rail's Changes row: the read-only working-tree page for `ownerSessionId` (the panel
      * owner, never the active session). `opener` gets focus back when the panel closes.
      */
-    function openWorkingTree({ ownerSessionId: owner, opener } = {}) {
+    function openWorkingTree({ ownerSessionId: owner, opener, reviewFindings } = {}) {
       const id = normalizeId(owner);
       // The page module loads lazily through ensureView() below; a load failure falls back to the ledger (applyScope).
       if (!id) return false;
@@ -247,7 +250,11 @@
       ownerSessionId = id;
       pageScope = 'working_tree';
       pendingReveal = null;
-      pendingFocus = true;
+      const withFindings = Boolean(reviewFindings && typeof reviewFindings === 'object');
+      // A plain open clears comments left by an earlier Show in diff (their lines may have moved since).
+      pendingFindings = withFindings ? reviewFindings : {};
+      // The page scrolls to the focused finding's comment instead of focusing the scope switch.
+      pendingFocus = !withFindings;
       if (opener && opener.isConnected && typeof opener.focus === 'function') previousFocusEl = opener;
       else capturePreviousFocus();
       if (typeof openArtifactRail === 'function') {
@@ -271,6 +278,8 @@
     }
 
     function closeCodeReview() {
+      // Findings not applied before the rail closed belong to that Show in diff only.
+      pendingFindings = null;
       setMode('artifact');
       syncArtifactReviewLayout();
       renderArtifactReviewPanel();
@@ -329,6 +338,11 @@
       workingTreeEl.hidden = false;
       page.mount(workingTreeEl);
       page.setScope(pageScope);
+      if (pendingFindings && pageScope === 'working_tree') {
+        const findings = pendingFindings;
+        pendingFindings = null;
+        page.setReviewFindings(findings);
+      }
       hostEl.hidden = pageScope === 'working_tree';
       if (pageScope === 'working_tree') view?.unmount();
       else view?.mount(hostEl);

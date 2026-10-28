@@ -236,24 +236,6 @@
 .settings-nav-item-badge[data-tone="pending"] { color: var(--accent-cyan); }
 .settings-nav-item-badge[data-tone="success"] { color: var(--state-success); }
 
-/* Unsaved-changes indicator. Renderer toggles [data-dirty="true"] on the
-   nav item when the corresponding section has uncommitted changes. Readiness
-   is status-only and owns that right-side slot for its count badge, so the
-   dot is scoped away from it - the two indicators never stack. */
-.settings-nav-item:not([data-settings-section="readiness"])[data-dirty="true"]::after {
-  content: "";
-  position: absolute;
-  inset-inline-end: var(--space-5);
-  top: 50%;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--state-warning);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--state-warning) 24%, transparent);
-  transform: translateY(-50%);
-  pointer-events: none;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .settings-nav-item {
     transition: none;

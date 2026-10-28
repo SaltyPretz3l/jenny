@@ -27,6 +27,7 @@ const EVENT_STATUS_EXPLANATIONS = Object.freeze({
   selector_not_editable: 'the element is not a text input',
   selector_focus_failed: 'the element could not be focused',
   selector_not_focusable: 'the element cannot take focus',
+  error: 'the browser could not run this interaction',
 });
 const SUCCESSFUL_EVENT_STATUSES = new Set(['clicked', 'typed', 'hovered', 'focused', 'pressed']);
 

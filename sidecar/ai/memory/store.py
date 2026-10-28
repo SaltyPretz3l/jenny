@@ -30,8 +30,10 @@ from sidecar.ai.memory.store_bootstrap import (
 )
 from sidecar.ai.memory.store_bootstrap import (
     configure_connection,
+    decode_text_replacing_damage,
     run_migrations,
     validate_memory_store_files,
+    verify_memory_database_pages,
 )
 from sidecar.ai.memory.store_lifecycle import _MemoryLifecycleMixin
 from sidecar.ai.memory.store_operations import project_scope_range
@@ -110,8 +112,10 @@ class MemoryStore(
             timeout=10.0,
             check_same_thread=False,
         )
+        connection.text_factory = decode_text_replacing_damage
         self._connection = connection
         try:
+            verify_memory_database_pages(connection)
             self._journal_mode = configure_connection(connection)
             migrated = run_migrations(connection)
             self._recall_index_available = self._ensure_recall_index(rebuild=migrated)

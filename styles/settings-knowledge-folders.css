@@ -33,7 +33,7 @@
 }
 
 .knowledge-folders-error:not(:empty) {
-  color: var(--status-error, #d66);
+  color: var(--state-danger);
 }
 
 /* "Search by meaning" (semantic_catalog, row 41): one status signal per

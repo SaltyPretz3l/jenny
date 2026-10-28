@@ -42,6 +42,20 @@ test('ipc contract descriptors use unique invoke/send/subscribe channels', () =>
   }
 });
 
+test('workspaceBackup descriptors pin the hot exit invoke channels', () => {
+  const expected = {
+    'workspaceBackup.write': 'workspace-backup:write',
+    'workspaceBackup.remove': 'workspace-backup:remove',
+    'workspaceBackup.list': 'workspace-backup:list',
+    'workspaceBackup.read': 'workspace-backup:read',
+  };
+  for (const [methodPath, channel] of Object.entries(expected)) {
+    assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS[methodPath], { kind: 'invoke', channel });
+    assert.equal(getBridgeChannel(methodPath, 'invoke'), channel);
+  }
+  assert.ok(listBridgeMethodPaths().includes('workspaceBackup.write'));
+});
+
 test('projectNotes descriptors pin the invoke channels and the changed subscription', () => {
   const expected = {
     'projectNotes.get': ['invoke', 'project-notes:get'],
@@ -339,6 +353,17 @@ test('ipc contract exposes a stable sorted method inventory', () => {
   assert.equal(getBridgeChannel('workspaceFs.writeText', 'invoke'), 'workspace-fs:write-text');
   assert.equal(getBridgeChannel('workspaceGit.getCommitDiff', 'invoke'), 'workspace-git:get-commit-diff');
   assert.equal(getBridgeChannel('workspaceGit.getFileAtHead', 'invoke'), 'workspace-git:get-file-at-head');
+  assert.equal(getBridgeChannel('workspaceGit.checkIgnored', 'invoke'), 'workspace-git:check-ignored');
+  // Row 82 P4 (G1/G2).
+  assert.equal(getBridgeChannel('workspaceGit.getFileAtIndex', 'invoke'), 'workspace-git:get-file-at-index');
+  assert.equal(getBridgeChannel('workspaceGit.getFileAtCommit', 'invoke'), 'workspace-git:get-file-at-commit');
+  assert.equal(getBridgeChannel('workspaceGit.getCommitFiles', 'invoke'), 'workspace-git:get-commit-files');
+  assert.equal(getBridgeChannel('workspaceGit.listStashes', 'invoke'), 'workspace-git:list-stashes');
+  assert.equal(getBridgeChannel('workspaceGit.getLastCommitMessage', 'invoke'), 'workspace-git:get-last-commit-message');
+  assert.equal(getBridgeChannel('workspaceGit.deleteBranch', 'invoke'), 'workspace-git:delete-branch');
+  assert.equal(getBridgeChannel('workspaceGit.applyPatch', 'invoke'), 'workspace-git:apply-patch');
+  assert.equal(getBridgeChannel('workspaceGit.blameFile', 'invoke'), 'workspace-git:blame-file'); // Row 82 cleanup G2
+  assert.equal(getBridgeChannel('workspaceGit.discardFiles', 'invoke'), 'workspace-git:discard-files'); // Row 82 cleanup G3
   assert.equal(getBridgeChannel('workspaceGit.discardFile', 'invoke'), 'workspace-git:discard-file');
   assert.equal(getBridgeChannel('workspaceGit.undoLastCommit', 'invoke'), 'workspace-git:undo-last-commit');
   assert.equal(getBridgeChannel('workspaceFileMap.getGraph', 'invoke'), 'workspace-file-map:get-graph');
@@ -469,4 +494,46 @@ test('Settings memory page descriptors pin the W4 invoke channels', () => {
   for (const [methodPath, channel] of Object.entries(expected)) {
     assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS[methodPath], { kind: 'invoke', channel }, methodPath);
   }
+});
+
+test('primaryChat descriptors pin the nine invoke channels and the changed subscription', () => {
+  const invoke = {
+    getState: 'primary-chat:get-state',
+    activity: 'primary-chat:activity',
+    permissions: 'primary-chat:permissions',
+    pause: 'primary-chat:pause',
+    resume: 'primary-chat:resume',
+    grantLaunch: 'primary-chat:grant-launch',
+    revokeLaunch: 'primary-chat:revoke-launch',
+    reset: 'primary-chat:reset',
+    forgetPreview: 'primary-chat:forget-preview',
+  };
+  for (const [method, channel] of Object.entries(invoke)) {
+    assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS[`primaryChat.${method}`], { kind: 'invoke', channel }, method);
+  }
+  assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS['primaryChat.onChanged'], { kind: 'subscribe', channel: 'primary-chat:changed' });
+  const keys = Object.keys(JENNY_SHELL_BRIDGE_DESCRIPTORS).filter((key) => key.startsWith('primaryChat.'));
+  assert.equal(keys.length, 10);
+});
+
+test('apiProviders descriptors pin the ten invoke channels and the changed subscription (row 78)', () => {
+  const invoke = {
+    getState: 'api-providers:get-state',
+    addInstance: 'api-providers:add-instance',
+    removeInstance: 'api-providers:remove-instance',
+    renameInstance: 'api-providers:rename-instance',
+    setKey: 'api-providers:set-key',
+    clearKey: 'api-providers:clear-key',
+    discover: 'api-providers:discover',
+    setModelEnabled: 'api-providers:set-model-enabled',
+    setModelPin: 'api-providers:set-model-pin',
+    acknowledgeNotice: 'api-providers:acknowledge-notice',
+  };
+  for (const [method, channel] of Object.entries(invoke)) {
+    assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS[`apiProviders.${method}`], { kind: 'invoke', channel }, method);
+  }
+  assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS['apiProviders.onChanged'], { kind: 'subscribe', channel: 'api-providers:changed' });
+  const keys = Object.keys(JENNY_SHELL_BRIDGE_DESCRIPTORS).filter((key) => key.startsWith('apiProviders.'));
+  assert.equal(keys.length, 11);
+  assert.equal(keys.some((key) => /get-?key|readKey/i.test(key)), false);
 });

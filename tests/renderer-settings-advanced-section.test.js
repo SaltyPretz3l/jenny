@@ -163,14 +163,13 @@ test('a rolled-back result surfaces on the field instead of failing silently', a
     }),
     reset: async () => ({ status: 'applied', state: { values: {} } }),
   };
-  const { sectionDom, documentRef, window, statuses } = createHarness({ bridge: rolledBack });
+  const { sectionDom, documentRef, window, status } = createHarness({ bridge: rolledBack });
   const input = sectionDom.advancedTuningFields.querySelector('[data-tuning-input="maxToolsPerTurn"]');
   input.value = '7';
   fire(documentRef, window, input, 'change');
   await new Promise((resolve) => setTimeout(resolve, 0));
-  const danger = statuses.filter((status) => status.tone === 'danger');
-  assert.ok(danger.length > 0, 'the user must be told the value did not stick');
-  assert.ok(/rejected|restored/i.test(danger[danger.length - 1].text));
+  assert.equal(status().tone, 'danger', 'the user must be told the value did not stick');
+  assert.ok(/rejected|restored/i.test(status().text));
   assert.match(input.closest('.settings-field').querySelector('.settings-field-error').textContent, /restored/);
   assert.match(sectionDom.advancedTuningStatus.textContent, /restored/);
   assert.equal(sectionDom.advancedTuningStatus.hidden, false);
@@ -184,12 +183,14 @@ test('failure reasons map to messages a person can act on', () => {
   assert.match(section.describeFailure({ status: 'degraded' }), /Restart Jenny/);
 });
 
-test('a missing bridge degrades to a message rather than throwing', () => {
-  const { sectionDom, documentRef, window, statuses } = createHarness({ bridge: {} });
+test('a missing bridge degrades to a message rather than throwing', async () => {
+  const { sectionDom, documentRef, window, status } = createHarness({ bridge: {} });
   const input = sectionDom.advancedTuningFields.querySelector('[data-tuning-input="maxToolsPerTurn"]');
   input.value = '7';
   assert.doesNotThrow(() => fire(documentRef, window, input, 'change'));
-  assert.ok(statuses.length > 0);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(status().tone, 'danger');
+  assert.match(status().text, /update failed/);
 });
 
 test('tuning controls retain their schema quick picks and accessible row labels', () => {
@@ -277,16 +278,13 @@ test('a deferred apply is announced as saved, not as a failure', async () => {
     update: async () => ({ status: 'applied', reason: 'deferred', state: { values: { maxToolsPerTurn: 7 }, fields: ENGINE_TUNING_FIELDS, groups: ENGINE_TUNING_GROUPS } }),
     reset: async () => ({ status: 'applied' }),
   };
-  const { sectionDom, statuses, documentRef, window } = createHarness({ bridge });
+  const { sectionDom, status, documentRef, window } = createHarness({ bridge });
   const input = sectionDom.advancedTuningFields.querySelector('[data-tuning-input="maxToolsPerTurn"]');
   input.value = '7';
   fire(documentRef, window, input, 'change');
   await new Promise((resolve) => setTimeout(resolve, 0));
-  const danger = statuses.filter((status) => status.tone === 'danger');
-  assert.deepEqual(danger, [], 'a deferred apply is not an error');
-  const saved = statuses.find((status) => /next time it starts/.test(status.text));
-  assert.ok(saved, 'the user is told the value is saved and when it applies');
-  assert.equal(saved.tone, 'success');
+  assert.match(status().text, /next time it starts/, 'the user is told the value is saved and when it applies');
+  assert.equal(status().tone, 'success', 'a deferred apply is not an error');
 });
 
 test('the reset describes the whole page and the fold counts modified rows', () => {
@@ -307,10 +305,11 @@ test('a second edit while one is applying is blocked and announced, never silent
   const values = {};
   const bridge = {
     getState: async () => ({ values, fields: ENGINE_TUNING_FIELDS, groups: ENGINE_TUNING_GROUPS }),
-    update: () => new Promise((resolve) => { resolveUpdate = resolve; }),
+    update: () => { updates += 1; return new Promise((resolve) => { resolveUpdate = resolve; }); },
     reset: async () => ({ status: 'applied', state: { values: {} } }),
   };
-  const { documentRef, window, sectionDom, statuses } = createHarness({ bridge });
+  let updates = 0;
+  const { documentRef, window, sectionDom, status } = createHarness({ bridge });
   const first = documentRef.getElementById('advancedTuningField-maxToolsPerTurn');
   const second = documentRef.getElementById('advancedTuningField-maxChatLoopIterations');
   first.value = '9';
@@ -323,12 +322,11 @@ test('a second edit while one is applying is blocked and announced, never silent
   assert.ok(controls.length > 1);
   for (const control of controls) assert.equal(control.disabled, true, control.id);
 
-  // If a change slips through anyway (keyboard, programmatic), it is announced.
+  // If a change slips through anyway (keyboard, programmatic), it is not sent and the page says why.
   second.value = '4';
   fire(documentRef, window, second, 'change');
-  const warned = statuses.find((status) => status.tone === 'warning');
-  assert.ok(warned, 'in-flight guard must surface a status');
-  assert.match(warned.text, /still applying/i);
+  assert.equal(updates, 1, 'the second edit is not sent');
+  assert.match(status().text, /still applying/i, 'in-flight guard must surface a status');
 
   resolveUpdate({
     status: 'applied',

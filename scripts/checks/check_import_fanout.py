@@ -110,8 +110,10 @@ WIRING_CAPS = {
     # Read-only context.preview composes the canonical prompt, overlays, tools
     # and counters without entering chat/inference orchestration. Keep its
     # nine direct owners, including history admission/framing, visible and
-    # capped (CHAT_PANEL_SUMMARY_FIXES.md).
-    (ROOT / "sidecar/ai/context/preview.py").resolve(): 9,
+    # capped (CHAT_PANEL_SUMMARY_FIXES.md). Row 66 (2026-10-20): the count-source
+    # ladder owner (context_count) so the next-send estimate counts in the
+    # send's units (9 -> 10).
+    (ROOT / "sidecar/ai/context/preview.py").resolve(): 10,
     # Row-48 review (2026-10-09): keep canonical error and request-preference
     # owners explicit instead of importing incidental re-exports through
     # delegate_contracts/config. Parent-reviewed composition edges, exactly 7.
@@ -169,7 +171,10 @@ WIRING_CAPS = {
     # shell_head_tail_output flag owner (28 -> 29), and the background-job runner
     # takes its env and head+tail truncation from the shell_harness owner (7 -> 8).
     # Parent-reviewed explicit edges; the concrete pins below are retired for them.
-    (ROOT / "sidecar/ai/routing/tool_execution.py").resolve(): 29,
+    # 2026-10-19 tool review (C2 #1): the contract lookup for a call now goes
+    # through tool_resolution.contract_entry_for_call so a bare MCP name resolves
+    # to its namespaced contract entry (29 -> 30). Explicit security edge.
+    (ROOT / "sidecar/ai/routing/tool_execution.py").resolve(): 30,
     # Row 60 W2: microcompaction and the compaction policy moved out to
     # compaction_micro (compaction.py 597 -> ~520 lines), one new edge (6 -> 7).
     (ROOT / "sidecar/ai/context/compaction.py").resolve(): 7,
@@ -185,18 +190,32 @@ WIRING_CAPS = {
 CONCRETE_EDGE_BASELINE = {
     (ROOT / "sidecar/ai/engines/ollama_generation.py").resolve(): 7,
     (ROOT / "sidecar/ai/mcp/builtin_request_scope.py").resolve(): 9,
-    (ROOT / "sidecar/ai/routing/chat_decision.py").resolve(): 15,
+    # Row 66 (2026-10-20): turn start resolves the count-source ladder
+    # (context_count) and publishes its scale to the engine (15 -> 16).
+    (ROOT / "sidecar/ai/routing/chat_decision.py").resolve(): 16,
     (ROOT / "sidecar/ai/routing/generation_runtime.py").resolve(): 15,
     (ROOT / "sidecar/ai/routing/generation_runtime_stream.py").resolve(): 12,
     (ROOT / "sidecar/ai/routing/route_policy_runtime.py").resolve(): 12,
     (ROOT / "sidecar/ai/routing/sub_agent_invocation.py").resolve(): 7,
-    (ROOT / "sidecar/ai/routing/tool_budget_filter.py").resolve(): 9,
-    (ROOT / "sidecar/ai/routing/tool_call_execution.py").resolve(): 13,
+    # Row 66 (2026-10-20): the pressure probe judges on the same count-source
+    # ladder (context_count) as the preflight it hands its scale to (9 -> 10).
+    # Row 69 gate run 3 (2026-10-20): the pairing/preference rules moved out to
+    # tool_budget_pairs to keep the file under its line cap (10 -> 11).
+    (ROOT / "sidecar/ai/routing/tool_budget_filter.py").resolve(): 11,
+    # 2026-10-19 tool review: tool_resolution.contract_entry_for_call (C2 #1/#2,
+    # the bare-MCP-name and live-prompt descriptor lookups) and
+    # failure_taxonomy.classify with the failure's own retryable flag (C7-D), the
+    # one place a failure becomes an outcome (13 -> 15).
+    (ROOT / "sidecar/ai/routing/tool_call_execution.py").resolve(): 15,
     (ROOT / "sidecar/ai/routing/tool_loop_calls.py").resolve(): 13,
     (ROOT / "sidecar/ai/routing/tool_loop_finalize.py").resolve(): 8,
     (ROOT / "sidecar/ai/routing/tool_loop_recovery.py").resolve(): 7,
     (ROOT / "sidecar/ai/tools/assembly.py").resolve(): 9,
-    (ROOT / "sidecar/ai/tools/workspace_manifest.py").resolve(): 7,
+    # 2026-10-19 tool review (C7 #1/#10): the manifest's git commands take the
+    # neutralizing config and environment from the git_process owner, and the
+    # rendered block runs each item through the prompt-marker and injection
+    # neutralizers (7 -> 10). Explicit security edges, not a facade.
+    (ROOT / "sidecar/ai/tools/workspace_manifest.py").resolve(): 10,
     (ROOT / "sidecar/ai/tools/builtins/file_state.py").resolve(): 8,
 }
 

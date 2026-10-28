@@ -19,11 +19,15 @@
  * Posture
  * -------
  * Deny-first: if a key's name matches the credential regex, it is
- * stripped regardless of value shape.  A small allowlist of
- * system-essential keys (PATH, HOME, SYSTEMROOT, etc.) is always
- * preserved.  Callers can ``options.allow`` extra regex patterns for
- * engine-specific vars (``OLLAMA_*``, ``VLLM_*``), or
- * ``options.extraDeny`` to tighten the deny list further.
+ * stripped regardless of value shape, even when an ``options.allow``
+ * pattern also matches it (``/^OLLAMA_/`` must not carry ``OLLAMA_API_KEY``).
+ * A caller whose child needs a credential names it exactly in
+ * ``options.allowCredentials``. A small allowlist of system-essential
+ * keys (PATH, HOME, SYSTEMROOT, etc.) is always preserved, and
+ * ``JENNY_ENABLE_*`` kill switches are flags, never credentials.
+ * Callers can ``options.allow`` extra regex patterns for engine-specific
+ * vars (``OLLAMA_*``, ``VLLM_*``), or ``options.extraDeny`` to tighten
+ * the deny list further.
  * When the source declares ``APPDIR``, a final AppImage post-pass
  * removes paths inside that bundle from ``LD_LIBRARY_PATH``, ``PATH``,
  * and ``XDG_DATA_DIRS`` so native children use system libraries and
@@ -45,6 +49,12 @@ const path = require('path');
 
 const CREDENTIAL_KEY_RE = /(^|_)(API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|PRIVATE[_-]?KEY|AUTH[_-]?TOKEN|ACCESS[_-]?KEY|SESSION[_-]?KEY|BEARER)(_|$)/i;
 const CREDENTIAL_PREFIX_RE = /^(ANTHROPIC|OPENAI|GITHUB|GH|AWS|AZURE|GCP|GOOGLE|HUGGINGFACE|HF_TOKEN|CLAUDE|GEMINI|COHERE|MISTRAL)_/i;
+// On/off kill switches (JENNY_ENABLE_TOKEN_BUDGET=0) only look credential-shaped.
+const FEATURE_FLAG_KEY_RE = /^JENNY_ENABLE_[A-Z0-9_]+$/i;
+
+function looksLikeCredential(key) {
+  return !FEATURE_FLAG_KEY_RE.test(key) && (CREDENTIAL_KEY_RE.test(key) || CREDENTIAL_PREFIX_RE.test(key));
+}
 
 const ALWAYS_KEEP = new Set([
   'PATH',
@@ -97,9 +107,10 @@ function normalizeEntry(entry) {
 /**
  * Copy ``env`` into a fresh object, dropping any key whose name looks
  * like a credential.  Callers can relax via ``options.allow`` (regex
- * patterns the key name must match to survive the deny pass) or
- * tighten via ``options.extraDeny`` (regex patterns that force a key
- * out even if the default rules would keep it).
+ * patterns that keep a non-credential key, chiefly in ``allowOnly`` mode)
+ * or ``options.allowCredentials`` (exact names of credentials the child
+ * needs), or tighten via ``options.extraDeny`` (regex patterns that force
+ * a key out even if the default rules would keep it).
  *
  * ``options.allowOnly`` flips the posture from deny-first to allow-only: a key
  * survives ONLY if it matches ``options.allow`` or the ALWAYS_KEEP system
@@ -110,11 +121,10 @@ function normalizeEntry(entry) {
  * spawn sites whose child has a small, enumerable set of vars it actually reads
  * should use allow-only.  The default stays deny-first: callers like the vLLM
  * launcher legitimately need most of the parent environment and opt specific
- * credentials back IN via ``options.allow``, which is why the allow pass keeps
- * running before the deny pass.
+ * credentials (``HF_TOKEN``) back IN by exact name via ``options.allowCredentials``.
  *
  * @param {NodeJS.ProcessEnv | Record<string, unknown>} env - source env
- * @param {{ allow?: RegExp[], extraDeny?: RegExp[], allowOnly?: boolean }} [options]
+ * @param {{ allow?: RegExp[], allowCredentials?: string[], extraDeny?: RegExp[], allowOnly?: boolean }} [options]
  * @returns {Record<string, string>} fresh, sanitized env map
  */
 function sanitizeSpawnEnv(env, options = {}) {
@@ -122,6 +132,9 @@ function sanitizeSpawnEnv(env, options = {}) {
   const allowList = Array.isArray(options.allow) ? options.allow.filter((r) => r instanceof RegExp) : [];
   const extraDenyList = Array.isArray(options.extraDeny) ? options.extraDeny.filter((r) => r instanceof RegExp) : [];
   const allowOnly = options.allowOnly === true;
+  const allowedCredentials = new Set(
+    (Array.isArray(options.allowCredentials) ? options.allowCredentials : []).map((name) => String(name).toUpperCase())
+  );
 
   const out = Object.create(null);
   for (const rawKey of Object.keys(source)) {
@@ -140,6 +153,11 @@ function sanitizeSpawnEnv(env, options = {}) {
       continue;
     }
 
+    if (looksLikeCredential(key)) {
+      if (allowedCredentials.has(upper)) out[key] = value;
+      continue;
+    }
+
     if (allowList.some((re) => re.test(key))) {
       out[key] = value;
       continue;
@@ -151,10 +169,6 @@ function sanitizeSpawnEnv(env, options = {}) {
     }
 
     if (allowOnly) {
-      continue;
-    }
-
-    if (CREDENTIAL_KEY_RE.test(key) || CREDENTIAL_PREFIX_RE.test(key)) {
       continue;
     }
 

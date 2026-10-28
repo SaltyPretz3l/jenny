@@ -126,6 +126,16 @@
     return true;
   }
 
+  // The hunk's modified side sits in `baseLines` at start0. A zero-length new
+  // side (a whole-file deletion: the new file is empty) would "verify" against
+  // ANY base because an empty slice always matches, so it additionally requires
+  // the base to genuinely end at start0 (old lines are never merged into
+  // unrelated/diverged content).
+  function hunkRegionVerified(baseLines, start0, newLines) {
+    return regionMatches(baseLines, start0, newLines)
+      && (newLines.length > 0 || baseLines.length === start0);
+  }
+
   function normalizeRejected(rejected, count) {
     const set = new Set();
     const source = rejected instanceof Set
@@ -181,12 +191,7 @@
       const sides = parseHunkSides(hunk);
       const start0 = hunkNewStart0(hunk);
       const regionLen = sides.newLines.length;
-      // A zero-length new side (a whole-file deletion: the new file is empty)
-      // would "verify" against ANY base because an empty slice always matches;
-      // require the base to genuinely be empty from start0 on, so old lines are
-      // never merged into unrelated/diverged content.
-      const verified = regionMatches(baseLines, start0, sides.newLines)
-        && (regionLen > 0 || baseLines.length === start0);
+      const verified = hunkRegionVerified(baseLines, start0, sides.newLines);
 
       // Emit untouched modified lines up to this hunk's start.
       if (start0 > cursor) {
@@ -245,12 +250,7 @@
     const { lines } = splitLines(modifiedText);
     const list = Array.isArray(hunks) ? hunks : [];
     for (const hunk of list) {
-      const sides = parseHunkSides(hunk);
-      const start0 = hunkNewStart0(hunk);
-      if (!regionMatches(lines, start0, sides.newLines)) {
-        return false;
-      }
-      if (sides.newLines.length === 0 && lines.length !== start0) {
+      if (!hunkRegionVerified(lines, hunkNewStart0(hunk), parseHunkSides(hunk).newLines)) {
         return false;
       }
     }

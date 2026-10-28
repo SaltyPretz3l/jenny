@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +10,7 @@ from sidecar.ai.config import MCPServerConfig
 from sidecar.ai.mcp import transport_command_policy
 from sidecar.ai.mcp.exceptions import MCPError
 from sidecar.ai.mcp.transport_command_policy import validate_stdio_command
+from tests.sidecar._platform_skips import posix_only
 
 
 def test_relative_command_under_trusted_root_is_rejected(
@@ -27,7 +27,7 @@ def test_relative_command_under_trusted_root_is_rejected(
         validate_stdio_command(config)
 
 
-@pytest.mark.skipif(os.name == "nt", reason="requires POSIX absolute-path semantics")
+@posix_only("POSIX absolute-path semantics")
 def test_posix_distro_command_path_is_trusted() -> None:
     config = MCPServerConfig(
         name="distro",

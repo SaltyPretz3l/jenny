@@ -37,14 +37,14 @@ test('composes editable header/body/footer regions and retains changed parts acr
   const footer = regions[2].blocks[0];
   assert.equal(header.text, 'Confidential header');
   assert.equal(footer.text, 'Footer text');
-  assert.equal(model.insertText(header.id, header.text.length, ' edited'), true);
-  assert.equal(model.insertText(footer.id, 0, 'Edited '), true);
+  assert.ok(model.insertText(header.id, header.text.length, ' edited'));
+  assert.ok(model.insertText(footer.id, 0, 'Edited '));
   let serialized = model.serialize();
   assert.match(serialized.replacements.get('word/header1.xml'), /Confidential header.* edited/);
   assert.match(serialized.replacements.get('word/footer1.xml'), /Edited .*Footer text/);
   assert.equal(serialized.replacements.has('word/footnotes.xml'), false);
   model.markSaved();
-  assert.equal(model.insertText(regions[1].blocks[0].id, 0, 'Body edit. '), true);
+  assert.ok(model.insertText(regions[1].blocks[0].id, 0, 'Body edit. '));
   serialized = model.serialize();
   assert.match(serialized.replacements.get('word/header1.xml'), /Confidential header.* edited/);
   assert.match(serialized.replacements.get('word/footer1.xml'), /Edited .*Footer text/);

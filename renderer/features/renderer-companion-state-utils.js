@@ -110,6 +110,8 @@
       sourceBadge: String(source.sourceBadge || '').trim(),
       sourceKind: String(source.sourceKind || '').trim(),
       contextLine: String(source.contextLine || '').trim(),
+      createdAt: String(source.createdAt || '').trim(),
+      updatedAt: String(source.updatedAt || '').trim(),
       deferredUntil: String(source.deferredUntil || '').trim(),
       deferPreset: String(source.deferPreset || '').trim(),
       resolvedAt: String(source.resolvedAt || '').trim(),

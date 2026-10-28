@@ -7,7 +7,6 @@ WorkspaceGuard instance."""
 from __future__ import annotations
 
 import os
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,31 +16,7 @@ from sidecar.ai.error_codes import CMP_TOOL_IO_FAILED, CMP_TOOL_OUTSIDE_WORKSPAC
 from sidecar.ai.tools import workspace as workspace_module
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import ensure_safe_internal_destination
-
-
-def _can_create_symlink(tmp_path: Path) -> bool:
-    probe_target = tmp_path / "symlink-probe-target"
-    probe_target.write_text("probe", encoding="utf-8")
-    probe_link = tmp_path / "symlink-probe-link"
-    try:
-        os.symlink(probe_target, probe_link)
-    except (OSError, NotImplementedError):
-        return False
-    finally:
-        if probe_link.is_symlink():
-            probe_link.unlink()
-        probe_target.unlink()
-    return True
-
-
-def _make_junction(link: Path, target: Path) -> bool:
-    result = subprocess.run(
-        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
-        capture_output=True,
-        check=False,
-        text=True,
-    )
-    return result.returncode == 0
+from tests.sidecar._platform_skips import make_dir_link, requires_file_symlinks, windows_only
 
 
 def test_new_destination_under_clean_root_is_allowed(tmp_path):
@@ -85,13 +60,11 @@ def test_missing_root_is_rejected(tmp_path):
 
 
 def test_symlinked_jenny_dir_is_rejected(tmp_path):
-    if not _can_create_symlink(tmp_path):
-        pytest.skip("cannot create symlinks in this environment")
     root = tmp_path / "ws"
     root.mkdir()
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
-    os.symlink(elsewhere, root / ".jenny", target_is_directory=True)
+    make_dir_link(root / ".jenny", elsewhere)
     with pytest.raises(ToolExecutionFailure) as excinfo:
         ensure_safe_internal_destination(root, root / ".jenny" / "trash" / "f.txt")
     assert excinfo.value.code == CMP_TOOL_IO_FAILED
@@ -100,21 +73,18 @@ def test_symlinked_jenny_dir_is_rejected(tmp_path):
 
 
 def test_symlinked_intermediate_dir_is_rejected(tmp_path):
-    if not _can_create_symlink(tmp_path):
-        pytest.skip("cannot create symlinks in this environment")
     root = tmp_path / "ws"
     (root / ".jenny").mkdir(parents=True)
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
-    os.symlink(elsewhere, root / ".jenny" / "trash", target_is_directory=True)
+    make_dir_link(root / ".jenny" / "trash", elsewhere)
     with pytest.raises(ToolExecutionFailure) as excinfo:
         ensure_safe_internal_destination(root, root / ".jenny" / "trash" / "f.txt")
     assert excinfo.value.code == CMP_TOOL_IO_FAILED
 
 
+@requires_file_symlinks()
 def test_symlinked_leaf_destination_is_rejected(tmp_path):
-    if not _can_create_symlink(tmp_path):
-        pytest.skip("cannot create symlinks in this environment")
     root = tmp_path / "ws"
     (root / ".jenny" / "backups").mkdir(parents=True)
     target = tmp_path / "victim.json"
@@ -127,14 +97,13 @@ def test_symlinked_leaf_destination_is_rejected(tmp_path):
     assert target.read_text(encoding="utf-8") == "{}"
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows junctions only")
+@windows_only("junctions")
 def test_windows_junction_at_jenny_is_rejected(tmp_path):
     root = tmp_path / "ws"
     root.mkdir()
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
-    if not _make_junction(root / ".jenny", elsewhere):
-        pytest.skip("mklink /J not permitted in this environment")
+    make_dir_link(root / ".jenny", elsewhere)
     with pytest.raises(ToolExecutionFailure) as excinfo:
         ensure_safe_internal_destination(root, root / ".jenny" / "trash" / "f.txt")
     assert excinfo.value.code == CMP_TOOL_IO_FAILED

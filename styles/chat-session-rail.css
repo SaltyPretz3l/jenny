@@ -356,7 +356,12 @@ button.session-rail-fact:hover {
 }
 
 /* Context categories share the application's palette; counts remain readable without color. */
-.session-context-bar { display: flex; height: 5px; overflow: hidden; border-radius: var(--radius-pill); background: var(--border-subtle); margin-block: var(--space-2) var(--space-3); }
+/* Row 63: the bar spans the window; the marker is where auto-compact fires (rail and ring popover). */
+.session-context-meter { position: relative; margin-block: var(--space-2) var(--space-1); }
+.session-context-bar { display: flex; height: 5px; overflow: hidden; border-radius: var(--radius-pill); background: var(--border-subtle); }
+.session-context-marker { position: absolute; inset-block: -2px; width: 2px; margin-inline-start: -1px; border-radius: 1px; background: var(--text-primary); opacity: 0.85; }
+.session-context-scale { display: flex; justify-content: space-between; margin-bottom: var(--space-2); font-size: var(--font-size-caption); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.session-context-marker-swatch { justify-self: center; width: 2px; height: 10px; border-radius: 1px; background: var(--text-primary); opacity: 0.85; }
 .session-context-bar > span { min-width: 0; flex-shrink: 1; }
 .session-context-category { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto 42px; gap: var(--space-2); align-items: center; font-size: var(--font-size-caption); padding-block: var(--space-1); }
 .session-context-category > :nth-child(2) { overflow-wrap: anywhere; }
@@ -364,6 +369,7 @@ button.session-rail-fact:hover {
 .session-context-category strong { font-weight: 500; }
 .session-context-swatch { width: 8px; height: 8px; border-radius: 2px; }
 [data-context-category="messages"] { background: var(--accent); }
+[data-context-category="used"] { background: var(--accent); }
 [data-context-category="system_prompt"] { background: var(--state-success); }
 [data-context-category="tools"] { background: var(--state-warning); }
 [data-context-category="instructions"] { background: var(--accent-amber); }

@@ -16,7 +16,7 @@
 
   // Primary + three secondary groups (the layout model's MAX_EDITOR_GROUPS).
   const MAX_GROUPS = 4;
-  const GROUP_IDS = ['editor-2', 'editor-3', 'editor-4'];
+  const GROUP_IDS = Object.freeze(['editor-2', 'editor-3', 'editor-4']);
   const GROUP_ID_RE = /^editor-[2-4]$/;
 
   function isGroupId(id) {
@@ -178,6 +178,7 @@
   }
 
   return {
+    GROUP_IDS,
     GROUP_ID_RE,
     MAX_GROUPS,
     freeGroupId,

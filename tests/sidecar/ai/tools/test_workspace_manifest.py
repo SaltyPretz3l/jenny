@@ -21,6 +21,7 @@ from sidecar.ai.tools.workspace_manifest import (
     render_workspace_manifest_block,
     summarize_workspace_manifest,
 )
+from tests.sidecar._platform_skips import make_dir_link
 
 
 def _write(path: Path, content: str) -> None:
@@ -340,23 +341,6 @@ def test_readme_excerpt_reads_bounded_prefix_of_huge_readme(
     assert sum(returned for _, returned in reads) <= scan_module.README_MAX_READ_BYTES
 
 
-def _make_dir_link(link: Path, target: Path) -> bool:
-    try:
-        os.symlink(target, link, target_is_directory=True)
-        return True
-    except (NotImplementedError, OSError):
-        pass
-    if os.name != "nt":
-        return False
-    completed = subprocess.run(
-        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
-        capture_output=True,
-        check=False,
-        text=True,
-    )
-    return completed.returncode == 0
-
-
 def test_scan_refuses_linked_directory_and_continues(tmp_path: Path, monkeypatch) -> None:
     """A planted symlink/junction directory must be refused (never followed),
     while the rest of the scan continues and the refusal is surfaced truthfully."""
@@ -368,8 +352,7 @@ def test_scan_refuses_linked_directory_and_continues(tmp_path: Path, monkeypatch
     outside = tmp_path / "outside_target"
     outside.mkdir()
     (outside / "leaked.py").write_text("leaked = True\n", encoding="utf-8")
-    if not _make_dir_link(root / "linked_dir", outside):
-        pytest.skip("symlink/junction creation unavailable in this environment")
+    make_dir_link(root / "linked_dir", outside)
 
     _stub_git(monkeypatch)
     manifest = build_workspace_manifest(root)
@@ -422,9 +405,10 @@ def _install_recording_git(monkeypatch) -> list[float]:
     """Serve canned git output, recording the timeout each command was granted."""
     granted_timeouts: list[float] = []
 
-    def run(argv, *, cwd, timeout_seconds):  # cwd is unused here.
+    def run(argv, *, cwd, timeout_seconds, env=None):  # cwd/env are unused here.
         granted_timeouts.append(timeout_seconds)
-        return _FakeCompleted(_GIT_RESPONSES[tuple(argv[3:])])
+        # The subcommand follows the neutralizing "-c" overrides and "-C <root>".
+        return _FakeCompleted(_GIT_RESPONSES[tuple(argv[argv.index("-C") + 2 :])])
 
     service = type("RecordingService", (), {"run": staticmethod(run)})()
     monkeypatch.setattr(
@@ -548,7 +532,7 @@ def test_confirmed_non_repository_stays_a_known_answer(tmp_path: Path, monkeypat
     root = tmp_path / "workspace"
     root.mkdir()
 
-    def run(argv, *, cwd, timeout_seconds):  # signature parity only.
+    def run(argv, *, cwd, timeout_seconds, env=None):  # signature parity only.
         return _FakeCompleted("false")
 
     non_repo_service = type("NonRepoService", (), {"run": staticmethod(run)})()
@@ -756,6 +740,29 @@ def test_workspace_manifest_read_tool_output_is_json(tmp_path: Path) -> None:
     payload = json.loads(result.output)
     assert payload["version"] == 2
     assert payload["readme_excerpt"] == "Tool output workspace."
+    assert result.success is True
+    assert result.error_code is None
+    assert "\n" not in result.output
+
+
+def test_workspace_manifest_read_tool_reports_an_error_payload_as_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from sidecar.ai.error_codes import CMP_TOOL_IO_FAILED
+    from sidecar.ai.tools.builtins import workspace_manifest_tool
+
+    class _FailingCache:
+        def read(self, _root: Path) -> dict[str, object]:
+            return {"version": 2, "generated_at": "2026-10-19T00:00:00Z", "error": "boom"}
+
+    monkeypatch.setattr(workspace_manifest_tool, "get_workspace_manifest_cache", _FailingCache)
+
+    result = workspace_manifest_read_tool({}, WorkspaceGuard(str(tmp_path)))
+
+    assert result.success is False
+    assert result.error_code == CMP_TOOL_IO_FAILED
+    assert result.metadata["has_error"] is True
+    assert json.loads(result.output)["error"] == "boom"
 
 
 @pytest.mark.parametrize("failure", ["directory", "classification"])

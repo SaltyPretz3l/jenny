@@ -64,7 +64,7 @@
         variant: 'secondary',
       }),
       '</div>',
-      '<details class="settings-overflow"><summary>More</summary>'
+      '<details class="settings-overflow"><summary>' + defaultEscapeHtml(jt('imageViewer.more', 'More')) + '</summary>'
         + '<div class="settings-actions">'
         + actionButton({
           id: 'settingsOpenFactoryReset',
@@ -93,7 +93,14 @@
 
   const defaultEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
-  function buildApprovalRuleRows(saved) {
+  // What a rule or grant matches, in words: a path, an action, or every call.
+  function approvalMatchDetail(match) {
+    if (match.path_prefix) return jt('settings.shell.approvalRuleForPath', 'for {path}', { path: match.path_prefix });
+    if (match.action) return jt('settings.shell.approvalRuleForAction', 'action {action}', { action: match.action });
+    return jt('settings.shell.approvalRulesEveryCall', 'every call');
+  }
+
+  function buildApprovalRuleRows(saved, projects) {
     const source = saved && typeof saved === 'object' ? saved : {};
     const policies = source.policies && typeof source.policies === 'object' ? source.policies : {};
     const rows = Object.entries(policies).map(([toolName, decision]) => ({
@@ -111,15 +118,18 @@
         key: String(rule.id),
         decision: rule.decision,
         label: `${APPROVAL_DECISION_LABELS[rule.decision] || rule.decision}: ${match.tool_id || jt('settings.tools.approvalRules.anyTool', 'any tool')}`,
-        detail: match.path_prefix ? jt('settings.shell.approvalRuleForPath', 'for {path}', { path: match.path_prefix }) : (match.action ? jt('settings.shell.approvalRuleForAction', 'action {action}', { action: match.action }) : jt('settings.shell.approvalRulesEveryCall', 'every call')),
+        detail: approvalMatchDetail(match),
       });
     }
     for (const grant of Array.isArray(source.scoped_grants) ? source.scoped_grants : []) {
       if (!grant?.id || !grant.authority) continue;
+      // The project's name, not its id; the folder; then the match in words.
+      const project = (Array.isArray(projects) ? projects : []).find((entry) => entry?.id === grant.authority.project_id);
+      const match = { path_prefix: grant.path_prefix, ...(grant.match && typeof grant.match === 'object' ? grant.match : {}) };
       rows.push({ kind: 'rule', key: String(grant.id), decision: 'auto',
         label: `${APPROVAL_DECISION_LABELS.auto}: ${grant.tool_name}`,
-        detail: [grant.authority.project_id, grant.authority.root_path,
-          JSON.stringify(grant.match || {})].filter(Boolean).join(' · ') });
+        detail: [project?.name || grant.authority.project_id, grant.authority.root_path,
+          approvalMatchDetail(match)].filter(Boolean).join(' · ') });
     }
     return rows;
   }
@@ -132,12 +142,11 @@
     return typeof candidate === 'function' ? candidate : null;
   }
 
-  function renderApprovalRuleRows(container, rows, escapeHtml, actionButton) {
+  function approvalRuleRowsMarkup(rows, escapeHtml, actionButton) {
     if (!rows.length) {
-      container.innerHTML = '<div class="settings-note tools-approval-rules-empty">' + escapeHtml(jt('settings.shell.approvalRulesEmpty', 'No saved approval rules yet. Choose "Always allow" on an approval card and it shows up here.')) + '</div>';
-      return;
+      return '<div class="settings-note tools-approval-rules-empty">' + escapeHtml(jt('settings.shell.approvalRulesEmpty', 'No saved approval rules yet. Choose "Always allow" on an approval card and it shows up here.')) + '</div>';
     }
-    container.innerHTML = rows.map((row) => {
+    return rows.map((row) => {
       const remove = actionButton
         ? actionButton({
           id: APPROVAL_RULE_REMOVE_ACTION,
@@ -157,25 +166,52 @@
     }).join('');
   }
 
+  // The shared signature guard (renderer-settings-v2-surfaces.js), resolved at
+  // call time: that module loads after this one in the Settings script manifest.
+  function slots() {
+    return globalThis.rendererSettingsV2Surfaces
+      || (typeof require === 'function' ? require('./renderer-settings-v2-surfaces') : null);
+  }
+  const REVIEW_PROJECT_SELECTOR = '#permission-review-project';
+  // An "Always allow" review decision needs a project with a reviewed folder.
+  function syncReviewAutoButtons(container) {
+    const selected = approvalRulesCache.projects.find(project => project.id === container.querySelector(REVIEW_PROJECT_SELECTOR)?.value);
+    for (const button of container.querySelectorAll('[data-review-id][data-decision="auto"]')) {
+      button.disabled = !selected?.root_path || !selected?.authority_key;
+    }
+  }
+
+  // `active: false` (Tools is not the Settings section on screen) neither paints
+  // nor fetches; a caller that omits it, or forces, renders. Returns a promise
+  // that settles after the paint, so a caller can move focus into the new rows.
   function renderApprovalRules(options) {
     const container = options?.container;
     if (!container) return null;
     const api = options?.api;
     const escapeHtml = typeof options?.escapeHtml === 'function' ? options.escapeHtml : defaultEscapeHtml;
     const actionButton = resolveActionButton(options);
+    const note = (text) => '<div class="settings-note">' + escapeHtml(text) + '</div>';
     if (!api || typeof api.getPermissions !== 'function') {
-      container.innerHTML = '<div class="settings-note">' + escapeHtml(jt('settings.shell.approvalRulesUnavailable', 'Approval rules are unavailable in this window.')) + '</div>';
+      slots().paintSlot(container, note(jt('settings.shell.approvalRulesUnavailable', 'Approval rules are unavailable in this window.')));
       return null;
     }
+    if (options.active === false && options.force !== true) return approvalRulesCache.inFlight;
     const paint = () => {
-      renderApprovalRuleRows(container, buildApprovalRuleRows(approvalRulesCache.saved), escapeHtml, actionButton);
-      renderPermissionReview(container, options, escapeHtml, actionButton);
+      // The chosen project survives a repaint; the markup always offers none.
+      const chosen = container.querySelector(REVIEW_PROJECT_SELECTOR)?.value || '';
+      const markup = permissionReviewMarkup(options, escapeHtml, actionButton)
+        + approvalRuleRowsMarkup(buildApprovalRuleRows(approvalRulesCache.saved, approvalRulesCache.projects), escapeHtml, actionButton);
+      if (!slots().paintSlot(container, markup) || !chosen) return;
+      const select = container.querySelector(REVIEW_PROJECT_SELECTOR);
+      if (!select || ![...select.options].some((option) => option.value === chosen)) return;
+      select.value = chosen;
+      syncReviewAutoButtons(container);
     };
     const stale = !approvalRulesCache.saved
       || Date.now() - approvalRulesCache.fetchedAt >= APPROVAL_RULES_CACHE_MS;
     if (approvalRulesCache.saved) paint();
-    else container.innerHTML = '<div class="settings-note">' + escapeHtml(jt('settings.shell.approvalRulesLoading', 'Loading approval rules...')) + '</div>';
-    if ((!stale || approvalRulesCache.inFlight) && options?.force !== true) return approvalRulesCache.inFlight;
+    else slots().paintSlot(container, note(jt('settings.shell.approvalRulesLoading', 'Loading approval rules...')));
+    if ((!stale || approvalRulesCache.inFlight) && options.force !== true) return approvalRulesCache.inFlight || Promise.resolve();
     const version = ++approvalRulesCache.version;
     approvalRulesCache.inFlight = Promise.resolve()
       .then(() => Promise.all([api.getPermissions(),
@@ -190,7 +226,7 @@
       })
       .catch(() => {
         if (version !== approvalRulesCache.version) return;
-        container.innerHTML = '<div class="settings-note">' + escapeHtml(jt('settings.shell.approvalRulesLoadFailed', 'Approval rules could not be loaded.')) + '</div>';
+        slots().paintSlot(container, note(jt('settings.shell.approvalRulesLoadFailed', 'Approval rules could not be loaded.')));
       })
       .finally(() => {
         if (version === approvalRulesCache.version) approvalRulesCache.inFlight = null;
@@ -209,9 +245,9 @@
     approvalRulesCache.reviewPage = 0;
   }
 
-  function renderPermissionReview(container, options, escapeHtml, actionButton) {
+  function permissionReviewMarkup(options, escapeHtml, actionButton) {
     const pending = approvalRulesCache.saved?.pending_review;
-    if (!Array.isArray(pending) || !pending.length || !actionButton) return;
+    if (!Array.isArray(pending) || !pending.length || !actionButton) return '';
     const notice = jt('settings.permissionReview.notice', 'Saved automatic permissions need review before they can apply to a project.');
     const reviewLabel = jt('settings.permissionReview.open', 'Review permissions');
     const selectField = options.selectField || globalThis.inventorySelectField;
@@ -262,7 +298,7 @@
       }
       markup += '</div>';
     }
-    container.insertAdjacentHTML('afterbegin', markup);
+    return markup;
   }
 
   function bindPermissionReview(options) {
@@ -270,27 +306,27 @@
     registerListener(container, 'change', event => {
       if (pendingReviewContainers.has(container)) return;
       if (event.target?.id !== 'permission-review-project') return;
-      const selected = approvalRulesCache.projects.find(project => project.id === event.target.value);
-      for (const button of container.querySelectorAll('[data-review-id][data-decision="auto"]')) {
-        button.disabled = !selected?.root_path || !selected?.authority_key;
-      }
+      syncReviewAutoButtons(container);
     }, options.listenerOptions);
     registerListener(container, 'click', event => {
       const button = event.target?.closest?.('[data-action="permission-review-open"], [data-action="permission-review-decide"], [data-action="permission-review-page"]');
       if (!button || !container.contains(button) || button.disabled || pendingReviewContainers.has(container)) return;
       if (button.dataset.action === 'permission-review-open') {
         approvalRulesCache.reviewExpanded = true;
-        renderApprovalRules(options)?.then?.(() => container.querySelector('#permission-review-project')?.focus());
+        renderApprovalRules(options)?.then?.(() => container.querySelector(REVIEW_PROJECT_SELECTOR)?.focus());
         return;
       }
       if (button.dataset.action === 'permission-review-page') {
         approvalRulesCache.reviewPage = Math.max(0, approvalRulesCache.reviewPage
           + (button.dataset.direction === 'next' ? 1 : -1));
-        renderApprovalRules(options)?.then?.(() => container.querySelector('#permission-review-project')?.focus());
+        // A project choice never carries over to another page of grants.
+        const select = container.querySelector(REVIEW_PROJECT_SELECTOR);
+        if (select) select.value = '';
+        renderApprovalRules(options)?.then?.(() => container.querySelector(REVIEW_PROJECT_SELECTOR)?.focus());
         return;
       }
       const decision = button.dataset.decision;
-      const projectId = container.querySelector('#permission-review-project')?.value;
+      const projectId = container.querySelector(REVIEW_PROJECT_SELECTOR)?.value;
       const project = approvalRulesCache.projects.find(entry => entry.id === projectId);
       if (decision === 'auto' && (!project?.root_path || !project?.authority_key)) return;
       const request = { review_id: button.dataset.reviewId, decision,
@@ -298,6 +334,8 @@
           expected_authority_key: project.authority_key } : {}) };
       const version = approvalRulesCache.version;
       pendingReviewContainers.add(container);
+      // Disabled by hand: the settle repaint must rebuild them even when the rows did not change.
+      slots().forgetSlot(container);
       for (const control of container.querySelectorAll('[data-review-id]')) control.disabled = true;
       Promise.resolve().then(() => options.permissionReviewApi.resolve(request)).then(result => {
         if (result?.ok === false) {
@@ -329,15 +367,30 @@
       if (!button || !container.contains(button)) return;
       const key = button.dataset.ruleKey;
       const method = button.dataset.ruleKind === 'rule' ? 'removePermissionRule' : 'clearPermission';
+      const removeSelector = `[data-action="${APPROVAL_RULE_REMOVE_ACTION}"]`;
+      const index = [...container.querySelectorAll(removeSelector)].indexOf(button);
+      slots().forgetSlot(container);
       button.disabled = true;
       Promise.resolve()
         .then(() => {
-          if (!api || typeof api[method] !== 'function') throw new Error('Approval rules are unavailable in this window.');
+          if (!api || typeof api[method] !== 'function') throw new Error(jt('settings.shell.approvalRulesUnavailable', 'Approval rules are unavailable in this window.'));
           return api[method](key);
         })
         .then(() => renderApprovalRules({
           ...options, container, api, force: true,
         }))
+        .then(() => {
+          // The repaint replaced the focused button: keep focus in the list
+          // (the next rule's Remove, else the list) unless it moved elsewhere.
+          const doc = container.ownerDocument;
+          const active = doc?.activeElement;
+          if (active && active !== doc.body && active.isConnected) return;
+          const buttons = container.querySelectorAll(removeSelector);
+          const next = buttons[Math.min(index, buttons.length - 1)];
+          if (next) { next.focus({ preventScroll: true }); return; }
+          if (!container.hasAttribute('tabindex')) container.setAttribute('tabindex', '-1');
+          container.focus({ preventScroll: true });
+        })
         .catch((error) => {
           button.disabled = false;
           if (typeof options?.onError === 'function') options.onError(error, jt('settings.shell.approvalRuleRemovalFailed', 'Approval Rule Removal Failed'));

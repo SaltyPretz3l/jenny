@@ -22,12 +22,16 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Iterator
 
+from sidecar.ai.error_codes import CMP_TOOL_CAP_EXCEEDED
 from sidecar.ai.tools import workspace_restore_win32 as _win32
 from sidecar.ai.tools.builtins.file_atomic_write import write_bytes_atomic_if_matches
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
 from sidecar.ai.tools.workspace_path_identity import NodeIdentity, is_link_object
 
+# One restored regular file is read whole: cap it at the per-workspace recovery
+# quota (MAX_RECOVERY_OBJECT_BYTES_PER_WORKSPACE), the most a journal can hold.
+MAX_RESTORE_FILE_BYTES = 768 * 1024 * 1024
 # os.replace shares renameat with os.rename; CPython registers only os.rename.
 _DIR_FD = all(
     op in os.supports_dir_fd
@@ -123,9 +127,47 @@ def _before_restore_io(_path: Path) -> None:
 
 
 def make_parents(path: Path) -> None:
+    """Create each missing ancestor of ``path`` one level at a time under its pinned parent."""
     _validate_parent(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    missing: list[Path] = []
+    current = path.parent
+    while not os.path.lexists(current) and current.parent != current:
+        missing.append(current)
+        current = current.parent
+    if not missing and not path.parent.is_dir():
+        raise FileExistsError(str(path.parent))  # what Path.mkdir(exist_ok=True) raised
+    for directory in reversed(missing):
+        try:
+            _create_pinned(directory, mode=0o777)  # umask applies, as Path.mkdir did
+        except FileExistsError:
+            pass  # created concurrently; the next level's pin re-checks what it is
     _validate_parent(path)
+
+
+def link(source: Path, target: Path) -> None:
+    """Hard-link ``source`` at the new name ``target`` under pinned parents, never by a
+    pathname whose ancestors were not re-checked; raises FileExistsError if occupied."""
+    source_identity, source_fd = _pin(source)
+    try:
+        target_identity, target_fd = _pin(target)
+        try:
+            _before_restore_io(target)
+            _recheck(source, source_identity)
+            _recheck(target, target_identity)
+            if source_fd is None or target_fd is None or os.link not in os.supports_dir_fd:
+                os.link(source, target)
+            else:  # never link through a source swapped for a symlink
+                no_follow = ({"follow_symlinks": False}
+                             if os.link in os.supports_follow_symlinks else {})
+                os.link(source.name, target.name, src_dir_fd=source_fd, dst_dir_fd=target_fd,
+                        **no_follow)
+        finally:
+            if target_fd is not None:
+                os.close(target_fd)
+    finally:
+        if source_fd is not None:
+            os.close(source_fd)
+    fsync_directory(target.parent)
 
 
 def replace(source: Path, target: Path) -> None:
@@ -263,7 +305,7 @@ def _set_directory_mode(path: Path, mode: int) -> None:
             os.close(descriptor)
 
 
-def _create_pinned(path: Path, *, link: str | None = None) -> None:
+def _create_pinned(path: Path, *, link: str | None = None, mode: int = 0o700) -> None:
     """Create a directory (or the symlink ``link``) under the pinned, re-checked parent.
 
     A parent that changed during the create is detected before anything is
@@ -281,7 +323,7 @@ def _create_pinned(path: Path, *, link: str | None = None) -> None:
         _recheck(path, identity)
         _before_restore_io(path)  # the window between the last check and the create
         if link is None:
-            os.mkdir(name, 0o700, dir_fd=descriptor)
+            os.mkdir(name, mode, dir_fd=descriptor)
         else:
             os.symlink(link, name, dir_fd=descriptor)
         if descriptor is None:
@@ -338,12 +380,27 @@ def _create_pinned_win32(path: Path, identity: NodeIdentity, link: str | None) -
 
 
 def _read_regular(path: Path) -> bytes:
+    """Read a regular file whole, refusing one over ``MAX_RESTORE_FILE_BYTES`` before
+    reading it (the guarded write primitive takes bytes, so a copy is held in memory)."""
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(str(path), flags)
     with os.fdopen(descriptor, "rb") as handle:
-        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+        opened = os.fstat(handle.fileno())
+        if not stat.S_ISREG(opened.st_mode):
             raise ValueError("recovery object is not a regular file")
-        return handle.read()
+        if opened.st_size > MAX_RESTORE_FILE_BYTES:
+            raise _too_large()
+        data = handle.read(MAX_RESTORE_FILE_BYTES + 1)
+    if len(data) > MAX_RESTORE_FILE_BYTES:  # it grew after the size check
+        raise _too_large()
+    return data
+
+
+def _too_large() -> ToolExecutionFailure:
+    return ToolExecutionFailure(
+        code=CMP_TOOL_CAP_EXCEEDED, retryable=False,
+        message=f"A file over the {MAX_RESTORE_FILE_BYTES}-byte restore cap was not copied.",
+    )
 
 
 def fsync_directory(path: Path) -> None:
@@ -361,6 +418,6 @@ def fsync_directory(path: Path) -> None:
 
 
 __all__ = [
-    "RestorePathUnsafe", "bound_workspace", "copy_new", "fsync_directory",
-    "make_parents", "remove", "replace", "rmdir",
+    "MAX_RESTORE_FILE_BYTES", "RestorePathUnsafe", "bound_workspace", "copy_new",
+    "fsync_directory", "link", "make_parents", "remove", "replace", "rmdir",
 ]

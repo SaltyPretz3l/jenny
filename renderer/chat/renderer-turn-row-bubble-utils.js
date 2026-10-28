@@ -155,6 +155,12 @@
     function buildUserBubbleRowMarkup(row, messages, options) {
       const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
       const sourceMessage = getSourceMessage(row, messages, options);
+      // An app-started turn's label is not the person's message (renderer-render-pipeline-article-markup.js).
+      const applicationTurn = globalThis.chatBubbleActionUtils?.applicationTurnOf?.(sourceMessage) || '';
+      if (applicationTurn === 'handoff_preparation' || applicationTurn === 'wake') return '';
+      if (applicationTurn) {
+        return `<p class="chat-app-turn-note" role="note">${escapeHtml(jt('chat.applicationTurn.autoResumed', 'Resumed automatically after a turn-budget stop'))}</p>`;
+      }
       const text = String(payload.content || sourceMessage && sourceMessage.content || '');
       const messageId = normalizeId(row && row.primary_message_id);
       const messageForAttachments = sourceMessage

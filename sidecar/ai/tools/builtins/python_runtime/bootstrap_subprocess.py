@@ -145,6 +145,9 @@ def run(  # noqa: PLR0913 - mirrors the subprocess.run keywords the bootstrap us
     """
     timeout = effective_timeout(timeout)
     popen_kwargs: dict[str, Any] = {
+        # The sidecar's own stdin is the JSON-RPC pipe; no bootstrap step may
+        # inherit (and consume) it.
+        "stdin": subprocess.DEVNULL,
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
         "text": True,

@@ -122,18 +122,23 @@
     }
 
     /* A window narrower than every floor: the flexible child (the primary editor group's
-     * side) keeps its floor first, and the other editor groups give way, last first (F11).
-     * Without this the fixed group kept its width and the primary group got nothing. */
-    function yieldToFlex(split, flex, sizes, main, flexMin) {
+     * side) keeps its floor first, and the other editor groups give way (F11), least
+     * recently used first, then farthest first (pickFold order). Without this the fixed
+     * group kept its width and the primary group got nothing; yielding last-first left the
+     * group just used (the one a file opens into) 0 px wide. */
+    function yieldToFlex(split, flex, sizes, main, flexMin, lastUsed) {
       var fixed = sizes.reduce(function (a, b, i) { return i === flex ? a : a + (b || 0); }, 0);
       var short = Math.min(flexMin, main) - (main - fixed);
-      for (var i = split.children.length - 1; i >= 0 && short > 0; i -= 1) {
+      if (short <= 0) return;
+      var groups = split.children.map(function (_c, i) { return i; }).filter(function (i) {
         var node = split.children[i].node;
-        if (i === flex || node.t !== 'stack' || node.kind !== 'editor') continue;
+        return i !== flex && node.t === 'stack' && node.kind === 'editor';
+      });
+      pickOrder(groups, split, flex, lastUsed).forEach(function (i) {
         var cut = Math.min(short, sizes[i]);
         sizes[i] -= cut;
         short -= cut;
-      }
+      });
     }
 
     /* The floor a flexible subtree defends against its siblings: only its first editor group
@@ -179,7 +184,7 @@
       var flexMin = defendedMin(split.children[flex].node, axis, ctx.scale);
       if (ctx.usable) {
         fitSplit(split, flex, sizes, foldable, main - flexMin, ctx);
-        yieldToFlex(split, flex, sizes, main, flexMin);
+        yieldToFlex(split, flex, sizes, main, flexMin, ctx.lastUsed);
       }
       var fixedNow = sizes.reduce(function (a, b, i) { return i === flex || !b ? a : a + b; }, 0);
       sizes[flex] = ctx.usable ? Math.max(0, Math.round(main - fixedNow)) : flexMin;

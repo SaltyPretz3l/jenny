@@ -261,7 +261,7 @@ test('click rings use a fixed four-slot pool and evict the oldest origin', () =>
   });
 });
 
-test('counter-parallax offsets move opposite the scene pointer and scale by depth', () => {
+test('the field keeps no pointer parallax state', () => {
   withAtomic({}, ({ controller, raf }) => {
     bindAndPrime(controller, raf, [{ role: 'chat-left' }]);
     controller.handleInput(inputPayload({
@@ -269,14 +269,7 @@ test('counter-parallax offsets move opposite the scene pointer and scale by dept
     }));
     raf.flush(80);
 
-    const offsets = entryFor(controller).parallaxOffsets;
-    assert.equal(offsets.length, 3);
-    offsets.forEach((offset) => {
-      assert.ok(offset.x < 0, 'rightward input shifts the field left');
-      assert.ok(offset.y < 0, 'downward input shifts the field up');
-    });
-    assert.ok(Math.abs(offsets[2].x) > Math.abs(offsets[1].x));
-    assert.ok(Math.abs(offsets[1].x) > Math.abs(offsets[0].x));
+    assert.equal(entryFor(controller).parallaxOffsets, undefined, 'no parallax state is kept or reported');
     controller.dispose();
   });
 });
@@ -414,7 +407,6 @@ test('one shared frame advances once while both gutter viewports paint the same 
     const right = entryFor(controller, 'chat-right');
     assert.equal(left.drawCount, before + 1, 'shared simulation advances once for the painted frame');
     assert.equal(right.drawCount, left.drawCount, 'both viewport snapshots observe the same frame state');
-    assert.deepEqual(right.parallaxOffsets, left.parallaxOffsets);
     controller.dispose();
   });
 });

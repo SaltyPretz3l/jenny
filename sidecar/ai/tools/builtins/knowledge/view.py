@@ -12,7 +12,10 @@ extent the read reports.
 from __future__ import annotations
 
 import json
+import os
 import re
+import threading
+from collections import OrderedDict
 from collections.abc import Callable
 from pathlib import Path
 
@@ -139,6 +142,40 @@ def _changed_source(display: str) -> ToolHandlerResult:
         success=False, error_code=CMP_TOOL_EXECUTION_FAILED)
 
 
+_StatIdentity = tuple[str, int, int, int]
+# Source hashes keyed by stat identity, so paging through one document hashes
+# it once rather than once per page (bounded; least recently used drops first).
+_HASH_MEMO_LIMIT = 64
+_HASH_MEMO: OrderedDict[_StatIdentity, str] = OrderedDict()
+_HASH_MEMO_LOCK = threading.Lock()
+
+
+def _stat_identity(path: Path) -> _StatIdentity | None:
+    try:
+        file_stat = os.stat(path)
+    except OSError:
+        return None
+    return (os.path.realpath(path), file_stat.st_size, file_stat.st_mtime_ns, file_stat.st_ino)
+
+
+def _memoized_source_hash(
+    resolved: Path, root: KnowledgeRoot, identity: _StatIdentity | None,
+) -> str:
+    if identity is not None:
+        with _HASH_MEMO_LOCK:
+            cached = _HASH_MEMO.get(identity)
+            if cached is not None:
+                _HASH_MEMO.move_to_end(identity)
+                return cached
+    digest = source_hash(resolved, root.guard)
+    if identity is not None and _stat_identity(resolved) == identity:
+        with _HASH_MEMO_LOCK:
+            _HASH_MEMO[identity] = digest
+            while len(_HASH_MEMO) > _HASH_MEMO_LIMIT:
+                _HASH_MEMO.popitem(last=False)
+    return digest
+
+
 def _view_with_identity(
     root: KnowledgeRoot, resolved: Path, display: str, arguments: dict[str, object],
     read: Callable[[], ToolHandlerResult],
@@ -151,11 +188,13 @@ def _view_with_identity(
             code=CMP_TOOL_INVALID_PATH,
             message="expected_source_hash must be a SHA-256 hash", retryable=False)
     is_pdf = resolved.suffix.lower() == ".pdf"
-    before = source_hash(resolved, root.guard)
+    identity = _stat_identity(resolved)
+    before = _memoized_source_hash(resolved, root, identity)
     if expected is not None and before != expected:
         return _changed_source(display)
     result = read()
-    if source_hash(resolved, root.guard) != before:
+    # A rewrite during the read changes the stat identity; no second full hash.
+    if identity is None or _stat_identity(resolved) != identity:
         return _changed_source(display)
     payload = json.loads(result.output)
     payload["source_hash"] = before
@@ -321,14 +360,14 @@ def _view_rich(
             retryable=False,
         )
     # knowledge_view is a read-only projection. Rich inspectors may expose
-    # artifact-producing controls; only PDF read pagination joins the path.
+    # artifact-producing controls; only PDF and Word read pagination joins the path.
     adapter_arguments: dict[str, object] = {
         "path": resolved.relative_to(root.path).as_posix()
     }
-    if adapter_key == "pdf":
-        for key in ("pages", "cursor"):
-            if key in arguments:
-                adapter_arguments[key] = arguments[key]
+    paging_keys = {"pdf": ("pages", "cursor"), "document": ("cursor",)}.get(adapter_key, ())
+    for key in paging_keys:
+        if key in arguments:
+            adapter_arguments[key] = arguments[key]
     try:
         adapter_result = handler(adapter_arguments, root.guard)
     except ToolExecutionFailure:

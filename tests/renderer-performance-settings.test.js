@@ -93,6 +93,50 @@ test('registry: a toggle edit goes through the shared binding to updateSettings;
   assert.equal(store.get().gpu_warnings_enabled, true);
 });
 
+function deferredSnapshots(bridge) {
+  const pending = [];
+  bridge.getSnapshot = (request) => {
+    bridge.snapshotCalls.push(request);
+    return new Promise((resolve) => pending.push(resolve));
+  };
+  return pending;
+}
+
+test('store: a snapshot requested before an acknowledgement never overwrites it; the refresh asks again', async () => {
+  const bridge = fx.createPerformanceBridge();
+  const pending = deferredSnapshots(bridge);
+  const { store } = storeWith(bridge);
+  const adapter = settingsModule.createAdapter({ store, confirmError });
+  const refreshed = store.refresh();
+  assert.equal(bridge.snapshotCalls.length, 1);
+  // An edit is acknowledged while the snapshot is in flight.
+  adapter.ack({ ok: true, settings: fx.settings({ show_counter: true }) }, { show_counter: true });
+  pending[0](fx.snapshot({ settings: fx.settings({ show_counter: false, gpu_warnings_enabled: false }) }));
+  await flush();
+  assert.equal(store.get().show_counter, true, 'the stale snapshot is dropped');
+  assert.equal(bridge.snapshotCalls.length, 2, 'and asked again');
+  pending[1](fx.snapshot({ settings: fx.settings({ show_counter: true, gpu_warnings_enabled: false }) }));
+  await refreshed;
+  assert.deepEqual(store.get(), { show_counter: true, gpu_warnings_enabled: false });
+});
+
+test('store: an invalidation while a snapshot is in flight re-runs the refresh once it lands', async () => {
+  const bridge = fx.createPerformanceBridge();
+  const pending = deferredSnapshots(bridge);
+  const { store } = storeWith(bridge);
+  const first = store.refresh();
+  void store.refresh();
+  void store.refresh();
+  assert.equal(bridge.snapshotCalls.length, 1, 'one snapshot in flight at a time');
+  pending[0](fx.snapshot({ settings: fx.settings({ show_counter: false }) }));
+  await flush();
+  assert.equal(bridge.snapshotCalls.length, 2, 'the dropped invalidations ask once more');
+  pending[1](fx.snapshot({ settings: fx.settings({ show_counter: true }) }));
+  await first;
+  assert.equal(store.get().show_counter, true, 'the newer snapshot wins');
+  assert.equal(bridge.snapshotCalls.length, 2);
+});
+
 function sectionDom() {
   const dom = new JSDOM('<!doctype html><body><section id="section"><div id="appearancePerformanceGroup" hidden>'
     + '<div data-setting-mount="performanceShowCounterToggle"></div><div data-setting-mount="performanceGpuWarningsToggle"></div></div></section></body>');

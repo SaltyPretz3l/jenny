@@ -1,0 +1,6 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_1","status":"in_progress"}}
+
+event: response.failed
+data: {"type":"response.failed","response":{"id":"resp_4","status":"failed","error":{"code":"insufficient_quota","message":"You exceeded your quota for key sk-test-0123456789abcdefXYZ."}}}
+

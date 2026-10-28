@@ -311,7 +311,12 @@ test('maximizes the window only when initial state reports isMaximized', () => {
     },
   });
   const winB = createMainWindowWithDeps(max.deps);
-  assert.equal(winB.maximized, true, 'window maximized when isMaximized:true');
+  // maximize() shows a hidden window, so it waits for the first-paint reveal.
+  assert.equal(winB.maximized, false, 'not maximized before first paint');
+  for (const [event, fn] of winB.onceHandlers) {
+    if (event === 'ready-to-show') fn();
+  }
+  assert.equal(winB.maximized, true, 'window maximized at reveal when isMaximized:true');
 });
 
 test('smoke vs non-smoke branch register observably different handler sets', () => {

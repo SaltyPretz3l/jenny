@@ -177,7 +177,20 @@
 
 .approval-gap-row > .tool-approval-receipt {
   padding-block: var(--space-2) var(--space-3);
-  padding-inline-start: var(--space-5);
+  padding-inline-start: var(--approval-text-inset);
+}
+
+/* The mark fills the dot column, centred on the row's dot axis; the negative
+   end margin cancels the flex gap so the label lands on the name column. */
+.approval-gap-row > .tool-approval-receipt--resolved {
+  padding-inline-start: 0;
+}
+
+.approval-gap-row > .tool-approval-receipt--resolved > .tool-approval-receipt-mark {
+  box-sizing: border-box;
+  flex-basis: var(--approval-text-inset);
+  margin-inline-end: calc(-1 * var(--space-2));
+  text-align: center;
 }
 
 /* HB-038 H2: a resolved approval stays as one quiet line naming the decision

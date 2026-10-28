@@ -56,6 +56,9 @@
   // Fallback after the duration: a missed animationend / transitionend must
   // never leave the lock held.
   const FALLBACK_SLACK_MS = 50;
+  // Each pane's composer toolbar fit (renderer-pane-composer-rail.js, same literal) settles on this
+  // event synchronously: its compact flag hides the avatar rail and so changes the measure.
+  const FIT_FLUSH_EVENT = 'jenny:composer-fit-flush';
 
   // One motion at a time per host: starting one cancels the other panel's.
   const activeByHost = new WeakMap();
@@ -90,6 +93,17 @@
     }
     function forceLayout() {
       if (chatView && typeof chatView.offsetWidth === 'number') void chatView.offsetWidth;
+    }
+    // Lay out a new panel state with every pane's toolbar fit settled for it, so a lock or an
+    // anchor restore sees the final measure rather than one the fit changes a frame later.
+    function settleLayout() {
+      forceLayout();
+      const panes = chatView?.querySelectorAll ? Array.from(chatView.querySelectorAll('.chat-pane')) : [];
+      // The pane's own realm: an Event from another window is rejected by dispatchEvent.
+      const EventCtor = chatView?.ownerDocument?.defaultView?.Event;
+      if (typeof EventCtor !== 'function' || !panes.length) return;
+      for (const pane of panes) pane.dispatchEvent?.(new EventCtor(FIT_FLUSH_EVENT));
+      forceLayout();
     }
     function setPhase(phase) {
       if (chatView?.dataset) chatView.dataset[MOTION_ATTRIBUTE] = phase;
@@ -169,7 +183,7 @@
     function runInstant(applyEnd) {
       captureAnchors();
       applyEnd();
-      forceLayout();
+      settleLayout();
       restoreAnchors();
       return false;
     }
@@ -188,7 +202,7 @@
       captureAnchors();
       setPhase('measuring');
       applyEnd();
-      forceLayout();
+      settleLayout();
       const measures = measureVisiblePanes();
       setContentWidth(panel);
       if (applyStart) { applyStart(); forceLayout(); }
@@ -208,7 +222,7 @@
         captureAnchors();
         releaseLocks(entry.locked);
         clearPhase();
-        forceLayout();
+        settleLayout();
         restoreAnchors();
       });
       return true;
@@ -242,7 +256,7 @@
         if (deferEnd) applyEnd();
         releaseLocks(entry.locked);
         clearPhase();
-        forceLayout();
+        settleLayout();
         restoreAnchors();
       });
       return true;

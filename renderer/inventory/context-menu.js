@@ -7,6 +7,13 @@
  * API:
  *   show(opts)  — display a context menu
  *   hide()      — dismiss the active menu
+ *
+ * Composer menus (row 63, 2026-10-19) add: `heading` (a muted line naming
+ * what picking does), `footer` (a muted note under the rows), `className`,
+ * an item's trusted `iconHtml` (a leading glyph column), and
+ * `placement: 'above'`, which opens the menu upward from the anchor's
+ * leading edge (a composer control sits at the bottom of the window), and
+ * `focusChecked`, which opens a radio menu on its current choice.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -66,9 +73,17 @@
     var doc = (opts.rootEl && opts.rootEl.ownerDocument) || document;
     var win = doc.defaultView || globalThis;
     var menu = doc.createElement('div');
-    menu.className = 'inv-context-menu';
+    menu.className = 'inv-context-menu' + (opts.className ? ' ' + String(opts.className) : '');
     menu.setAttribute('role', 'menu');
     if (opts.ariaLabel) menu.setAttribute('aria-label', String(opts.ariaLabel));
+    if (opts.heading) {
+      var heading = doc.createElement('div');
+      heading.className = 'inv-context-menu-heading';
+      heading.setAttribute('role', 'presentation');
+      heading.textContent = String(opts.heading);
+      menu.appendChild(heading);
+      if (!opts.ariaLabel) menu.setAttribute('aria-label', String(opts.heading));
+    }
 
     for (var i = 0; i < opts.items.length; i++) {
       var item = opts.items[i];
@@ -90,6 +105,15 @@
       btn.setAttribute('role', checked === null ? 'menuitem' : item.toggle === true ? 'menuitemcheckbox' : 'menuitemradio');
       if (checked !== null) btn.setAttribute('aria-checked', checked ? 'true' : 'false');
       btn.disabled = !!item.disabled;
+      if (item.value !== undefined) btn.setAttribute('data-value', String(item.value));
+      if (item.iconHtml) {
+        var iconSpan = doc.createElement('span');
+        iconSpan.className = 'inv-context-menu-icon';
+        iconSpan.setAttribute('aria-hidden', 'true');
+        iconSpan.innerHTML = String(item.iconHtml); // trusted caller markup (a static glyph)
+        btn.appendChild(iconSpan);
+        btn.classList.add('inv-context-menu-item--icon');
+      }
 
       var labelSpan = doc.createElement('span');
       labelSpan.textContent = item.label || '';
@@ -146,6 +170,13 @@
 
       menu.appendChild(btn);
     }
+    if (opts.footer) {
+      var footer = doc.createElement('div');
+      footer.className = 'inv-context-menu-footer';
+      footer.setAttribute('role', 'presentation');
+      footer.textContent = String(opts.footer);
+      menu.appendChild(footer);
+    }
 
     doc.body.appendChild(menu);
     _menuEl = menu;
@@ -157,16 +188,20 @@
     var anchorRect = opts.anchorEl && typeof opts.anchorEl.getBoundingClientRect === 'function'
       ? opts.anchorEl.getBoundingClientRect()
       : null;
-    var anchorX = anchorRect ? anchorRect.right : opts.anchorX || 0;
+    var above = opts.placement === 'above' && anchorRect;
+    var anchorX = anchorRect ? (above ? anchorRect.left : anchorRect.right) : opts.anchorX || 0;
     var anchorY = anchorRect ? anchorRect.bottom : opts.anchorY || 0;
     var left = Math.max(0, Math.min(anchorX, win.innerWidth - menuRect.width - 4));
     var top = Math.max(0, Math.min(anchorY, win.innerHeight - menuRect.height - 4));
+    // Upward from the anchor; downward only when there is no room above.
+    if (above) top = anchorRect.top - menuRect.height - 6 >= 4 ? anchorRect.top - menuRect.height - 6 : top;
     menu.style.left = Math.round(left) + 'px';
     menu.style.top = Math.round(top) + 'px';
 
-    /* Focus first enabled item. */
+    /* Focus the first enabled item, or with `focusChecked` the checked one. */
     var enabled = _getEnabledItems();
-    if (enabled.length) enabled[0].focus();
+    var current = opts.focusChecked ? enabled.filter(function (el) { return el.getAttribute('aria-checked') === 'true'; })[0] : null;
+    if (current || enabled.length) (current || enabled[0]).focus();
 
     /* Keyboard navigation. */
     function handleKeydown(e) {

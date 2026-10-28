@@ -95,8 +95,7 @@ function removeTempUserDataPath(userDataPath) {
   fs.rmSync(userDataPath, { recursive: true, force: true });
 }
 
-function createDiagnosticHost(t) {
-  const userDataPath = makeTempUserDataPath();
+function createDiagnosticHost(t, userDataPath = makeTempUserDataPath()) {
   const hosted = createHostedBackend({
     hostMode: 'server', userDataPath, workspaceRoot: null,
     credentialService: createCredentialService(),
@@ -145,6 +144,16 @@ test('hosted service logs persist desktop canonical entries and shutdown events 
   assert.equal(hosted.backend.shellLogStore, hosted.logStore);
   assert.equal(result.exitConfirmed, true);
   assert.equal(result.logFlush.flushed, true);
+});
+
+test('a corrupt permission file logs the deny-all fallback to the hosted shell log', async (t) => {
+  const userDataPath = makeTempUserDataPath();
+  fs.writeFileSync(path.join(userDataPath, 'tool-permissions.json'), '{not json', 'utf8');
+  const hosted = createDiagnosticHost(t, userDataPath);
+  await hosted.stop();
+  const entry = readHostedLog(hosted).find((candidate) => candidate.event === 'permission_store.read_only');
+  assert.equal(entry?.level, 'WARN');
+  assert.equal(entry.data.reason, 'unreadable_or_corrupt');
 });
 
 test('hosted mirrored sidecar diagnostics persist with secrets redacted', async (t) => {

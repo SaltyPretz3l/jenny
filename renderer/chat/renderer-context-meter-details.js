@@ -122,36 +122,34 @@
     return Math.min(count, maximum);
   }
 
+  /* The popover's scope note (row 63): the breakdown above it already carries the numbers, so it
+     speaks only when the next send will not carry the whole chat. Full session reads as ''. */
   function formatSummary(summary) {
     if (!summary || summary.status !== 'estimated') {
       return jt('chat.contextMeter.unavailable', 'Next-turn estimate is unavailable.');
     }
-    var scope = summary.history_scope === 'recent' ? 'Last 6 turns'
-      : summary.history_scope === 'fresh' ? jt('settings.context.historyScope.newPromptOnly', 'New prompt only') : jt('settings.context.fullSession', 'Full session');
-    var categories = summary.context_categories || {};
-    var enabled = [];
-    if (categories.personality) enabled.push(jt('chat.contextMeter.personality', 'personality'));
-    if (categories.approved_memory) enabled.push(jt('chat.contextMeter.approvedMemory', 'approved memory'));
-    if (categories.git) enabled.push(jt('chat.contextMeter.git', 'git'));
-    if (categories.codebase) enabled.push(jt('chat.contextMeter.codebase', 'codebase'));
-    if (categories.active_file) enabled.push(jt('chat.contextMeter.activeFile', 'active file'));
-    if (categories.mentions) enabled.push(jt('chat.contextMeter.mentions', 'mentions'));
-    var attachmentCount = boundedCount(categories.attachments, 64);
     var historyCount = boundedCount(summary.history_message_count, 1000000);
     var availableCount = boundedCount(summary.available_history_message_count, 1000000);
-    if (attachmentCount > 0) enabled.push(attachmentCount + ' attachment(s)');
     var narrowing = summary.automatic_narrowing
-      ? jt('chat.contextMeter.automaticNarrowing', ' Automatic narrowing will omit {count} older message(s).', { count: Math.max(0, availableCount - historyCount) })
+      ? jt('chat.contextMeter.automaticNarrowing', ' Automatic narrowing will omit {count} older message(s).', { count: Math.max(0, availableCount - historyCount) }).trim()
       : '';
-    var preview = summary.preview;
-    var estimate = preview?.status === 'estimated'
-      ? jt('chat.sessionRail.context.nextSend', 'Estimated for the next send; retrieval may add context.') + ' '
-        + jt('chat.sessionRail.context.tokens', '{count} tokens', { count: preview.used_tokens }) + '. '
+    var snapshot = summary.compaction_snapshot_present
+      ? jt('chat.contextMeter.compactedSnapshot', ' A bounded compacted snapshot may replace its covered prefix.').trim()
       : '';
-    return estimate + jt('chat.contextMeter.historySummary', '{scope}: {count} history message(s). ', { scope: scope, count: historyCount })
-      + (enabled.length ? jt('chat.contextMeter.additionalContextPlanned', 'Additional context planned: {context}.', { context: enabled.join(', ') }) : jt('chat.contextMeter.noOptionalContext', 'No optional context is planned.'))
-      + (summary.compaction_snapshot_present ? jt('chat.contextMeter.compactedSnapshot', ' A bounded compacted snapshot may replace its covered prefix.') : '')
-      + narrowing;
+    var scope = '';
+    if (summary.history_scope === 'recent' || summary.history_scope === 'fresh') {
+      scope = jt('chat.contextMeter.historySummary', '{scope}: {count} history message(s). ', {
+        scope: summary.history_scope === 'recent' ? jt('chat.contextMeter.lastSixTurns', 'Last 6 turns')
+          : jt('settings.context.historyScope.newPromptOnly', 'New prompt only'),
+        count: historyCount,
+      }).trim();
+    }
+    return [scope, narrowing, snapshot].filter(Boolean).join(' ');
+  }
+
+  function showScopeNote(output, text) {
+    output.textContent = text;
+    output.hidden = !text;
   }
 
   async function loadPreview(popover, state) {
@@ -161,7 +159,7 @@
     previewGate.bump();
     var previewToken = previewGate.capture();
     output.dataset.contextPreviewPending = 'true';
-    output.textContent = jt('chat.contextMeter.calculating', 'Calculating from the canonical session…');
+    var requestedAt = Date.now();
     try {
       var queuedAttachments = Array.isArray(state?.attachments?.queued) ? state.attachments.queued : [];
       var mentionPaths = root?.rendererIdeMentionAutocomplete?.collectMentionPaths?.();
@@ -172,18 +170,15 @@
       });
       if (!previewGate.isCurrent(previewToken) || !output.isConnected
         || String(state?.currentSessionId || '').trim() !== sessionId) return;
-      var input = popover.closest('.composer-wrap')?.querySelector('[data-chat-node="chatInput"], #chatInput')
-        || popover.__invPopoverTrigger?.closest('.composer-wrap')?.querySelector('[data-chat-node="chatInput"], #chatInput');
-      if (summary?.preview && root?.rendererContextPreview?.withDraft) {
-        summary = { ...summary, preview: root.rendererContextPreview.withDraft(summary.preview, input?.value, queuedAttachments) };
-      }
-      output.textContent = formatSummary(summary);
+      showScopeNote(output, formatSummary(summary));
       delete output.dataset.contextPreviewPending;
       positionPopover(popover, popover.__invPopoverTrigger);
+      // Shared with the ring and the Session summary; a changed estimate repaints the ring.
+      if (summary?.preview?.status === 'estimated') root?.rendererContextPreview?.remember?.(sessionId, summary.preview, requestedAt);
     } catch (_error) {
       if (previewGate.isCurrent(previewToken) && output.isConnected
         && String(state?.currentSessionId || '').trim() === sessionId) {
-        output.textContent = jt('chat.contextMeter.unavailable', 'Next-turn estimate is unavailable.');
+        showScopeNote(output, '');
         delete output.dataset.contextPreviewPending;
         positionPopover(popover, popover.__invPopoverTrigger);
       }

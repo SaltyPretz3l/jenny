@@ -14,8 +14,9 @@ import pytest
 
 from sidecar.ai.tools import workspace_restore_io as restore_io
 from sidecar.ai.tools.workspace_path_identity import NodeIdentity
+from tests.sidecar._platform_skips import windows_only
 
-pytestmark = pytest.mark.skipif(os.name != "nt", reason="Win32 handle-relative primitives")
+pytestmark = windows_only("Win32 handle-relative primitives")
 
 if os.name == "nt":
     import _winapi

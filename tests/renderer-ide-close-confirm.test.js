@@ -253,6 +253,29 @@ test('orchestrator window preflight prompts for registered surfaces even with cl
   orch.cancel(plan);
 });
 
+test('orchestrator window exit with Close without saving drops the hot-exit backups first; a tab close does not', async () => {
+  const discarded = [];
+  const orch = createIdeCloseOrchestrator({
+    getIde: () => ({ openTabs: [{ path: 'a.js' }, { path: 'b.js' }] }),
+    isDirty: (p) => p === 'a.js',
+    confirmClose: () => Promise.resolve('discard'),
+    onExitDiscard: (paths) => { discarded.push(paths); return Promise.resolve(true); },
+  });
+  const plan = await orch.preflight(['a.js', 'b.js'], { intent: 'close' });
+  assert.equal(plan.ready, true);
+  assert.deepEqual(discarded, [['a.js']], 'only the dirty buffers the user chose not to save');
+  orch.cancel(plan);
+  await orch.requestClose('a.js');
+  assert.equal(discarded.length, 1, 'a tab close leaves backup cleanup to hot exit noticing the closed tab');
+  const hung = createIdeCloseOrchestrator({
+    getIde: () => ({ openTabs: [{ path: 'a.js' }] }),
+    isDirty: () => true,
+    confirmClose: () => Promise.resolve('discard'),
+    onExitDiscard: () => { throw new Error('bridge gone'); },
+  });
+  assert.equal((await hung.preflight(['a.js'], { intent: 'reload' })).ready, true, 'a failing cleanup never blocks the exit');
+});
+
 test('orchestrator window preflight passes the intent with dirty buffers and cancels on Cancel', async () => {
   const prompts = [];
   const orch = createIdeCloseOrchestrator({

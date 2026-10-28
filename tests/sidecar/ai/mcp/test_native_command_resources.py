@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ctypes
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,6 +11,7 @@ from sidecar.ai.config_parsing import _parse_mcp_servers
 from sidecar.ai.container_mcp_servers import _default_mcp_servers
 from sidecar.ai.mcp import process_containment
 from sidecar.ai.tools.builtins.python_runtime import job_object
+from tests.sidecar._platform_skips import windows_only
 
 
 @pytest.mark.parametrize("host_mode,policy,rich_files,expected", [
@@ -65,7 +65,7 @@ def test_posix_retains_other_limits_without_lowering_native_address_space(monkey
     assert ((1, 512 * 1024 * 1024) in calls) is (memory_limit_mb is not None)
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows job accounting")
+@windows_only("job object accounting")
 @pytest.mark.parametrize("memory_limit_mb", [None, 128])
 def test_real_windows_job_preserves_process_limit_and_kill_on_close(memory_limit_mb):
     query = job_object.kernel32.QueryInformationJobObject

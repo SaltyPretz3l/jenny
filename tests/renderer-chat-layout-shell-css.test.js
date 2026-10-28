@@ -331,8 +331,11 @@ test('surface-effect styles keep splash layering stable and composer-accessible'
     /\.artifact-review-panel\[data-artifact-review-mode="tasks"\]\s*\{[\s\S]*?background:\s*var\(--bg-base\);[\s\S]*?border-inline-start:\s*1px solid var\(--line\);/,
     'tasks mode should use the flat chat-page surface grammar'
   );
-  assert.match(taskRailCss, /\.task-rail-check\s*\{[\s\S]*?border-bottom:\s*1px solid color-mix/);
+  assert.doesNotMatch(taskRailCss, /\.task-rail-(?:check|row)\b[^{]*\{[^}]*border-bottom/, 'task rows separate by whitespace, not dividers');
   assert.doesNotMatch(taskRailCss, /\.task-rail-row-actions\b/);
+  // Finished follow-ups and finished checklist steps are both marked off.
+  assert.match(taskRailCss, /\.task-rail-row--resolved \.task-rail-title \{[^}]*text-decoration: line-through/);
+  assert.match(taskRailCss, /\.task-rail-check\[data-check-status="completed"\] \.task-rail-check-text \{[^}]*text-decoration: line-through/);
   const timelineUtilityButtonRule = readCssRuleBlock(
     timelineOrientationCss,
     '.chat-timeline-utility-button'

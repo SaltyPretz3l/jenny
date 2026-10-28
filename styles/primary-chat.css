@@ -1,0 +1,109 @@
+/* Primary Jenny chat controls (row 76): the paused tag on its sidebar row, the paused
+ * notice above the composer, the Activity / Permissions dialog body and the offer card's
+ * "always allow" row. Tokens only; the dialog reuses the Review dialog's chat-review__*
+ * grammar and the step-modal shell; no new containers or decoration. */
+
+/* Sidebar row (A1): a small tag after the title, the queued-send badge's tone. */
+.session-row__paused {
+  margin-inline-start: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+/* Paused notice (B): one line above the composer in the wait-line grammar, one text action. */
+.primary-paused-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-1);
+  border-block-start: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+}
+.primary-paused-notice[hidden] { display: none; }
+.primary-paused-notice .status-dot { align-self: center; }
+.primary-paused-notice__why { color: var(--text-primary); font-weight: 500; }
+.primary-paused-notice__action {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--border-default);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.primary-paused-notice__action:hover { text-decoration-color: currentColor; }
+.primary-paused-notice__action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.primary-paused-notice__action:disabled { cursor: default; opacity: 0.56; text-decoration: none; }
+
+/* Activity dialog (C, D): a segmented control switches the two panes; entries reuse chat-review__*. */
+.primary-activity__tabs { margin-block-end: var(--space-3); }
+.primary-activity__pane[hidden] { display: none; }
+.primary-activity__kicker {
+  margin: var(--space-4) 0 var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.primary-activity__kicker:first-child { margin-block-start: 0; }
+.primary-activity__kind {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.primary-activity__perm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px var(--space-3);
+  align-items: center;
+  padding: var(--space-2) var(--space-1);
+  border-block-end: 1px solid var(--border-subtle);
+}
+.primary-activity__perm-title { color: var(--text-primary); font-size: var(--font-size-body); overflow-wrap: anywhere; }
+.primary-activity__perm-meta { grid-column: 1; color: var(--text-muted); font-size: var(--font-size-footnote); }
+.primary-activity__perm-act { grid-row: 1 / span 2; }
+.primary-activity__form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--space-1) var(--space-1);
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+}
+.primary-activity__form .inv-select-field { min-inline-size: 180px; }
+
+/* Offer card (E1): the "always allow" row under the choices. */
+.proposal-always {
+  margin-block-start: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+}
+
+/* Reset / Forget confirm (F): the danger step modal, plain message, a short list, one option. */
+.primary-reset__message { margin: 0; color: var(--text-primary); font-size: var(--font-size-body); line-height: 1.5; }
+.primary-reset__list { margin: var(--space-2) 0 0; padding-inline-start: 18px; color: var(--text-secondary); font-size: var(--font-size-footnote); }
+.primary-reset__opt { margin-block-start: var(--space-3); color: var(--text-secondary); font-size: var(--font-size-footnote); }
+.primary-reset__notice { margin: var(--space-2) 0 0; color: var(--text-danger-emphasis); font-size: var(--font-size-footnote); }
+.inv-step-modal--danger .inv-step-modal-action--primary {
+  border-color: color-mix(in srgb, var(--text-danger-emphasis) 44%, var(--border-default));
+  background: color-mix(in srgb, var(--text-danger-emphasis) 12%, var(--surface-input-background));
+  color: var(--text-danger-emphasis);
+}
+
+@media (forced-colors: active) {
+  .session-row__paused, .primary-activity__perm { border-color: CanvasText; }
+  .primary-paused-notice__action, .inv-step-modal--danger .inv-step-modal-action--primary { color: LinkText; }
+}

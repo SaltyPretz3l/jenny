@@ -89,9 +89,9 @@ test('the shipped artifact manifest loads with the pinned values and derived URL
   assert.equal(artifact.model_id, 'qwen3.8-27b-nvfp4');
   assert.equal(artifact.format_version, 3);
   assert.equal(artifact.supports_mtp, true);
-  assert.deepEqual([...artifact.context_windows], [16384, 32768, 65536, 131072, 153600, 262144]);
+  assert.deepEqual([...artifact.context_windows], [16384, 32768, 65536, 131072, 153600, 196608, 262144]);
   // Above 128k the bf16 cache leaves no VRAM free on a 32 GB card (150k ran 6x slower): 8-bit cache.
-  assert.deepEqual([...artifact.fp8_kv_windows], [153600, 262144]);
+  assert.deepEqual([...artifact.fp8_kv_windows], [153600, 196608, 262144]);
   assert.equal(artifact.default_context_window, 153600);
   assert.ok(Object.isFrozen(artifacts));
   assert.ok(Object.isFrozen(artifact));

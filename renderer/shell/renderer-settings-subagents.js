@@ -8,10 +8,10 @@
     || ((key, fallback) => fallback);
   const controllers = new WeakMap();
   const providers = ['chatgpt', 'codex-cli'];
-  const empty = () => ({ defaultModel: '', defaultEffort: '', preferredModels: [], allowedModels: [], maxEffort: '' });
   const clone = (row) => ({ defaultModel: row?.defaultModel || '', defaultEffort: row?.defaultEffort || '',
     preferredModels: Array.isArray(row?.preferredModels) ? [...row.preferredModels] : [],
     allowedModels: Array.isArray(row?.allowedModels) ? [...row.allowedModels] : [], maxEffort: row?.maxEffort || '' });
+  const empty = () => clone();
   const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   const effortLabels = () => ({
     default: jt('settings.subagents.effortDefault', 'Provider default'),
@@ -22,6 +22,15 @@
     high: jt('settings.subagents.effortHigh', 'High'),
     xhigh: jt('settings.subagents.effortXhigh', 'Extra high'),
     max: jt('settings.subagents.effortMax', 'Maximum'),
+  });
+  // The accessible name of each routing select, by its field id.
+  const selectLabels = () => ({
+    provider: jt('settings.subagents.provider', 'Provider'),
+    model: jt('settings.subagents.defaultModel', 'Default model'),
+    effort: jt('settings.subagents.defaultEffort', 'Default effort'),
+    maximum: jt('settings.subagents.maximumEffort', 'Maximum effort'),
+    allowed: jt('settings.subagents.allowedModels', 'Allowed models'),
+    preferred: jt('settings.subagents.addPreferred', 'Add preferred model'),
   });
 
   function createSubagentRoutingController(options = {}) {
@@ -64,12 +73,7 @@
     }
     function select(id, value, choices, disabled = false) {
       return inventory.selectField?.({ id: `subagent-${id}`, value, options: choices, disabled: busy || toolDisabled() || disabled,
-        ariaLabel: id === 'provider' ? jt('settings.subagents.provider', 'Provider') : id === 'model'
-          ? jt('settings.subagents.defaultModel', 'Default model') : id === 'effort'
-            ? jt('settings.subagents.defaultEffort', 'Default effort') : id === 'maximum'
-              ? jt('settings.subagents.maximumEffort', 'Maximum effort') : id === 'allowed'
-                ? jt('settings.subagents.allowedModels', 'Allowed models') : jt('settings.subagents.addPreferred', 'Add preferred model'),
-        dataset: { 'subagent-field': id } }) || '';
+        ariaLabel: selectLabels()[id], dataset: { 'subagent-field': id } }) || '';
     }
     function button(action, label, index, disabled = false, model = '', list = 'preferred') {
       return inventory.actionButton?.({ label, ariaLabel: model ? `${label}: ${model}` : label,
@@ -152,16 +156,26 @@
         focusTarget?.focus({ preventScroll: true });
       }
     }
+    // The action control that had focus, so a settle can hand focus back to it.
+    function captureActionFocus() {
+      const active = container?.ownerDocument?.activeElement;
+      actionFocusId = container?.querySelector('[data-subagent-routing-host]')?.contains(active) ? active.id : '';
+    }
     function adopt(payload) {
       if (!payload) return;
       catalog = payload.subagentModelCatalogs || catalog;
       options.applyFeatures?.(payload);
     }
+    // Re-entering Tools re-reads the catalog only once it is this old.
+    const SHOWN_REFRESH_MS = 30000;
+    let loadedAt = 0;
+    function refreshIfStale() {
+      if (Date.now() - loadedAt >= SHOWN_REFRESH_MS) void refresh();
+    }
     async function refresh() {
       if (disposed || loading || busy) return;
       const token = ++generation;
-      actionFocusId = container?.querySelector('[data-subagent-routing-host]')?.contains(container.ownerDocument.activeElement)
-        ? container.ownerDocument.activeElement.id : '';
+      captureActionFocus();
       loading = true;
       message = '';
       failed = false;
@@ -173,6 +187,7 @@
         const payload = await getBridge()?.getState?.();
         if (disposed || token !== generation) return;
         adopt(payload);
+        loadedAt = Date.now();
       } catch (_error) {
         if (disposed || token !== generation) return;
         failed = true;
@@ -183,8 +198,7 @@
     }
     async function save(reset = false) {
       if (disposed || busy || toolDisabled()) return;
-      actionFocusId = container?.querySelector('[data-subagent-routing-host]')?.contains(container.ownerDocument.activeElement)
-        ? container.ownerDocument.activeElement.id : '';
+      captureActionFocus();
       const selectedProvider = provider;
       const submitted = reset ? empty() : clone(draft());
       generation += 1; // Invalidate catalog reads that captured pre-save settings.
@@ -272,7 +286,7 @@
       container?.removeEventListener?.('click', click);
       controllers.delete(container);
     }
-    const controller = { bind, render, refresh, dispose, save };
+    const controller = { bind, render, refresh, refreshIfStale, dispose, save };
     return controller;
   }
   return { createSubagentRoutingController, sync: (container) => controllers.get(container)?.render() };

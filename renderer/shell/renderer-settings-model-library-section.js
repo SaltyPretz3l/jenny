@@ -45,14 +45,19 @@
   'use strict';
   var loadFailureReader = root.jennyModelLoadFailure || (typeof require === 'function' ? require('../shared/model-load-failure') : null);
   var recoveryModule = root.rendererModelLibraryRecoveryActions || (typeof require === 'function' ? require('./model-library/model-library-recovery-actions') : null);
+  var sectionMergeModule = root.modelLibrarySectionMerge || (typeof require === 'function' ? require('./model-library/model-library-section-merge') : null);
+  var sectionRenderModule = root.modelLibrarySectionRender || (typeof require === 'function' ? require('./model-library/model-library-section-render') : null);
+  var sectionMenuModule = root.modelLibrarySectionMenu || (typeof require === 'function' ? require('./model-library/model-library-section-menu') : null);
+  var sectionDeleteModule = root.modelLibrarySectionDelete || (typeof require === 'function' ? require('./model-library/model-library-section-delete') : null);
+  var sectionLiveSyncModule = root.modelLibrarySectionLiveSync || (typeof require === 'function' ? require('./model-library/model-library-section-live-sync') : null);
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var CARD_SELECTOR = '.settings-card[data-settings-section="models"]';
   var TOOLBAR_HOST_ID = 'modelLibrarySectionToolbarHost';
   var HOST_ID = 'modelLibrarySectionHost';
   var EXTRAS_HOST_ID = 'modelLibrarySectionExtrasHost'; // folders + image engine under the grid (else in the toolbar)
-  var MODAL_ID = 'model-library-section-confirm-delete';
-  var ACTIONS = ['use', 'unload', 'tune', 'pull', 'cancel', 'menu', 'retry', 'loadSmaller', 'showFits', 'diagnostics', 'copyDetails'];
+  var RECOVERY_ACTIONS = ['retry', 'loadSmaller', 'showFits', 'diagnostics', 'copyDetails'];
+  var ACTIONS = ['use', 'unload', 'tune', 'pull', 'cancel', 'menu'].concat(RECOVERY_ACTIONS);
 
   if (!sourcesModule || typeof sourcesModule.createModelLibrarySource !== 'function'
     || typeof sourcesModule.createPullController !== 'function'
@@ -63,14 +68,18 @@
     || !mergeModule || typeof mergeModule.mergeModelLibrary !== 'function'
     || typeof mergeModule.filterCounts !== 'function'
     || !viewModule || typeof viewModule.buildModelGrid !== 'function'
-    || typeof viewModule.buildModelCard !== 'function'
     || typeof viewModule.buildFilterChips !== 'function'
     || typeof viewModule.buildHardwareSummaryLine !== 'function'
     || typeof inventoryActionButton !== 'function'
     || typeof inventoryTextField !== 'function'
     || !inventoryStepModal || typeof inventoryStepModal.renderStepModal !== 'function'
     || !inventoryContextMenu || typeof inventoryContextMenu.show !== 'function'
-    || !formatUtils || typeof formatUtils.canonicalOllamaTag !== 'function') {
+    || !formatUtils || typeof formatUtils.canonicalOllamaTag !== 'function'
+    || typeof sectionMergeModule?.createModelLibrarySectionMerge !== 'function'
+    || typeof sectionRenderModule?.createModelLibrarySectionRender !== 'function'
+    || typeof sectionMenuModule?.createModelLibrarySectionMenu !== 'function'
+    || typeof sectionDeleteModule?.createModelLibrarySectionDelete !== 'function'
+    || typeof sectionLiveSyncModule?.createModelLibrarySectionLiveSync !== 'function') {
     throw new Error('renderer-settings-model-library-section: missing required dependency');
   }
 
@@ -116,18 +125,16 @@
     });
     var pullController = null;
     var foldersController = null;
-    var engineBlocks = createEngineBlocks();
+    var engineBlocks = null;
     var sourceData = null;
     var merged = null;
     var loadSettled = false; // until then the hardware line reads "Checking hardware…"
-    var catchUpAttempts = 0; // re-reads spent on a read taken before the backend was ready
     var disposed = false;
     var boundCard = null;
     var unsubscribeFeatures = null;
-    var pendingConfirmModel = '';
-    var pendingDeleteModel = '';
-    var contextSignature = '';
     var view = { filter: 'all', pullTag: '', statusMessage: '' };
+    // The status a load wrote; a later load clears only that, never an action's result ("removed").
+    var loadStatusMessage = '';
 
     function card() {
       return documentRef && documentRef.querySelector
@@ -140,151 +147,31 @@
     function host() { return byId(HOST_ID); }
     function toolbarHost() { return byId(TOOLBAR_HOST_ID); }
     function extrasHost() { return byId(EXTRAS_HOST_ID); }
+    function isDisposed() { return disposed; }
+    function getSourceData() { return sourceData; }
+    function getMerged() { return merged; }
+    function getEngineBlocks() { return engineBlocks; }
 
-    function activeModel() {
-      return String(state && state.status && state.status.model || '').trim();
-    }
-
-    function preferredLocalModel() {
-      return String(state && state.offline && state.offline.preferredLocalModel || '').trim();
-    }
-
-    function accelerationFlagEnabled() {
-      return state.features?.featureFlags?.llama_server_acceleration === true;
-    }
-
-    // The Image engine section follows the image_generate tool's kill switch.
-    function imageEngineFlagEnabled() {
-      return state.features?.featureFlags?.tools_image_generate_enabled === true;
-    }
-
-    // The NInfer block (row 54) follows its own kill switch; an ineligible GPU renders nothing.
-    function ninferFlagEnabled() { return state.features?.featureFlags?.ninfer === true; }
-    function ninferLibraryInput() { return engineBlocks?.ninfer()?.libraryInput() || null; }
-
-    function mergeSignature() {
-      return [
-        activeModel(),
-        preferredLocalModel(),
-        JSON.stringify(loadFailureReader.readModelLoadFailure(state.backend)),
-        JSON.stringify(state.localEngines?.openaiCompatible?.managed || null),
-        Boolean(state.accelerationCatalog),
-        JSON.stringify(ninferLibraryInput()),
-      ].join('\n');
-    }
-
-    // GGUFs added to the library are cards of their own (flag on only). One
-    // keyed apart (its name would share another model's card) takes its
-    // served alias along, and is the active or default model by its exact tag
-    // only, which the canonical match would pin on the other card.
-    function libraryView(managed) {
-      var active = activeModel();
-      var preferred = preferredLocalModel();
-      if (!accelerationFlagEnabled()) return { installed: sourceData.installed, active: active, preferred: preferred };
-      var rows = sourcesModule.projectLibraryGgufs({
-        managed: managed,
-        localGgufs: sourceData.localGgufs || [],
-        ollamaTags: sourceData.ollamaTags,
-        installed: sourceData.installed,
-        recommendations: sourceData.recommendations,
-      });
-      var own = rows.filter(function (row) { return row.ownCardKey; }).map(function (row) { return row.id; });
-      rows.forEach(function (row) { if (row.ownCardKey && row.id === active) row.loaded = true; });
-      return {
-        installed: sourceData.installed.filter(function (row) {
-          return row.engine_type === 'ollama' || own.indexOf(String(row.id || '').toLowerCase()) < 0;
-        }).concat(rows),
-        active: own.indexOf(active) < 0 ? active : '',
-        preferred: own.indexOf(preferred) < 0 ? preferred : '',
-      };
-    }
-
-    function buildMerged() {
-      if (!sourceData) return null;
-      contextSignature = mergeSignature();
-      var managed = state.localEngines?.openaiCompatible?.managed || null;
-      var library = libraryView(managed);
-      var result = mergeModule.mergeModelLibrary({
-        installed: library.installed,
-        ollamaTags: sourceData.ollamaTags,
-        recommendations: sourceData.recommendations,
-        fitEstimates: sourceData.fitEstimates,
-        hardware: sourceData.hardware,
-        memory: sourceData.memory,
-        catalogMeta: sourceData.catalogMeta,
-        activeModel: library.active,
-        loadFailure: loadFailureReader.readModelLoadFailure(state.backend),
-        preferredLocalModel: library.preferred,
-        // Kill switch: with the flag off none of the per-model engine inputs are
-        // projected (no engine or Serving pills), so the library renders exactly
-        // as it did before W4.
-        managed: accelerationFlagEnabled() ? managed : null,
-        localGgufs: accelerationFlagEnabled() ? (sourceData.localGgufs || []) : [],
-        llamaServer: accelerationFlagEnabled() ? (sourceData.llamaServer || null) : null,
-        acceleration: {
-          enabled: accelerationFlagEnabled() && Boolean(state.accelerationCatalog),
-          headroomMb: Number(state.accelerationCatalog?.defaults?.vramHeadroomMb) || 2048,
-          families: state.accelerationCatalog?.families || [],
-        },
-        ninfer: ninferLibraryInput(),
-      });
-      // The pull-recommendation an empty chat offers is an Ollama tag; an NInfer row downloads through its block.
-      var recommended = result.cards.find(function (card) { return card.recommended === true && card.fitState === 'fits' && card.installed !== true && card.selectedEngine !== 'ninfer'; });
-      var previousTag = state.modelRecommendation?.tag;
-      state.modelRecommendation = recommended ? { tag: recommended.tag, downloadSizeMb: recommended.downloadSizeMb } : null;
-      if (previousTag !== state.modelRecommendation?.tag) windowRef.dispatchEvent(new windowRef.CustomEvent('jenny:model-state-changed'));
-      return result;
-    }
+    // Flag readers and the merged card list (model-library-section-merge.js).
+    var mergeInputs = sectionMergeModule.createModelLibrarySectionMerge({
+      state: state, windowRef: windowRef, sourcesModule: sourcesModule, mergeModule: mergeModule,
+      loadFailureReader: loadFailureReader, getSourceData: getSourceData, getEngineBlocks: getEngineBlocks,
+    });
+    var activeModel = mergeInputs.activeModel;
+    var accelerationFlagEnabled = mergeInputs.accelerationFlagEnabled;
+    var buildMerged = mergeInputs.buildMerged;
+    engineBlocks = createEngineBlocks();
 
     function hardwarePending() {
       return !loadSettled || Boolean(sourceData && sourceData.hardwarePending === true);
-    }
-
-    function toolbarHtml() {
-      var modelView = merged || { hardware: {}, cards: [] };
-      var cards = Array.isArray(modelView.cards) ? modelView.cards : [];
-      return '<div class="model-library-section-toolbar">'
-        + viewModule.buildFilterChips(view.filter, mergeModule.filterCounts(cards))
-        + '<div class="model-library-section-toolbar-actions">'
-        + inventoryTextField({
-          id: 'modelLibrarySectionPullInput',
-          value: view.pullTag,
-          placeholder: jt('settings.modelLibrary.tagPlaceholder', 'ollama tag, e.g. qwen3:8b'),
-          ariaLabel: jt('settings.modelLibrary.tagAria', 'Ollama model tag'),
-          className: 'model-library-section-pull-input',
-          dataset: { 'model-library-section-input': 'pull-tag' },
-        })
-        + inventoryActionButton({
-          id: 'pull-tag',
-          label: jt('settings.modelLibrary.pull', 'Pull'),
-          variant: 'secondary',
-          size: 'sm',
-          dataset: { 'model-library-section-action': 'pull-tag' },
-        })
-        + inventoryActionButton({
-          id: 'refresh',
-          label: '↻',
-          ariaLabel: jt('settings.modelLibrary.refreshCatalog', 'Refresh catalog'),
-          variant: 'ghost',
-          size: 'sm',
-          className: 'model-library-section-refresh',
-          dataset: { 'model-library-section-action': 'refresh' },
-        })
-        + '</div></div>'
-        + viewModule.buildHardwareSummaryLine(modelView.hardware, { pending: hardwarePending() });
-    }
-
-    function extrasHtml() {
-      return (accelerationFlagEnabled() ? '<div id="modelLibraryFoldersHost"></div>' : '')
-        + (engineBlocks ? engineBlocks.hostsHtml() : '');
     }
 
     // The NInfer and Image engine blocks (one lifecycle, see model-library-engine-blocks.js).
     function createEngineBlocks() {
       var module = resolveEngineBlocksModule();
       if (typeof module?.createModelLibraryEngineBlocks !== 'function') return null;
-      return module.createModelLibraryEngineBlocks({ windowRef: windowRef, documentRef: documentRef, imageEngineEnabled: imageEngineFlagEnabled,
-        ninferEnabled: ninferFlagEnabled, ninfer: { onState: rebuildFromState, onUse: function (modelId) { runtimeActions.handleUse(modelId); } } });
+      return module.createModelLibraryEngineBlocks({ windowRef: windowRef, documentRef: documentRef, imageEngineEnabled: mergeInputs.imageEngineFlagEnabled,
+        ninferEnabled: mergeInputs.ninferFlagEnabled, ninfer: { onState: rebuildFromState, onUse: function (modelId) { runtimeActions.handleUse(modelId); } } });
     }
 
     function folders() {
@@ -332,18 +219,6 @@
     // Last pull status rendered per model key; see handlePullChange.
     var pullRenderStatus = Object.create(null);
 
-    // inventoryContextMenu is a process-wide singleton, so this controller may
-    // only dismiss a menu it opened itself - a background render must never
-    // close (and steal focus from) an Explorer or chat menu. show() dismisses
-    // any prior menu first, firing its onHide, so this flag cannot go stale.
-    var menuOpen = false;
-
-    function hideOwnContextMenu() {
-      if (!menuOpen) return;
-      menuOpen = false;
-      contextMenu?.hide?.();
-    }
-
     function updateStatusLine() {
       var target = card();
       var status = target && target.querySelector('.model-library-section-status');
@@ -355,128 +230,37 @@
       updateStatusLine();
     }
 
-    function removeConfirmModal() {
-      var existing = documentRef && documentRef.querySelector(
-        '[data-step-modal="' + MODAL_ID + '"]'
-      );
-      if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
-    }
+    // The Remove dialog and its delete (model-library-section-delete.js).
+    var deleteFlow = sectionDeleteModule.createModelLibrarySectionDelete({
+      windowRef: windowRef, documentRef: documentRef, stepModal: stepModal, boundedErrorMessage: boundedErrorMessage,
+      card: card, findModel: findModel, isDisposed: isDisposed, setStatusMessage: setStatusMessage,
+      statusMessage: function () { return view.statusMessage; }, refresh: refresh,
+      refreshModelPickers: function () { refreshModelPickers(); }, appendClientLog: appendClientLog,
+    });
 
-    function renderConfirmModal() {
-      removeConfirmModal();
-      var section = card();
-      if (!pendingConfirmModel || !section) return;
-      section.insertAdjacentHTML('beforeend', stepModal.renderStepModal({
-        id: MODAL_ID,
-        tone: 'danger',
-        title: jt('settings.modelLibrary.removeModelTitle', 'Remove model?'),
-        summary: jt('settings.modelLibrary.removeModelSummary', 'This deletes "{model}" from your local engine (ollama rm). This cannot be undone.', { model: pendingConfirmModel }),
-        bodyHtml: '',
-        actions: [
-          { id: 'cancel', label: jt('common.cancel', 'Cancel'), variant: 'secondary' },
-          { id: 'confirm', label: jt('common.remove', 'Remove'), variant: 'danger' },
-        ],
-      }));
-    }
+    // A card's ⋯ menu and Tune options (model-library-section-menu.js).
+    var menu = sectionMenuModule.createModelLibrarySectionMenu({
+      windowRef: windowRef, documentRef: documentRef, state: state, contextMenu: contextMenu,
+      isLibraryTag: sourcesModule.isLibraryTag, focusQuietly: sectionRenderModule.focusQuietly,
+      card: card, host: host, toolbarHost: toolbarHost, folders: folders, isDisposed: isDisposed,
+      setStatusMessage: setStatusMessage, ninferLibraryInput: mergeInputs.ninferLibraryInput,
+      getSourceData: getSourceData, requestRemove: deleteFlow.requestConfirm,
+    });
 
-    function renderToolbar() {
-      if (disposed) return;
-      var target = toolbarHost();
-      if (!target) return;
-      var extras = extrasHost();
-      var activeElement = documentRef.activeElement;
-      // The GGUF folders row is rebuilt with the toolbar: its focused control
-      // gets the focus back, like the pull input.
-      var folderScope = extras || target;
-      var folderAction = activeElement && folderScope.contains(activeElement)
-        ? activeElement.getAttribute?.('data-model-library-folder-action') || '' : '';
-      var preservePullFocus = activeElement
-        && activeElement.getAttribute?.('data-model-library-section-input') === 'pull-tag';
-      var pullFocus = preservePullFocus ? {
-        value: String(activeElement.value || ''),
-        selectionStart: activeElement.selectionStart,
-        selectionEnd: activeElement.selectionEnd,
-        selectionDirection: activeElement.selectionDirection,
-      } : null;
-      if (pullFocus) view.pullTag = pullFocus.value;
-      target.innerHTML = toolbarHtml() + (extras ? '' : extrasHtml());
-      if (extras) extras.innerHTML = extrasHtml();
-      renderFolders();
-      if (engineBlocks) engineBlocks.render();
-      if (pullFocus) {
-        var nextInput = target.querySelector('[data-model-library-section-input="pull-tag"]');
-        if (nextInput) {
-          nextInput.value = pullFocus.value;
-          try { nextInput.focus({ preventScroll: true }); }
-          catch (_focusError) { nextInput.focus(); }
-          if (typeof nextInput.setSelectionRange === 'function'
-            && Number.isInteger(pullFocus.selectionStart)
-            && Number.isInteger(pullFocus.selectionEnd)) {
-            nextInput.setSelectionRange(
-              pullFocus.selectionStart,
-              pullFocus.selectionEnd,
-              pullFocus.selectionDirection || 'none'
-            );
-          }
-        }
-      } else if (folderAction) {
-        var nextControl = Array.from(folderScope.querySelectorAll('[data-model-library-folder-action]')).find(function (control) {
-          return control.getAttribute('data-model-library-folder-action') === folderAction;
-        });
-        if (nextControl) focusQuietly(nextControl);
-      }
-    }
-
-    function focusQuietly(element) {
-      try { element.focus({ preventScroll: true }); }
-      catch (_focusError) { element.focus(); }
-    }
-
-    function renderRows() {
-      hideOwnContextMenu();
-      if (disposed) return;
-      var target = host();
-      if (!target) return;
-      var activeElement = documentRef.activeElement;
-      var activeRow = activeElement && target.contains(activeElement)
-        ? activeElement.closest?.('[data-model-key]') : null;
-      var rowFocus = activeRow ? {
-        action: activeElement.getAttribute?.('data-model-card-action') || '',
-        key: activeRow.getAttribute('data-model-key') || '',
-      } : null;
-      var modelView = merged || { hardware: {}, cards: [] };
-      target.innerHTML = viewModule.buildModelGrid(modelView, {
-        filter: view.filter,
-        actions: ACTIONS,
-        pulls: currentPulls(),
-        compact: false,
-        activation: runtimeActions.activationState(),
-      });
-      var duplicateHardware = target.querySelector(
-        '.model-library-view > .model-library-hardware-summary'
-      );
-      if (duplicateHardware) duplicateHardware.remove();
-      var duplicateChips = target.querySelector('.model-library-view > .model-library-filter-chips');
-      if (duplicateChips) duplicateChips.remove();
-      if (rowFocus && rowFocus.action && rowFocus.key) {
-        var nextRow = Array.from(target.querySelectorAll('[data-model-key]')).find(
-          function (candidate) {
-            return candidate.getAttribute('data-model-key') === rowFocus.key;
-          }
-        );
-        var nextAction = nextRow && nextRow.querySelector(
-          '[data-model-card-action="' + rowFocus.action + '"]'
-        );
-        if (nextAction) {
-          try { nextAction.focus({ preventScroll: true }); }
-          catch (_focusError) { nextAction.focus(); }
-        }
-      }
-      renderConfirmModal();
-    }
+    // Toolbar and card grid rendering (model-library-section-render.js).
+    var renderer = sectionRenderModule.createModelLibrarySectionRender({
+      documentRef: documentRef, view: view, actions: ACTIONS, viewModule: viewModule, mergeModule: mergeModule,
+      inventoryTextField: inventoryTextField, inventoryActionButton: inventoryActionButton,
+      host: host, toolbarHost: toolbarHost, extrasHost: extrasHost, isDisposed: isDisposed,
+      getMerged: getMerged, hardwarePending: hardwarePending, accelerationFlagEnabled: accelerationFlagEnabled,
+      getEngineBlocks: getEngineBlocks, renderFolders: renderFolders, hideMenu: menu.hide,
+      currentPulls: currentPulls, activationState: function () { return runtimeActions.activationState(); },
+      renderConfirmModal: deleteFlow.renderConfirmModal, findModel: findModel,
+    });
+    var renderRows = renderer.renderRows;
 
     function render() {
-      renderToolbar();
+      renderer.renderToolbar();
       renderRows();
     }
 
@@ -491,7 +275,7 @@
         if (disposed || result.generation !== source.latestGeneration()) return null;
         sourceData = result;
         loadSettled = true;
-        if (result.backendPending !== true) catchUpAttempts = 0;
+        liveSync.noteLoad(result);
         merged = buildMerged();
         // One cause behind several reads ("Managed sidecar is not ready yet."
         // from both model lists before the sidecar attaches) reads once.
@@ -500,13 +284,16 @@
           var reason = result.unavailable[key];
           if (reason && unavailable.indexOf(reason) < 0) unavailable.push(reason);
         });
-        setStatusMessage(unavailable.join(' '));
+        var nextLoadStatus = unavailable.join(' ');
+        if (nextLoadStatus || view.statusMessage === loadStatusMessage) setStatusMessage(nextLoadStatus);
+        loadStatusMessage = nextLoadStatus;
         render();
         return result;
       }).catch(function (error) {
         if (!disposed) {
           loadSettled = true;
           setStatusMessage(boundedErrorMessage(error, jt('settings.modelLibrary.refreshFailed', 'Could not refresh the model library.')));
+          loadStatusMessage = view.statusMessage;
           appendClientLog('WARN', 'model_library.section_refresh_failed', {
             message: view.statusMessage,
           });
@@ -524,74 +311,6 @@
       var cards = merged && Array.isArray(merged.cards) ? merged.cards : [];
       return cards.find(function (model) { return model.key === exact; })
         || cards.find(function (model) { return model.key === key; }) || null;
-    }
-
-    // The library GGUF behind a card: its saved entry, named by a
-    // library-shaped tag. Nothing else (an Ollama model's engine setting)
-    // ever offers Remove from library.
-    function libraryTagOf(model) {
-      var entry = model && model.libraryGguf === true
-        ? state.localEngines?.openaiCompatible?.managed?.perModel?.[model.managedKey] : null;
-      var tag = entry && typeof entry.tag === 'string' ? entry.tag : '';
-      return sourcesModule.isLibraryTag(tag) ? tag : '';
-    }
-
-    // ⋯ ▸ Remove from library. Once it settles, a focus the re-render dropped
-    // goes back to the card's ⋯, else to the card now in its place.
-    function removeFromLibrary(tag, control) {
-      var controller = folders();
-      if (!controller) return null;
-      var focused = documentRef.activeElement === control;
-      var row = control.closest('[data-model-key]');
-      var rows = row && host() ? Array.from(host().querySelectorAll('[data-model-key]')) : [];
-      var index = rows.indexOf(row);
-      var keys = index < 0 ? [] : [rows[index], rows[index + 1], rows[index - 1]].filter(Boolean)
-        .map(function (element) { return element.getAttribute('data-model-key'); });
-      return controller.removeLibraryModel(tag).then(function (removed) {
-        if (focused && !disposed) restoreCardFocus(keys);
-        return removed;
-      });
-    }
-
-    function restoreCardFocus(keys) {
-      var active = documentRef.activeElement;
-      var section = host();
-      if (!section || (active && active !== documentRef.body && active.isConnected !== false)) return;
-      var rowsByKey = Object.create(null);
-      Array.from(section.querySelectorAll('[data-model-key]')).forEach(function (element) {
-        var key = element.getAttribute('data-model-key');
-        if (!rowsByKey[key]) rowsByKey[key] = element;
-      });
-      for (var i = 0; i < keys.length; i += 1) {
-        var match = rowsByKey[keys[i]];
-        var target = match && (match.querySelector('[data-model-card-action="menu"]')
-          || match.querySelector('[data-model-card-action]'));
-        if (target) {
-          focusQuietly(target);
-          return;
-        }
-      }
-      // No card left in view (the last one under a filter): the pressed filter
-      // chip, else Add GGUF model…, so focus never falls to the page.
-      var toolbar = toolbarHost();
-      var fallback = toolbar && (toolbar.querySelector('.model-library-filter-chips [aria-pressed="true"]')
-        || toolbar.querySelector('[data-model-library-folder-action="add-model"]'));
-      if (fallback) focusQuietly(fallback);
-    }
-
-    // While Ollama's tag list is unreadable nobody knows whether Ollama has
-    // the model: the drawer gets no Ollama facts (it reads that as unknown),
-    // and keeps the llama-server ones.
-    // A pin's window list: context_windows, or fp8_kv_windows (the drawer labels their 8-bit cache).
-    function ninferPinWindows(model, key) {
-      var pin = (ninferLibraryInput()?.pins || []).find(function (entry) { return entry.id === model.ninferArtifactId; });
-      return Array.isArray(pin?.[key]) ? pin[key] : [];
-    }
-
-    function tuneEngines(model) {
-      var engines = model && model.engines ? model.engines : null;
-      return engines && sourceData && sourceData.unavailable && sourceData.unavailable.ollamaTags
-        ? Object.assign({}, engines, { ollama: null }) : engines;
     }
 
     function handlePullChange(key) {
@@ -614,28 +333,7 @@
       if (pull.cancelFailed === true) {
         setStatusMessage(jt('settings.modelLibrary.cancelPullFailed', 'Could not cancel the pull.'));
       }
-      if (!replaceRow(key) && pullRenderStatus[key] !== previousPullStatus) renderRows();
-    }
-
-    // Progress ticks patch one row in place; group membership only changes on
-    // 'done', which goes through refresh() above.
-    function replaceRow(key) {
-      var section = host();
-      var model = findModel(key);
-      if (!section || !model) return false;
-      var element = Array.from(section.querySelectorAll('[data-model-key]')).find(function (candidate) {
-        return candidate.getAttribute('data-model-key') === key;
-      });
-      if (!element) return false;
-      var pulls = currentPulls();
-      element.outerHTML = viewModule.buildModelRow(Object.assign({}, model, {
-        budgetMb: Number(merged && merged.hardware && merged.hardware.budgetMb) || 0,
-      }), {
-        actions: ACTIONS,
-        pull: pulls[key] || {},
-        activation: runtimeActions.activationState(),
-      });
-      return true;
+      if (!renderer.replaceRow(key) && pullRenderStatus[key] !== previousPullStatus) renderRows();
     }
 
     function ensurePullController() {
@@ -668,58 +366,6 @@
       setFilter: function (filter) { view.filter = filter; render(); }, openDiagnostics: d.openDiagnostics, reader: loadFailureReader,
     });
 
-    function handleConfirmDelete() {
-      var modelId = pendingConfirmModel;
-      pendingConfirmModel = '';
-      removeConfirmModal();
-      if (!modelId) return;
-      if (pendingDeleteModel) {
-        setStatusMessage(jt('settings.modelLibrary.removeInProgress', 'Still removing the previous model.'));
-        return;
-      }
-      if (!findModel(modelId)) {
-        setStatusMessage(jt('settings.modelLibrary.noLongerListed', '"{model}" is no longer in the model list.', { model: modelId }));
-        return;
-      }
-      var deleteFn = windowRef.jennyShell?.models?.delete;
-      if (typeof deleteFn !== 'function') {
-        setStatusMessage(jt('settings.modelLibrary.deleteUnavailable', 'Delete is unavailable right now.'));
-        return;
-      }
-      pendingDeleteModel = modelId;
-      Promise.resolve(deleteFn({ model: modelId })).then(function (result) {
-        if (disposed) return null;
-        pendingDeleteModel = '';
-        if (result && result.status === 'deleted') {
-          setStatusMessage('"' + modelId + '" removed.');
-          return refresh({ force: true }).then(function () { refreshModelPickers(); });
-        }
-        var code = result && result.code;
-        if (code === 'model_in_use') {
-          setStatusMessage(jt('settings.modelLibrary.unloadBeforeRemove', '"{model}" is currently loaded. Unload it first.', { model: modelId }));
-        } else if (code === 'not_found') {
-          setStatusMessage(jt('settings.modelLibrary.alreadyRemoved', '"{model}" was already removed.', { model: modelId }));
-          return refresh({ force: true }).then(function () { refreshModelPickers(); });
-        } else if (code === 'invalid_tag') {
-          setStatusMessage(jt('settings.modelLibrary.invalidTag', 'That model tag is not valid.'));
-        } else {
-          setStatusMessage(boundedErrorMessage(
-            result && result.message,
-            jt('settings.modelLibrary.removeFailed', 'Could not remove that model.')
-          ));
-        }
-        return null;
-      }).catch(function (error) {
-        if (disposed) return;
-        pendingDeleteModel = '';
-        setStatusMessage(boundedErrorMessage(error, jt('settings.modelLibrary.removeFailed', 'Could not remove that model.')));
-        appendClientLog('WARN', 'model_library.delete_failed', {
-          model: modelId,
-          message: view.statusMessage,
-        });
-      });
-    }
-
     function startPull(tag) {
       var model = String(tag || '').trim();
       if (!model) {
@@ -750,78 +396,12 @@
         if (action === 'menu') {
           var model = findModel(tag);
           if (!model) return;
-          var libraryTag = libraryTagOf(model);
-          contextMenu.show({
-            rootEl: card(),
-            anchorEl: modelAction,
-            restoreFocusTo: modelAction,
-            onHide: function () { menuOpen = false; },
-            items: [
-              libraryTag ? {
-                // A library GGUF only leaves the library: its file stays on
-                // disk, and a model in use keeps its entry.
-                label: jt('settings.modelLibrary.removeFromLibrary', 'Remove from library'),
-                danger: true,
-                disabled: model.active === true || model.serving === true,
-                action: function () { return removeFromLibrary(libraryTag, modelAction); },
-              } : {
-                // Same gate the standalone Remove button carried: ollama only,
-                // and never the loaded model (the main process rejects that
-                // delete with model_in_use, so offering it is a dead end).
-                label: jt('settings.modelLibrary.removeMenu', 'Remove…'),
-                danger: true,
-                disabled: String(model.engineType || '').toLowerCase() !== 'ollama'
-                  || model.active === true,
-                action: function () {
-                  pendingConfirmModel = tag;
-                  renderConfirmModal();
-                },
-              },
-              {
-                // Returned so the menu wrapper owns the rejection and the
-                // status line reports what actually happened - a denied or
-                // absent clipboard must not read as a successful copy.
-                label: jt('settings.modelLibrary.copyTag', 'Copy tag'),
-                action: function () {
-                  var writeText = windowRef.navigator?.clipboard?.writeText;
-                  if (typeof writeText !== 'function') {
-                    setStatusMessage(jt('settings.modelLibrary.clipboardUnavailable', 'Clipboard access is unavailable right now.'));
-                    return null;
-                  }
-                  return Promise.resolve(writeText.call(windowRef.navigator.clipboard, tag))
-                    .then(function () {
-                      if (!disposed) setStatusMessage('Copied ' + tag);
-                      return null;
-                    })
-                    .catch(function () {
-                      if (!disposed) setStatusMessage(jt('settings.modelLibrary.copyFailed', 'Could not copy {tag} to the clipboard.', { tag: tag }));
-                      return null;
-                    });
-                },
-              },
-            ],
-          });
-          menuOpen = true;
+          menu.open(model, tag, modelAction);
         } else if (action === 'use') runtimeActions.handleUse(tag);
-        else if (['retry', 'loadSmaller', 'showFits', 'diagnostics', 'copyDetails'].includes(action)) void recovery.handle(action, tag);
+        else if (RECOVERY_ACTIONS.includes(action)) void recovery.handle(action, tag);
         else if (action === 'unload') runtimeActions.handleUnload(tag);
-        else if (action === 'tune') {
-          // The card's merged engine facts (Ollama/GGUF availability) seed the
-          // drawer so both surfaces agree on what can run this model. A library
-          // GGUF is in no model list until served, so its engine type rides along.
-          var tuned = findModel(tag);
-          openModelTuning(tag, modelAction, {
-            displayName: tuned?.displayName || '',
-            engines: tuneEngines(tuned),
-            engineTypeHint: tuned?.libraryGguf || tuned?.selectedEngine === 'ninfer' ? 'openai-compatible' : '',
-            // An NInfer row: the drawer shows the NInfer section (context + MTP) instead of the Engine one.
-            ninfer: tuned?.selectedEngine === 'ninfer' ? { artifactId: tuned.ninferArtifactId, modelId: tuned.tag, contextWindows: ninferPinWindows(tuned, 'context_windows'), fp8KvWindows: ninferPinWindows(tuned, 'fp8_kv_windows'), supportsMtp: tuned.mtp?.eligible === true } : null,
-          });
-        }
-        else if (action === 'remove') {
-          pendingConfirmModel = tag;
-          renderConfirmModal();
-        } else if (action === 'pull') {
+        else if (action === 'tune') openModelTuning(tag, modelAction, menu.tuneOptions(findModel(tag)));
+        else if (action === 'pull') {
           // An NInfer row downloads through its block (engine + model, one set-up).
           var ninferRow = findModel(tag);
           if (ninferRow && ninferRow.selectedEngine === 'ninfer') void engineBlocks?.ninfer()?.setup();
@@ -840,20 +420,7 @@
         else if (sectionActionId === 'pull-tag') startPull(view.pullTag);
         return;
       }
-      var modalAction = target.closest('[data-step-modal-action]');
-      if (modalAction && modalAction.closest('[data-step-modal="' + MODAL_ID + '"]')) {
-        if (modalAction.getAttribute('data-step-modal-action') === 'confirm') handleConfirmDelete();
-        else {
-          pendingConfirmModel = '';
-          removeConfirmModal();
-        }
-        return;
-      }
-      var backdrop = target.closest('[data-step-modal="' + MODAL_ID + '"]');
-      if (backdrop && pendingConfirmModel && !target.closest('.inv-step-modal')) {
-        pendingConfirmModel = '';
-        removeConfirmModal();
-      }
+      deleteFlow.handleClick(target);
     }
 
     function handleInput(event) {
@@ -863,12 +430,7 @@
         view.pullTag = String(target.value || '');
       }
     }
-    function handleKeydown(event) {
-      if (event && event.key === 'Escape' && pendingConfirmModel) {
-        pendingConfirmModel = '';
-        removeConfirmModal();
-      }
-    }
+    function handleKeydown(event) { deleteFlow.handleKeydown(event); }
 
     // features.onChanged fires for every shell-config change, not only flag
     // flips. Reload the sources only when a flag this section reads changed
@@ -892,65 +454,23 @@
 
     function rebuildFromState() {
       if (!sourceData) return;
-      var nextSignature = mergeSignature();
-      if (nextSignature === contextSignature) return;
+      if (mergeInputs.signatureUnchanged()) return;
       merged = buildMerged();
       render();
     }
 
-    // The loaded llama-server status is a snapshot, and nothing pushes its
-    // changes. The periodic sync rereads it alone, so a server the chat GPU
-    // handoff parked for an image render reads paused, then serving again once
-    // it is restored (rechecked sooner while parked).
-    var statusReadPending = false;
-    var parkedRecheckTimer = null;
-    var PARKED_RECHECK_MS = 3000;
-    function scheduleParkedRecheck(status) {
-      if (disposed || parkedRecheckTimer || !status || status.state !== 'stopped' || status.identityRetained !== true) return;
-      parkedRecheckTimer = windowRef.setTimeout(function () {
-        parkedRecheckTimer = null;
-        syncLlamaServerStatus();
-      }, PARKED_RECHECK_MS);
-    }
-
-    function syncLlamaServerStatus() {
-      var bridge = windowRef.jennyShell && windowRef.jennyShell.llamaServer;
-      if (disposed || statusReadPending || !accelerationFlagEnabled() || !sourceData
-        || !bridge || typeof bridge.getStatus !== 'function'
-        || typeof sourcesModule.normalizeLlamaServer !== 'function') return;
-      var generation = source.latestGeneration();
-      statusReadPending = true;
-      Promise.resolve().then(function () { return bridge.getStatus(); }).then(function (payload) {
-        statusReadPending = false;
-        if (disposed || !sourceData || generation !== source.latestGeneration()
-          || !payload || typeof payload !== 'object' || payload.ok === false) return;
-        var next = sourcesModule.normalizeLlamaServer(payload);
-        scheduleParkedRecheck(next);
-        if (JSON.stringify(next) === JSON.stringify(sourceData.llamaServer || null)) return;
+    // The state tick's catch-up re-read and llama-server status reread
+    // (model-library-section-live-sync.js).
+    var liveSync = sectionLiveSyncModule.createModelLibrarySectionLiveSync({
+      windowRef: windowRef, state: state, source: source, sourcesModule: sourcesModule,
+      isDisposed: isDisposed, accelerationFlagEnabled: accelerationFlagEnabled, getSourceData: getSourceData,
+      applyLlamaServer: function (next) {
         sourceData = Object.assign({}, sourceData, { llamaServer: next });
         merged = buildMerged();
         render();
-      }, function () { statusReadPending = false; });
-    }
-
-    // A load taken before the managed sidecar attached (the section binds at
-    // boot) left the status line on "not ready" and the hardware unprobed, and
-    // the tick only re-merged it. Once the app reads the backend ready and its
-    // model list available, the tick re-reads the sources (five times at most).
-    function catchUpPendingLoad() {
-      var list = state.modelList;
-      if (disposed || !sourceData || sourceData.backendPending !== true || catchUpAttempts >= 5
-        || state.backend?.phase !== 'ready' || !list || typeof list !== 'object' || list.available === false) return false;
-      catchUpAttempts += 1;
-      void refresh();
-      return true;
-    }
-
-    function syncFromState() {
-      if (catchUpPendingLoad()) return;
-      rebuildFromState();
-      syncLlamaServerStatus();
-    }
+      },
+      refresh: function () { return refresh(); }, rebuildFromState: rebuildFromState,
+    });
 
     function syncEngineSettings(localEngines) {
       if (localEngines) state.localEngines = localEngines;
@@ -975,8 +495,7 @@
     function dispose() {
       if (disposed) return;
       disposed = true;
-      if (parkedRecheckTimer) windowRef.clearTimeout(parkedRecheckTimer);
-      parkedRecheckTimer = null;
+      liveSync.dispose();
       runtimeActions.dispose();
       if (boundCard) {
         boundCard.removeEventListener('click', handleClick);
@@ -994,8 +513,8 @@
       foldersController = null;
       if (engineBlocks) engineBlocks.dispose();
       engineBlocks = null;
-      hideOwnContextMenu();
-      removeConfirmModal();
+      menu.hide();
+      deleteFlow.removeConfirmModal();
     }
 
     return {
@@ -1004,7 +523,7 @@
       render: render,
       refresh: refresh,
       syncFeatureState: syncFeatureState,
-      syncFromState: syncFromState,
+      syncFromState: liveSync.syncFromState,
       syncEngineSettings: syncEngineSettings,
       startPull: startPull,
       cancelPull: function (tag) { return ensurePullController().cancel(tag); },

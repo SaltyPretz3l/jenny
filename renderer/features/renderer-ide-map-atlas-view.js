@@ -24,6 +24,11 @@
  * this module owns DOM only. Palette-token styling lives in
  * styles/ide-file-map.css; this module assigns classes + inline geometry.
  * UMD, windowRef-free (document reached via contentEl.ownerDocument).
+ *
+ * Decoration passes (selection/spotlight, git, heat) touch only the ids
+ * whose state changed, never every dot/tile. Also exports the content-space
+ * SVG overlay helpers (createOverlaySvg / appendArrowMarker / viewBoxFor)
+ * shared with renderer-ide-explode-view.js.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -49,23 +54,87 @@
     return {};
   }
 
-  const inventoryButton = resolveModule('inventoryActionButton', '../inventory/action-button');
-  const actionButton = typeof inventoryButton === 'function'
-    ? inventoryButton
-    : inventoryButton.actionButton || inventoryButton.default || null;
-  const atlasLayout = resolveModule('rendererIdeMapAtlasLayout', './renderer-ide-map-atlas-layout');
-  const langClassFor = typeof atlasLayout.langClassFor === 'function'
-    ? atlasLayout.langClassFor
-    : () => 'other';
+  const actionButton = resolveModule('inventoryActionButton', '../inventory/action-button');
+  // Loads earlier in the IDE script manifest (positions/geometry owner).
+  const atlasLayoutModule = globalRef.rendererIdeMapAtlasLayout
+    || require('./renderer-ide-map-atlas-layout');
+  // The layout owns tile geometry, the label-width estimator and the chrome
+  // (padding + dot + gap + border) around a tile's name text.
+  const { langClassFor, districtKeyOf, TILE_W, TILE_H, TILE_CHROME, estimateLabelWidth } = atlasLayoutModule;
 
   const defaultEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   const SVG_NS = 'http://www.w3.org/2000/svg';
+  // Content-space padding around the bounds for the overlay svgs.
+  const OVERLAY_PAD = 80;
 
-  // Tile footprint at scale 1 (CSS keeps in sync; atlas-layout CELL spacing
-  // must exceed it so adjacent tiles never collide).
-  const TILE_W = Number(atlasLayout.TILE_W) || 132;
-  const TILE_H = Number(atlasLayout.TILE_H) || 26;
+  // Padded, integer content-space viewBox around a { minX, minY, maxX, maxY }.
+  function viewBoxFor(bounds, pad) {
+    return {
+      x: Math.floor(bounds.minX - pad),
+      y: Math.floor(bounds.minY - pad),
+      w: Math.ceil(bounds.maxX - bounds.minX + pad * 2) || 1,
+      h: Math.ceil(bounds.maxY - bounds.minY + pad * 2) || 1,
+    };
+  }
+
+  // An aria-hidden svg positioned in content space over viewBox.
+  function createOverlaySvg(documentRef, className, viewBox) {
+    const svg = documentRef.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('class', className);
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('width', String(viewBox.w));
+    svg.setAttribute('height', String(viewBox.h));
+    svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
+    svg.style.left = `${viewBox.x}px`;
+    svg.style.top = `${viewBox.y}px`;
+    return svg;
+  }
+
+  // Arrow-tip <marker id> appended to defs; the tip path carries cls.
+  function appendArrowMarker(defs, documentRef, id, cls) {
+    const marker = documentRef.createElementNS(SVG_NS, 'marker');
+    marker.setAttribute('id', id);
+    marker.setAttribute('viewBox', '0 0 8 8');
+    marker.setAttribute('refX', '7');
+    marker.setAttribute('refY', '4');
+    marker.setAttribute('markerWidth', '7');
+    marker.setAttribute('markerHeight', '7');
+    marker.setAttribute('orient', 'auto-start-reverse');
+    const tip = documentRef.createElementNS(SVG_NS, 'path');
+    tip.setAttribute('d', 'M 0 0 L 8 4 L 0 8 z');
+    tip.setAttribute('class', cls);
+    marker.appendChild(tip);
+    defs.appendChild(marker);
+  }
+
+  const ELLIPSIS = '…';
+
+  // Shorten a file name to maxWidthPx in the MIDDLE so the extension survives:
+  // head + '…' + up to 4 trailing stem chars + extension. Names that already
+  // fit come back unchanged; the head never drops under 3 chars.
+  function middleEllipsis(name, maxWidthPx, measure) {
+    const text = String(name == null ? '' : name);
+    const m = typeof measure === 'function' ? measure : estimateLabelWidth;
+    if (m(text) <= maxWidthPx) return text;
+    const dot = text.lastIndexOf('.');
+    const hasExt = dot > 0 && text.length - dot <= 6;
+    const ext = hasExt ? text.slice(dot) : '';
+    const stem = hasExt ? text.slice(0, dot) : text;
+    const tailLen = Math.min(4, Math.max(0, stem.length - 3));
+    const tail = (tailLen ? stem.slice(stem.length - tailLen) : '') + ext;
+    const maxHead = stem.length - tailLen;
+    if (maxHead <= 0) return text;
+    let head = 3;
+    while (head < maxHead && m(text.slice(0, head + 1) + ELLIPSIS + tail) <= maxWidthPx) head += 1;
+    const out = text.slice(0, Math.min(head, maxHead)) + ELLIPSIS + tail;
+    return out.length < text.length ? out : text;
+  }
+
+  function districtName(district) {
+    return district.key === '.' ? jt('ide.map.atlas.repositoryRoot', 'repository root') : district.key;
+  }
+
   // Dot radius (CSS keeps in sync) and the spatial index's effective hit
   // radius — generous so 3px-at-zoom dots aren't fiddly to hover.
   const DOT_R = 4;
@@ -81,25 +150,27 @@
     const d = deps || {};
     const contentEl = d.contentEl || null;
     const escapeHtml = typeof d.escapeHtml === 'function' ? d.escapeHtml : defaultEscapeHtml;
+    const measureLabel = typeof d.measureLabel === 'function' ? d.measureLabel : estimateLabelWidth;
 
     let disposed = false;
-    let districtLayer = null;   // holder div for district rects
-    let dotsSvg = null;         // shared circles layer
     let raysSvg = null;         // on-demand selection edges
     let tilesLayer = null;      // materialized tile cards
     let bounds = null;
     let tier = 'regions';
     let viewportRect = null;    // content-space rect for culling (null = all)
+    // Tile name -> its middle-ellipsized text; node records are rebuilt per render.
+    const shortLabels = new WeakMap();
     let hideTests = false;
 
     // Data indices, rebuilt by renderAtlas.
     let nodeById = new Map();          // id -> graph node (with baked x/y)
     let districtByKey = new Map();     // key -> public district record
-    let districtEls = new Map();       // key -> element
+    let nodeIdSet = new Set();         // stable per render (getAllNodeIds)
     let dotEls = new Map();            // id -> svg circle
     let tileEls = new Map();           // id -> materialized tile element
     let spatial = new Map();           // "cx|cy" -> [nodeId]
-    let sourceViewBox = null;
+    let stateClassIds = new Set();     // ids carrying selection/spotlight classes
+    let tileHolder = null;             // reusable parse holder for tile markup
     let activeGitStatus = {};
     let activeFinding = { kind: null, ids: [] };
     let selection = null;              // { focusId, rays }
@@ -181,7 +252,8 @@
         return `<span class="ide-atlas-langseg ide-atlas-langseg--${escapeHtml(m.cls)}" style="width:${pct}%"></span>`;
       }).join('');
       const tick = healthTickLevel(district.health);
-      const name = district.key === '.' ? '(root)' : `${district.label}/`;
+      const name = district.key === '.' ? district.label : `${district.label}/`;
+      const zoomLabel = jt('ide.map.atlas.zoomTo', 'Zoom to {district}', { district: districtName(district) });
       const flat = district.flattened ? '<span class="ide-atlas-district-flat" aria-hidden="true">…</span>' : '';
       // A real button (inventory primitive) so zoom-to-district is
       // keyboard-reachable for free; the event-ownership classifier treats
@@ -190,8 +262,8 @@
       return actionButton({
         plain: true,
         className: 'ide-atlas-district-header',
-        ariaLabel: jt('ide.map.atlas.zoomTo', 'Zoom to {district}', { district: district.key === '.' ? jt('ide.map.atlas.repositoryRoot', 'repository root') : district.key }),
-        title: jt('ide.map.atlas.zoomTo', 'Zoom to {district}', { district: district.key === '.' ? jt('ide.map.atlas.repositoryRoot', 'repository root') : district.key }),
+        ariaLabel: zoomLabel,
+        title: zoomLabel,
         dataset: { 'map-district-header': district.key },
         trustedHtml: ''
           + `<span class="ide-atlas-district-name">${escapeHtml(name)}</span>${flat}`
@@ -204,7 +276,7 @@
     function renderDistricts(districts) {
       const documentRef = doc();
       if (!documentRef) return;
-      districtLayer = documentRef.createElement('div');
+      const districtLayer = documentRef.createElement('div');
       districtLayer.className = 'ide-atlas-districts';
       for (const district of districts) {
         const el = documentRef.createElement('div');
@@ -216,10 +288,9 @@
         el.style.height = `${Math.round(district.h)}px`;
         el.setAttribute('role', 'group');
         el.setAttribute('aria-label',
-          jt('ide.map.atlas.districtFileCount', '{district}, {count} files', { district: district.key === '.' ? jt('ide.map.atlas.repositoryRoot', 'repository root') : district.key, count: district.fileCount }));
+          jt('ide.map.atlas.districtFileCount', '{district}, {count} files', { district: districtName(district), count: district.fileCount }));
         el.innerHTML = districtMarkup(district);
         districtLayer.appendChild(el);
-        districtEls.set(district.key, el);
       }
       contentEl.appendChild(districtLayer);
     }
@@ -228,14 +299,7 @@
     function renderDots(viewBox) {
       const documentRef = doc();
       if (!documentRef) return;
-      dotsSvg = documentRef.createElementNS(SVG_NS, 'svg');
-      dotsSvg.setAttribute('class', 'ide-atlas-dots');
-      dotsSvg.setAttribute('aria-hidden', 'true');
-      dotsSvg.setAttribute('width', String(viewBox.w));
-      dotsSvg.setAttribute('height', String(viewBox.h));
-      dotsSvg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
-      dotsSvg.style.left = `${viewBox.x}px`;
-      dotsSvg.style.top = `${viewBox.y}px`;
+      const dotsSvg = createOverlaySvg(documentRef, 'ide-atlas-dots', viewBox);
       for (const node of nodeById.values()) {
         const c = documentRef.createElementNS(SVG_NS, 'circle');
         c.setAttribute('class',
@@ -253,35 +317,16 @@
     function buildRaysSvg(viewBox) {
       const documentRef = doc();
       if (!documentRef) return null;
-      const svg = documentRef.createElementNS(SVG_NS, 'svg');
-      svg.setAttribute('class', 'ide-atlas-rays');
-      svg.setAttribute('aria-hidden', 'true');
-      svg.setAttribute('width', String(viewBox.w));
-      svg.setAttribute('height', String(viewBox.h));
-      svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
-      svg.style.left = `${viewBox.x}px`;
-      svg.style.top = `${viewBox.y}px`;
+      const svg = createOverlaySvg(documentRef, 'ide-atlas-rays', viewBox);
       const defs = documentRef.createElementNS(SVG_NS, 'defs');
-      const marker = documentRef.createElementNS(SVG_NS, 'marker');
-      marker.setAttribute('id', 'ideAtlasRayArrow');
-      marker.setAttribute('viewBox', '0 0 8 8');
-      marker.setAttribute('refX', '7');
-      marker.setAttribute('refY', '4');
-      marker.setAttribute('markerWidth', '7');
-      marker.setAttribute('markerHeight', '7');
-      marker.setAttribute('orient', 'auto-start-reverse');
-      const tip = documentRef.createElementNS(SVG_NS, 'path');
-      tip.setAttribute('d', 'M 0 0 L 8 4 L 0 8 z');
-      tip.setAttribute('class', 'ide-atlas-ray-arrow');
-      marker.appendChild(tip);
-      defs.appendChild(marker);
+      appendArrowMarker(defs, documentRef, 'ideAtlasRayArrow', 'ide-atlas-ray-arrow');
       svg.appendChild(defs);
       return svg;
     }
 
     function halfExtentOf(id) {
       if (tier === 'tiles' && tileEls.has(id)) {
-        return { hw: TILE_W / 2, hh: TILE_H / 2 };
+        return { hw: (nodeById.get(id)?.w || TILE_W) / 2, hh: TILE_H / 2 };
       }
       return { hw: DOT_R + 1, hh: DOT_R + 1 };
     }
@@ -328,6 +373,11 @@
     function tileMarkup(node) {
       if (typeof actionButton !== 'function') return '';
       const lang = langClassFor(node.id);
+      let labelText = shortLabels.get(node);
+      if (labelText === undefined) {
+        labelText = middleEllipsis(node.label || node.id, (node.w || TILE_W) - TILE_CHROME, (text) => measureLabel(text, 'tile'));
+        shortLabels.set(node, labelText);
+      }
       return actionButton({
         plain: true,
         className: `ide-atlas-tile ide-atlas-tile--lang-${lang}${node.isTest ? ' ide-atlas-tile--test' : ''}`,
@@ -336,7 +386,7 @@
         dataset: { 'map-node': node.id },
         trustedHtml: ''
           + '<span class="ide-atlas-tile-dot" aria-hidden="true"></span>'
-          + `<span class="ide-atlas-tile-name">${escapeHtml(node.label || node.id)}</span>`
+          + `<span class="ide-atlas-tile-name">${escapeHtml(labelText)}</span>`
           + '<span class="ide-atlas-tile-git" aria-hidden="true"></span>',
       });
     }
@@ -374,7 +424,9 @@
     }
 
     function positionTile(el, node) {
-      el.style.left = `${Math.round(node.x - TILE_W / 2)}px`;
+      const w = node.w || TILE_W;
+      el.style.width = `${w}px`;
+      el.style.left = `${Math.round(node.x - w / 2)}px`;
       el.style.top = `${Math.round(node.y - TILE_H / 2)}px`;
     }
 
@@ -382,6 +434,9 @@
       const status = activeGitStatus[id];
       el.classList.toggle('ide-atlas-tile--git-modified', status === 'modified');
       el.classList.toggle('ide-atlas-tile--git-added', status === 'added');
+      const heatEdit = paintedHeat.get(id);
+      el.classList.toggle('is-heat', heatEdit !== undefined);
+      el.classList.toggle('is-heat-edit', heatEdit === true);
       const f = activeFinding;
       el.classList.toggle('ide-atlas-node--finding-hub', f.kind === 'hub' && f.ids.includes(id));
       el.classList.toggle('ide-atlas-node--finding-cycle', f.kind === 'cycle' && f.ids.includes(id));
@@ -395,29 +450,15 @@
 
     function materializeTiles() {
       if (disposed || !tilesLayer) return;
-      const documentRef = doc();
-      if (!documentRef) return;
       const want = desiredTileIds();
       for (const [id, el] of tileEls) {
         if (!want.has(id)) {
           el.remove();
           tileEls.delete(id);
+          dotEls.get(id)?.classList.remove('is-under-tile');
         }
       }
-      const holder = documentRef.createElement('div');
-      for (const id of want) {
-        if (tileEls.has(id)) continue;
-        const node = nodeById.get(id);
-        if (!node) continue;
-        holder.innerHTML = tileMarkup(node);
-        const el = holder.firstElementChild;
-        if (!el) continue;
-        el.tabIndex = -1;
-        positionTile(el, node);
-        decorateTile(el, id);
-        tilesLayer.appendChild(el);
-        tileEls.set(id, el);
-      }
+      for (const id of want) ensureTileFor(id);
     }
 
     // Force-materialize one tile (reveal / a11y focus target) regardless of
@@ -427,16 +468,17 @@
       if (tileEls.has(id)) return tileEls.get(id) || null;
       const node = nodeById.get(id);
       const documentRef = doc();
-      if (!node || !documentRef || !isNodeNavigable(id)) return null;
-      const holder = documentRef.createElement('div');
-      holder.innerHTML = tileMarkup(node);
-      const el = holder.firstElementChild;
+      if (!node || !documentRef) return null;
+      tileHolder = tileHolder || documentRef.createElement('div');
+      tileHolder.innerHTML = tileMarkup(node);
+      const el = tileHolder.firstElementChild;
       if (!el) return null;
       el.tabIndex = -1;
       positionTile(el, node);
       decorateTile(el, id);
       tilesLayer.appendChild(el);
       tileEls.set(id, el);
+      dotEls.get(id)?.classList.add('is-under-tile');
       return el;
     }
 
@@ -449,11 +491,11 @@
       const districts = Array.isArray(layoutResult.districts) ? layoutResult.districts : [];
 
       contentEl.replaceChildren();
-      districtEls = new Map();
       dotEls = new Map();
       tileEls = new Map();
+      stateClassIds = new Set();
       activityLayer = null;
-      lastHeatIds = new Set();
+      paintedHeat = new Map();
       livePulseCount = 0;
       nodeById = new Map();
       districtByKey = new Map(districts.map((dist) => [dist.key, dist]));
@@ -462,27 +504,19 @@
       hoverId = null;
       contentEl.classList.remove('ide-atlas--spotlit');
 
-      const keyOf = typeof atlasLayout.districtKeyOf === 'function'
-        ? atlasLayout.districtKeyOf
-        : () => '.';
       for (const node of graph.nodes || []) {
         if (!node || node.id == null || node.bucket === true) continue;
         const pos = positions[node.id];
         if (!pos) continue;
-        nodeById.set(node.id, { ...node, x: pos.x, y: pos.y, districtKey: keyOf(node.id) });
+        nodeById.set(node.id, { ...node, x: pos.x, y: pos.y, w: pos.w || TILE_W, districtKey: districtKeyOf(node.id) });
       }
+      nodeIdSet = new Set(nodeById.keys());
       buildSpatialIndex();
 
       bounds = layoutResult.bounds && Number.isFinite(layoutResult.bounds.minX)
         ? { ...layoutResult.bounds }
         : { minX: 0, minY: 0, maxX: 0, maxY: 0 };
-      const pad = 80;
-      sourceViewBox = {
-        x: Math.floor(bounds.minX - pad),
-        y: Math.floor(bounds.minY - pad),
-        w: Math.ceil(bounds.maxX - bounds.minX + pad * 2) || 1,
-        h: Math.ceil(bounds.maxY - bounds.minY + pad * 2) || 1,
-      };
+      const sourceViewBox = viewBoxFor(bounds, OVERLAY_PAD);
 
       renderDistricts(districts);
       renderDots(sourceViewBox);
@@ -497,7 +531,10 @@
 
       applyTierClasses();
       materializeTiles();
-      applyGitStatus(activeGitStatus);
+      // Fresh dots: re-apply the whole git map (the diff starts from empty).
+      const gitStatus = activeGitStatus;
+      activeGitStatus = {};
+      applyGitStatus(gitStatus);
       applyFindingHighlight(activeFinding.kind, activeFinding.ids);
       return { ...bounds };
     }
@@ -533,12 +570,18 @@
       if (tile) fn(tile);
     }
 
+    // Selection/spotlight classes go through markState so clearing touches
+    // only the ids that carry them (hover-rate path).
+    function markState(id, cls) {
+      stateClassIds.add(id);
+      forEachNodeEl(id, (el) => el.classList.add(cls));
+    }
+
     function clearNodeStateClasses() {
-      for (const layerEls of [dotEls, tileEls]) {
-        for (const el of layerEls.values()) {
-          el.classList.remove('is-selected', 'is-ray-target', 'is-spotlit', 'is-incident-node');
-        }
+      for (const id of stateClassIds) {
+        forEachNodeEl(id, (el) => el.classList.remove('is-selected', 'is-ray-target', 'is-spotlit', 'is-incident-node'));
       }
+      stateClassIds.clear();
     }
 
     function redrawSelection() {
@@ -569,9 +612,9 @@
         },
       };
       contentEl.classList.add('ide-atlas--spotlit');
-      forEachNodeEl(focusId, (el) => el.classList.add('is-selected'));
+      markState(focusId, 'is-selected');
       for (const list of [selection.rays.dependencies, selection.rays.dependents]) {
-        for (const id of list) forEachNodeEl(id, (el) => el.classList.add('is-ray-target'));
+        for (const id of list) markState(id, 'is-ray-target');
       }
       redrawSelection();
     }
@@ -593,10 +636,9 @@
       members.add(focusId);
       spotlightSet = { focusId, memberIds: members };
       contentEl.classList.add('ide-atlas--spotlit');
-      forEachNodeEl(focusId, (el) => el.classList.add('is-spotlit'));
+      markState(focusId, 'is-spotlit');
       for (const id of members) {
-        if (id === focusId) continue;
-        forEachNodeEl(id, (el) => el.classList.add('is-incident-node'));
+        if (id !== focusId) markState(id, 'is-incident-node');
       }
     }
 
@@ -611,18 +653,30 @@
     }
 
     // ── decorations ─────────────────────────────────────────────────────────
+    // Diffs against the previous map: only ids whose status changed restyle.
     function applyGitStatus(statusByPath) {
       if (disposed) return;
-      activeGitStatus = statusByPath || {};
-      for (const [id, el] of tileEls) {
-        const status = activeGitStatus[id];
-        el.classList.toggle('ide-atlas-tile--git-modified', status === 'modified');
-        el.classList.toggle('ide-atlas-tile--git-added', status === 'added');
+      const prev = activeGitStatus;
+      const next = { ...(statusByPath || {}) };
+      activeGitStatus = next;
+      const changed = new Set();
+      for (const map of [prev, next]) {
+        for (const id of Object.keys(map)) {
+          if (prev[id] !== next[id]) changed.add(id);
+        }
       }
-      for (const [id, el] of dotEls) {
-        const status = activeGitStatus[id];
-        el.classList.toggle('ide-atlas-dot--git-modified', status === 'modified');
-        el.classList.toggle('ide-atlas-dot--git-added', status === 'added');
+      for (const id of changed) {
+        const status = next[id];
+        const tile = tileEls.get(id);
+        if (tile) {
+          tile.classList.toggle('ide-atlas-tile--git-modified', status === 'modified');
+          tile.classList.toggle('ide-atlas-tile--git-added', status === 'added');
+        }
+        const dot = dotEls.get(id);
+        if (dot) {
+          dot.classList.toggle('ide-atlas-dot--git-modified', status === 'modified');
+          dot.classList.toggle('ide-atlas-dot--git-added', status === 'added');
+        }
       }
     }
 
@@ -676,8 +730,9 @@
     // pulse rings render into one .ide-atlas-activity overlay (content
     // space, so it pans/zooms with the map). Pulses spawn only for ids NEW
     // since the previous apply, capped, and self-remove on animationend.
+    // Heat classes are diffed against paintedHeat (id -> edited flag).
     let activityLayer = null;
-    let lastHeatIds = new Set();
+    let paintedHeat = new Map();
     let livePulseCount = 0;
     const MAX_PULSES = 30;
 
@@ -738,17 +793,26 @@
       const heat = s.heat instanceof Map ? s.heat : new Map(Object.entries(s.heat || {}));
       const edited = s.editedIds instanceof Set ? s.editedIds : new Set(s.editedIds || []);
       const trail = Array.isArray(s.trail) ? s.trail : [];
-      for (const layerEls of [dotEls, tileEls]) {
-        for (const [id, el] of layerEls) {
-          const entry = heat.get(id);
-          el.classList.toggle('is-heat', !!entry);
-          el.classList.toggle('is-heat-edit', !!entry && edited.has(id));
+      const nextHeat = new Map();
+      for (const [id, entry] of heat) {
+        if (entry) nextHeat.set(id, edited.has(id));
+      }
+      for (const id of paintedHeat.keys()) {
+        if (!nextHeat.has(id)) {
+          forEachNodeEl(id, (el) => el.classList.remove('is-heat', 'is-heat-edit'));
         }
       }
-      for (const id of heat.keys()) {
-        if (!lastHeatIds.has(id)) spawnPulse(id);
+      for (const [id, isEdit] of nextHeat) {
+        if (paintedHeat.get(id) === isEdit) continue;
+        forEachNodeEl(id, (el) => {
+          el.classList.add('is-heat');
+          el.classList.toggle('is-heat-edit', isEdit);
+        });
       }
-      lastHeatIds = new Set(heat.keys());
+      for (const id of heat.keys()) {
+        if (!paintedHeat.has(id)) spawnPulse(id);
+      }
+      paintedHeat = nextHeat;
       renderTrailSteps(trail);
       const layer = ensureActivityLayer();
       if (layer) layer.classList.toggle('is-fading', s.faded === true);
@@ -772,8 +836,10 @@
       return new Set(tileEls.keys());
     }
 
+    // The same Set until the next render (consumers key caches on it; do
+    // not mutate).
     function getAllNodeIds() {
-      return new Set(nodeById.keys());
+      return nodeIdSet;
     }
 
     function getBounds() {
@@ -789,20 +855,19 @@
       disposed = true;
       if (contentEl) contentEl.replaceChildren();
       nodeById = new Map();
+      nodeIdSet = new Set();
       districtByKey = new Map();
-      districtEls = new Map();
       dotEls = new Map();
       tileEls = new Map();
       spatial = new Map();
-      districtLayer = null;
-      dotsSvg = null;
+      stateClassIds = new Set();
+      tileHolder = null;
       raysSvg = null;
       tilesLayer = null;
       activityLayer = null;
-      lastHeatIds = new Set();
+      paintedHeat = new Map();
       livePulseCount = 0;
       bounds = null;
-      sourceViewBox = null;
       selection = null;
       spotlightSet = null;
     }
@@ -830,45 +895,9 @@
       getBounds,
       getTier,
       dispose,
-      _internals: {
-        get nodeById() { return nodeById; },
-        get dotEls() { return dotEls; },
-        get tileEls() { return tileEls; },
-        get districtEls() { return districtEls; },
-        get spatial() { return spatial; },
-        desiredTileIds,
-        clipToBorder,
-        rayPathD,
-        healthTickLevel,
-        TILE_W,
-        TILE_H,
-        DOT_R,
-        HIT_RADIUS,
-        INDEX_CELL,
-        MAX_TILES,
-      },
+      _internals: { MAX_TILES },
     };
   }
 
-  // Ignored-directory rollups render as CHROME (screen-space footer chips),
-  // never as spatial cards — the controller owns the strip element.
-  function renderBucketStrip(stripEl, buckets, escapeHtmlFn) {
-    if (!stripEl) return;
-    const esc = typeof escapeHtmlFn === 'function' ? escapeHtmlFn : defaultEscapeHtml;
-    const list = Array.isArray(buckets) ? buckets : [];
-    if (!list.length) {
-      stripEl.innerHTML = '';
-      stripEl.classList.add('hidden');
-      return;
-    }
-    stripEl.classList.remove('hidden');
-    stripEl.innerHTML = list.slice(0, 8).map((b) => ''
-        + `<span class="ide-atlas-bucket-chip" data-map-bucket="${esc(b.key)}" title="${esc(jt('ide.map.atlas.excludedBucket', '{bucket} — excluded from the map', { bucket: b.key }))}">`
-      + '<span class="ide-atlas-bucket-glyph" aria-hidden="true">▤</span>'
-      + `<span class="ide-atlas-bucket-name">${esc(b.label)}</span>`
-      + `<span class="ide-atlas-bucket-count">${Number(b.count) || 0}</span>`
-      + '</span>').join('');
-  }
-
-  return { createAtlasView, renderBucketStrip };
+  return { createAtlasView, middleEllipsis, createOverlaySvg, appendArrowMarker, viewBoxFor };
 });

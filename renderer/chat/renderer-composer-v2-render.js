@@ -203,7 +203,8 @@
     const copy = MODE_CHIP_COPY[mode];
     const nextCopy = MODE_CHIP_COPY[nextMode];
     // The mode's hint sentence rides the chip: its tooltip and the end of its label.
-    const ariaLabel = jt('composer.runMode.switchAriaLabel', 'Run mode: {mode}. Click to switch to {nextMode}.', { mode: copy.label, nextMode: nextCopy.label }).replace('{mode}', () => String(copy.label)).replace('{nextMode}', () => String(nextCopy.label)) + ' ' + copy.hint;
+    // Row 63: a click opens the mode menu; Shift+Tab (aria-keyshortcuts) cycles to the next.
+    const ariaLabel = jt('composer.runMode.menuAriaLabel', 'Run mode: {mode}. Shift+Tab switches to {nextMode}.', { mode: copy.label, nextMode: nextCopy.label }).replace('{mode}', () => String(copy.label)).replace('{nextMode}', () => String(nextCopy.label)) + ' ' + copy.hint;
     const title = copy.label + ' · ' + copy.hint;
     const segments = findRunModeSegments(chip);
     const disabled = chip.disabled === true;
@@ -226,6 +227,8 @@
     chip.setAttribute('aria-label', ariaLabel);
     chip.setAttribute('title', title);
     chip.setAttribute('aria-keyshortcuts', 'Shift+Tab');
+    chip.setAttribute('aria-haspopup', 'menu');
+    if (!chip.hasAttribute('aria-expanded')) chip.setAttribute('aria-expanded', 'false');
     chip.removeAttribute('aria-pressed');
     appliedRunModeChips.set(chip, { key, segments });
     return true;
@@ -794,5 +797,6 @@
     syncRunModeChip,
     syncRunModeSegmentsDisabled,
     BLOCKED_SEND_REASONS,
+    RUN_MODE_COPY: MODE_CHIP_COPY,
   };
 });

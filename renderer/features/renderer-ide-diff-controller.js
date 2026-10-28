@@ -38,20 +38,23 @@
 
   const defaultEscape = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
-  // EOL normalization is owned by the find/replace util (toLf); resolved at
-  // module scope so the exported normalizeDiffText below can delegate to that
-  // single source of truth (also reused by the factory for detectEol/restoreEol).
-  // SCRIPT_ORDER loads replace-text-utils first, so the global is present here;
-  // the inline fallback is an exact mirror for the require-unavailable path.
-  const textUtils = resolveModule('rendererIdeReplaceTextUtils', './renderer-ide-replace-text-utils');
+  // EOL handling is owned by the find/replace util (SCRIPT_ORDER loads it
+  // first). Ledger hashes are computed over EOL-normalized text (hash_kind
+  // diff_input_text); both diff sides normalize the same way so a CRLF file
+  // never shows every line as changed.
+  const {
+    toLf: normalizeDiffText,
+    detectEol,
+    restoreEol,
+  } = resolveModule('rendererIdeReplaceTextUtils', './renderer-ide-replace-text-utils');
 
-  // Ledger hashes are computed over EOL-normalized text (hash_kind
-  // diff_input_text); both diff sides normalize the same way so a CRLF
-  // file never shows every line as changed.
-  function normalizeDiffText(value) {
-    return typeof textUtils.toLf === 'function'
-      ? textUtils.toLf(value)
-      : String(value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  // More than one line-ending style (CRLF, lone CR, lone LF) in one file.
+  // restoreEol can only re-apply ONE style, so a safety write over such a
+  // file would rewrite every line ending (one stray CR made it all-CR).
+  function hasMixedEol(raw) {
+    const text = String(raw ?? '');
+    const styles = [/\r\n/, /\r(?!\n)/, /(^|[^\r])\n/].filter((pattern) => pattern.test(text));
+    return styles.length > 1;
   }
 
   // Plain-text rendering of a change whose pre-edit snapshot is gone
@@ -108,15 +111,6 @@
       ? deps.actionButton
       : (typeof actionButtonResolved === 'function' ? actionButtonResolved : null);
 
-    const detectEol = typeof textUtils.detectEol === 'function'
-      ? textUtils.detectEol
-      : (raw) => (/\r\n/.test(String(raw ?? '')) ? 'crlf' : (/\r/.test(String(raw ?? '')) ? 'cr' : 'lf'));
-    const restoreEol = typeof textUtils.restoreEol === 'function'
-      ? textUtils.restoreEol
-      : (lf, eol) => (eol === 'crlf'
-        ? String(lf).replace(/\n/g, '\r\n')
-        : (eol === 'cr' ? String(lf).replace(/\n/g, '\r') : String(lf)));
-
     const fileNameOf = (path) => ideStateUtils.fileNameOf?.(path) || String(path || '');
     const diffPrefix = () => ideStateUtils.DIFF_TAB_PREFIX || 'diff://';
     const changeDiffId = (change) => `${diffPrefix()}change/${change.changeId}`;
@@ -133,9 +127,17 @@
     let disposed = false;
 
     const isCurrent = (epoch) => !disposed && epoch === rootEpoch;
+
+    // The current on-disk copy: the versioned file-operations read when wired
+    // (its payload doubles as the write snapshot), else the plain fs read.
+    function readCurrent(path) {
+      const operations = getFileOperations();
+      return operations ? operations.readForMutation(path) : getWorkspaceFsApi().readFile({ path });
+    }
+
     // Suggested changes (row 35) get their own diff tabs and decision bar.
     const suggestionDiff = resolveModule('rendererIdeSuggestionDiff', './renderer-ide-suggestion-diff').createIdeSuggestionDiff?.({
-      getIde, getDom, editorHost, getFileOperations, getWorkspaceFsApi, ideStateUtils, renderTabs, appendClientLog, showDiffTab,
+      getIde, getDom, editorHost, readCurrent, ideStateUtils, renderTabs, appendClientLog, showDiffTab,
     }) || null;
     function beginWrite() {
       if (activeWriteToken) return null;
@@ -251,9 +253,7 @@
       }
       let modified;
       try {
-        const payload = getFileOperations()
-          ? await getFileOperations().readForMutation(change.path)
-          : await api.readFile({ path: change.path });
+        const payload = await readCurrent(change.path);
         if (!isCurrent(epoch)) {
           return false;
         }
@@ -365,9 +365,7 @@
       }
       let diskContent;
       try {
-        const payload = getFileOperations()
-          ? await getFileOperations().readForMutation(normalized)
-          : await api.readFile({ path: normalized });
+        const payload = await readCurrent(normalized);
         if (!isCurrent(epoch)) {
           return false;
         }
@@ -411,16 +409,23 @@
     // Read the current on-disk content to detect its EOL + mtime. A vanished
     // file degrades to LF / no mtime (the write then recreates it).
     async function readDiskMeta(path) {
-      const api = getWorkspaceFsApi();
       try {
-        const payload = getFileOperations()
-          ? await getFileOperations().readForMutation(path)
-          : await api.readFile({ path });
+        const payload = await readCurrent(path);
         const raw = payload?.content;
-        return { raw, lf: normalizeDiffText(raw), eol: detectEol(raw), mtime: payload?.mtimeMs, snapshot: getFileOperations() ? payload : null };
+        return {
+          raw, lf: normalizeDiffText(raw), eol: detectEol(raw), mixedEol: hasMixedEol(raw),
+          mtime: payload?.mtimeMs, snapshot: getFileOperations() ? payload : null,
+        };
       } catch (_error) {
-        return { raw: null, lf: null, eol: 'lf', mtime: undefined };
+        return { raw: null, lf: null, eol: 'lf', mixedEol: false, mtime: undefined };
       }
+    }
+
+    // A mixed-EOL file is refused through the ordinary failure toast.
+    function refuseMixedEol(message, dedupeKey) {
+      changesToast(message, dedupeKey);
+      appendClientLog('WARN', 'ide.safety_write_refused', { reason: 'mixed_eol' });
+      return false;
     }
 
     async function writeFileSafe(path, content, meta, noBridgeDedupeKey = 'ide:revert:no-bridge') {
@@ -538,6 +543,10 @@
         if (!isCurrentWrite(writeToken)) {
           return false;
         }
+        const revertFailed = jt('ide.diff.revertFailed', 'Could not revert {file}.', { file: fileName });
+        if (!isCreated && before.mixedEol) {
+          return refuseMixedEol(revertFailed, `ide:revert:${change.path}`);
+        }
         const unsavedNote = editorHost.isDirty?.(change.path) === true
           ? jt('ide.diff.unsavedEditsDiscarded', 'Your unsaved edits to this file will be discarded.')
           : '';
@@ -608,6 +617,9 @@
             editorHost.showEmpty();
           }
         } else {
+          if (after.mixedEol) {
+            return refuseMixedEol(revertFailed, `ide:revert:${change.path}`);
+          }
           const content = restoreEol(original, after.eol);
           const write = await writeFileSafe(change.path, content, after);
           if (!isCurrentWrite(writeToken)) {
@@ -617,7 +629,7 @@
             if (write.noBridge) return false;
             changesToast(write.conflict
               ? jt('ide.diff.changedOnDiskNotReverted', '{file} changed on disk; not reverted.', { file: fileName })
-              : jt('ide.diff.revertFailed', 'Could not revert {file}.', { file: fileName }), `ide:revert:${change.path}`);
+              : revertFailed, `ide:revert:${change.path}`);
             return false;
           }
           await refreshOpenBuffer(change.path, content, write, after.eol);
@@ -712,6 +724,9 @@
         if (meta.lf !== expectedCurrent) {
           changesToast(jt('ide.diff.changedOnDiskNotUpdated', '{file} changed on disk; not updated.', { file: fileNameOf(ctx.path) }), `ide:hunk:${ctx.path}`);
           return false;
+        }
+        if (meta.mixedEol) {
+          return refuseMixedEol(jt('ide.diff.updateFailed', 'Could not update {file}.', { file: fileNameOf(ctx.path) }), `ide:hunk:${ctx.path}`);
         }
         const content = restoreEol(out.text, meta.eol);
         const write = await writeFileSafe(ctx.path, content, meta, 'ide:hunk:no-bridge');

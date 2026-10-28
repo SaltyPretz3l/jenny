@@ -147,17 +147,20 @@ test('New session on an unsolicited suggestion snapshots the options and submits
   assert.equal(stale.reason, 'stale_revision');
 });
 
-test('the preparation turn: first event starts the 60 s deadline, a clean end without a handoff needs attention', async (t) => {
+test('the preparation turn: first output starts the 60 s deadline, a clean end without a handoff needs attention', async (t) => {
   const fx = createSessionFixture(t);
   const { proposal } = await fx.publishSession(1, { initiation: 'own_initiative' });
   await fx.decide(proposal, 'new_session');
   fx.stream('turn_c1', 'tool_use');
   const preparing = fx.record(proposal.proposal_id);
   assert.equal(preparing.action_state, 'preparing');
-  assert.deepEqual(fx.handoff.calls.filter((call) => call[0] === 'start_deadline'), [['start_deadline', preparing.proposal_id, preparing.attempt_id]]);
-  assert.equal(fx.ctl.liveTimers().filter((timer) => timer.ms === 60000).length, 1);
+  assert.deepEqual(fx.handoff.calls.filter((call) => call[0] === 'start_deadline'), [
+    ['start_deadline', preparing.proposal_id, preparing.attempt_id, 'admitted'],
+    ['start_deadline', preparing.proposal_id, preparing.attempt_id, 'output'],
+  ]);
+  assert.deepEqual(fx.ctl.liveTimers().map((timer) => timer.ms), [60000], 'the output deadline replaced the first-output limit');
   fx.stream('turn_c1', 'tool_use');
-  assert.equal(fx.handoff.calls.filter((call) => call[0] === 'start_deadline').length, 1, 'started once');
+  assert.equal(fx.handoff.calls.filter((call) => call[0] === 'start_deadline').length, 2, 'each stage started once');
 
   fx.stream('turn_c1', 'complete', { completionReason: 'session_handoff_completed' });
   const failed = fx.record(proposal.proposal_id);
@@ -199,7 +202,39 @@ test('a preparation turn that errors, or runs past 60 s, fails the preparation a
   await fx.fireTimers(60000);
   const timedOut = fx.record(b.proposal_id);
   assert.deepEqual([timedOut.action_state, timedOut.last_error.cause_code], ['needs_attention', 'deadline']);
-  assert.deepEqual(fx.runtime.cancels, [['work_2', { reason: 'deadline' }]]);
+  assert.deepEqual(fx.runtime.cancels, [['work_2', { reason: 'handoff_deadline' }]]);
+});
+
+// 2026-10-27: a ~43K-token source chat took NInfer 65 s to read before the first token, and the
+// 60 s deadline (then counted from admission) cancelled every attempt before the model wrote.
+test('reading the prompt does not count against the 60 s deadline: admission arms only the first-output limit', async (t) => {
+  const fx = createSessionFixture(t);
+  const { proposal } = await fx.publishSession(1, { initiation: 'own_initiative' });
+  await fx.decide(proposal, 'new_session');
+  fx.stream('turn_c1', 'started');
+  fx.stream('turn_c1', 'thinking_status');
+  assert.equal(fx.record(proposal.proposal_id).action_state, 'preparing');
+  assert.deepEqual(fx.ctl.liveTimers().map((timer) => timer.ms), [5 * 60000]);
+  await fx.fireTimers(60000);
+  assert.equal(fx.record(proposal.proposal_id).action_state, 'preparing', 'no 60 s timer runs before any output');
+
+  fx.stream('turn_c1', 'delta', { reasoning: { text: 'Let me write the handoff.' } });
+  assert.deepEqual(fx.ctl.liveTimers().map((timer) => timer.ms), [60000]);
+  await fx.fireTimers(60000);
+  const timedOut = fx.record(proposal.proposal_id);
+  assert.deepEqual([timedOut.action_state, timedOut.last_error.cause_code], ['needs_attention', 'deadline']);
+  assert.deepEqual(fx.runtime.cancels, [['work_1', { reason: 'handoff_deadline' }]]);
+});
+
+test('a preparation turn that never produces output fails at the first-output limit', async (t) => {
+  const fx = createSessionFixture(t);
+  const { proposal } = await fx.publishSession(1, { initiation: 'own_initiative' });
+  await fx.decide(proposal, 'new_session');
+  fx.stream('turn_c1', 'started');
+  await fx.fireTimers(5 * 60000);
+  assert.deepEqual([fx.record(proposal.proposal_id).action_state, fx.record(proposal.proposal_id).last_error.cause_code],
+    ['needs_attention', 'deadline']);
+  assert.deepEqual(fx.runtime.cancels, [['work_1', { reason: 'handoff_deadline' }]]);
 });
 
 test('retry before any child starts a fresh preparation attempt with a new key; a refused submission is dispatch_failed', async (t) => {
@@ -494,4 +529,18 @@ test('diagnostics never carry titles, descriptions or tasks', async (t) => {
   fx.runtime = null;
   await fx.decide(proposal, 'new_session');
   assert.doesNotMatch(JSON.stringify(fx.logs), /TOPSECRET/u);
+});
+
+test('project_id is an optional bounded string; an absent one keeps stored inputs byte-identical', () => {
+  const plain = S.normalizeSessionProposalInput({ initiation: 'offer', title: 'T' });
+  assert.equal(plain.ok, true);
+  assert.equal(Object.hasOwn(plain.value, 'project_id'), false, 'old stored records still normalize to themselves');
+  assert.equal(S.normalizeSessionProposalInput({ initiation: 'offer', title: 'T', project_id: null }).value.project_id ?? null, null);
+  const named = S.normalizeSessionProposalInput({ initiation: 'user_asked', title: 'T', project_id: 'proj_2' });
+  assert.equal(named.value.project_id, 'proj_2');
+  assert.deepEqual(S.normalizeSessionProposalInput(named.value), named, 'a stored value normalizes to itself');
+  for (const bad of ['', 'x'.repeat(129), 5, 'a\nb', 'a\u0000b', 'a​b', {}]) {
+    assert.equal(S.normalizeSessionProposalInput({ initiation: 'offer', title: 'T', project_id: bad }).cause_code, 'field_project_id', JSON.stringify(bad));
+  }
+  assert.equal(S.normalizeSessionProposalInput({ initiation: 'offer', title: 'T', project_id: 'x'.repeat(128) }).ok, true);
 });

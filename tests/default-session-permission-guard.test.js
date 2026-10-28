@@ -9,6 +9,9 @@ const {
   installDefaultSessionPermissionGuard,
   normalizePermission,
 } = require('../services/main/default-session-permission-guard');
+const { pathToFileURL } = require('node:url');
+const path = require('node:path');
+const { MAIN_DOCUMENT_PATH } = require('../services/main/ipc-sender-authorization');
 
 // A minimal Electron-Session stand-in that captures the installed handlers so
 // tests can drive them directly (mirrors the fake session in
@@ -173,4 +176,94 @@ test('exported helpers normalize and build the allowlist set', () => {
   assert.deepEqual([...set].sort(), ['a', 'b']);
   // Non-array falls back to the default allowlist.
   assert.deepEqual([...buildAllowedSet(null)].sort(), [...DEFAULT_ALLOWED_PERMISSIONS].sort());
+});
+
+// ── Dictation microphone gate (row 84) ──────────────────────────────────────
+
+const APP_URL = pathToFileURL(MAIN_DOCUMENT_PATH).href;
+
+function createMicHarness({ enabled = true, url = APP_URL } = {}) {
+  const webContents = { isDestroyed: () => false, getURL: () => url };
+  const mainWindow = { isDestroyed: () => false, webContents };
+  const state = { enabled };
+  const session = createFakeSession();
+  installDefaultSessionPermissionGuard({
+    session,
+    getMainWindow: () => mainWindow,
+    isMicrophoneEnabled: () => state.enabled,
+  });
+  const request = (details, contents = webContents) => {
+    let granted;
+    session.permissionRequestHandler(contents, 'media', (value) => { granted = value; }, details);
+    return granted;
+  };
+  const check = (details, contents = webContents) => session.permissionCheckHandler(contents, 'media', 'file:///', details);
+  return { session, webContents, mainWindow, state, request, check };
+}
+
+const audioFromApp = (extra = {}) => ({ isMainFrame: true, requestingUrl: APP_URL, mediaTypes: ['audio'], ...extra });
+
+test('dictation: an audio request from the app page in the main window is granted', () => {
+  const mic = createMicHarness();
+  assert.equal(mic.request(audioFromApp()), true);
+  assert.equal(mic.check({ isMainFrame: true, requestingUrl: APP_URL, mediaType: 'audio' }), true);
+});
+
+test('dictation: the microphone closes as soon as the flag is off', () => {
+  const mic = createMicHarness();
+  mic.state.enabled = false;
+  assert.equal(mic.request(audioFromApp()), false);
+  assert.equal(mic.check({ isMainFrame: true, requestingUrl: APP_URL, mediaType: 'audio' }), false);
+});
+
+test('dictation: video, mixed or missing media types are denied', () => {
+  const mic = createMicHarness();
+  for (const mediaTypes of [['video'], ['audio', 'video'], [], undefined, 'audio']) {
+    assert.equal(mic.request(audioFromApp({ mediaTypes })), false, `mediaTypes ${JSON.stringify(mediaTypes)}`);
+  }
+  for (const mediaType of ['video', 'unknown', undefined]) {
+    assert.equal(mic.check({ isMainFrame: true, requestingUrl: APP_URL, mediaType }), false, `check ${mediaType}`);
+  }
+});
+
+test('dictation: subframes, other pages and other webContents are denied', () => {
+  const mic = createMicHarness();
+  assert.equal(mic.request(audioFromApp({ isMainFrame: false })), false, 'subframe (artifact preview)');
+  assert.equal(mic.request(audioFromApp({ requestingUrl: 'jenny-artifact://frame/abc' })), false, 'artifact scheme');
+  assert.equal(mic.request(audioFromApp({ requestingUrl: pathToFileURL(path.join(path.dirname(MAIN_DOCUMENT_PATH), 'other.html')).href })), false, 'another local page');
+  assert.equal(mic.request(audioFromApp({ requestingUrl: 'https://example.com/' })), false, 'remote page');
+  assert.equal(mic.request(audioFromApp(), { isDestroyed: () => false, getURL: () => APP_URL }), false, 'another webContents');
+  assert.equal(mic.request(audioFromApp(), null), false, 'no webContents');
+});
+
+test('dictation: a main window that navigated away or is gone is denied', () => {
+  const navigated = createMicHarness({ url: 'https://example.com/' });
+  assert.equal(navigated.request(audioFromApp()), false);
+  const gone = createMicHarness();
+  gone.mainWindow.isDestroyed = () => true;
+  assert.equal(gone.request(audioFromApp()), false);
+});
+
+test('dictation: the gate fails closed when its inputs throw or are missing', () => {
+  const throwing = createFakeSession();
+  installDefaultSessionPermissionGuard({
+    session: throwing,
+    getMainWindow: () => { throw new Error('boom'); },
+    isMicrophoneEnabled: () => true,
+  });
+  let granted;
+  throwing.permissionRequestHandler({}, 'media', (value) => { granted = value; }, audioFromApp());
+  assert.equal(granted, false);
+
+  const noGate = createFakeSession();
+  installDefaultSessionPermissionGuard({ session: noGate });
+  noGate.permissionRequestHandler({}, 'media', (value) => { granted = value; }, audioFromApp());
+  assert.equal(granted, false);
+});
+
+test('dictation: listing media in a custom allowlist never grants it wholesale', () => {
+  const session = createFakeSession();
+  installDefaultSessionPermissionGuard({ session, allowedPermissions: ['media'] });
+  assert.equal(session.requestPermission('media'), false);
+  assert.equal(session.checkPermission('media'), false);
 });

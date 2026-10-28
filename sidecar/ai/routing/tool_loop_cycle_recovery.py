@@ -56,16 +56,39 @@ def next_recovery_payload(
     return "done", []
 
 
+class MissingStatusCounter:
+    """Running per-tool count of missing-identifier status failures.
+
+    ``retired`` folds in only the outcomes appended since its last call, so the
+    per-iteration check stays O(new outcomes) instead of rescanning the turn.
+    """
+
+    __slots__ = ("_counts", "_scanned")
+
+    def __init__(self) -> None:
+        self._counts: dict[str, int] = {}
+        self._scanned = 0
+
+    def retired(self, outcomes: list[Any]) -> frozenset[str]:
+        """Return status tools whose missing identifier failed three times."""
+        if len(outcomes) < self._scanned:  # the list was rebuilt: recount it
+            self._counts.clear()
+            self._scanned = 0
+        for outcome in outcomes[self._scanned:]:
+            tool_name = getattr(outcome, "tool_name", "")
+            if (
+                tool_name in _STATUS_TOOLS_WITH_MISSING_IDENTIFIERS
+                and getattr(outcome, "error_code", "") == CMP_TOOL_BACKGROUND_NOT_FOUND
+            ):
+                self._counts[tool_name] = self._counts.get(tool_name, 0) + 1
+        self._scanned = len(outcomes)
+        return frozenset(
+            tool_name
+            for tool_name, count in self._counts.items()
+            if count >= _MISSING_STATUS_RETIRE_THRESHOLD
+        )
+
+
 def repeated_missing_status_tools(outcomes: list[Any]) -> frozenset[str]:
     """Return status tools whose missing identifier failed three times."""
-    return frozenset(
-        tool_name
-        for tool_name in _STATUS_TOOLS_WITH_MISSING_IDENTIFIERS
-        if sum(
-            1
-            for outcome in outcomes
-            if getattr(outcome, "tool_name", "") == tool_name
-            and getattr(outcome, "error_code", "") == CMP_TOOL_BACKGROUND_NOT_FOUND
-        )
-        >= _MISSING_STATUS_RETIRE_THRESHOLD
-    )
+    return MissingStatusCounter().retired(outcomes)

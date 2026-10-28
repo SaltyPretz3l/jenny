@@ -27,9 +27,10 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn, spawnSync } = require('child_process');
+const { spawnSync } = require('child_process');
 
 const { pipeChildLogs } = require('./backend/child-process-logging');
+const { spawnOffMainThread } = require('./ninfer-spawn-worker');
 const { sanitizeSpawnEnv } = require('./backend/sanitize-spawn-env');
 const { forceKillProcessTreeSync, verifyProcessExitedSync } = require('./backend/sidecar-shutdown');
 const { isPortOpen, isProcessAlive, wait, waitForPortToClose } = require('./backend/process-utils');
@@ -243,7 +244,8 @@ async function launchOnce(spec, deps) {
     vision, draftTokens: mtp ? draftTokens : 0, lmHeadDraft: Boolean(mtp && lmHeadDraft), kvDtype: kvDtype || 'bf16', hostKvMib,
     hostStateSlots: hostStateSlots === null ? 'default' : hostStateSlots,
   });
-  const child = spawnImpl(binaryPath, args, {
+  // Defender can hold CreateProcess for seconds; the worker keeps the main thread responsive.
+  const child = await spawnImpl(binaryPath, args, {
     cwd: path.dirname(binaryPath),
     detached: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
     env: sanitizeSpawnEnv(process.env),
@@ -388,7 +390,7 @@ async function startNinferServer({
   retainedApiKey = '',
   logger,
   platform = process.platform,
-  spawnImpl = spawn,
+  spawnImpl = spawnOffMainThread,
   spawnSyncImpl = spawnSync,
   isProcessAliveImpl = isProcessAlive,
   fetchImpl = globalThis.fetch,

@@ -87,16 +87,6 @@
   color: var(--accent);
 }
 
-/* Same pulsing dot as the row badge while the gate verifies mid-turn. */
-.ide-test-runner-gate__verdict[data-status="running"]::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  animation: ide-test-runner-pulse var(--motion-duration-pulse-fast) var(--motion-ease-standard) infinite;
-}
-
 .ide-test-runner-gate__detail {
   flex: 1 1 auto;
   min-width: 0;
@@ -143,6 +133,11 @@
   padding: 6px 8px;
   border-radius: var(--radius-sm, 5px);
   background: color-mix(in srgb, var(--state-info, var(--accent-blue, #4d9de0)) 12%, transparent);
+}
+
+/* Main could not confirm the stopped run's process tree died. */
+.ide-test-runner-panel__active-run--unconfirmed {
+  background: color-mix(in srgb, var(--state-warning) 12%, transparent);
 }
 
 .ide-test-runner-panel__active-run-label {
@@ -195,11 +190,15 @@
 .ide-test-runner-panel__status[data-status="error"] { color: var(--state-danger); }
 .ide-test-runner-panel__status[data-status="aborted"],
 .ide-test-runner-panel__status[data-status="timeout"],
-.ide-test-runner-panel__status[data-status="interrupted"] { color: var(--state-warning); }
+.ide-test-runner-panel__status[data-status="interrupted"],
+.ide-test-runner-panel__status[data-status="skipped"],
+.ide-test-runner-panel__status[data-status="unconfirmed"] { color: var(--state-warning); }
 .ide-test-runner-panel__status[data-status="running"] { color: var(--accent); }
 
-/* Pulsing dot for the live run badge (settles for reduced-motion). */
-.ide-test-runner-panel__status[data-status="running"]::before {
+/* Pulsing dot for the live run badge, and the gate verdict while the gate
+ * verifies mid-turn (settles for reduced-motion). */
+.ide-test-runner-panel__status[data-status="running"]::before,
+.ide-test-runner-gate__verdict[data-status="running"]::before {
   content: "";
   width: 6px;
   height: 6px;
@@ -212,8 +211,6 @@
   0%, 100% { opacity: 0.35; }
   50% { opacity: 1; }
 }
-
-.ide-test-runner-panel__status[data-status="skipped"] { color: var(--state-warning); }
 
 @media (prefers-reduced-motion: reduce) {
   .ide-test-runner-panel__status[data-status="running"]::before,

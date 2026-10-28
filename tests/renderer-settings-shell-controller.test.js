@@ -79,7 +79,6 @@ test('settings shell controller binds child controllers once and owns settings s
         getCurrentRuntimePreferences() { return {}; },
         getRuntimePreferenceSnapshot() { return {}; },
         runRuntimePreferenceActivity: async () => {},
-        listSlashCommands() { return ['/context', '/compact']; },
       },
       factories: {
         settingsRendererUtils: {
@@ -88,7 +87,6 @@ test('settings shell controller binds child controllers once and owns settings s
             return {
               renderSettings() { calls.push('renderSettings'); },
               renderComposerPopover() { calls.push('renderComposerPopover'); },
-              renderCommandPopover() { calls.push('renderCommandPopover'); },
               syncComposerInputHeight() { calls.push('syncComposerInputHeight'); },
             };
           },
@@ -111,6 +109,11 @@ test('settings shell controller binds child controllers once and owns settings s
               bind() { calls.push('settingsNav.bind'); },
               dispose() { calls.push('settingsNav.dispose'); },
               restoreActiveSection() { calls.push('settingsNav.restore'); },
+              setActiveSection(sectionId) {
+                calls.push(`settingsNav.setActiveSection:${sectionId}`);
+                state.ui.activeSettingsSection = sectionId;
+                return true;
+              },
             };
           },
         },
@@ -119,18 +122,17 @@ test('settings shell controller binds child controllers once and owns settings s
 
     controller.bind();
     controller.bind();
-    controller.openSettingsSection('tools');
+    assert.equal(controller.navigateSettingsSection('tools'), true);
+    assert.equal(controller.openSettingsSection, undefined, 'the alias is gone; navigateSettingsSection is the one entry');
     controller.restoreSettingsNavSection();
     controller.renderSettings();
     controller.renderComposerPopover();
-    controller.renderCommandPopover();
     controller.syncComposerInputHeight();
     controller.dispose();
     controller.dispose();
 
     assert.equal(state.ui.activeView, 'settings');
     assert.equal(state.ui.activeSettingsSection, 'tools');
-    assert.equal(localStorage.getItem('jenny.settings.activeSection'), 'tools');
     assert.deepEqual(calls, [
       'createSettingsRenderer',
       'createSettingsEventBindings',
@@ -143,10 +145,10 @@ test('settings shell controller binds child controllers once and owns settings s
       // via the inventory selectField) must exist before that pass runs.
       'renderSettings',
       'setActiveView:settings',
+      'settingsNav.setActiveSection:tools',
       'settingsNav.restore',
       'renderSettings',
       'renderComposerPopover',
-      'renderCommandPopover',
       'syncComposerInputHeight',
       'settingsEvents.dispose',
       'settingsNav.dispose',
@@ -219,7 +221,6 @@ test('settings shell controller initializes retained lazy sections once and read
         getCurrentRuntimePreferences() { return {}; },
         getRuntimePreferenceSnapshot() { return {}; },
         runRuntimePreferenceActivity: async () => {},
-        listSlashCommands() { return []; },
         refreshProactiveState: async () => { refreshCalls.proactive += 1; },
         refreshSkillsState: async () => { refreshCalls.skills += 1; },
         bindSkillsShellEvents: () => { lazyBinderCalls.skills += 1; },
@@ -352,7 +353,6 @@ test('settings shell controller retries lazy section initialization when binding
         getCurrentRuntimePreferences() { return {}; },
         getRuntimePreferenceSnapshot() { return {}; },
         runRuntimePreferenceActivity: async () => {},
-        listSlashCommands() { return []; },
       },
       factories: {
         settingsRendererUtils: {
@@ -435,7 +435,6 @@ test('settings shell controller forwards the setup action callbacks into the eve
         getCurrentRuntimePreferences() { return {}; },
         getRuntimePreferenceSnapshot() { return {}; },
         runRuntimePreferenceActivity: async () => {},
-        listSlashCommands() { return []; },
         handleRunSetupAgain() { invoked.push('handleRunSetupAgain'); },
         showSetupHelp() { invoked.push('showSetupHelp'); },
         showFactoryReset() { invoked.push('showFactoryReset'); },
@@ -446,7 +445,6 @@ test('settings shell controller forwards the setup action callbacks into the eve
             return {
               renderSettings() {},
               renderComposerPopover() {},
-              renderCommandPopover() {},
               syncComposerInputHeight() {},
             };
           },

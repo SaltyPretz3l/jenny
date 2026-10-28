@@ -52,7 +52,6 @@
     const getRecentFiles = typeof d.getRecentFiles === 'function' ? d.getRecentFiles : () => [];
     const getOpenTabs = typeof d.getOpenTabs === 'function' ? d.getOpenTabs : () => (getIde().openTabs || []);
     const getActiveView = typeof d.getActiveView === 'function' ? d.getActiveView : () => 'ide';
-    const getWorkspaceId = typeof d.getWorkspaceId === 'function' ? d.getWorkspaceId : () => '';
     // Canonical workspace-root identity (WIDE-030): { rootId, generation }
     // from state.workspaceRoot. The File Map keys persistence and scan
     // bindings off THIS — never the legacy session-workspace id above.
@@ -72,6 +71,7 @@
     const openChangeDiff = typeof d.openChangeDiff === 'function' ? d.openChangeDiff : null;
     const openChangesPanel = typeof d.openChangesPanel === 'function' ? d.openChangesPanel : noop;
     const showShellErrorToast = typeof d.showShellErrorToast === 'function' ? d.showShellErrorToast : noop;
+    const showToastMessage = typeof d.showToastMessage === 'function' ? d.showToastMessage : null;
 
     // Breadcrumb v2: folder-crumb dropdown navigation + leaf-crumb symbol picker.
     const breadcrumbs = resolveModule('rendererIdeBreadcrumbs', './renderer-ide-breadcrumbs')
@@ -92,6 +92,24 @@
     // lifecycle's saveFile; the collector just owns construction + disposal.
     const saveHygiene = resolveModule('rendererIdeSaveHygiene', './renderer-ide-save-hygiene')
       .createIdeSaveHygiene?.({ editorHost, getIde, appendClientLog }) || null;
+
+    // Hot exit (row 82 P2 E3): backs dirty buffers up through window.jennyShell.workspaceBackup
+    // and restores them after hydrate. Inert without the bridge or with ide_hot_exit off.
+    const hotExit = resolveModule('rendererIdeHotExit', './renderer-ide-hot-exit')
+      .createIdeHotExit?.({
+        getIde, editorHost, ideStateUtils, getFeatureFlags, getFileOperations, onOpenFile, activateTab,
+        showToastMessage, appendClientLog, windowRef, timers: globalRef,
+      }) || null;
+
+    // Outline view (row 82 O1): the active file's symbols in the explorer's row grammar,
+    // painted into the workbench's `outline` host while that view is visible. TS/JS reuse
+    // the symbol-nav instance's cached navigation tree; it self-subscribes to file and root events.
+    const outline = resolveModule('rendererIdeOutlineView', './renderer-ide-outline-view')
+      .createIdeOutlineView?.({
+        getViewDeps: () => d.getWorkbenchWiring?.()?.viewDeps?.('outline') || null,
+        getSymbolNav: typeof d.getSymbolNav === 'function' ? d.getSymbolNav : null,
+        editorHost, windowRef, escapeHtml, appendClientLog,
+      }) || null;
 
     // Workspace File Map (P1): renders in a stage sibling of the editor, not
     // an editor document, so it plugs into this collector like its siblings.
@@ -115,7 +133,7 @@
     const explodeController = resolveModule('rendererIdeExplodeController', './renderer-ide-explode-controller')
       .createIdeExplodeController?.({
         getDom, getIde, editorHost, windowRef, escapeHtml,
-        getWorkspaceId, getFeatureFlags, ideStateUtils, requestRender,
+        getFeatureFlags, ideStateUtils, requestRender,
         onViewModeApplied: (mode) => stageSurface?.activate(mode === 'exploded' ? 'exploded' : 'editor'),
       }) || null;
 
@@ -198,6 +216,7 @@
     function bindAll() {
       breadcrumbs?.bindEvents();
       mruSwitcher?.bindEvents();
+      hotExit?.bind();
       mapController?.bindEvents();
       stageSurface?.bindEvents();
       presentation?.bindEvents();
@@ -207,6 +226,8 @@
       breadcrumbs?.dispose();
       mruSwitcher?.dispose();
       saveHygiene?.dispose();
+      hotExit?.dispose();
+      outline?.dispose();
       mapController?.dispose();
       explodeController?.dispose();
       stageSurface?.dispose();
@@ -218,6 +239,7 @@
     // map adopts the new rootId/generation from it before rescanning.
     function handleWorkspaceRootCommitted(payload) {
       mapController?.handleWorkspaceRootCommitted?.(payload);
+      hotExit?.handleWorkspaceRootCommitted?.();
       // Living Atlas seam: heat/trail rel paths are root-relative — a root
       // switch invalidates every one of them (see activity-bus clearAll doc).
       activityBus?.clearAll?.();
@@ -230,7 +252,12 @@
       explodeController?.resetForRoot?.();
     }
 
-    return { breadcrumbs, mruSwitcher, saveHygiene, mapController, explodeController, stageSurface, previewStage, presentation, revealActiveFileInMap, blastActiveFileInMap, bindAll, disposeAll, handleWorkspaceRootCommitted };
+    // The controller calls this after each hydrate: restore backed-up dirty buffers.
+    function noteHydrated() {
+      return hotExit?.restore?.();
+    }
+
+    return { breadcrumbs, mruSwitcher, saveHygiene, hotExit, outline, noteHydrated, mapController, explodeController, stageSurface, previewStage, presentation, revealActiveFileInMap, blastActiveFileInMap, bindAll, disposeAll, handleWorkspaceRootCommitted };
   }
 
   return { createIdeQolWiring };

@@ -63,7 +63,7 @@ export default [
     },
   },
   {
-    files: ["*.js", "services/**/*.js", "server/**/*.js", "scripts/**/*.js", "tests/**/*.js", "build/**/*.js"],
+    files: ["*.js", "services/**/*.js", "server/**/*.js", "cli/**/*.js", "scripts/**/*.js", "tests/**/*.js", "build/**/*.js"],
     ignores: browserShellFiles,
     languageOptions: {
       ecmaVersion: "latest",

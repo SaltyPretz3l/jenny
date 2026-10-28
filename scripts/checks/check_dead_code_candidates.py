@@ -9,6 +9,16 @@ reached file contributes its static ``require``/``import``/``import()`` targets,
 ``<script src>`` tags, ``path.join(__dirname, ...)`` literals, and app-root
 ``renderer/...js`` literals (the ``ensureScript`` lazy panes and script-tag
 injections resolve against the app root, not the importing file).
+
+``launcher_targets`` adds the roots no import graph reaches: npm ``bin``
+entries, tool configs, self-runnable scripts (node shebang or
+``require.main === module``), ``scripts/`` tools a test spawns by path, JS paths
+named by launcher files (workflows, compose, shell, python, PowerShell, Makefile,
+Dockerfile), ``node x.js`` recipes and relative ``[text](x.js)`` links in
+non-archived markdown (``archive`` directories and ``docs/history/`` are records),
+and the siblings a ``scripts/`` tool names by basename (a tool that mounts its own
+directory, e.g. ``/proof/probe.js``). Candidates are limited to tracked files
+(``git ls-files``) so gitignored build outputs never appear.
 """
 from __future__ import annotations
 
@@ -17,6 +27,7 @@ import ast
 import json
 import os
 import re
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -41,6 +52,27 @@ DYNAMIC_ENTRY_GLOBS = (
     # "locales/<tag>.catalog.js" for the active non-English locale.
     "locales/*.catalog.js",
 )
+
+# Tool configs and build inputs discovered by name rather than by import.
+CONFIG_ENTRY_FILES = ("eslint.config.mjs", "uninstall-preload.js")
+
+# Top-level directories that hold records (plans, reports, probes, mockups), never shipped source.
+RECORD_TOP_DIRS = {"docs", ".jenny-diagnostics"}
+
+# A file that declares itself runnable: node shebang or ``require.main === module``.
+RE_SELF_RUNNABLE = re.compile(r"\A#!.*\bnode\b|require\.main\s*===\s*module")
+# Repo-relative JS path inside a launcher (workflow, compose, shell, python, powershell, Makefile).
+# Both separators are accepted so ``scripts\eval\x.js`` in a .ps1 counts.
+_PATH_PART = r"[A-Za-z0-9_.\-]+"
+_JS_PATH = rf"{_PATH_PART}(?:[/\\]{_PATH_PART})*\.(?:js|mjs|cjs)\b"
+RE_JS_PATH_TOKEN = re.compile(_JS_PATH)
+# A documented recipe: ``node scripts/x.js`` / ``electron scripts/x.js``.
+RE_DOC_RECIPE = re.compile(rf"\b(?:node|electron)(?:\.exe)?\s+(?:--?\S+\s+)*(?P<ref>{_JS_PATH})")
+# A markdown link to a JS file, resolved against the markdown file's directory.
+RE_DOC_LINK = re.compile(r"\]\((?P<ref>[^)\s#]+\.(?:js|mjs|cjs))(?:#[^)]*)?\)")
+LAUNCHER_SUFFIXES = (".py", ".sh", ".ps1", ".yml", ".yaml", ".cmd", ".bat")
+LAUNCHER_NAMES = {"Makefile", "Dockerfile"}
+JS_SUFFIXES_ALL = {".js", ".mjs", ".cjs"}
 
 # npm-script tokens that name a local file worth traversing.
 PACKAGE_SCRIPT_SUFFIXES = (".js", ".mjs", ".cjs", ".py")
@@ -202,11 +234,118 @@ def package_script_targets(root: Path) -> set[Path]:
     return targets
 
 
+def tracked_files() -> list[Path] | None:
+    """Tracked files, so gitignored build outputs never become candidates (None outside git)."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "-z"], capture_output=True, check=True
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    names = [name for name in proc.stdout.decode("utf-8", "replace").split("\0") if name]
+    return [ROOT / name for name in names] or None
+
+
+def _is_launcher(path: Path) -> bool:
+    return (
+        path.suffix in LAUNCHER_SUFFIXES
+        or path.name in LAUNCHER_NAMES
+        or path.name.startswith("Dockerfile")
+        or path.parts[-3:-1] == (".github", "workflows")
+    )
+
+
+def _spawned_tool_targets(text: str, test_file: Path) -> set[Path]:
+    """``scripts/**`` JS files a test spawns or loads by path (a tool with a test is not dead)."""
+    found: set[Path] = set()
+    for token in RE_JS_PATH_TOKEN.findall(text):
+        ref = token.replace("\\", "/")
+        for base in (test_file.parent, ROOT):
+            candidate = (base / ref).resolve()
+            if not (candidate.is_file() and candidate.is_relative_to(ROOT)):
+                continue
+            if candidate.relative_to(ROOT).parts[0] == "scripts":
+                found.add(candidate)
+                break
+    return found
+
+
+def _is_record_markdown(rel_parts: tuple[str, ...]) -> bool:
+    """Archived plans and dated history never keep a script alive."""
+    return "archive" in rel_parts or rel_parts[:2] == ("docs", "history")
+
+
+def _mounted_sibling_targets(text: str, tool: Path) -> set[Path]:
+    """Siblings a ``scripts/`` tool names by basename (its directory is mounted or copied)."""
+    found: set[Path] = set()
+    for token in RE_JS_PATH_TOKEN.findall(text):
+        sibling = tool.parent / token.replace("\\", "/").rsplit("/", 1)[-1]
+        if sibling != tool and sibling.is_file():
+            found.add(sibling.resolve())
+    return found
+
+
+def _doc_link_targets(text: str, doc: Path) -> set[Path]:
+    found: set[Path] = set()
+    for match in RE_DOC_LINK.finditer(text):
+        candidate = (doc.parent / match.group("ref")).resolve()
+        if candidate.is_file() and candidate.is_relative_to(ROOT):
+            found.add(candidate)
+    return found
+
+
+def launcher_targets(files: list[Path]) -> set[Path]:
+    """JS files named by launchers, npm ``bin`` entries, node shebangs/main guards and doc references.
+
+    ``files`` is the tracked-file universe to scan (empty when git is unavailable).
+    Archived and history markdown is skipped so finished programs do not keep
+    scripts alive.
+    """
+    targets: set[Path] = set()
+    try:
+        bin_field = json.loads((ROOT / "package.json").read_text(encoding="utf-8")).get("bin") or {}
+    except (OSError, json.JSONDecodeError):
+        bin_field = {}
+    bins = [bin_field] if isinstance(bin_field, str) else list(bin_field.values())
+    bins = [b for b in bins if isinstance(b, str)]
+    targets.update(p for b in bins if (p := (ROOT / b).resolve()).is_file())
+    targets.update(p.resolve() for name in CONFIG_ENTRY_FILES if (p := ROOT / name).is_file())
+    for path in files:
+        is_js = path.suffix in JS_SUFFIXES_ALL
+        rel_parts = path.relative_to(ROOT).parts
+        is_md = path.suffix == ".md" and not _is_record_markdown(rel_parts)
+        if not (is_js or is_md or _is_launcher(path)):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if is_js:
+            if RE_SELF_RUNNABLE.search(text):
+                targets.add(path.resolve())
+            if TEST_DIRS.intersection(rel_parts):
+                targets.update(_spawned_tool_targets(text, path))
+            elif rel_parts[0] == "scripts":
+                targets.update(_mounted_sibling_targets(text, path))
+            continue
+        if is_md:
+            targets.update(_doc_link_targets(text, path))
+            refs = [m.group("ref") for m in RE_DOC_RECIPE.finditer(text)]
+        else:
+            refs = RE_JS_PATH_TOKEN.findall(text)
+        for ref in refs:
+            candidate = (ROOT / ref.replace("\\", "/")).resolve()
+            if candidate.is_file():
+                targets.add(candidate)
+    return targets
+
+
 def _initial_entries() -> list[Path]:
     entries = {p.resolve() for p in ENTRYPOINTS if p.exists()}
     for pattern in DYNAMIC_ENTRY_GLOBS:
         entries.update(p.resolve() for p in ROOT.glob(pattern) if p.is_file())
     entries.update(package_script_targets(ROOT))
+    entries.update(launcher_targets(tracked_files() or []))
     return sorted(entries, key=str)
 
 
@@ -254,6 +393,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     all_files = {f for f in collect_files() if f.suffix != ".json"}
+    tracked = tracked_files()
+    if tracked is not None:
+        all_files &= {p.resolve() for p in tracked}
 
     excluded_dirs = set()
     if not args.include_tests:
@@ -264,6 +406,7 @@ def main(argv: list[str] | None = None) -> int:
         f for f in all_files
         if all(test_dir not in f.parts for test_dir in excluded_dirs)
         and all(part not in IGNORE_DIRS for part in f.relative_to(ROOT).parts)
+        and f.relative_to(ROOT).parts[0] not in RECORD_TOP_DIRS
     }
 
     refs = collect_references()

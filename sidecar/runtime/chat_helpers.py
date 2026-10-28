@@ -5,6 +5,11 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from sidecar.ai.context.context_count import (
+    ContextCalibration,
+    engine_reports_full_prompt_tokens,
+    normalize_context_calibration,
+)
 from sidecar.ai.error_codes import CMP_APPROVAL_REJECTED, CMP_CHAT_INVALID_PARAMS
 from sidecar.ai.feature_flags import FEATURE_AGENT_EXECUTOR, is_feature_flag_enabled
 from sidecar.ai.mode_policy import normalize_mode
@@ -300,6 +305,7 @@ def attach_compact_threshold(
         try:
             from sidecar.ai.context.token_budget import (
                 TokenBudget,
+                engine_fits_output_to_window,
                 resolve_auto_compact_ratio,
                 resolve_context_window_hint,
             )
@@ -316,6 +322,7 @@ def attach_compact_threshold(
                 budget = TokenBudget(
                     context_window=int(window),
                     max_output_tokens=int(max_output),
+                    fitted_output=engine_fits_output_to_window(engine),
                     auto_compact_ratio=resolve_auto_compact_ratio(
                         config,
                         model_id=str(getattr(config, "model", "") or ""),
@@ -368,6 +375,52 @@ def attach_context_used_tokens(
     usage_payload["context_used_source"] = (
         "provider" if provider_tokens >= estimate else "estimate"
     )
+
+
+def context_calibration_from_params(params: Any) -> ContextCalibration | None:
+    """The request's carried calibration, failing closed to ``None`` on anything malformed."""
+    if not isinstance(params, dict):
+        return None
+    return normalize_context_calibration(params.get("context_calibration"))
+
+
+def attach_context_calibration(
+    usage_payload: dict[str, Any], reading: Any, engine: Any, config: Any
+) -> None:
+    """Publish the last request's provider-vs-estimate pair for the next turn.
+
+    ``reading`` is the tool loop's ``{provider_tokens, estimate_tokens,
+    estimator}`` for the request that produced the usage block's
+    ``last_request_input_tokens``. It rides out only when the engine's count is
+    the whole prompt and still matches that figure, and carries the engine and
+    model the ladder compares before trusting it (``resolve_token_scale``): the
+    labels stamped when the request was measured, else the turn's config.
+    """
+    if not isinstance(usage_payload, dict) or not isinstance(reading, dict):
+        return
+    provider_tokens = reading.get("provider_tokens")
+    if (
+        not engine_reports_full_prompt_tokens(engine)
+        or provider_tokens != usage_payload.get("last_request_input_tokens")
+    ):
+        return
+    calibration = normalize_context_calibration(
+        {
+            "provider_tokens": provider_tokens,
+            "estimate_tokens": reading.get("estimate_tokens"),
+            "engine": str(reading.get("engine") or config.engine_type),
+            "model": str(reading.get("model") or config.model),
+            "estimator": reading.get("estimator"),
+        }
+    )
+    if calibration is not None:
+        usage_payload["context_calibration"] = {
+            "provider_tokens": calibration.provider_tokens,
+            "estimate_tokens": calibration.estimate_tokens,
+            "engine": calibration.engine,
+            "model": calibration.model,
+            "estimator": calibration.estimator,
+        }
 
 
 def _decision_usage_payload(

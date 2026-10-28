@@ -67,23 +67,14 @@ describe('ToolRegistry', () => {
     assert.equal(all[1].name, 'B');
   });
 
-  test('getToolSchemas returns schemas for all tools', () => {
+  test('registerTool normalizes the read-only and mode flags', () => {
     const registry = new ToolRegistry();
     registry.registerTool(makeTool({ name: 'Read', readOnly: true }));
-    registry.registerTool(makeTool({ name: 'Write', readOnly: false }));
-    const schemas = registry.getToolSchemas();
-    assert.equal(schemas.length, 2);
-    assert.equal(schemas[0].type, 'function');
-    assert.equal(schemas[0].function.name, 'Read');
-  });
-
-  test('getToolSchemas with planMode filters to readOnly', () => {
-    const registry = new ToolRegistry();
-    registry.registerTool(makeTool({ name: 'Read', readOnly: true }));
-    registry.registerTool(makeTool({ name: 'Write', readOnly: false }));
-    const schemas = registry.getToolSchemas({ planMode: true });
-    assert.equal(schemas.length, 1);
-    assert.equal(schemas[0].function.name, 'Read');
+    registry.registerTool(makeTool({ name: 'Write', readOnly: 'yes', planModeOnly: 1 }));
+    assert.equal(registry.getTool('Read').readOnly, true);
+    assert.equal(registry.getTool('Write').readOnly, false);
+    assert.equal(registry.getTool('Write').planModeOnly, false);
+    assert.equal(registry.getTool('Write').proposeModeOnly, false);
   });
 
   test('readOnly defaults to false when not set', () => {
@@ -100,12 +91,12 @@ describe('ToolRegistry', () => {
 
     assert.equal(registry.getTool('run_command').name, 'run_command');
     assert.equal(registry.getTool('Bash').name, 'run_command');
-    assert.equal(registry.getToolSchemas()[0].function.name, 'run_command');
+    assert.deepEqual(registry.getAllTools().map((tool) => tool.name), ['run_command']);
   });
 
   test('default registry does not duplicate sidecar-owned canonical tools', () => {
     const registry = createDefaultRegistry();
-    const schemaNames = registry.getToolSchemas().map((entry) => entry.function.name);
+    const schemaNames = registry.getAllTools().map((tool) => tool.name);
 
     for (const toolName of [
       'read_file',
@@ -130,21 +121,15 @@ describe('ToolRegistry', () => {
     assert.equal(tool.workspaceRequired, false);
     assert.equal(tool.parameters.additionalProperties, false);
     assert.equal(tool.parameters.properties.session_id.type, 'string');
-
-    const planModeNames = registry
-      .getToolSchemas({ planMode: true })
-      .map((entry) => entry.function.name);
-    assert.equal(planModeNames.includes('jenny_status'), true);
+    assert.equal(tool.planModeOnly, false);
   });
 
 });
 
-test('propose-mode-only tools are offered only when proposeMode is set (Plan Plus)', () => {
+test('propose-mode-only tools carry the proposeModeOnly flag (Plan Plus)', () => {
   const registry = new ToolRegistry();
   registry.registerTool(makeTool({ name: 'Suggest', readOnly: true, proposeModeOnly: true }));
   registry.registerTool(makeTool({ name: 'Read', readOnly: true }));
-  const names = (options) => registry.getToolSchemas(options).map((schema) => schema.function.name);
-  assert.deepEqual(names(), ['Read']);
-  assert.deepEqual(names({ planMode: true }), ['Read']);
-  assert.deepEqual(names({ proposeMode: true }), ['Suggest', 'Read']);
+  assert.equal(registry.getTool('Suggest').proposeModeOnly, true);
+  assert.equal(registry.getTool('Read').proposeModeOnly, false);
 });

@@ -17,6 +17,7 @@ const {
 const {
   normalizeGeneratedArtifactMetadataList,
 } = require('../artifact-metadata-utils');
+const { isPrimaryRole } = require('./primary-session');
 
 function isBranchableMessage(message) {
   if (!message || typeof message !== 'object' || Array.isArray(message)) {
@@ -216,6 +217,11 @@ function updateLinkedSessionIds(store, sessionId, linkedSessionId) {
 function forkSession(sessionStore, sourceSessionId, atMessageId, options = {}) {
   const sourceSession = sessionStore.getSession(sourceSessionId);
   if (!sourceSession) {
+    return null;
+  }
+  // Row 69: the primary Jenny chat's transcript spans every project; a branch would copy it into an
+  // ordinary General chat that every General chat may read.
+  if (isPrimaryRole(sourceSession)) {
     return null;
   }
 
@@ -438,6 +444,7 @@ async function forkSessionWithArtifacts(sessionStore, sourceSessionId, atMessage
 }
 
 module.exports = {
+  updateLinkedSessionIds,
   forkSession,
   forkSessionWithArtifacts,
   isBranchableMessage,

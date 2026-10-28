@@ -425,3 +425,13 @@ describe('forkSession and addressed session messages', () => {
     assert.equal(forkSession(store, 'sess_mail', `ctxr_${F.uuid(2)}`), null);
   });
 });
+
+it('row 69: the primary Jenny chat cannot be branched', () => {
+  const messages = [{ id: 'msg_1', role: 'user', content: 'what was I working on?' }];
+  const store = createMockSessionStore({
+    primary: { id: 'primary', title: 'Jenny', session_role: 'primary', project_id: 'project_general', messages, linked_session_ids: [] },
+    plain: { id: 'plain', title: 'Plan', project_id: 'project_general', messages, linked_session_ids: [] },
+  });
+  assert.equal(forkSession(store, 'primary', 'msg_1'), null, 'a branch would copy a cross-project transcript into General');
+  assert.ok(forkSession(store, 'plain', 'msg_1'), 'ordinary chats still branch');
+});

@@ -30,12 +30,6 @@
       return { status: null };
     },
     renderApprovedMemoryManager: noop,
-    handleApprovedMemorySave: noopAsync,
-    handleApprovedMemoryDelete: noopAsync,
-    upsertApprovedMemoryDraft: noop,
-    clearApprovedMemoryDraft: noop,
-    getApprovedMemoryById: noopNull,
-    hasApprovedMemoryDraftChanges: noopFalse,
   });
 
   function createShellServiceRegistry(deps) {
@@ -90,12 +84,8 @@
       setActiveView = noop,
       openSettingsSection = noop,
       getSettingsShellController = noopNull,
-      applyWorkspaceSnapshot = noop,
-      renderWorkspaceChrome = noop,
-      syncWorkspaceFromStore = noopAsync,
       activateWorkspaceSession = noopAsync,
       handleCreateSessionWithWorkspace = noopAsync,
-      getCurrentRuntimePreferences = noopObj,
       setSessionOrigin = noop,
       setPendingOrigin = noop,
       clearPendingOrigin = noop,
@@ -119,9 +109,7 @@
 
     let personalityController = null;
     let getPersonalityActiveFile = noopNull;
-    let getPersonalityDraft = noopStr;
     let setPersonalityDraft = noop;
-    let loadPersonalityTabContent = noopAsync;
     let refreshPersonalityWorkspace = noopAsync;
     let renderPersonalityEditor = noop;
     let handlePersonalityTabChange = noopAsync;
@@ -152,12 +140,6 @@
     let refreshPendingMemories = MEMORY_CONTROLLER_DEFAULTS.refreshPendingMemories;
     let refreshMemoryStatus = MEMORY_CONTROLLER_DEFAULTS.refreshMemoryStatus;
     let renderApprovedMemoryManager = MEMORY_CONTROLLER_DEFAULTS.renderApprovedMemoryManager;
-    let handleApprovedMemorySave = MEMORY_CONTROLLER_DEFAULTS.handleApprovedMemorySave;
-    let handleApprovedMemoryDelete = MEMORY_CONTROLLER_DEFAULTS.handleApprovedMemoryDelete;
-    let upsertApprovedMemoryDraft = MEMORY_CONTROLLER_DEFAULTS.upsertApprovedMemoryDraft;
-    let clearApprovedMemoryDraft = MEMORY_CONTROLLER_DEFAULTS.clearApprovedMemoryDraft;
-    let getApprovedMemoryById = MEMORY_CONTROLLER_DEFAULTS.getApprovedMemoryById;
-    let hasApprovedMemoryDraftChanges = MEMORY_CONTROLLER_DEFAULTS.hasApprovedMemoryDraftChanges;
 
     let refreshWorkspaceRootDependents = noopAsync;
 
@@ -195,9 +177,7 @@
       }) || null;
       ({
         getPersonalityActiveFile = noopNull,
-        getPersonalityDraft = noopStr,
         setPersonalityDraft = noop,
-        loadPersonalityTabContent = noopAsync,
         refreshPersonalityWorkspace = noopAsync,
         renderPersonalityEditor = noop,
         handlePersonalityTabChange = noopAsync,
@@ -368,12 +348,6 @@
         refreshPendingMemories = MEMORY_CONTROLLER_DEFAULTS.refreshPendingMemories,
         refreshMemoryStatus = MEMORY_CONTROLLER_DEFAULTS.refreshMemoryStatus,
         renderApprovedMemoryManager = MEMORY_CONTROLLER_DEFAULTS.renderApprovedMemoryManager,
-        handleApprovedMemorySave = MEMORY_CONTROLLER_DEFAULTS.handleApprovedMemorySave,
-        handleApprovedMemoryDelete = MEMORY_CONTROLLER_DEFAULTS.handleApprovedMemoryDelete,
-        upsertApprovedMemoryDraft = MEMORY_CONTROLLER_DEFAULTS.upsertApprovedMemoryDraft,
-        clearApprovedMemoryDraft = MEMORY_CONTROLLER_DEFAULTS.clearApprovedMemoryDraft,
-        getApprovedMemoryById = MEMORY_CONTROLLER_DEFAULTS.getApprovedMemoryById,
-        hasApprovedMemoryDraftChanges = MEMORY_CONTROLLER_DEFAULTS.hasApprovedMemoryDraftChanges,
       } = memoryController || {});
       return memoryController;
     }
@@ -515,10 +489,8 @@
           callbacks: { appendClientLog: (...args) => appendClientLog(...args), clearPendingOrigin: (...args) => clearPendingOrigin(...args),
             activateWorkspaceSession: (...args) => activateWorkspaceSession(...args), setActiveView: (...args) => setActiveView(...args), renderAll: (...args) => renderAll(...args),
             applyCompanionPayload: (...args) => applyCompanionPayload(...args),
-            // Ask-pill mini-composer: the same create path the New Chat button
-            // uses, plus the live runtime pair the pill's draft seeds from.
-            handleCreateSession: (...args) => handleCreateSessionWithWorkspace(...args),
-            getRuntimePreferences: (...args) => getCurrentRuntimePreferences(...args) },
+            // The ask pill opens chats through the same path the New Chat button uses.
+            handleCreateSession: (...args) => handleCreateSessionWithWorkspace(...args) },
         }) || null;
         if (dashboardController) {
           dashboardController.bind?.();
@@ -610,10 +582,11 @@
             showToastMessage: (...args) => showToastMessage(...args),
             showShellErrorToast: (...args) => showShellErrorToast(...args),
             setActiveView: (...args) => setActiveView(...args),
-            renderHomeAfterChange: () => {
-              if (state.ui?.activeView === 'home') {
-                renderAll();
-              }
+            // A setup snapshot changed (a status-driven refresh or a step write): repaint the
+            // surface that shows it, so Settings > Account never keeps an old step count.
+            renderAfterSetupChange: () => {
+              if (state.ui?.activeView === 'settings') renderSettings();
+              else if (state.ui?.activeView === 'home') renderAll();
             },
           },
         }) || null;
@@ -683,7 +656,6 @@
     }) || {};
     const {
       applyFeatureStatePayload = noopObj,
-      applyWorkspaceRootStatePayload = noopObj,
       refreshFeatureState = noopAsync,
       refreshWorkspaceRootState = noopAsync,
       refreshPhasePercentiles = noopAsync, resetPhasePercentiles = noopAsync,
@@ -782,9 +754,6 @@
     const refreshPendingMemoriesSafe = memorySafe((...args) => refreshPendingMemories(...args));
     const refreshMemoryStatusSafe = memorySafe((...args) => refreshMemoryStatus(...args));
     const renderApprovedMemoryManagerSafe = memorySafe((...args) => renderApprovedMemoryManager(...args));
-    const handleApprovedMemorySaveSafe = memorySafe((...args) => handleApprovedMemorySave(...args));
-    const handleApprovedMemoryDeleteSafe = memorySafe((...args) => handleApprovedMemoryDelete(...args));
-    const upsertApprovedMemoryDraftSafe = memorySafe((...args) => upsertApprovedMemoryDraft(...args));
 
     // A construction throw declines (false) so callers fall back instead of re-entering the IDE.
     function openIdeAfterLoad(method) {
@@ -806,9 +775,6 @@
     const revealIdeChangesSafe = (target) => { try { return ideController?.chatDock?.revealChanges?.(target) === true; } catch (error) { appendClientLog('WARN', 'ide_chat_dock.reveal_changes_failed', { message: String(error?.message || error).slice(0, 200) }); return false; } }; // only a live dock can show it
     const getIdeCommandItemsSafe = ideSafe((...args) => ensureIdeController()?.getIdeCommandItems?.(...args) || []);
     const openIdeHelpOverlaySafe = ideSafe((...args) => openIdeHelpOverlay(...args)); const openIdeChangeDiffSafe = openIdeAfterLoad('openLedgerChangeById'); const openIdeFileAtLineSafe = openIdeAfterLoad('openFileAtLine'); const openIdeTestOutputSafe = openIdeAfterLoad('showActivityOutput'); const openIdeGitViewSafe = openIdeAfterLoad('openGitView'); // an explicit user click may construct it
-    const clearApprovedMemoryDraftSafe = memorySafe((...args) => clearApprovedMemoryDraft(...args));
-    const getApprovedMemoryByIdSafe = memorySafe((...args) => getApprovedMemoryById(...args));
-    const hasApprovedMemoryDraftChangesSafe = memorySafe((...args) => hasApprovedMemoryDraftChanges(...args));
 
     const companionHandlers = shellStateRuntimeUtils.createCompanionSafeHandlers?.({
       state,
@@ -837,10 +803,8 @@
     }) || {};
     const {
       initSetupControllerSafe = noopAsync,
-      refreshSetupStateSafe = noopAsync,
       applySetupBackendStatusSafe = noopObj,
       openSetupTileSafe = noopNull,
-      showSetupFromSettingsSafe = noop,
       showSetupHelpSafe = noopNull,
       showFactoryResetSafe = noopNull,
       handleRunSetupAgain = noopAsync,
@@ -854,27 +818,17 @@
     return {
       initializeEagerServices,
       applyFeatureStatePayload,
-      applyWorkspaceRootStatePayload,
       refreshFeatureState,
       refreshWorkspaceRootState,
       refreshPhasePercentiles,
       resetPhasePercentiles,
-      refreshWorkspaceRootDependents,
       hydrateCachedLazyShellState,
       queueStartupLazyHydration,
       handleWorkspaceRootChoose,
       clearWorkspaceRoot,
       getProjectSwitcher,
       getPersonalityActiveFileSafe,
-      getPersonalityDraftSafe: (...args) => {
-        ensurePersonalityController();
-        return getPersonalityDraft(...args);
-      },
       setPersonalityDraftSafe,
-      loadPersonalityTabContentSafe: (...args) => {
-        ensurePersonalityController();
-        return loadPersonalityTabContent(...args);
-      },
       refreshPersonalityWorkspaceSafe,
       renderPersonalityEditorSafe,
       handlePersonalityTabChangeSafe,
@@ -897,18 +851,12 @@
       refreshPendingMemoriesSafe,
       refreshMemoryStatusSafe,
       renderApprovedMemoryManagerSafe,
-      handleApprovedMemorySaveSafe,
-      handleApprovedMemoryDeleteSafe,
-      upsertApprovedMemoryDraftSafe,
       ensureIdeController, ensureIdeLoaded,
       renderIdeSafe,
       activateIdeSafe,
       layoutIdeEditorSafe, reconcileChatDockHostSafe, prepareChatDockSessionTransitionSafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe, openIdeTestOutputSafe, openIdeGitViewSafe, revealIdeChangesSafe,
       getIdeCommandItemsSafe,
       openIdeHelpOverlaySafe,
-      clearApprovedMemoryDraftSafe,
-      getApprovedMemoryByIdSafe,
-      hasApprovedMemoryDraftChangesSafe,
       refreshCompanionStateSafe,
       shouldRenderHomePanelSafe,
       renderHomePanelSafe,
@@ -917,10 +865,8 @@
       renderDashboardSafe,
       ensureSetupController,
       initSetupControllerSafe,
-      refreshSetupStateSafe,
       applySetupBackendStatusSafe,
       openSetupTileSafe,
-      showSetupFromSettingsSafe,
       showSetupHelpSafe,
       showFactoryResetSafe,
       handleRunSetupAgain,

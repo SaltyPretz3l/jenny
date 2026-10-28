@@ -980,7 +980,7 @@ If the turn is stuck, the user can click Cancel. Electron sends
 Typedefs `ToolApprovalResponse` and `ToolApprovalResponseResult` live in
 [services/ipc-contract.js](../../services/ipc-contract.js). The schema
 owner is [sidecar/protocol.py](../../sidecar/protocol.py) plus
-`sidecar/runtime/approval.py::approval_decision_from_response`. A malformed
+`sidecar/runtime/approval.py::approval_resolution_from_response`. A malformed
 response is rejected at the sidecar boundary and surfaces as
 `CMP-APPROVAL-0002 / malformed_decision`.
 

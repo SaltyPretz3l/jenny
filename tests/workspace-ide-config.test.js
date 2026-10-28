@@ -33,6 +33,43 @@ test('tab normalization keeps preview and positive integer view lines only', () 
   ]);
 });
 
+test('tab normalization keeps a valid PDF page and zoom and silently drops invalid ones', () => {
+  const value = normalizeWorkspaceIde({ openTabs: [
+    { path: 'a.pdf', page: 12, zoom: 1.25 },
+    { path: 'b.pdf', page: 1, zoom: 'page-width' },
+    { path: 'c.pdf', page: 100000, zoom: 'page-fit' },
+    { path: 'd.pdf', zoom: 'page-actual' },
+    { path: 'e.pdf', zoom: 'auto' },
+    { path: 'f.pdf', zoom: 0.25 },
+    { path: 'g.pdf', zoom: 8 },
+    { path: 'h.pdf', zoom: 1.234567 },
+    { path: 'bad1.pdf', page: 0, zoom: 0.1 },
+    { path: 'bad2.pdf', page: -1, zoom: 'huge' },
+    { path: 'bad3.pdf', page: 1.5, zoom: 9 },
+    { path: 'bad4.pdf', page: NaN, zoom: NaN },
+    { path: 'bad5.pdf', page: '3', zoom: '300' },
+    { path: 'bad6.pdf', page: 100001, zoom: Infinity },
+    { path: 'plain.js', line: 3 },
+  ] });
+  assert.deepEqual(value.openTabs, [
+    { path: 'a.pdf', pinned: false, page: 12, zoom: 1.25 },
+    { path: 'b.pdf', pinned: false, page: 1, zoom: 'page-width' },
+    { path: 'c.pdf', pinned: false, page: 100000, zoom: 'page-fit' },
+    { path: 'd.pdf', pinned: false, zoom: 'page-actual' },
+    { path: 'e.pdf', pinned: false, zoom: 'auto' },
+    { path: 'f.pdf', pinned: false, zoom: 0.25 },
+    { path: 'g.pdf', pinned: false, zoom: 8 },
+    { path: 'h.pdf', pinned: false, zoom: 1.2346 },
+    { path: 'bad1.pdf', pinned: false },
+    { path: 'bad2.pdf', pinned: false },
+    { path: 'bad3.pdf', pinned: false },
+    { path: 'bad4.pdf', pinned: false },
+    { path: 'bad5.pdf', pinned: false },
+    { path: 'bad6.pdf', pinned: false },
+    { path: 'plain.js', pinned: false, line: 3 },
+  ]);
+});
+
 function ideState(state) {
   return workspaceIdeStateForRoot(
     state.workspaceIde,
@@ -149,6 +186,7 @@ test('normalizeWorkspaceIde applies defaults and clamps', () => {
     activeStageSurface: 'editor',
     previewPath: '',
     replaceJournal: null,
+    searchHistory: [],
     railPanel: 'explorer',
     railSide: 'left',
     railWidth: 300,
@@ -176,12 +214,38 @@ test('normalizeWorkspaceIde applies defaults and clamps', () => {
     renderWhitespace: 'selection',
     eol: '',
     autoSaveEnabled: false,
+    // Row 82 additive editor/terminal/auto-save prefs.
+    fontFamily: '',
+    cursorStyle: 'line',
+    cursorBlinking: 'smooth',
+    cursorSmoothCaretAnimation: true,
+    fontLigatures: true,
+    bracketPairColorization: true,
+    indentGuides: true,
+    stickyScroll: true,
+    folding: true,
+    insertSpaces: true,
+    detectIndentation: true,
+    autoSaveMode: 'off',
+    autoSaveDelayMs: 1000,
+    scrollBeyondLastLine: false,
+    mouseWheelZoom: true,
+    inlineBlame: true,
+    terminalScrollback: 1000,
+    terminalDefaultProfile: '',
     formatOnSave: false,
     trimTrailingWhitespace: false,
     insertFinalNewline: false,
     rulers: [],
     workbenchLayout: null,
   });
+  // terminal scrollback: integer, clamped to 500..25000 (D1); non-numeric -> 1000.
+  assert.equal(normalizeWorkspaceIde({ terminalScrollback: 5000.9 }).terminalScrollback, 5000);
+  assert.equal(normalizeWorkspaceIde({ terminalScrollback: 10 }).terminalScrollback, 500);
+  assert.equal(normalizeWorkspaceIde({ terminalScrollback: 100000 }).terminalScrollback, 25000, 'a stored pre-D1 value clamps on load');
+  for (const bad of ['abc', null, NaN, true, {}, undefined]) {
+    assert.equal(normalizeWorkspaceIde({ terminalScrollback: bad }).terminalScrollback, 1000);
+  }
   // save-time hygiene: all DEFAULT-OFF (only a literal true enables).
   for (const key of ['formatOnSave', 'trimTrailingWhitespace', 'insertFinalNewline']) {
     assert.equal(normalizeWorkspaceIde({ [key]: true })[key], true);
@@ -195,6 +259,29 @@ test('normalizeWorkspaceIde applies defaults and clamps', () => {
   assert.equal(normalizeWorkspaceIde({ autoSaveEnabled: 'yes' }).autoSaveEnabled, false);
   assert.equal(normalizeWorkspaceIde({ autoSaveEnabled: 1 }).autoSaveEnabled, false);
   assert.equal(normalizeWorkspaceIde(undefined).autoSaveEnabled, false);
+  // row 82: autoSaveMode wins; autoSaveEnabled is only the derived mirror.
+  assert.equal(normalizeWorkspaceIde({ autoSaveEnabled: true }).autoSaveMode, 'afterDelay');
+  assert.equal(normalizeWorkspaceIde({ autoSaveEnabled: 'yes' }).autoSaveMode, 'off');
+  const explicitOff = normalizeWorkspaceIde({ autoSaveMode: 'off', autoSaveEnabled: true });
+  assert.equal(explicitOff.autoSaveMode, 'off');
+  assert.equal(explicitOff.autoSaveEnabled, false);
+  const focusMode = normalizeWorkspaceIde({ autoSaveMode: 'onFocusChange', autoSaveEnabled: false });
+  assert.equal(focusMode.autoSaveMode, 'onFocusChange');
+  assert.equal(focusMode.autoSaveEnabled, true);
+  assert.equal(normalizeWorkspaceIde({ autoSaveMode: 'bogus' }).autoSaveMode, 'off');
+  assert.equal(normalizeWorkspaceIde({ autoSaveDelayMs: 5 }).autoSaveDelayMs, 100);
+  assert.equal(normalizeWorkspaceIde({ autoSaveDelayMs: 9e9 }).autoSaveDelayMs, 60000);
+  assert.equal(normalizeWorkspaceIde({ autoSaveDelayMs: NaN }).autoSaveDelayMs, 1000);
+  assert.equal(normalizeWorkspaceIde({ terminalScrollback: 1 }).terminalScrollback, 500);
+  assert.equal(normalizeWorkspaceIde({ terminalScrollback: 1e9 }).terminalScrollback, 25000);
+  assert.equal(normalizeWorkspaceIde({ terminalDefaultProfile: 'pwsh-7' }).terminalDefaultProfile, 'pwsh-7');
+  assert.equal(normalizeWorkspaceIde({ terminalDefaultProfile: '../x' }).terminalDefaultProfile, '');
+  assert.equal(normalizeWorkspaceIde({ fontFamily: ' Fira Code ' }).fontFamily, 'Fira Code');
+  assert.equal(normalizeWorkspaceIde({ fontFamily: 'a;b' }).fontFamily, '');
+  assert.equal(normalizeWorkspaceIde({ folding: 0 }).folding, true);
+  assert.equal(normalizeWorkspaceIde({ folding: false }).folding, false);
+  assert.equal(normalizeWorkspaceIde({ scrollBeyondLastLine: 'yes' }).scrollBeyondLastLine, false);
+  assert.equal(normalizeWorkspaceIde({ scrollBeyondLastLine: true }).scrollBeyondLastLine, true);
   assert.equal(normalizeWorkspaceIde({ showGenerated: true }).showGenerated, true);
   assert.equal(normalizeWorkspaceIde({ showGenerated: 'yes' }).showGenerated, false);
   assert.equal(normalizeWorkspaceIde({ explorerSortMode: 'type' }).explorerSortMode, 'type');
@@ -899,4 +986,26 @@ test('explorer sort mode round-trips as an additive global preference', () => {
   assert.equal(ideState(roundTrip).explorerSortMode, 'modified');
   assert.equal(roundTrip.workspaceIde.preferences.explorerSortMode, 'modified');
   assert.equal(normalizeWorkspaceIde({ explorerSortMode: null }).explorerSortMode, 'name');
+});
+
+test('normalizeWorkspaceIde bounds searchHistory (trimmed, de-duplicated newest-kept, max 20) as root-scoped state', () => {
+  assert.deepEqual(normalizeWorkspaceIde().searchHistory, []);
+  assert.deepEqual(DEFAULT_WORKSPACE_IDE.searchHistory, []);
+  for (const searchHistory of ['query', { a: 1 }, null, 7]) {
+    assert.deepEqual(normalizeWorkspaceIde({ searchHistory }).searchHistory, []);
+  }
+  assert.deepEqual(
+    normalizeWorkspaceIde({ searchHistory: [' alpha ', '', 5, 'beta', 'alpha', 'x'.repeat(257), null, 'gamma'] }).searchHistory,
+    ['beta', 'alpha', 'gamma'],
+    'junk dropped, a repeat keeps its newest position, newest last'
+  );
+  const many = Array.from({ length: 30 }, (_, index) => `query${index}`);
+  const capped = normalizeWorkspaceIde({ searchHistory: many }).searchHistory;
+  assert.equal(capped.length, 20);
+  assert.equal(capped[0], 'query10');
+  assert.equal(capped[19], 'query29');
+  const { normalizeWorkspaceIdeRootState, workspaceIdePreferencePatch, workspaceIdeRootPatch } = require('../services/workspace-ide-config-schema');
+  assert.deepEqual(normalizeWorkspaceIdeRootState({ searchHistory: ['one two'] }).searchHistory, ['one two']);
+  assert.deepEqual(workspaceIdeRootPatch({ searchHistory: ['x y'] }), { searchHistory: ['x y'] });
+  assert.deepEqual(workspaceIdePreferencePatch({ searchHistory: ['x y'] }), {}, 'root-bound, never a preference');
 });

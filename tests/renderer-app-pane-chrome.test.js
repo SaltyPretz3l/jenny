@@ -79,13 +79,14 @@ function buildPane(rig) {
   return { toolbarRight, paneDom };
 }
 
-test('buildComposerNodes inserts Stop/Send/Attach, the notice hosts, the queued span and the dom bag', (t) => {
+test('buildComposerNodes inserts the mic/Stop/Send/Attach, the notice hosts, the queued span and the dom bag', (t) => {
   const rig = makeRig(t);
   const { toolbarRight, paneDom } = buildPane(rig);
   assert.equal(toolbarRight, rig.rootEl.querySelector('.composer-toolbar-right'));
-  assert.deepEqual(Array.from(toolbarRight.children).map((el) => el.className), ['composer-stop-button hidden', 'composer-send']);
-  assert.equal(rig.pane.stopButton, toolbarRight.children[0]);
-  assert.equal(rig.pane.sendButton, toolbarRight.children[1]);
+  assert.deepEqual(Array.from(toolbarRight.children).map((el) => el.className),
+    ['composer-icon-button composer-dictate-button', 'composer-stop-button hidden', 'composer-send']);
+  assert.equal(rig.pane.stopButton, toolbarRight.children[1]);
+  assert.equal(rig.pane.sendButton, toolbarRight.children[2]);
   assert.equal(rig.pane.attachButton.dataset.chatNode, 'composerAttachShortcut');
   assert.equal(rig.pane.queuedNotice.className, 'chat-pane-queued');
   assert.equal(rig.pane.queuedNotice.hidden, true);

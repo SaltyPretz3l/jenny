@@ -17,8 +17,6 @@ import threading
 import time
 from pathlib import Path
 
-import pytest
-
 from sidecar.ai.tools.builtins.owned_process import (
     PIPE_DRAIN_GRACE_SECONDS,
     OwnedProcessService,
@@ -27,10 +25,9 @@ from sidecar.ai.tools.builtins.owned_process_drain import (
     READER_CANCEL_SECONDS,
     close_process_pipes,
 )
+from tests.sidecar._platform_skips import windows_only
 
-pytestmark = pytest.mark.skipif(
-    os.name != "nt", reason="Windows synchronous-pipe close semantics"
-)
+pytestmark = windows_only("synchronous-pipe close semantics")
 
 # Far longer than any bounded drain; the RED run ends here instead of hanging.
 _HOLDER_RELEASE_SECONDS = 20.0

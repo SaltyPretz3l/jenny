@@ -9,47 +9,6 @@
   const getFieldCopy = fieldCopyModule && typeof fieldCopyModule.getSettingsFieldCopy === 'function'
     ? fieldCopyModule.getSettingsFieldCopy
     : function () { return null; };
-  function inferEngineTypeFromModel(model) {
-    const token = String(model || '').trim().toLowerCase();
-    if (!token) {
-      return '';
-    }
-    if (token.startsWith('mock')) return 'mock';
-    return 'ollama';
-  }
-
-  function resolveReasoningEffortSupport(status, runtimePreferences) {
-    const localRuntime =
-      status?.local_runtime
-      && typeof status.local_runtime === 'object'
-      && !Array.isArray(status.local_runtime)
-        ? status.local_runtime
-        : null;
-    const localRuntimeSupport = String(localRuntime?.reasoning?.support || '').trim().toLowerCase();
-    if (localRuntimeSupport === 'supported' || localRuntimeSupport === 'unsupported') {
-      return localRuntimeSupport;
-    }
-    const providerCapabilities =
-      status?.provider_capabilities
-      && typeof status.provider_capabilities === 'object'
-      && !Array.isArray(status.provider_capabilities)
-        ? status.provider_capabilities
-        : null;
-    const preferredEngine = inferEngineTypeFromModel(runtimePreferences?.preferredModel);
-    const statusEngine = String(status?.engine || '').trim().toLowerCase();
-    const targetEngine = statusEngine || preferredEngine;
-    const declaredSupport = String(
-      targetEngine && providerCapabilities
-        ? providerCapabilities[targetEngine]?.reasoning_effort_support || ''
-        : ''
-    ).trim().toLowerCase();
-    if (declaredSupport === 'supported' || declaredSupport === 'unsupported') {
-      return declaredSupport;
-    }
-    const fallbackSupport = String(status?.reasoning_effort_support || 'unknown').trim().toLowerCase();
-    return fallbackSupport || 'unknown';
-  }
-
   // Derives the Models card badge { state, text } from runtime signals, ready to
   // pass to the design-system applyBadgeState (renderer-settings-foundation.js).
   // Lives here next to the other Models/session resolvers rather than in the
@@ -60,9 +19,9 @@
       : s.errored ? 'error'
       : (s.catalogUnavailable && !s.activeModel) ? 'warn'
       : s.activeModel ? 'live' : 'info';
-    const text = s.busy ? (s.loadingModel ? 'Switching' : 'Unloading')
-      : state === 'error' ? 'Error'
-      : state === 'warn' ? 'Unavailable'
+    const text = s.busy ? (s.loadingModel ? jt('settings.modelLibrary.badgeSwitching', 'Switching') : jt('settings.modelLibrary.badgeUnloading', 'Unloading'))
+      : state === 'error' ? jt('healthPill.error', 'Error')
+      : state === 'warn' ? jt('diagnostics.common.unavailable', 'Unavailable')
       : (s.activeModel || jt('settings.modelLibrary.defaultBackend', 'Default backend'));
     return { state, text };
   }
@@ -723,7 +682,7 @@
   }
 
   function normalizeFeatureState(payload) {
-    const source = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
+    const source = isPlainObject(payload) ? payload : {};
     return {
       loaded: true,
       // Display-only Tier C #12 seam: carried through so a render-time
@@ -731,9 +690,7 @@
       // applyFeatureStatePayload set. Never influences tools/featureFlags
       // below, only status-chip rendering.
       availabilityResolved: source.availabilityResolved === true,
-      tools: source.tools && typeof source.tools === 'object' && !Array.isArray(source.tools)
-        ? { ...source.tools }
-        : {},
+      tools: isPlainObject(source.tools) ? { ...source.tools } : {},
       subagentRouting: Object.fromEntries(['chatgpt', 'codex-cli'].map((provider) => {
         const row = source.subagentRouting?.[provider] || {};
         return [provider, { defaultModel: String(row.defaultModel || ''), defaultEffort: String(row.defaultEffort || ''),
@@ -747,14 +704,9 @@
         pauseSaving: source.memory?.pauseSaving === true,
         useInChats: source.memory?.useInChats !== false,
       },
-      featureFlags: source.featureFlags && typeof source.featureFlags === 'object' && !Array.isArray(source.featureFlags)
-        ? { ...source.featureFlags }
-        : {},
-      featureOverrides:
-        source.featureOverrides && typeof source.featureOverrides === 'object' && !Array.isArray(source.featureOverrides)
-          ? { ...source.featureOverrides }
-          : {},
-      availability: source.availability && typeof source.availability === 'object' && !Array.isArray(source.availability)
+      featureFlags: isPlainObject(source.featureFlags) ? { ...source.featureFlags } : {},
+      featureOverrides: isPlainObject(source.featureOverrides) ? { ...source.featureOverrides } : {},
+      availability: isPlainObject(source.availability)
         ? source.availability
         : {
             runtime: {
@@ -774,14 +726,14 @@
   }
 
   function normalizeWorkspaceRootState(payload) {
-    const source = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
+    const source = isPlainObject(payload) ? payload : {};
     const status =
-      source.status && typeof source.status === 'object' && !Array.isArray(source.status)
+      isPlainObject(source.status)
         ? {
             state: String(source.status.state || 'missing').trim() || 'missing',
             message: String(source.status.message || '').trim(),
           }
-        : source.workspaceRootStatus && typeof source.workspaceRootStatus === 'object' && !Array.isArray(source.workspaceRootStatus)
+        : isPlainObject(source.workspaceRootStatus)
           ? {
               state: String(source.workspaceRootStatus.state || 'missing').trim() || 'missing',
               message: String(source.workspaceRootStatus.message || '').trim(),
@@ -852,15 +804,9 @@
   }
 
   return {
-    inferEngineTypeFromModel,
-    resolveReasoningEffortSupport,
     resolveModelBadge,
-    TOOL_CONFIG_TOGGLE_ID_PREFIX,
     TOOL_DEPENDENTS,
     DEFAULT_TOOL_CONFIG_FIELDS,
-    normalizeToolConfig,
-    encodeToolConfigToggleKey,
-    decodeToolConfigToggleKey,
     toolConfigRowId,
     getToolConfigFieldsForRender,
     UI_LANGUAGE_TAGS,
@@ -885,7 +831,6 @@
     renderStatusRowContainer,
     buildSettingsSummaryModel,
     WEB_SEARCH_PROVIDERS,
-    WEB_SEARCH_KEY_PROVIDERS,
     WEB_SEARCH_SECRET_KEY_IDS,
     normalizeWebSearchState,
     buildWebSearchSectionMarkup,

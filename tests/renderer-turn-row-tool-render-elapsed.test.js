@@ -90,26 +90,56 @@ test('settled row with a paired result keeps the plain duration label, never the
 // ── Approval-gap command preview (same sibling file: the primary render-utils
 // test file sits at the test-size ratchet) ──
 
-const { renderApprovalBlock } = require('../renderer/chat/renderer-approval-block');
+const { renderApprovalBlock, resolveApprovalCardState } = require('../renderer/chat/renderer-approval-block');
+const { livePendingApproval } = require('./helpers/exact-approval-fixtures');
 
-function createApprovalRenderer() {
-  return createToolRenderer({ renderApprovalBlock });
+// The renderer state of a live approval, carrying the backend's exact presentation.
+function liveApprovalState(entry) {
+  return { pendingToolApprovals: new Map([[entry.approvalId, livePendingApproval(entry)]]) };
 }
 
-test('approval gap row markup quotes the run_command command from input_json', () => {
-  const approvalRenderer = createApprovalRenderer();
-  const markup = approvalRenderer.buildApprovalGapMarkup({
-    payload: {
-      tool_call_id: 'call-approve',
-      tool_name: 'run_command',
-      prompt: 'Jenny wants to run: rm -rf build',
-      input_json: JSON.stringify({ command: 'rm -rf build', timeout_seconds: 30 }),
-      state: 'awaiting_approval',
-    },
+function createApprovalRenderer(state) {
+  return createToolRenderer({
+    renderApprovalBlock,
+    getApprovalCardState: (ref) => resolveApprovalCardState(state, ref),
   });
+}
+
+const APPROVAL_ROW = {
+  payload: {
+    approval_id: 'approval-approve',
+    tool_call_id: 'call-approve',
+    tool_name: 'run_command',
+    prompt: 'Jenny wants to run: rm -rf build',
+    input_json: JSON.stringify({ command: 'rm -rf build', timeout_seconds: 30 }),
+    state: 'awaiting_approval',
+  },
+};
+
+test('live approval gap row quotes the exact run_command command', () => {
+  const state = liveApprovalState({
+    approvalId: 'approval-approve',
+    callId: 'call-approve',
+    toolName: 'run_command',
+    input: { command: 'rm -rf build', timeout_seconds: 30 },
+  });
+  const markup = createApprovalRenderer(state).buildApprovalGapMarkup(APPROVAL_ROW, [], {});
 
   assert.match(markup, /tool-approval-command/);
+  assert.match(markup, /data-approval-exact-field="command"/);
   assert.match(markup, /rm -rf build/);
+  assert.match(markup, /Allow once/);
+});
+
+test('approval gap row without the live exact presentation fails closed', () => {
+  // Rehydrated after a restart: the persisted input_json is a redacted snapshot, never
+  // shown as the command, and the card offers Deny only.
+  const markup = createApprovalRenderer({}).buildApprovalGapMarkup(APPROVAL_ROW, [], {});
+
+  assert.doesNotMatch(markup, /tool-approval-command/);
+  assert.match(markup, /data-approval-exact-unavailable="missing"/);
+  assert.doesNotMatch(markup, /Allow once|Always allow/);
+  assert.match(markup, /Deny/);
 });
 
 // ── W1-4 clickable path chips (same sibling file, same ratchet reason) ──

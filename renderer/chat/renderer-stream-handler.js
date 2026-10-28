@@ -63,6 +63,11 @@
     throw new Error('renderer-stream-tool-live-tail must load before renderer/chat/renderer-stream-handler.js');
   }
   const { createToolLiveTail } = _liveTailUtils;
+  const _imageRenderUtils = resolveDependencyModule('rendererStreamImageRenderProgress', './renderer-stream-image-render-progress');
+  if (!_imageRenderUtils || typeof _imageRenderUtils.createImageRenderProgress !== 'function') {
+    throw new Error('renderer-stream-image-render-progress must load before renderer/chat/renderer-stream-handler.js');
+  }
+  const { createImageRenderProgress } = _imageRenderUtils;
   const _terminalSettleUtils = resolveDependencyModule('rendererStreamHandlerTerminalSettle', './renderer-stream-handler-terminal-settle');
   if (!_terminalSettleUtils || typeof _terminalSettleUtils.createTerminalSettleHandlers !== 'function') {
     throw new Error('renderer-stream-handler-terminal-settle must load before renderer/chat/renderer-stream-handler.js');
@@ -426,8 +431,17 @@
       getChatTimeline: () => chatTimeline,
       isSessionVisible: isPaneZeroSession,
     });
+    // Live image render progress (ephemeral DOM patches of the pending figure).
+    // Like the live tail, only the visible session's figure is patched.
+    const imageRenderProgress = createImageRenderProgress({ getChatTimeline: () => chatTimeline });
+    const handleToolProgress = async (payload) => {
+      if (!isPaneZeroSession(payload?.sessionId)) return { buffered: false, terminal: false };
+      try { imageRenderProgress.apply(payload); } catch (_error) { /* ephemeral UI only */ }
+      return { buffered: false, terminal: false };
+    };
     const clearTerminalStreamState = (streamId) => {
       toolLiveTail.settleStream(streamId);
+      imageRenderProgress.settleStream(streamId);
       runtime.clearTerminalStreamState?.(approvalToastSessionIds, streamSegmentState, streamPhaseState, streamId);
     };
     const finalizeTerminalStream = runtime.finalizeTerminalStream
@@ -459,12 +473,12 @@
         return state.ui?.editCommitting === true || state.ui?.bulkTruncateCommitting === true;
       },
       onFallback(sessionId) {
+        // A tool row repaint: no sessions render (see queueToolSessionRender).
         queueSessionRender(sessionId, {
           messages: true,
           composerStatus: true,
           composer: true,
           header: true,
-          sessions: true,
         });
       },
     });
@@ -545,6 +559,10 @@
     const streamActivityRow = createStreamActivityRow({
       ...waitingRowWiring.rowOptions,
       getChatTimeline: () => chatTimeline,
+      getSessionTimeline: (sessionId) => globalThis.rendererAppPaneComposition?.getPaneComposition?.()
+        ?.getSessionPaneTarget?.(sessionId)?.chatTimeline || null,
+      // A dismissed row leaves with the render that replaces it (no tail snap).
+      retireOnTimelineWrite: true,
       onRowMounted: (sessionId, node) => scheduleMessageViewportSync(getSessionMessages(sessionId) || [], {
         patchedRoot: node?.closest?.('.chat-entry') || node,
       }),
@@ -596,7 +614,10 @@
       publishToolStartImpulse,
       applyToolLiveOutputChunk: (payload) => toolLiveTail.appendChunk(payload),
       isToolLiveOutputSession: isPaneZeroSession,
-      settleToolLiveOutput: (identity) => toolLiveTail.settle(identity),
+      settleToolLiveOutput: (identity) => {
+        toolLiveTail.settle(identity);
+        imageRenderProgress.settle(identity);
+      },
     });
     const handleToolUse = toolHandlers.handleToolUse || (async function noopHandleToolUse() {
       return { buffered: false, terminal: false };
@@ -789,6 +810,7 @@
         handleApprovalNeeded,
         handleUserQuestionsRequested,
         handleToolOutputChunk,
+        handleToolProgress,
         handleToolResult,
         handleStreamReset,
         handleContextCompacted,
@@ -873,6 +895,7 @@
         streamActivityRow.dispose?.();
         liveToolPatchController.dispose?.();
         toolLiveTail.dispose();
+        imageRenderProgress.dispose();
         disposeLifecycle();
       },
     };

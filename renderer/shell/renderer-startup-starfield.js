@@ -36,6 +36,8 @@
   var MIN_HOLD_MS = 900;
   var FADE_IN_MS = 700;
   var COLLAPSE_MS = 750;
+  // A returning launch (the profile has seen the full sky once) collapses fast.
+  var QUICK_COLLAPSE_MS = 250;
   var MAX_FRAME_STEP_MS = 64;
 
   // The disc: an ellipse centred on the wordmark, inner sky turning faster. The
@@ -141,6 +143,7 @@
     var lastNow = 0;
     var elapsed = 0;
     var collapseElapsed = 0;
+    var collapseDurationMs = COLLAPSE_MS;
     var collapsing = false;
     var running = false;
     var paused = false;
@@ -323,7 +326,7 @@
       var p = 0;
       if (collapsing) {
         collapseElapsed += step;
-        p = clamp01(collapseElapsed / COLLAPSE_MS);
+        p = clamp01(collapseElapsed / collapseDurationMs);
       }
       drawFrame(elapsed, step, p);
       if (collapsing && p >= 1) {
@@ -343,7 +346,7 @@
     function landCollapse() {
       if (rafHandle && caf) { caf(rafHandle); }
       rafHandle = 0;
-      collapseElapsed = COLLAPSE_MS;
+      collapseElapsed = collapseDurationMs;
       drawFrame(elapsed, 0, 1);
       finishCollapse();
     }
@@ -406,6 +409,8 @@
       }
       assignDestinations();
       if (curtain && curtain.style) { curtain.style.transition = 'none'; }
+      var requestedDurationMs = Number(collapseOptions && collapseOptions.durationMs);
+      collapseDurationMs = requestedDurationMs > 0 ? requestedDurationMs : COLLAPSE_MS;
       collapsing = true;
       collapseElapsed = 0;
       onCollapseDone = done;
@@ -486,7 +491,7 @@
       // Test and measurement seam: the live star records (read-only use) and
       // one synchronous frame at a given elapsed time.
       getStars: function getStars() { return stars; },
-      drawFrameForTest: function drawFrameForTest(t) { drawFrame(t, 16, collapsing ? clamp01(collapseElapsed / COLLAPSE_MS) : 0); },
+      drawFrameForTest: function drawFrameForTest(t) { drawFrame(t, 16, collapsing ? clamp01(collapseElapsed / collapseDurationMs) : 0); },
     };
     return api;
   }
@@ -497,5 +502,6 @@
     STAR_COUNT_FULL: STAR_COUNT_FULL,
     MIN_HOLD_MS: MIN_HOLD_MS,
     COLLAPSE_MS: COLLAPSE_MS,
+    QUICK_COLLAPSE_MS: QUICK_COLLAPSE_MS,
   };
 });

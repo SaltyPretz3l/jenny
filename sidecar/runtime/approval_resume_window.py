@@ -27,8 +27,10 @@ def _approval_resume_descriptor(
 
 
 def _read_only_call(descriptor: Any | None, call: Any) -> bool:
-    return descriptor is not None and not bool(
-        effective_side_effecting(descriptor, getattr(call, "arguments", {}) or {})
+    # ``None`` (no side-effect fact) is not read-only: the resumed window must
+    # not grow past a call whose effect is unknown (tool review C6 #12).
+    return descriptor is not None and (
+        effective_side_effecting(descriptor, getattr(call, "arguments", {}) or {}) is False
     )
 
 
@@ -75,6 +77,7 @@ def _runs_without_approval(
             approvals_pre_granted=False,
             policy_decisions_by_call=policy.decisions_by_call,
             approval_mode=str(getattr(context, "approval_mode", "prompt")),
+            execution_context=execution,
             **gate,
         )
     except Exception:  # noqa: BLE001 - fail closed: the call is re-issued instead.

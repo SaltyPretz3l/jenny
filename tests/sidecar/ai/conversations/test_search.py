@@ -55,6 +55,30 @@ def test_scope_isolates_projects_and_excluded_sessions(db: ConversationStore) ->
     assert [hit["session_id"] for hit in hits] == ["mine"]
 
 
+def test_no_project_spans_every_project_and_still_excludes(db: ConversationStore) -> None:
+    # Row 69: the primary chat's all_projects search passes project_id=None.
+    db.replace_session(session("mine", ["rocket launch plan"], project_id="p1"))
+    db.replace_session(session("other", ["rocket launch plan"], project_id="p2"))
+    db.replace_session(session("current", ["rocket launch plan"], project_id="p1"))
+
+    hits = _search(db, "rocket", project_id=None, exclude_session_ids=["current"])["hits"]
+
+    assert sorted(hit["session_id"] for hit in hits) == ["mine", "other"]
+
+
+def test_hybrid_search_spans_every_project_without_a_project(db: ConversationStore) -> None:
+    provider = SynonymProvider()
+    db.replace_session(session("s1", ["car trouble"], project_id="p1"))
+    db.replace_session(session("s2", ["car trouble again"], project_id="p2"))
+    embed_step(db, handle(provider), budget_seconds=2.0, batch=8)
+
+    narrow = _search(db, "automobile", project_id="p1", embedder=handle(provider))
+    wide = _search(db, "automobile", project_id=None, embedder=handle(provider))
+
+    assert [hit["session_id"] for hit in narrow["hits"]] == ["s1"]
+    assert sorted(hit["session_id"] for hit in wide["hits"]) == ["s1", "s2"]
+
+
 def test_at_most_two_hits_per_session(db: ConversationStore) -> None:
     db.replace_session(session("busy", ["orbit one", "orbit two", "orbit three", "orbit four"]))
     db.replace_session(session("quiet", ["orbit five"]))

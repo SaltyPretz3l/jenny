@@ -1,0 +1,4 @@
+data: {"id":"c2","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"Before"},"finish_reason":null}]}
+
+data: {"error":{"message":"Provider returned error","code":502}}
+

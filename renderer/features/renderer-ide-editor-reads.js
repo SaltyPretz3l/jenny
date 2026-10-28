@@ -28,7 +28,10 @@
       const selection = monacoEditor.getSelection?.();
       let selectedChars = 0;
       if (selection && !selection.isEmpty?.()) {
-        selectedChars = (doc.model.getValueInRange?.(selection) || '').length;
+        // Length only: no copy of the selected text on every cursor event.
+        selectedChars = typeof doc.model.getValueLengthInRange === 'function'
+          ? Number(doc.model.getValueLengthInRange(selection)) || 0
+          : (doc.model.getValueInRange?.(selection) || '').length;
       }
       return {
         lineNumber: position?.lineNumber || 1,

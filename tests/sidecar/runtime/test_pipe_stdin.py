@@ -19,9 +19,10 @@ import pytest
 
 from sidecar.runtime import pipe_stdin
 from sidecar.runtime.pipe_stdin import GatedPipeReader, gated_stdin
+from tests.sidecar._platform_skips import windows_only
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-WINDOWS_ONLY = pytest.mark.skipif(os.name != "nt", reason="Windows pipe semantics")
+WINDOWS_ONLY = windows_only("pipe semantics")
 
 
 class _ScriptedRaw:
@@ -162,7 +163,6 @@ _IMPORT_UNDER_FRAMED_READER = textwrap.dedent(
 @WINDOWS_ONLY
 @pytest.mark.parametrize("script", [_IMPORT_UNDER_PUMP, _IMPORT_UNDER_FRAMED_READER])
 def test_numpy_imports_while_a_stdin_reader_waits_on_a_pipe(script: str) -> None:
-    pytest.importorskip("numpy")
     process = subprocess.Popen(
         [sys.executable, "-c", script.format(repo=str(REPO_ROOT))],
         stdin=subprocess.PIPE,

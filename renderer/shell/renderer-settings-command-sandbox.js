@@ -26,8 +26,11 @@
     'disabled', 'unavailable', 'preparing', 'ready', 'busy', 'recovery-required',
   ]);
   const RETRY_STATES = new Set(['unavailable', 'recovery-required']);
-  const UNVERIFIED_PLATFORMS = new Set(['linux', 'darwin', 'macos', 'mac']);
+  // normalizePlatform maps every alias to one of these names.
+  const UNVERIFIED_PLATFORMS = new Set(['linux', 'macos']);
   const DEFAULT_PLATFORM = 'unknown';
+  // Every run gets a disposable workspace copy and no network, whatever the bridge reports.
+  const SANDBOX_SCOPE = Object.freeze({ workspace: 'disposable_copy', network: 'none' });
 
   function normalizePlatform(value) {
     const platform = String(value || DEFAULT_PLATFORM).trim().toLowerCase();
@@ -55,9 +58,13 @@
       message: '',
       platform,
       qualified: false,
-      workspace: 'disposable_copy',
-      network: 'none',
+      ...SANDBOX_SCOPE,
     };
+  }
+
+  // The bridge answers with the state itself or wrapped as { state: {...} }.
+  function unwrapState(value) {
+    return value?.state && typeof value.state === 'object' ? value.state : value;
   }
 
   function normalizeState(rawState, previousState, options = {}) {
@@ -80,8 +87,7 @@
       // visible and actionable when the bridge reports them, but are marked
       // unverified in the surface.
       qualified: platform === 'windows' && raw.qualified === true,
-      workspace: 'disposable_copy',
-      network: 'none',
+      ...SANDBOX_SCOPE,
     };
   }
 
@@ -132,6 +138,7 @@
     let unsubscribe = null;
     let actionPromise = null;
     let requestGeneration = 0;
+    let paintedMarkup = null; // the row markup last written into the host
     // The row depends on the Terminal commands switch; the Tools render passes that switch's state.
     let parentOn = true;
     const listeners = [];
@@ -215,24 +222,33 @@
       if (retry) retry.disabled = retryLocked();
     }
 
+    // A state event that changes nothing on screen keeps the row's nodes, so focus and the
+    // row's alert are not replaced (and announced) again.
     function render() {
       if (disposed || !host) return;
       host.dataset.commandSandboxState = currentState.state;
       host.dataset.commandSandboxQualified = currentState.qualified ? 'true' : 'false';
-      host.innerHTML = getMarkup();
+      const markup = getMarkup();
+      if (markup === paintedMarkup) return;
+      host.innerHTML = markup;
+      paintedMarkup = markup;
+    }
+
+    function setApiUnavailable() {
+      setFailure('unavailable', null, 'api_unavailable', jt('settings.commandSandbox.apiUnavailable', 'Command sandbox is unavailable in this window.'));
     }
 
     async function refresh() {
       const bridge = getBridge();
       if (!bridge || typeof bridge.getState !== 'function') {
-        setFailure('unavailable', null, 'api_unavailable', jt('settings.commandSandbox.apiUnavailable', 'Command sandbox is unavailable in this window.'));
+        setApiUnavailable();
         return currentState;
       }
       const generation = ++requestGeneration;
       try {
         const result = await bridge.getState();
         if (disposed || generation !== requestGeneration) return currentState;
-        return setState(result?.state && typeof result.state === 'object' ? result.state : result);
+        return setState(unwrapState(result));
       } catch (error) {
         if (!disposed && generation === requestGeneration) {
           setFailure('unavailable', error, 'get_state_failed', jt('settings.commandSandbox.loadFailed', 'Command sandbox status could not be loaded.'));
@@ -247,25 +263,23 @@
       // generation used by refresh() so a late getState() cannot roll the
       // persisted state back to an older snapshot.
       requestGeneration += 1;
-      const next = rawState?.state && typeof rawState.state === 'object' ? rawState.state : rawState;
-      setState(next);
+      setState(unwrapState(rawState));
     }
 
     async function invokeAction(method, args, fallbackState, key, fallback) {
       if (disposed || actionPromise) return currentState;
       const bridge = getBridge();
       if (!bridge || typeof bridge[method] !== 'function') {
-        setFailure('unavailable', null, 'api_unavailable', jt('settings.commandSandbox.apiUnavailable', 'Command sandbox is unavailable in this window.'));
+        setApiUnavailable();
         return currentState;
       }
-      const previous = actionPromise;
       const generation = ++requestGeneration;
       // The switch keeps the acknowledged value until the bridge echoes a new one.
       setState({
         ...currentState,
         state: 'preparing',
         reason: '',
-        message: jt('settings.commandSandbox.messagePreparing', 'Preparing the Docker sandbox…'),
+        message: stateMessage('preparing'),
       });
       const operation = Promise.resolve()
         .then(() => (args === undefined ? bridge[method]() : bridge[method](args)))
@@ -284,7 +298,7 @@
           return currentState;
         })
         .finally(() => {
-          if (actionPromise === operation || actionPromise === previous) actionPromise = null;
+          if (actionPromise === operation) actionPromise = null;
           if (!disposed) render();
         });
       actionPromise = operation;

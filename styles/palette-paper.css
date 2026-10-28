@@ -23,6 +23,15 @@
   --accent-strong: #2755cf;
   --accent-cyan: #157ec7;
   --accent-amber: #b87913;
+  /* File-map language tints: darker inks for a light canvas. */
+  --atlas-lang-js: #8a6d00;
+  --atlas-lang-ts: #2f6aa3;
+  --atlas-lang-py: #1f7a70;
+  --atlas-lang-css: #6a4fa8;
+  --atlas-lang-html: #a8456e;
+  --atlas-lang-md: #6b7480;
+  --atlas-lang-data: #8a5a1c;
+  --atlas-lang-other: #6b7480;
   --holo-periwinkle: #3568f0;
   --holo-lavender: #8a5ec0;
   --holo-pink: #c04080;

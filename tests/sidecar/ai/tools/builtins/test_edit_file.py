@@ -21,10 +21,12 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_STALE_READ_SNAPSHOT,
 )
 from sidecar.ai.tools.builtins import edit_file as edit_module
+from sidecar.ai.tools.builtins import edit_matching
 from sidecar.ai.tools.builtins import file_history as file_history_module
 from sidecar.ai.tools.builtins import filesystem as filesystem_module
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
+from tests.sidecar._platform_skips import make_dir_link
 
 
 def _guard(tmp_path: Path) -> WorkspaceGuard:
@@ -347,7 +349,7 @@ def test_edit_file_crlf_aware_bound_refuses_before_allocating_replacement_buffer
             "replacement buffer must not be allocated past the CRLF-aware bound check"
         )
 
-    monkeypatch.setattr(edit_module, "_apply_edit", _unexpected_apply_edit)
+    monkeypatch.setattr(edit_matching, "_apply_edit", _unexpected_apply_edit)
 
     result = edit_module.edit_file_tool(
         {
@@ -595,11 +597,8 @@ def test_write_file_rejects_parent_symlink_swap_before_mutation(
 
     @contextmanager
     def _swap_parent_to_symlink(*_args, **_kwargs):
-        try:
-            safe_dir.rmdir()
-            safe_dir.symlink_to(outside_dir, target_is_directory=True)
-        except (NotImplementedError, OSError):
-            pytest.skip("symlink creation unavailable in this environment")
+        safe_dir.rmdir()
+        make_dir_link(safe_dir, outside_dir)
         yield
 
     monkeypatch.setattr(filesystem_module, "checkpoint_lock_for", _swap_parent_to_symlink)
@@ -661,12 +660,9 @@ def test_edit_file_rejects_parent_symlink_swap_before_mutation(
 
     @contextmanager
     def _swap_parent_to_symlink(*_args, **_kwargs):
-        try:
-            target.unlink()
-            safe_dir.rmdir()
-            safe_dir.symlink_to(outside_dir, target_is_directory=True)
-        except (NotImplementedError, OSError):
-            pytest.skip("symlink creation unavailable in this environment")
+        target.unlink()
+        safe_dir.rmdir()
+        make_dir_link(safe_dir, outside_dir)
         yield
 
     monkeypatch.setattr(edit_module, "checkpoint_lock_for", _swap_parent_to_symlink)
@@ -1108,9 +1104,7 @@ def test_create_checkpoint_eviction_removes_oldest_snapshots(
     assert second.display_path is not None
     first_snapshot = _relative_metadata_path(tmp_path, first.display_path)
     second_snapshot = _relative_metadata_path(tmp_path, second.display_path)
-    # Recent-but-ordered mtimes: this test pins COUNT-quota ordering, so the
-    # ages stay inside MAX_BACKUP_AGE_DAYS (WIDE-044 added an age quota that
-    # would otherwise also fire on epoch-era timestamps).
+    # Recent-but-ordered mtimes: this test pins COUNT-quota ordering.
     now = time.time()
     os.utime(first_snapshot, (now - 200, now - 200))
     os.utime(second_snapshot, (now - 100, now - 100))

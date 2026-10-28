@@ -38,7 +38,7 @@ function tool(toolName, status, verb) {
 test('SPRITE_ACTIVITIES is the frozen vocabulary', () => {
   assert.ok(Object.isFrozen(SPRITE_ACTIVITIES));
   assert.deepEqual([...SPRITE_ACTIVITIES], [
-    'think', 'write', 'compose', 'check', 'search', 'tool', 'compact',
+    'think', 'write', 'compose', 'check', 'search', 'make', 'run', 'tool', 'compact',
     'wait', 'stuck', 'approve', 'done', 'rest', 'stopped', 'error',
   ]);
 });
@@ -107,12 +107,20 @@ const LIVE_ROWS = [
   ['running search gives search', live({ runningTools: [tool('a', 'running', 'search')] }), 'search'],
   ['running web gives search', live({ runningTools: [tool('a', 'running', 'web')] }), 'search'],
   ['running fetch gives search', live({ runningTools: [tool('a', 'running', 'fetch')] }), 'search'],
+  ['a running edit gives make', live({ runningTools: [tool('write_file', 'running', 'edit')] }), 'make'],
+  ['a running artifact gives make (no verb of its own)',
+    live({ runningTools: [tool('create_artifact', 'running', '')] }), 'make'],
+  ['a running script or command gives run', live({ runningTools: [tool('run_temp_script', 'executing', 'run')] }), 'run'],
   ['a verb outside the list gives tool', live({ runningTools: [tool('a', 'running', 'bash')] }), 'tool'],
   ['an empty verb gives tool', live({ runningTools: [tool('a', 'running', '')] }), 'tool'],
   ['the last running tool wins (tool then search)',
     live({ runningTools: [tool('a', 'running', 'bash'), tool('b', 'executing', 'read')] }), 'search'],
   ['the last running tool wins (search then tool)',
     live({ runningTools: [tool('a', 'running', 'read'), tool('b', 'running', 'bash')] }), 'tool'],
+  ['a still-running tool beats a later one that just ran',
+    live({ runningTools: [tool('a', 'running', 'run'), { ...tool('b', 'completed', 'read'), justRan: true }] }), 'run'],
+  ['a tool that just ran counts when nothing is running',
+    live({ runningTools: [{ ...tool('b', 'completed', 'read'), justRan: true }] }), 'search'],
   ['non-running tools after a running one are skipped',
     live({ runningTools: [tool('a', 'running', 'read'), tool('b', 'queued', 'bash')] }), 'search'],
   ['running tool beats tool_input',
@@ -356,10 +364,10 @@ function streamStub(overrides) {
   };
 }
 
-function gather({ state = gatherState(), streams = streamStub(), anchor = {}, verbs = {} } = {}) {
+function gather({ state = gatherState(), streams = streamStub(), anchor = {}, verbs = {}, now = () => 10_000 } = {}) {
   const toolCallUtils = { ...realToolCallUtils, toolRunVerb: (name) => verbs[name] || '' };
   return gatherSpriteActivityInput(
-    { state, multiStreamController: streams, toolCallUtils, approvalBlock: realApprovalBlock },
+    { state, multiStreamController: streams, toolCallUtils, approvalBlock: realApprovalBlock, now },
     SESSION,
     { messages: [USER], streamId: 'stream-1', status: 'complete', outcome: 'complete', ...anchor },
   );
@@ -479,11 +487,25 @@ test('gather: runningTools keep insertion order with normalized status and the v
   ]);
   state.toolCallsByStream.set('stream-2', [{ callId: 'z', toolName: 'bash', status: 'running' }]);
   assert.deepEqual(gather({ state, verbs: { read_file: 'read', bash: 'run' } }).runningTools, [
-    { status: 'running', verb: 'read' },
-    { status: 'awaiting_approval', verb: 'run' },
-    { status: 'executing', verb: '' },
+    { status: 'running', verb: 'read', toolName: 'read_file', justRan: false },
+    { status: 'awaiting_approval', verb: 'run', toolName: 'bash', justRan: false },
+    { status: 'executing', verb: '', toolName: 'mystery', justRan: false },
   ]);
   assert.deepEqual(gather({ state, anchor: { streamId: 'none' } }).runningTools, []);
+});
+
+test('gather: a tool that ran within 300 ms counts as just ran, so a 1 ms read still shows its form', () => {
+  const state = gatherState();
+  state.toolCallsByStream.set('stream-1', [
+    { callId: 'a', toolName: 'read_file', status: 'completed', ranAt: 9_990 },
+    { callId: 'b', toolName: 'write_file', status: 'completed', ranAt: 9_600 },
+    { callId: 'c', toolName: 'bash', status: 'completed' },
+  ]);
+  const input = gather({ state, verbs: { read_file: 'read', write_file: 'edit', bash: 'run' } });
+  assert.deepEqual(input.runningTools.map((tool) => tool.justRan), [true, false, false]);
+  assert.equal(deriveSpriteActivity({ ...input, turnLive: true }).activity, 'search');
+  assert.equal(deriveSpriteActivity({ ...gather({ state, now: () => 10_400 }), turnLive: true }).activity, 'think',
+    'past the window the settled tool no longer counts');
 });
 
 test('gather: typed activity and delta kind come from the active stream', () => {
@@ -543,4 +565,19 @@ test('gather: a send queued behind the live stream is not the turn; the pane sen
   assert.equal(read({ runtimeSendController: withRows([]) }).questionPending, false, 'an admitted latest user row is the turn');
   const state = gatherState({ runtimeSendController: withRows([]) });
   assert.equal(read({ state, runtimeSendController: withRows(paneRows) }).questionPending, true, 'the pane controller, not the state slot');
+});
+
+test('gather: a manual compaction outside any turn plays compact', () => {
+  const compaction = Object.freeze({ kind: 'compaction', toolName: '', checklist: false, waitState: '' });
+  const state = gatherState({
+    streamWaits: {
+      getTypedActivity: () => null,
+      getSessionTypedActivity: (sessionId) => (sessionId === SESSION ? compaction : null),
+    },
+  });
+  const input = gather({ state });
+  assert.equal(input.turnLive, true, 'no stream or lifecycle, yet live while it compacts');
+  assert.equal(input.typed, compaction);
+  assert.equal(deriveSpriteActivity(input).activity, 'compact');
+  assert.equal(gather({ state: gatherState() }).turnLive, false, 'settled chat at rest without one');
 });

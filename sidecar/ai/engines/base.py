@@ -97,6 +97,12 @@ class BaseEngine(ABC):
     - unload_model: Cleanup (optional)
     """
 
+    # True when the input-token count the engine reports is the WHOLE prompt.
+    # False for engines that count only the freshly evaluated tail on a prompt
+    # cache hit (Ollama's ``prompt_eval_count``), which cannot calibrate the
+    # context estimate.
+    reports_full_prompt_input_tokens: bool = False
+
     @property
     def supported_modalities(self) -> Set[ModelModality]:
         """

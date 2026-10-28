@@ -177,7 +177,8 @@
       callbacks.renderMessages();
       callbacks.renderSessions();
       callbacks.renderHeader();
-      callbacks.renderComposerState();
+      // No renderComposerState here: finalizeSend (the send's finally) renders
+      // the composer once settleAccepted has cleared the busy state.
       callbacks.appendClientLog('INFO', 'chat.send', { sessionId: resolvedSessionId });
       if (interactiveGuardrailFallback && normalizedInteractiveResponse) {
         callbacks.appendClientLog('WARN', 'interactive.guardrail_fallback_requested', {

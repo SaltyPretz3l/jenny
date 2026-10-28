@@ -46,10 +46,11 @@
     return {};
   }
 
-  const inventoryButton = resolveModule('inventoryActionButton', '../inventory/action-button');
-  const actionButton = typeof inventoryButton === 'function'
-    ? inventoryButton
-    : inventoryButton.actionButton || inventoryButton.default || null;
+  const actionButton = resolveModule('inventoryActionButton', '../inventory/action-button');
+  // Shared content-space SVG overlay helpers (the File Map's atlas view
+  // loads earlier in the IDE script manifest).
+  const { createOverlaySvg, appendArrowMarker, viewBoxFor } = globalRef.rendererIdeMapAtlasView
+    || require('./renderer-ide-map-atlas-view');
 
   const defaultEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
@@ -154,33 +155,10 @@
       return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
     }
 
-    function appendArrowMarker(defs, documentRef, id, cls) {
-      const marker = documentRef.createElementNS(SVG_NS, 'marker');
-      marker.setAttribute('id', id);
-      marker.setAttribute('viewBox', '0 0 8 8');
-      marker.setAttribute('refX', '7');
-      marker.setAttribute('refY', '4');
-      marker.setAttribute('markerWidth', '7');
-      marker.setAttribute('markerHeight', '7');
-      marker.setAttribute('orient', 'auto-start-reverse');
-      const tip = documentRef.createElementNS(SVG_NS, 'path');
-      tip.setAttribute('d', 'M 0 0 L 8 4 L 0 8 z');
-      tip.setAttribute('class', cls);
-      marker.appendChild(tip);
-      defs.appendChild(marker);
-    }
-
     function buildSvg(graph, positions, viewBox) {
       const documentRef = doc();
       if (!documentRef) return null;
-      const svg = documentRef.createElementNS(SVG_NS, 'svg');
-      svg.setAttribute('class', 'ide-explode-edges');
-      svg.setAttribute('aria-hidden', 'true');
-      svg.setAttribute('width', String(viewBox.w));
-      svg.setAttribute('height', String(viewBox.h));
-      svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
-      svg.style.left = `${viewBox.x}px`;
-      svg.style.top = `${viewBox.y}px`;
+      const svg = createOverlaySvg(documentRef, 'ide-explode-edges', viewBox);
 
       const defs = documentRef.createElementNS(SVG_NS, 'defs');
       appendArrowMarker(defs, documentRef, 'ideExplodeArrowCall', 'ide-explode-edge-arrow--call');
@@ -270,13 +248,7 @@
 
       const providedBounds = o.bounds && Number.isFinite(o.bounds.minX) ? o.bounds : null;
       bounds = providedBounds || boundsFromPositions(nodes, positions);
-      const pad = 80;
-      const viewBox = {
-        x: Math.floor(bounds.minX - pad),
-        y: Math.floor(bounds.minY - pad),
-        w: Math.ceil(bounds.maxX - bounds.minX + pad * 2) || 1,
-        h: Math.ceil(bounds.maxY - bounds.minY + pad * 2) || 1,
-      };
+      const viewBox = viewBoxFor(bounds, 80);
 
       const svg = buildSvg({ nodes, edges: graph.edges || [] }, positions, viewBox);
       if (svg) {
@@ -344,15 +316,6 @@
       setSpotlight,
       setLodTier,
       dispose,
-      _internals: {
-        nodeIndex,
-        edgeIndex,
-        incidence,
-        tagFor,
-        isHero,
-        NODE_BASE_W,
-        NODE_BASE_H,
-      },
     };
   }
 

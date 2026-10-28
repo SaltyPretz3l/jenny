@@ -802,16 +802,11 @@ test('shared palette semantics keep the Home orbit-field and Settings shell wire
     'settings nav groups should be separated by the shared rail divider token'
   );
   // 2026-07 open-sections polish: section cards are flush (no panel surface);
-  // theme wiring is the header hairline plus the data-surface-state tints.
+  // theme wiring is the header hairline.
   assert.match(
     settingsCss,
     /\.settings-card-header\s*\{[\s\S]*?border-bottom:\s*[^;]*var\(--settings-shell-muted-border\)[^;]*;/,
     'settings card headers should consume the shared settings shell border token'
-  );
-  assert.match(
-    settingsCss,
-    /\.settings-card\[data-surface-state~="busy"\]\s*\{[\s\S]*?var\(--state-warning\)/,
-    'settings card surface states should stay wired to the shared state tokens'
   );
 });
 
@@ -923,8 +918,8 @@ test('Chats and Settings share a flat rail visual contract without reviving acti
   assert.doesNotMatch(chatsCss, /--sidebar-active-rail|\.conversation-state-badge/);
   assert.match(foundationCss, /--font-size-2xl:\s*var\(--font-size-title\);/);
   assert.match(chatsCss, /\.sidebar-title\s*\{[\s\S]*?font-size:\s*var\(--font-size-heading\)/);
-  assert.match(chatsCss, /\.session-row\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) 32px/);
-  assert.match(chatsCss, /\.session-row__menu\s*\{[\s\S]*?width:\s*32px;[\s\S]*?height:\s*32px;/);
+  assert.match(chatsCss, /\.session-row\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\);/);
+  assert.match(chatsCss, /\.session-row__menu(?:,\s*\.project-header__(?:new|menu))*\s*\{[\s\S]*?width:\s*32px;[\s\S]*?height:\s*32px;/);
   assert.match(
     chatsCss,
     /\.session-row__open\s*\{[\s\S]*?display:\s*flex;[\s\S]*?gap:\s*var\(--space-4\);/
@@ -935,7 +930,8 @@ test('Chats and Settings share a flat rail visual contract without reviving acti
     chatsCss,
     /\.session-row\[data-session-dominant-state="streaming"\] \.session-row__dot\s*\{[\s\S]*?background:\s*var\(--sidebar-state-streaming-color\)/
   );
-  assert.match(chatsCss, /\.session-row:is\(\[data-session-dominant-state="idle"\], \[data-session-dominant-state="open"\]\)\[data-session-last-outcome="completed"\] \.session-row__dot\s*\{\s*background:\s*var\(--text-muted\)/);
+  assert.doesNotMatch(chatsCss, /data-session-last-outcome="completed"/, 'the grey finished dot is retired');
+  assert.doesNotMatch(chatsCss, /\.session-row\.active \.session-row__menu\s*\{\s*opacity/, 'the selected row has no resting menu');
   assert.match(chatsCss, /\.session-row:is\(\[data-session-dominant-state="idle"\], \[data-session-dominant-state="open"\]\)\[data-session-last-outcome="failed"\] \.session-row__dot\s*\{\s*background:\s*var\(--text-danger-emphasis\)/);
   const narrowStart = chatsCss.indexOf('@container viewpanel (max-width: 279px)');
   const narrowEnd = chatsCss.indexOf('@media (prefers-reduced-motion: reduce)', narrowStart);

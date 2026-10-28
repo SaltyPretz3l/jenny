@@ -237,6 +237,9 @@ class BrowserSessionService {
 
     try {
       if (session.strictWorkspaceOnly) {
+        if (session.requestFilterInstalled !== true) {
+          throw new Error('Strict browser sessions require request filtering.');
+        }
         const policyResult = this._classifyAllowedUrl(session.url, session);
         if (!policyResult.allowed) {
           throw new Error('Strict browser sessions require a contained workspace file URL.');
@@ -284,9 +287,13 @@ class BrowserSessionService {
         releaseFrames();
       }
       _throwIfAborted(signal);
-      const buffer = _toPngBuffer(captureResult);
-      const dimensions = parsePngDimensions(buffer);
-      if (!buffer.length || dimensions.width <= 0 || dimensions.height <= 0) {
+      // A caller that only reads the render-summary thumbnail (preview_test
+      // without a requested screenshot) skips the full PNG encode.
+      const thumbnailOnly = options.thumbnailOnly === true && options.modelImage !== true
+        && typeof captureResult?.getSize === 'function';
+      const buffer = thumbnailOnly ? null : _toPngBuffer(captureResult);
+      const dimensions = thumbnailOnly ? captureResult.getSize() : parsePngDimensions(buffer);
+      if ((!thumbnailOnly && !buffer.length) || !(dimensions?.width > 0) || !(dimensions?.height > 0)) {
         throw new Error('Browser screenshot capture did not return a valid PNG image.');
       }
       let thumbnail = null;
@@ -315,6 +322,7 @@ class BrowserSessionService {
         width: dimensions.width,
         height: dimensions.height,
         thumbnail,
+        ...(thumbnailOnly ? { thumbnail_only: true } : {}),
         model_image: modelImage,
         console_messages: session.consoleMessages.slice(-20),
         page_errors: session.pageErrors.slice(-20),
@@ -637,6 +645,13 @@ class BrowserSessionService {
     if (!webContents) {
       return;
     }
+    if (typeof webContents.setWebRTCIPHandlingPolicy === 'function') {
+      try {
+        webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
+      } catch (_) {
+        // Older Electron: the hidden window still has no media permissions.
+      }
+    }
     if (typeof webContents.setWindowOpenHandler === 'function') {
       webContents.setWindowOpenHandler((details = {}) => {
         const policyResult = this._classifyAllowedUrl(details.url, session);
@@ -665,7 +680,12 @@ class BrowserSessionService {
     if (browserSession && typeof browserSession.setDevicePermissionHandler === 'function') {
       browserSession.setDevicePermissionHandler(() => false);
     }
-    if (browserSession?.webRequest && typeof browserSession.webRequest.onBeforeRequest === 'function') {
+    // Recorded so a strict session can refuse to open without the filter
+    // instead of silently loading unfiltered.
+    session.requestFilterInstalled = Boolean(
+      browserSession?.webRequest && typeof browserSession.webRequest.onBeforeRequest === 'function'
+    );
+    if (session.requestFilterInstalled) {
       browserSession.webRequest.onBeforeRequest((details, callback) => {
         const policyResult = this._classifyAllowedUrl(details?.url, session);
         if (!policyResult.allowed) {
@@ -721,9 +741,26 @@ class BrowserSessionService {
     });
   }
 
+  // Allowed roots are realpath-resolved once per session; every request
+  // still resolves its own candidate path.
+  _resolvedFileRoots(session) {
+    if (Array.isArray(session.resolvedFileRoots)) return session.resolvedFileRoots;
+    const resolved = [];
+    for (const root of session.allowedFileRoots || []) {
+      try {
+        resolved.push(this._fs.realpathSync(this._path.resolve(root)));
+      } catch (_) {
+        // An unavailable root never matches; the classifier fails closed.
+      }
+    }
+    session.resolvedFileRoots = resolved;
+    return resolved;
+  }
+
   _classifyAllowedUrl(rawUrl, session) {
     const policy = classifyBrowserUrlWithRealpathSync(rawUrl, {
-      allowedFileRoots: session.allowedFileRoots,
+      allowedFileRoots: this._resolvedFileRoots(session),
+      allowedFileRootsResolved: true,
       fsImpl: this._fs,
       pathImpl: this._path,
     });

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+import fitz
 import pytest
 
 from sidecar.ai.tools.builtins.knowledge import configure_knowledge_tools, knowledge_view_tool
@@ -18,7 +19,6 @@ from tests.sidecar.ai.tools.test_knowledge import (
 
 
 def test_knowledge_pdf_pages_and_cursor_reach_real_adapter(corpus):
-    fitz = pytest.importorskip("fitz")
     from sidecar.ai.tools.builtins.rich_files.pdf import pdf_inspect_tool
     path = corpus["root_a"] / "report.pdf"
     document = fitz.open()
@@ -53,7 +53,6 @@ def test_knowledge_pdf_validates_pagination_controls(corpus, controls):
     from sidecar.ai.tools.builtins.rich_files.pdf import pdf_inspect_tool
     from sidecar.ai.tools.contracts import ToolExecutionFailure
 
-    fitz = pytest.importorskip("fitz")
     document = fitz.open()
     document.new_page().insert_text((72, 72), "PDF content")
     document.save(corpus["root_a"] / "report.pdf")
@@ -77,9 +76,18 @@ def test_text_view_returns_its_source_hash(corpus):
     assert payload["sources"][0]["source_hash"] == payload["source_hash"]
 
 
+def _rewrite(path, text: str) -> None:
+    """Change content AND mtime, so a stat-keyed memo cannot mask the edit."""
+    import os
+
+    previous = path.stat().st_mtime_ns
+    path.write_text(text, encoding="utf-8")
+    os.utime(path, ns=(previous + 2_000_000_000, previous + 2_000_000_000))
+
+
 def test_text_view_rejects_a_source_changed_since_the_first_view(corpus):
     first = _payload(knowledge_view_tool({"path": "project-x/spec.md"}, _WORKSPACE))
-    (corpus["root_a"] / "spec.md").write_text("rewritten\n", encoding="utf-8")
+    _rewrite(corpus["root_a"] / "spec.md", "rewritten\n")
     stale = knowledge_view_tool(
         {"path": "project-x/spec.md", "expected_source_hash": first["source_hash"]}, _WORKSPACE)
     body = _payload(stale)
@@ -87,6 +95,52 @@ def test_text_view_rejects_a_source_changed_since_the_first_view(corpus):
     assert body["reason"] == "source_changed"
     assert body["sources"] == []
     assert "rewritten" not in stale.output
+
+
+def test_paging_an_unchanged_source_hashes_it_once(corpus, monkeypatch):
+    from sidecar.ai.tools.builtins.knowledge import view as view_module
+
+    path = corpus["root_a"] / "paged.md"
+    path.write_text("".join(f"line {n}\n" for n in range(1, 30)), encoding="utf-8")
+    real_hash = view_module.source_hash
+    calls: list[object] = []
+
+    def counting_hash(*args, **kwargs):
+        calls.append(args[0])
+        return real_hash(*args, **kwargs)
+
+    monkeypatch.setattr(view_module, "source_hash", counting_hash)
+    first = _payload(knowledge_view_tool({"path": "project-x/paged.md", "limit": 10}, _WORKSPACE))
+    second = _payload(knowledge_view_tool(
+        {"path": "project-x/paged.md", "offset": 10, "limit": 10,
+         "expected_source_hash": first["source_hash"]}, _WORKSPACE))
+
+    assert second["content"].startswith("line 11")
+    assert second["source_hash"] == first["source_hash"] == _sha256(path)
+    assert len(calls) == 1
+
+    _rewrite(path, "changed\n")
+    third = _payload(knowledge_view_tool({"path": "project-x/paged.md"}, _WORKSPACE))
+    assert third["source_hash"] == _sha256(path)
+    assert len(calls) == 2
+
+
+def test_a_source_rewritten_during_the_read_is_rejected(corpus, monkeypatch):
+    from sidecar.ai.tools.builtins.knowledge import view as view_module
+
+    path = corpus["root_a"] / "spec.md"
+    real_view_text = view_module._view_text
+
+    def rewriting_read(*args, **kwargs):
+        result = real_view_text(*args, **kwargs)
+        _rewrite(path, "rewritten mid-read\n")
+        return result
+
+    monkeypatch.setattr(view_module, "_view_text", rewriting_read)
+    result = knowledge_view_tool({"path": "project-x/spec.md"}, _WORKSPACE)
+
+    assert result.success is False
+    assert _payload(result)["reason"] == "source_changed"
 
 
 def test_page_locator_on_a_text_file_fails_typed_before_any_read(corpus, monkeypatch):
@@ -172,3 +226,26 @@ def test_a_supplied_blank_locator_is_invalid_before_any_read(corpus, monkeypatch
     assert body["reason"] == "invalid_locator"
     assert body["sources"] == []
     assert "alpha" not in result.output
+
+
+def test_knowledge_docx_cursor_reaches_the_adapter_and_names_knowledge_view(corpus):
+    from sidecar.ai.tools.contracts import ToolHandlerResult
+
+    (corpus["root_a"] / "memo.docx").write_bytes(b"fake-docx-bytes")
+    seen: list[dict[str, object]] = []
+
+    def document(arguments, _guard):
+        seen.append(dict(arguments))
+        hint = "To continue, call read_file again with the same path and cursor=docx:x:41."
+        return ToolHandlerResult(output=json.dumps(
+            {"summary": {"paragraph_count": 60, "continuation_hint": hint}}))
+
+    configure_knowledge_tools({"knowledge_roots": [str(corpus["root_a"])]},
+                              rich_adapters={"document": document})
+    result = knowledge_view_tool(
+        {"path": "project-x/memo.docx", "cursor": "docx:0123456789abcdef:41", "pages": "1"},
+        _WORKSPACE,
+    )
+
+    assert seen == [{"path": "memo.docx", "cursor": "docx:0123456789abcdef:41"}]
+    assert "call knowledge_view again" in _payload(result)["summary"]["continuation_hint"]

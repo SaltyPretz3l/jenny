@@ -50,8 +50,10 @@
   var COMPOSER_WRAP_SELECTOR = '#composerWrap';
   var GENERAL_PROJECT_ID = 'project_general';
 
-  const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
-    || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
+  const sharedStringUtils = (typeof globalThis !== 'undefined' && globalThis.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null);
+  const escapeHtml = sharedStringUtils.escapeHtml;
+  const isPrimarySession = sharedStringUtils.isPrimarySession || (() => false);
 
   function folderName(rootPath) {
     var parts = String(rootPath || '').split(/[\\/]+/).filter(Boolean);
@@ -349,6 +351,8 @@
       var sessionId = String(session.id || '').trim();
       if (dismissedChats[sessionId]) return null;
       if (session.session_type === 'plugin') return null;
+      // The primary Jenny chat (row 69) is folderless by design: it never edits files, so no nudge.
+      if (isPrimarySession(session)) return null;
       // A chat with no backend record yet (first Send in flight, or a local
       // draft) carries no project_id: sessions.create binds it to the Workspace
       // folder's project, so its project is unknown here, not General.

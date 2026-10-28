@@ -48,6 +48,9 @@ const RULE_KEYS = Object.freeze(['decision', 'id', 'match', 'reason']);
 const MATCH_KEYS = Object.freeze([
   'action', 'mcp_server', 'mode', 'path_prefix', 'source_kind', 'tool_family', 'tool_id',
 ]);
+// Tools whose consent is a one-off by contract: a persisted always-allow
+// grant for them is refused by the store and rejected on read.
+const NEVER_PERSIST_ALWAYS_ALLOW = Object.freeze(new Set(['exit_plan_mode', 'propose_change']));
 const AUTHORITY_KEYS = Object.freeze([
   'device_id', 'inode', 'project_id', 'root_id', 'root_path', 'root_revision',
 ]);
@@ -191,8 +194,9 @@ function canonicalLegacyPolicies(value, { allowAuto }) {
   for (const [rawName, decision] of Object.entries(value)) {
     const toolName = validateToolName(rawName);
     if (!toolName || !VALID_DECISIONS.has(decision) || (!allowAuto && decision === 'auto')) return null;
+    // Two raw names can canonicalize to one tool (alias, case); the most
+    // restrictive decision wins instead of refusing the whole document.
     const existing = policies[toolName];
-    if (existing !== undefined) return null;
     if (!existing || decision === 'deny' || (decision === 'ask' && existing === 'auto')) {
       policies[toolName] = decision;
     }
@@ -270,6 +274,7 @@ function validateScopedGrant(value) {
   return Boolean(
     canonicalText(value.id, MAX_RULE_ID_CHARS)
     && (value.tool_name === '*' || validateToolName(value.tool_name) === value.tool_name)
+    && !(split && NEVER_PERSIST_ALWAYS_ALLOW.has(split.tool_id))
     && pathPrefix !== undefined && pathPrefix === value.path_prefix
     && canonical && isDeepStrictEqual(canonical.match, value.match)
     && (value.tool_name === '*' || canonical.match.tool_id === split.tool_id)
@@ -537,6 +542,7 @@ module.exports = {
   MAX_RULE_COUNT,
   MAX_SCOPED_GRANT_COUNT,
   migratePermissionDocument,
+  NEVER_PERSIST_ALWAYS_ALLOW,
   normalizeAuthority,
   normalizeToolName,
   RETIRED_INSPECT_TOOL_NAMES,

@@ -29,6 +29,7 @@ const flow = require('./chat-proposal-session-flow');
 const support = require('./chat-proposal-support');
 const restore = require('./chat-proposal-restore');
 const { prepareSessionRetry } = require('./backend/chat-proposal-session-records');
+const { createChildTracker } = require('./backend/chat-proposal-child-view');
 const { gestureVerdict, proposalGestureReceipt, recordGesture } = require('./backend/coordination-receipts');
 const { COMMAND_DRIFT_CAUSES, markCommandOutcome } = require('./backend/chat-proposal-command-records');
 
@@ -84,6 +85,7 @@ class ChatProposalService {
     this._gestures = new Map(); // `${proposalId}:${decisionId}` -> { op, expectedRevision }
     this._tracked = new Map(); // continuation / preparation turn id -> { sessionId, proposalId, state, role }
     this._ports = flow.buildPorts(portOptions);
+    this._child = createChildTracker({ readFacts: portOptions.readChildFacts, changed: (id) => this._changed(id) }); // F3b
     this._sessionHandoff = sessionHandoff;
     this._offerTurns = new Map(); // source turn id -> session id (ordinary offers awaiting their boundary)
     this._turnTerminals = new Map(); // source turn id -> 'complete' | 'failed' | 'cancelled'
@@ -165,6 +167,7 @@ class ChatProposalService {
   }
 
   async list(raw) { return support.listPage(this, raw); }
+  childChanged(childId) { this._child.touch(childId); } // F3b: an automatic resume took the child's report
 
   async decide(raw) {
     const checked = contract.validateDecideRequest(raw);
@@ -353,6 +356,7 @@ class ChatProposalService {
   handleChatStreamEvent(event) {
     const turnId = typeof event?.turnId === 'string' ? event.turnId : '';
     flow.onSourceTurnEvent(this, event);
+    this._child.onEvent(event);
     const tracked = turnId ? this._tracked.get(turnId) : null;
     if (!tracked) return;
     if (tracked.role === 'prep') return flow.onPrepEvent(this, tracked, event);
@@ -381,14 +385,16 @@ class ChatProposalService {
 
   // Startup: expire what is due, then settle every unsettled Git continuation and
   // command Run from the runtime store. Reads only; never resumes or resubmits.
-  reconcileOnStartup() {
-    const rec = this._records;
+  // The wiring runs startupReconcileSteps() (one step per chat) in yielding slices (row 62).
+  reconcileOnStartup() { for (const step of this.startupReconcileSteps()) step(); }
+
+  startupReconcileSteps() {
     let ids;
-    try { ids = this._listSessionIds() || []; } catch { return; }
-    for (const sessionId of ids) {
+    try { ids = this._listSessionIds() || []; } catch { return []; }
+    return ids.map((sessionId) => () => {
       try {
         const read = this._sweep(sessionId, this._store.read(sessionId));
-        if (!read.ok || read.frozen) continue;
+        if (!read.ok || read.frozen) return;
         for (const record of read.records) {
           if (flow.reconcileRecord(this, sessionId, record)) continue;
           if (record.decision_state !== 'accepted' || !['queued', 'admitted'].includes(record.action_state)) continue;
@@ -398,7 +404,7 @@ class ChatProposalService {
       } catch {
         this._log('WARN', 'chat_proposal.reconcile_failed', { reason: 'exception' });
       }
-    }
+    });
   }
 
   _reconcileRecord(sessionId, record) { support.reconcileContinuation(this, sessionId, record); }
@@ -437,9 +443,7 @@ class ChatProposalService {
     try { return this._ports.supportsSessionHandoff() === true && typeof this._handoff()?.buildPreparationRequest === 'function'; } catch { return false; }
   }
 
-  _untrack(turnId) {
-    if (typeof turnId === 'string') this._tracked.delete(turnId);
-  }
+  _untrack(turnId) { if (typeof turnId === 'string') this._tracked.delete(turnId); }
 
   _changed(sessionId) {
     this._notifier.notify(sessionId);
@@ -459,13 +463,11 @@ class ChatProposalService {
     return this._records.projectProposal(record, {
       now: this._now(), ...this._runState(record.source_session_id), commandRunSupported: this._commandSupported(),
       sessionRuntimeSupported: true, sessionHandoffSupported: record.kind === 'session' && this._handoffSupported(),
+      child: this._child.view(record),
     });
   }
 
-  _commandSupported() {
-    try { return this._commandAdapter?.isSupported?.() === true; } catch { return false; }
-  }
-
+  _commandSupported() { try { return this._commandAdapter?.isSupported?.() === true; } catch { return false; } }
   _storeFailure(result) {
     const reason = result.reason === 'io_failed' ? 'io_failed' : (result.reason === 'not_found' ? 'not_found' : 'unavailable');
     return fail(reason, { currentRevision: result.current_revision, retryable: result.retryable });

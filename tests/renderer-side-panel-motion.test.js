@@ -352,3 +352,38 @@ describe('context panel column motion', () => {
     assert.deepEqual(f.calls, ['capture:-', 'restore:-']);
   });
 });
+
+describe('composer fit settle', () => {
+  // The pane's toolbar fit flips compact (hiding the avatar rail) only when asked to settle;
+  // without the settle the lock would hold the pre-compact measure and the reader would jump.
+  function withFit(f) {
+    const pane = f.paneEls[0];
+    const timeline = pane.querySelector('[data-chat-node="chatTimeline"]');
+    let compact = false;
+    pane.addEventListener('jenny:composer-fit-flush', () => {
+      compact = f.chatView.classList.contains('open');
+      f.log.push(`fit compact=${compact}`);
+    });
+    timeline.getBoundingClientRect = () => ({ width: f.chatView.classList.contains('open') ? (compact ? 760 : OPEN_MEASURE) : CLOSED_MEASURE });
+    return pane;
+  }
+
+  test('open locks the measure the pane has once its fit has settled for the open state', (t) => {
+    const f = makeFixture(t, { panes: 1 });
+    const pane = withFit(f);
+    f.motion.open({ panel: f.panel, applyEnd: f.applyOpen });
+    assert.equal(f.lockOf(pane), '760px');
+    assert.deepEqual(f.log.slice(0, 3), ['capture lock=none phase=none', 'apply open', 'fit compact=true']);
+  });
+
+  test('close settles the fit inside the reflow bracket, before the anchor is restored', (t) => {
+    const f = makeFixture(t, { panes: 1 });
+    withFit(f);
+    f.motion.open({ panel: f.panel, applyEnd: f.applyOpen });
+    f.fireTimer();
+    f.log.length = 0;
+    f.motion.close({ panel: f.panel, applyEnd: f.applyClosed, deferEnd: true });
+    f.fireTimer();
+    assert.deepEqual(f.log, ['capture lock=760px phase=closing', 'apply closed', 'fit compact=false', 'restore lock=none phase=none']);
+  });
+});

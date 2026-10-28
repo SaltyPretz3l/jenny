@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -19,7 +18,7 @@ from sidecar.ai.tools.builtins.lsp.limits import (
     DEFAULT_MAX_DIAGNOSTICS,
     DEFAULT_MAX_REFERENCES,
     DEFAULT_MAX_SYMBOLS,
-    MAX_LSP_ITEMS,
+    bounded_item_limit,
 )
 from sidecar.ai.tools.builtins.lsp.manager import (
     LSPManager,
@@ -60,7 +59,7 @@ configure_lsp_tools = _configure_lsp_tools
 
 
 if _STATE.manager is None:
-    _STATE.manager = LSPManager()
+    _STATE.manager = LSPManager(request_timeout_seconds=lambda: _STATE.request_timeout_seconds)
 
 
 @dataclass(frozen=True)
@@ -83,7 +82,7 @@ def lsp_diagnostics_tool(
     workspace: WorkspaceGuard,
 ) -> ToolHandlerResult:
     target = resolve_lsp_target(arguments, workspace)
-    max_items = _bounded_int(
+    max_items = bounded_item_limit(
         arguments.get("max_diagnostics"),
         default=DEFAULT_MAX_DIAGNOSTICS,
     )
@@ -107,7 +106,7 @@ def lsp_symbols_tool(
     workspace: WorkspaceGuard,
 ) -> ToolHandlerResult:
     target = resolve_lsp_target(arguments, workspace)
-    max_items = _bounded_int(arguments.get("max_symbols"), default=DEFAULT_MAX_SYMBOLS)
+    max_items = bounded_item_limit(arguments.get("max_symbols"), default=DEFAULT_MAX_SYMBOLS)
     return _run_lsp_request(
         target=target,
         workspace=workspace,
@@ -129,7 +128,7 @@ def lsp_definition_tool(
 ) -> ToolHandlerResult:
     target = resolve_lsp_target(arguments, workspace)
     position = parse_lsp_position(arguments)
-    max_items = _bounded_int(arguments.get("max_locations"), default=DEFAULT_MAX_DEFINITIONS)
+    max_items = bounded_item_limit(arguments.get("max_locations"), default=DEFAULT_MAX_DEFINITIONS)
     return _run_lsp_request(
         target=target,
         workspace=workspace,
@@ -161,7 +160,7 @@ def lsp_references_tool(
     target = resolve_lsp_target(arguments, workspace)
     position = parse_lsp_position(arguments)
     include_declaration = arguments.get("include_declaration") is True
-    max_items = _bounded_int(arguments.get("max_references"), default=DEFAULT_MAX_REFERENCES)
+    max_items = bounded_item_limit(arguments.get("max_references"), default=DEFAULT_MAX_REFERENCES)
     return _run_lsp_request(
         target=target,
         workspace=workspace,
@@ -218,7 +217,7 @@ def lsp_tool(
             ),
             success=False,
             error_code=CMP_TOOL_EXECUTION_FAILED,
-            metadata={"result_kind": "lsp", "truncated": False},
+            metadata={"result_kind": "lsp", "truncated": False, "effects": "none"},
         )
     return handler(arguments, workspace)
 
@@ -251,17 +250,12 @@ def _run_lsp_request(
         workspace_root = workspace.require_root()
         manager = _STATE.manager
         manager.evict_idle_sessions()
-        session_for_request = getattr(manager, "session_for_request", None)
-        acquire = session_for_request if callable(session_for_request) else manager.ensure_session
-        acquired = acquire(
+        with manager.session_for_request(
             language=server_language_for_target(target.language),
             workspace_root=workspace_root,
             command=_command_for_server(server),
-        )
-        lease = acquired if callable(session_for_request) else nullcontext(acquired)
-        with lease as session:
-            _ensure_initialized(
-                manager=manager,
+        ) as session:
+            manager.ensure_initialized(
                 session=session,
                 language=target.language,
                 workspace_root=workspace_root,
@@ -284,13 +278,12 @@ def _run_lsp_request(
                         "sync_version": sync_result.version,
                     },
                 )
-            raw_result = _request_language_feature(
-                manager=manager,
-                session=session,
-                method=spec.method,
-                uri=target.uri,
-                params=spec.request_params,
-            )
+            if spec.method == "textDocument/diagnostic":
+                raw_result = manager.request_document_diagnostics(session=session, uri=target.uri)
+            else:
+                raw_result = session.request(
+                    spec.method, spec.request_params or {"textDocument": {"uri": target.uri}}
+                )
     except ToolExecutionFailure:
         raise
     except LSPProtocolError as error:
@@ -325,37 +318,6 @@ def _run_lsp_request(
             truncated=bool(payload.get("truncated", False)),
         ),
     )
-
-
-def _ensure_initialized(
-    *, manager: Any, session: Any, language: LSPLanguage, workspace_root: Path
-) -> None:
-    ensure_initialized = getattr(manager, "ensure_initialized", None)
-    if callable(ensure_initialized):
-        ensure_initialized(
-            session=session,
-            language=language,
-            workspace_root=workspace_root,
-        )
-
-
-def _request_language_feature(
-    *,
-    manager: Any,
-    session: Any,
-    method: str,
-    uri: str,
-    params: dict[str, object] | None = None,
-) -> object:
-    if method == "textDocument/diagnostic":
-        request_document_diagnostics = getattr(
-            manager,
-            "request_document_diagnostics",
-            None,
-        )
-        if callable(request_document_diagnostics):
-            return request_document_diagnostics(session=session, uri=uri)
-    return session.request(method, params or {"textDocument": {"uri": uri}})
 
 
 def _failure_result(
@@ -409,6 +371,8 @@ def _metadata(*, result_kind: str, target: LSPTarget, truncated: bool) -> dict[s
         "language": target.language,
         "file": target.relative_path,
         "truncated": truncated,
+        # Every action is read-only; the derived-effects fallback cannot see this tool.
+        "effects": "none",
     }
 
 
@@ -470,14 +434,6 @@ def _lsp_enabled(config: Any | None) -> bool:
     else:
         value = getattr(config, "tools_lsp_enabled", None)
     return value if isinstance(value, bool) else False
-
-
-def _bounded_int(value: object, *, default: int) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        return default
-    if value < 1:
-        return default
-    return min(value, MAX_LSP_ITEMS)
 
 
 def _log_protocol_failure(

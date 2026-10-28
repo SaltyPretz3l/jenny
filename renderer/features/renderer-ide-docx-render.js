@@ -44,6 +44,7 @@
       const image = documentRef.createElement('img');
       image.className = 'ide-docx-img';
       image.dataset.run = run.id;
+      image.decoding = 'async';
       image.src = run.src;
       image.alt = run.alt || '';
       image.draggable = false;
@@ -64,7 +65,27 @@
     return span;
   }
 
-  function renderParagraph(documentRef, block, state) {
+  // Word keeps one counter per (list, level): a paragraph advances its own
+  // level and restarts every deeper one, and paragraphs, tables and other
+  // lists in between never interrupt it. `counters`: numId -> level counts.
+  function listLabel(list, counters) {
+    const numId = String(list.numId || '');
+    const level = Math.max(0, Number.parseInt(list.level, 10) || 0);
+    if (!counters.has(numId)) counters.set(numId, []);
+    const levels = counters.get(numId);
+    const start = Number.isFinite(list.start) ? list.start : 1;
+    levels[level] = levels[level] === undefined ? start : levels[level] + 1;
+    levels.length = level + 1;
+    return list.kind === 'bullet' ? '\u2022' : `${levels[level]}.`;
+  }
+
+  // A paragraph's list identity: while it holds, the paragraph's label
+  // depends only on earlier paragraphs, so a text edit can re-render it alone.
+  function listKey(list) {
+    return list ? `${list.kind}:${list.numId || ''}:${list.level || 0}` : '';
+  }
+
+  function renderParagraph(documentRef, block, counters) {
     const paragraph = documentRef.createElement('p');
     paragraph.className = 'ide-docx-p';
     paragraph.dataset.block = block.id;
@@ -72,22 +93,8 @@
     paragraph.dataset.align = block.align || '';
     if (block.list) {
       paragraph.dataset.list = block.list.kind;
-      if (block.list.kind === 'bullet') {
-        paragraph.dataset.listLabel = '\u2022';
-        state.lastNumberId = '';
-      } else {
-        const numId = String(block.list.numId || '');
-        if (state.lastNumberId !== numId) {
-          state.number = Number.isFinite(block.list.start) ? block.list.start : 1;
-        } else {
-          state.number += 1;
-        }
-        state.lastNumberId = numId;
-        paragraph.dataset.listLabel = `${state.number}.`;
-      }
-    } else {
-      state.lastNumberId = '';
-      state.number = 0;
+      paragraph.dataset.listKey = listKey(block.list);
+      paragraph.dataset.listLabel = listLabel(block.list, counters);
     }
     let runOffset = 0;
     for (const run of block.runs || []) {
@@ -107,13 +114,10 @@
   }
 
   function appendBlocks(documentRef, parent, blocks, counters) {
-    const state = counters || { lastNumberId: '', number: 0 };
     for (const block of blocks || []) {
       if (block.type === 'paragraph') {
-        parent.appendChild(renderParagraph(documentRef, block, state));
+        parent.appendChild(renderParagraph(documentRef, block, counters));
       } else if (block.type === 'table') {
-        state.lastNumberId = '';
-        state.number = 0;
         const table = documentRef.createElement('table');
         table.className = 'ide-docx-table';
         for (const rowBlock of block.rows || []) {
@@ -122,15 +126,13 @@
             const cell = documentRef.createElement('td');
             cell.className = 'ide-docx-cell';
             cell.dataset.cell = cellBlock.id;
-            appendBlocks(documentRef, cell, cellBlock.blocks, { lastNumberId: '', number: 0 });
+            appendBlocks(documentRef, cell, cellBlock.blocks, counters);
             row.appendChild(cell);
           }
           table.appendChild(row);
         }
         parent.appendChild(table);
       } else {
-        state.lastNumberId = '';
-        state.number = 0;
         const other = documentRef.createElement('div');
         other.className = 'ide-docx-other';
         other.setAttribute('contenteditable', 'false');
@@ -140,11 +142,104 @@
     }
   }
 
-  function renderBlocks(documentRef, blocks, options = {}) {
+  function renderBlocks(documentRef, blocks) {
     const fragment = documentRef.createDocumentFragment();
-    const counters = options.listCounters || { lastNumberId: '', number: 0 };
-    appendBlocks(documentRef, fragment, blocks, counters);
+    appendBlocks(documentRef, fragment, blocks, new Map());
     return fragment;
+  }
+
+  // One section per region (body, headers, footers); the non-body ones carry
+  // a label that is not part of the editable text.
+  function renderRegions(documentRef, regions) {
+    const fragment = documentRef.createDocumentFragment();
+    for (const region of regions || []) {
+      const section = documentRef.createElement('section');
+      section.className = `ide-docx-region ide-docx-region-${region.type}`;
+      section.dataset.region = region.key;
+      if (region.type !== 'body') {
+        const label = documentRef.createElement('div');
+        label.className = 'ide-docx-region-label';
+        label.setAttribute('contenteditable', 'false');
+        const labels = {
+          header: jt('ide.docx.header', 'Header'), footer: jt('ide.docx.footer', 'Footer'),
+          firstheader: jt('ide.docx.firstPageHeader', 'First page header'),
+          firstfooter: jt('ide.docx.firstPageFooter', 'First page footer'),
+          evenheader: jt('ide.docx.evenPageHeader', 'Even page header'),
+          evenfooter: jt('ide.docx.evenPageFooter', 'Even page footer'),
+        };
+        const variant = region.variant === 'first' || region.variant === 'even' ? region.variant : '';
+        label.textContent = labels[variant + region.type];
+        section.appendChild(label);
+      }
+      section.appendChild(renderBlocks(documentRef, region.blocks));
+      fragment.appendChild(section);
+    }
+    return fragment;
+  }
+
+  // Block ids are positional within their container (`b<n>`, `<cell>.b<n>`,
+  // `header1::b<n>`): `base` is the id up to the ordinal (`header1::`,
+  // `b2.row1.c1.`, or '' for the body). Sibling walks, not children arrays:
+  // indexing an HTMLCollection is linear per access in jsdom.
+  function blockIdBase(blockId) {
+    const match = /^(.*)b\d+$/.exec(String(blockId || ''));
+    return match ? match[1] : null;
+  }
+
+  const isBlockElement = (element) => !element.classList.contains('ide-docx-region-label');
+
+  // From `start` on, every block element takes the id its position now gives
+  // it, including the cell and paragraph ids nested in a table.
+  function renumberBlocks(start, base, ordinal) {
+    let next = ordinal;
+    for (let element = start; element; element = element.nextElementSibling) {
+      if (!isBlockElement(element)) continue;
+      const id = `${base}b${next}`;
+      next += 1;
+      if (element.classList.contains('ide-docx-p')) {
+        element.dataset.block = id;
+        continue;
+      }
+      for (const nested of element.querySelectorAll('[data-block], [data-cell]')) {
+        const key = nested.dataset.block === undefined ? 'cell' : 'block';
+        const value = nested.dataset[key];
+        if (value.startsWith(base)) nested.dataset[key] = id + value.slice(base.length).replace(/^b\d+/, '');
+      }
+    }
+  }
+
+  // Enter and a merge in a plain (non-list) paragraph patch the DOM in
+  // place: only the touched paragraphs re-render and later blocks take their
+  // shifted ids. Each returns false before touching the DOM when a list is
+  // involved or the DOM positions disagree with the ids; the caller then
+  // renders everything.
+  function positionOf(paragraph) {
+    const base = blockIdBase(paragraph?.dataset.block);
+    if (base === null || paragraph.dataset.list) return null;
+    let ordinal = 1;
+    for (let sibling = paragraph.previousElementSibling; sibling; sibling = sibling.previousElementSibling) {
+      if (isBlockElement(sibling)) ordinal += 1;
+    }
+    return paragraph.dataset.block === `${base}b${ordinal}` ? { base, ordinal } : null;
+  }
+
+  function patchSplit(documentRef, paragraph, halves) {
+    const position = positionOf(paragraph);
+    if (!position || halves[0]?.id !== paragraph.dataset.block || halves.some((block) => !block || block.list)) return false;
+    const after = paragraph.nextElementSibling;
+    paragraph.replaceWith(renderBlocks(documentRef, halves));
+    renumberBlocks(after, position.base, position.ordinal + 2);
+    return true;
+  }
+
+  function patchMerge(paragraph, mergedId) {
+    const position = positionOf(paragraph);
+    const previous = paragraph?.previousElementSibling;
+    if (!position || previous?.dataset.block !== mergedId || previous.dataset.list) return false;
+    const after = paragraph.nextElementSibling;
+    paragraph.remove();
+    renumberBlocks(after, position.base, position.ordinal);
+    return true;
   }
 
   function ownerElement(node) {
@@ -173,7 +268,6 @@
     if (locked && paragraph.contains(locked)) {
       return { blockId: paragraph.dataset.block, offset: offsetBefore(paragraph, locked) + runLength(locked) };
     }
-    const children = paragraphChildren(paragraph);
     if (domNode === paragraph) {
       const count = Math.max(0, Math.min(Number(domOffset) || 0, paragraph.childNodes.length));
       let offset = 0;
@@ -252,5 +346,5 @@
     return true;
   }
 
-  return { renderBlocks, resolvePoint, resolveSelection, setCaret };
+  return { renderBlocks, renderRegions, patchSplit, patchMerge, resolvePoint, resolveSelection, setCaret, listKey };
 });

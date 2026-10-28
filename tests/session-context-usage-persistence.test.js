@@ -30,7 +30,9 @@ const { forkSession } = require('../services/backend/session-branching');
 const { rebuildChatDoneUsage } = require('../services/backend/chat-stream-usage');
 const {
   buildSessionContextUsageRecord,
+  contextCalibrationSendField,
   normalizeSessionContextUsage,
+  persistTerminalContextUsage,
 } = require('../services/backend/session-context-usage');
 const {
   handleNotification,
@@ -386,4 +388,105 @@ test('chat.done stays on its terminal path when the session store rejects the se
     .filter((entry) => entry.code === 'chat.context_usage_not_persisted');
   assert.equal(warns.length, 1, 'the degradation is observable');
   assert.equal(warns[0].fields.reason, 'persistence_exception');
+});
+
+// ---------------------------------------------------------------------------
+// Calibration: the provider-vs-estimate pair Electron carries back to the sidecar
+// ---------------------------------------------------------------------------
+
+const CALIBRATION = Object.freeze({
+  provider_tokens: 150000,
+  estimate_tokens: 110000,
+  engine: 'ninfer',
+  model: 'qwen3.8',
+  estimator: 'CharEstimationBackend',
+});
+
+test('a terminal usage with a calibration persists it on the record and reloads it', () => {
+  const rebuilt = rebuildChatDoneUsage({
+    ...TERMINAL_USAGE,
+    context_calibration: { ...CALIBRATION, injected: 'dropped' },
+  });
+  assert.deepEqual(rebuilt.context_calibration, CALIBRATION, 'copied key by key, never spread');
+
+  const record = buildSessionContextUsageRecord(rebuilt, { updatedAt: '2026-10-20T12:00:00.000Z' });
+  assert.equal(record.version, 1, 'the optional field does not bump the record version');
+  assert.deepEqual(record.calibration, CALIBRATION);
+
+  const tmpRoot = makeRoot('calibration');
+  const store = createStore(tmpRoot);
+  seedStore(store, 'sess-cal');
+  store.setSessionContextUsage('sess-cal', record);
+  store.flush();
+  store.dispose();
+  const reloaded = createStore(tmpRoot);
+  assert.deepEqual(reloaded.getSession('sess-cal').context_usage.calibration, CALIBRATION);
+  assert.deepEqual(
+    contextCalibrationSendField(reloaded.getSession('sess-cal')),
+    { context_calibration: CALIBRATION }
+  );
+  reloaded.dispose();
+});
+
+test('an invalid calibration is dropped alone and the meter seed survives', () => {
+  const bad = [
+    { ...CALIBRATION, provider_tokens: 0 },
+    { ...CALIBRATION, provider_tokens: 1.5 },
+    { ...CALIBRATION, estimate_tokens: '110000' },
+    { ...CALIBRATION, engine: '' },
+    { ...CALIBRATION, model: 'm'.repeat(201) },
+    { ...CALIBRATION, estimator: null },
+    { provider_tokens: 150000 },
+    [],
+    'nope',
+  ];
+  for (const calibration of bad) {
+    const rebuilt = rebuildChatDoneUsage({ ...TERMINAL_USAGE, context_calibration: calibration });
+    assert.equal(Object.hasOwn(rebuilt, 'context_calibration'), false);
+
+    const normalized = normalizeSessionContextUsage({ ...terminalRecord(), calibration });
+    assert.equal(normalized.used_tokens, 42000, 'the rest of the record stays valid');
+    assert.equal(Object.hasOwn(normalized, 'calibration'), false);
+    assert.deepEqual(contextCalibrationSendField({ context_usage: { ...terminalRecord(), calibration } }), {});
+  }
+});
+
+test('a record without a calibration, and a calibration-free session, send nothing', () => {
+  assert.equal(Object.hasOwn(terminalRecord(), 'calibration'), false);
+  assert.deepEqual(contextCalibrationSendField({ context_usage: terminalRecord() }), {});
+  assert.deepEqual(contextCalibrationSendField({}), {});
+  assert.deepEqual(contextCalibrationSendField(null), {});
+  assert.deepEqual(normalizeSessionContextUsage({ ...terminalRecord(), calibration: CALIBRATION }).calibration, CALIBRATION);
+});
+
+test('a stored calibration goes with the record when history is rewritten', () => {
+  const store = createStore(makeRoot('calibration-rewrite'));
+  seedStore(store, 'sess-cal-trunc');
+  store.setSessionContextUsage('sess-cal-trunc', { ...terminalRecord(), calibration: CALIBRATION });
+  assert.deepEqual(store.getSession('sess-cal-trunc').context_usage.calibration, CALIBRATION);
+  assert.ok(store.truncateAfterMessage('sess-cal-trunc', 'u2'));
+  assert.deepEqual(contextCalibrationSendField(store.getSession('sess-cal-trunc')), {});
+  store.dispose();
+});
+
+test('a turn that could not calibrate keeps the previous calibration; a new one replaces it', () => {
+  const store = createStore(makeRoot('calibration-carry'));
+  seedStore(store, 'sess-cal-carry');
+  const ctx = { resolvedSessionId: 'sess-cal-carry', service: { sessionStore: store } };
+
+  assert.ok(persistTerminalContextUsage(ctx, rebuildChatDoneUsage({
+    ...TERMINAL_USAGE,
+    context_calibration: CALIBRATION,
+  })));
+  // An image turn or a fallback reply: no calibration on the usage block.
+  assert.ok(persistTerminalContextUsage(ctx, rebuildChatDoneUsage({ ...TERMINAL_USAGE })));
+  assert.deepEqual(store.getSession('sess-cal-carry').context_usage.calibration, CALIBRATION);
+
+  const fresher = { ...CALIBRATION, provider_tokens: 160000, estimate_tokens: 115000 };
+  assert.ok(persistTerminalContextUsage(ctx, rebuildChatDoneUsage({
+    ...TERMINAL_USAGE,
+    context_calibration: fresher,
+  })));
+  assert.deepEqual(store.getSession('sess-cal-carry').context_usage.calibration, fresher);
+  store.dispose();
 });

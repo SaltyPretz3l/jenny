@@ -17,19 +17,16 @@ from sidecar.ai.tools.builtins.web_http import (
     RedirectTargetInvalidError,
     UrlReadResult,
     ValidatedUrl,
-    _NoRedirectHandler,
 )
 from sidecar.ai.tools.builtins.web_search_providers import (
     _MAX_POLICY_REASON_CHARS,
     _MAX_PROVIDER_RESPONSE_BYTES,
-    _VENDOR_OPENER,
     BraveProvider,
     DuckDuckGoProvider,
     GooglePSEProvider,
     SearXNGProvider,
     SerperProvider,
     TavilyProvider,
-    _request_json,
     build_provider_dispatch,
     citations_from_sources,
     filter_sources_by_domains,
@@ -47,12 +44,9 @@ _CANONICAL_KEYS = {
     "source_url",
 }
 
-# Vendors go through the no-redirect seam (their requests carry API keys, so
-# a followed redirect would forward the credential to the redirect target).
-_URLOPEN_PATCH = "sidecar.ai.tools.builtins.web_search_providers._vendor_urlopen"
 _VALIDATE_PATCH = "sidecar.ai.tools.builtins.web_search_providers.validate_public_url"
-# SearXNG uses the pinned/no-redirect fetch (web_http.read_url_response), not
-# the vendor path the fixed-host providers use.
+# Every provider uses the pinned fetch (web_http.read_url_response); vendors pass
+# max_redirects=0 so a 3xx never forwards their API key.
 _READ_URL_PATCH = "sidecar.ai.tools.builtins.web_search_providers.read_url_response"
 _PROVIDERS_LOGGER = "sidecar.ai.tools.builtins.web_search_providers"
 
@@ -277,7 +271,7 @@ class TestSearXNGProvider:
         # The FULL request URL is what gets validated, and the pinned fetch
         # targets exactly the ValidatedUrl the validation returned.
         assert mock_validate.call_args[0][0] == full_url
-        assert mock_read.call_args[0][0] is mock_validate.return_value
+        assert mock_read.call_args[0][0] == mock_validate.return_value
 
     @patch(_READ_URL_PATCH)
     @patch(_VALIDATE_PATCH, return_value=ValidatedUrl(url="https://searx.example.com", pinned_ip=""))
@@ -667,44 +661,81 @@ class TestVendorHttpPosture:
     """The shared vendor request path must never leak keys via redirects or
     buffer unbounded response bodies."""
 
-    def test_vendor_opener_never_follows_redirects(self) -> None:
-        # Structural pin: the real opener's only redirect handler is the
-        # raise-on-3xx one, so a vendor 302 can never re-issue the request
-        # (and its key headers) to the redirect target.
-        redirect_handlers = [
-            handler
-            for handler in _VENDOR_OPENER.handlers
-            if isinstance(handler, urllib.request.HTTPRedirectHandler)
-        ]
-        assert redirect_handlers, "expected an explicit redirect handler"
-        assert all(isinstance(handler, _NoRedirectHandler) for handler in redirect_handlers)
+    @patch(_READ_URL_PATCH)
+    @patch(_VALIDATE_PATCH, return_value=ValidatedUrl(url="https://api.search.brave.com", pinned_ip=""))
+    def test_vendor_requests_never_follow_redirects(
+        self, _mock_validate: MagicMock, mock_read: MagicMock
+    ) -> None:
+        # Structural pin: a vendor 302 can never re-issue the request (and its key
+        # headers) to the redirect target.
+        mock_read.return_value = _url_read_result(b"{}")
+        BraveProvider(api_key="brave-key").search("q", **_search_kwargs())
+        assert mock_read.call_args.kwargs["max_redirects"] == 0
 
-    @patch(_URLOPEN_PATCH)
-    def test_redirect_fails_closed_with_key_free_error(self, mock_open: MagicMock) -> None:
-        mock_open.side_effect = urllib.error.HTTPError(
-            "https://api.search.brave.com/res/v1/web/search", 302, "Found", None, None
-        )
+    @patch(_READ_URL_PATCH)
+    @patch(_VALIDATE_PATCH, return_value=ValidatedUrl(url="https://searx.example.com", pinned_ip=""))
+    def test_searxng_keeps_the_revalidating_redirect_follow(
+        self, _mock_validate: MagicMock, mock_read: MagicMock
+    ) -> None:
+        mock_read.return_value = _url_read_result(_searxng_body(1))
+        SearXNGProvider(base_url="https://searx.example.com").search("q", **_search_kwargs())
+        assert "max_redirects" not in mock_read.call_args.kwargs
+
+    @patch(_READ_URL_PATCH)
+    @patch(_VALIDATE_PATCH, return_value=ValidatedUrl(url="https://api.search.brave.com", pinned_ip=""))
+    def test_redirect_fails_closed_with_key_free_error(
+        self, _mock_validate: MagicMock, mock_read: MagicMock
+    ) -> None:
+        mock_read.side_effect = RedirectBlockedError("Too many redirects (maximum 0).")
         payload = BraveProvider(api_key="brave-key-123").search("q", **_search_kwargs())
         assert payload["error"] == "brave search failed: redirect blocked"
         assert "brave-key-123" not in json.dumps(payload)
 
-    @patch(_URLOPEN_PATCH)
-    def test_oversized_response_fails_closed(self, mock_open: MagicMock) -> None:
-        oversized = b"x" * (_MAX_PROVIDER_RESPONSE_BYTES + 1)
-        mock_open.return_value = _mock_response(oversized)
+    @patch(_READ_URL_PATCH)
+    @patch(_VALIDATE_PATCH, return_value=ValidatedUrl(url="https://api.tavily.com", pinned_ip=""))
+    def test_oversized_response_fails_closed(
+        self, _mock_validate: MagicMock, mock_read: MagicMock
+    ) -> None:
+        mock_read.return_value = UrlReadResult(
+            payload=b"x" * 1024,
+            was_truncated=True,
+            content_type="application/json",
+            status_code=200,
+            requested_url="https://api.tavily.com/search",
+            final_url="https://api.tavily.com/search",
+            redirect_chain=(),
+        )
         payload = TavilyProvider(api_key="tavily-key-123").search("q", **_search_kwargs())
         assert payload["error"] == "tavily search failed: response too large"
         assert "tavily-key-123" not in json.dumps(payload)
 
-    @patch(_URLOPEN_PATCH)
-    def test_request_json_reads_no_more_than_the_response_bound(
-        self, mock_open: MagicMock
+    @patch(_READ_URL_PATCH)
+    @patch(_VALIDATE_PATCH, return_value=ValidatedUrl(url="https://api.tavily.com", pinned_ip=""))
+    def test_vendor_read_is_size_and_deadline_bounded(
+        self, _mock_validate: MagicMock, mock_read: MagicMock
     ) -> None:
-        response = _mock_response(json.dumps({"ok": True}).encode())
-        mock_open.return_value = response
-        data = _request_json("https://api.tavily.com/search", timeout_s=5, provider="tavily")
-        assert data == {"ok": True}
-        response.read.assert_called_once_with(_MAX_PROVIDER_RESPONSE_BYTES + 1)
+        mock_read.return_value = _url_read_result(json.dumps({"ok": True}).encode())
+        TavilyProvider(api_key="tavily-key").search("q", **_search_kwargs())
+        kwargs = mock_read.call_args.kwargs
+        assert kwargs["max_bytes"] == _MAX_PROVIDER_RESPONSE_BYTES
+        assert isinstance(kwargs["deadline"], float)
+
+    @patch(_READ_URL_PATCH)
+    @patch(_VALIDATE_PATCH)
+    def test_vendor_reuses_the_pinned_address_from_validation(
+        self, mock_validate: MagicMock, mock_read: MagicMock
+    ) -> None:
+        # One DNS resolution: the pinned IP validate_public_url resolved is the one
+        # the request connects to, and the key query string rides on the full URL.
+        mock_validate.return_value = ValidatedUrl(
+            url="https://www.googleapis.com/customsearch/v1", pinned_ip="142.250.0.1"
+        )
+        mock_read.return_value = _url_read_result(b"{}")
+        GooglePSEProvider(api_key="gkey", cx="gcx").search("q", **_search_kwargs())
+        mock_validate.assert_called_once()
+        target = mock_read.call_args[0][0]
+        assert target.pinned_ip == "142.250.0.1"
+        assert target.url.startswith("https://www.googleapis.com/customsearch/v1?key=gkey")
 
 
 class TestBraveProvider:
@@ -712,7 +743,7 @@ class TestBraveProvider:
         assert BraveProvider(api_key=None).is_configured() is False
         assert BraveProvider(api_key="  ").is_configured() is False
 
-    @patch(_URLOPEN_PATCH)
+    @patch(_READ_URL_PATCH)
     @patch(_VALIDATE_PATCH, return_value=ValidatedUrl(url="https://api.search.brave.com", pinned_ip=""))
     def test_happy_path(self, _mock_validate: MagicMock, mock_urlopen: MagicMock) -> None:
         body = json.dumps(
@@ -728,7 +759,7 @@ class TestBraveProvider:
                 }
             }
         ).encode()
-        mock_urlopen.return_value = _mock_response(body)
+        mock_urlopen.return_value = _url_read_result(body)
         payload = BraveProvider(api_key="brave-key").search("q", **_search_kwargs())
         assert set(payload.keys()) == _CANONICAL_KEYS
         assert payload["error"] == ""
@@ -737,15 +768,14 @@ class TestBraveProvider:
         assert sources[0]["snippet"] == "About A"
         # Answer falls back to the first snippet when the API has no answer field.
         assert payload["answer"] == "About A"
-        request = mock_urlopen.call_args[0][0]
-        assert request.get_header("X-subscription-token") == "brave-key"
+        assert mock_urlopen.call_args.kwargs["headers"]["X-Subscription-Token"] == "brave-key"
 
-    @patch(_URLOPEN_PATCH)
+    @patch(_READ_URL_PATCH)
     @patch(_VALIDATE_PATCH, return_value=ValidatedUrl(url="https://api.search.brave.com", pinned_ip=""))
     def test_malformed_response_fails_closed(
         self, _mock_validate: MagicMock, mock_urlopen: MagicMock
     ) -> None:
-        mock_urlopen.return_value = _mock_response(b"[]")
+        mock_urlopen.return_value = _url_read_result(b"[]")
         payload = BraveProvider(api_key="brave-key").search("q", **_search_kwargs())
         assert payload["error"] == "brave search failed: unexpected response shape"
 
@@ -754,7 +784,7 @@ class TestTavilyProvider:
     def test_not_configured_without_key(self) -> None:
         assert TavilyProvider(api_key=None).is_configured() is False
 
-    @patch(_URLOPEN_PATCH)
+    @patch(_READ_URL_PATCH)
     @patch(_VALIDATE_PATCH, return_value=ValidatedUrl(url="https://api.tavily.com", pinned_ip=""))
     def test_happy_path_uses_answer_and_posts_json(
         self, _mock_validate: MagicMock, mock_urlopen: MagicMock
@@ -767,16 +797,17 @@ class TestTavilyProvider:
                 ],
             }
         ).encode()
-        mock_urlopen.return_value = _mock_response(body)
+        mock_urlopen.return_value = _url_read_result(body)
         payload = TavilyProvider(api_key="tavily-key").search("q", **_search_kwargs())
         assert payload["answer"] == "Tavily answer."
         assert payload["error"] == ""
-        request = mock_urlopen.call_args[0][0]
-        assert request.get_header("Authorization") == "Bearer tavily-key"
-        sent = json.loads(request.data.decode("utf-8"))
+        kwargs = mock_urlopen.call_args.kwargs
+        assert kwargs["headers"]["Authorization"] == "Bearer tavily-key"
+        assert kwargs["method"] == "POST"
+        sent = json.loads(kwargs["data"].decode("utf-8"))
         assert sent["query"] == "q"
 
-    @patch(_URLOPEN_PATCH)
+    @patch(_READ_URL_PATCH)
     @patch(_VALIDATE_PATCH, return_value=ValidatedUrl(url="https://api.tavily.com", pinned_ip=""))
     def test_http_error_fails_closed(
         self, _mock_validate: MagicMock, mock_urlopen: MagicMock
@@ -792,7 +823,7 @@ class TestSerperProvider:
     def test_not_configured_without_key(self) -> None:
         assert SerperProvider(api_key="").is_configured() is False
 
-    @patch(_URLOPEN_PATCH)
+    @patch(_READ_URL_PATCH)
     @patch(_VALIDATE_PATCH, return_value=ValidatedUrl(url="https://google.serper.dev", pinned_ip=""))
     def test_happy_path_with_answer_box(
         self, _mock_validate: MagicMock, mock_urlopen: MagicMock
@@ -805,21 +836,20 @@ class TestSerperProvider:
                 ],
             }
         ).encode()
-        mock_urlopen.return_value = _mock_response(body)
+        mock_urlopen.return_value = _url_read_result(body)
         payload = SerperProvider(api_key="serper-key").search("q", **_search_kwargs())
         assert payload["answer"] == "42"
         sources = payload["sources"]
         assert isinstance(sources, list)
         assert sources[0]["url"] == "https://s.com/1"
-        request = mock_urlopen.call_args[0][0]
-        assert request.get_header("X-api-key") == "serper-key"
+        assert mock_urlopen.call_args.kwargs["headers"]["X-API-KEY"] == "serper-key"
 
-    @patch(_URLOPEN_PATCH)
+    @patch(_READ_URL_PATCH)
     @patch(_VALIDATE_PATCH, return_value=ValidatedUrl(url="https://google.serper.dev", pinned_ip=""))
     def test_malformed_json_fails_closed(
         self, _mock_validate: MagicMock, mock_urlopen: MagicMock
     ) -> None:
-        mock_urlopen.return_value = _mock_response(b"oops")
+        mock_urlopen.return_value = _url_read_result(b"oops")
         payload = SerperProvider(api_key="serper-key").search("q", **_search_kwargs())
         assert payload["error"] == "serper search failed: malformed JSON response"
 
@@ -830,7 +860,7 @@ class TestGooglePSEProvider:
         assert GooglePSEProvider(api_key=None, cx="cx").is_configured() is False
         assert GooglePSEProvider(api_key="k", cx="cx").is_configured() is True
 
-    @patch(_URLOPEN_PATCH)
+    @patch(_READ_URL_PATCH)
     @patch(_VALIDATE_PATCH, return_value=ValidatedUrl(url="https://www.googleapis.com", pinned_ip=""))
     def test_happy_path(self, _mock_validate: MagicMock, mock_urlopen: MagicMock) -> None:
         body = json.dumps(
@@ -840,19 +870,19 @@ class TestGooglePSEProvider:
                 ]
             }
         ).encode()
-        mock_urlopen.return_value = _mock_response(body)
+        mock_urlopen.return_value = _url_read_result(body)
         payload = GooglePSEProvider(api_key="gkey", cx="gcx").search("q", **_search_kwargs())
         assert payload["error"] == ""
         sources = payload["sources"]
         assert isinstance(sources, list)
         assert sources[0]["url"] == "https://g.com/1"
-        request = mock_urlopen.call_args[0][0]
-        assert "key=gkey" in request.full_url
-        assert "cx=gcx" in request.full_url
+        full_url = mock_urlopen.call_args[0][0].url
+        assert "key=gkey" in full_url
+        assert "cx=gcx" in full_url
         # The credential-free base endpoint is what gets validated.
         assert _mock_validate.call_args[0][0] == "https://www.googleapis.com/customsearch/v1"
 
-    @patch(_URLOPEN_PATCH)
+    @patch(_READ_URL_PATCH)
     @patch(_VALIDATE_PATCH, return_value=ValidatedUrl(url="https://www.googleapis.com", pinned_ip=""))
     def test_http_error_message_contains_no_key_material(
         self, _mock_validate: MagicMock, mock_urlopen: MagicMock
@@ -889,18 +919,14 @@ def test_initial_dns_receives_search_deadline_and_remaining_budget(
         now[0] += 0.5
         return ValidatedUrl(url=url)
 
-    with patch(_VALIDATE_PATCH, side_effect=validate), patch(_READ_URL_PATCH) as read, patch(
-        _URLOPEN_PATCH, return_value=_mock_response(b"{}")
-    ) as vendor_open:
+    with patch(_VALIDATE_PATCH, side_effect=validate), patch(_READ_URL_PATCH) as read:
         read.return_value = _url_read_result(b"{}")
         payload = provider.search("q", **_search_kwargs(timeout_s=1))
 
     assert payload["error"] == ""
     assert deadlines == [101.0]
-    transport = read if provider_name == "searxng" else vendor_open
-    assert transport.call_args.kwargs["timeout_s"] == 0.5
-    if provider_name == "searxng":
-        assert transport.call_args.kwargs["deadline"] == 101.0
+    assert read.call_args.kwargs["timeout_s"] == 0.5
+    assert read.call_args.kwargs["deadline"] == 101.0
 
 
 def test_initial_dns_timeout_returns_search_error_without_fetch() -> None:
@@ -933,27 +959,3 @@ def test_dns_consuming_search_budget_prevents_fetch(monkeypatch: pytest.MonkeyPa
     assert payload["error"]
     assert payload["sources"] == []
     read.assert_not_called()
-
-
-def test_vendor_response_read_uses_remaining_search_budget(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    now = [100.0]
-    monkeypatch.setattr(time, "monotonic", lambda: now[0])
-    response = _mock_response(b"{}")
-
-    def validate(url, **_kwargs):
-        now[0] += 0.5
-        return ValidatedUrl(url=url)
-
-    def vendor_open(_request, **_kwargs):
-        now[0] += 0.25
-        return response
-
-    with patch(_VALIDATE_PATCH, side_effect=validate), patch(
-        _URLOPEN_PATCH, side_effect=vendor_open
-    ):
-        payload = BraveProvider(api_key="key").search("q", **_search_kwargs(timeout_s=1))
-
-    assert payload["error"] == ""
-    response.settimeout.assert_called_once_with(0.25)

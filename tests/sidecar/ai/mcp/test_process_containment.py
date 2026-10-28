@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import signal
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +10,7 @@ from sidecar.ai.config import MCPServerConfig
 from sidecar.ai.config_parsing import _parse_mcp_servers, mcp_env_key_rejection
 from sidecar.ai.mcp import process_containment as module
 from sidecar.ai.mcp.process_containment import MCPProcessContainment
+from tests.sidecar._platform_skips import windows_only
 
 
 @pytest.mark.parametrize("exited", [False, True])
@@ -67,7 +69,33 @@ def test_minimal_env_never_lets_a_row_override_or_add_reserved_keys(monkeypatch:
 def test_every_passthrough_key_is_reserved_for_rows() -> None:
     for key in (*module._ENV_PASSTHROUGH_KEYS, "PATH", "PYTHONIOENCODING", "PYTHONUNBUFFERED",
                 "OPENBLAS_NUM_THREADS"):
-        assert mcp_env_key_rejection(key) == "reserved_env_key", key
+        # PROGRAMFILES(X86)-style names can never be row keys: the key pattern refuses them.
+        expected = "env_invalid" if "(" in key else "reserved_env_key"
+        assert mcp_env_key_rejection(key) == expected, key
+
+
+def test_minimal_env_passes_windows_machine_facts_to_the_builtin_server(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A 15-variable child env left CMake's VS generator unable to find the VS
+    # Setup instance store under ProgramData (2026-10-20).
+    parent = {"PROGRAMDATA": r"C:\ProgramData", "PROGRAMFILES(X86)": r"C:\Program Files (x86)"}
+    monkeypatch.setattr(module, "read_environment_value",
+                        lambda key, default="": parent.get(key, default))
+    env = module._minimal_env(
+        MCPServerConfig(name=module.BUILTIN_MCP_SERVER_NAME, transport="stdio", command="python"),
+        command_path=None,
+    )
+    assert env["PROGRAMDATA"] == r"C:\ProgramData"
+    assert env["PROGRAMFILES(X86)"] == r"C:\Program Files (x86)"
+
+
+def test_a_row_env_naming_programdata_is_rejected_as_reserved() -> None:
+    assert mcp_env_key_rejection("PROGRAMDATA") == "reserved_env_key"
+    assert _parse_mcp_servers(
+        [{"name": "rea", "transport": "stdio", "command": "npx", "env": {"PROGRAMDATA": "/evil"}}],
+        sse_enabled=False,
+    ) == ()
 
 
 @pytest.mark.parametrize("memory_limit_mb", [2048, 8192])
@@ -98,3 +126,34 @@ def test_row_memory_limit_reaches_the_windows_job(
     )
     MCPProcessContainment(config).after_spawn(SimpleNamespace(pid=4321))  # type: ignore[arg-type]
     assert observed == [{"memory_limit_mb": memory_limit_mb, "max_processes": 16}]
+
+
+@windows_only("CreateProcess searches the cwd for a bare command name")
+def test_bare_mcp_command_never_resolves_from_the_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cwd_dir = tmp_path / "cwd"
+    bin_dir = tmp_path / "bin"
+    cwd_dir.mkdir()
+    bin_dir.mkdir()
+    (cwd_dir / "docs-mcp.exe").write_text("", encoding="utf-8")
+    (bin_dir / "npx.cmd").write_text("", encoding="utf-8")
+    monkeypatch.chdir(cwd_dir)
+    monkeypatch.setattr(
+        module,
+        "read_environment_value",
+        lambda key, default="": str(bin_dir) if key == "PATH" else default,
+    )
+    monkeypatch.setattr(module, "_default_path_segments", lambda: ())
+    docs = MCPProcessContainment(MCPServerConfig(name="docs", transport="stdio", command="docs-mcp"))
+
+    with pytest.raises(FileNotFoundError):
+        docs.spawn_command()
+    assert module._resolve_command_for_env("docs-mcp") is None
+
+    (bin_dir / "docs-mcp.exe").write_text("", encoding="utf-8")
+    assert docs.spawn_command() == str(bin_dir / "docs-mcp.exe")
+    # A bare name keeps CreateProcess's .exe-only rule: npx.cmd is not picked up.
+    npx = MCPProcessContainment(MCPServerConfig(name="npx", transport="stdio", command="npx"))
+    with pytest.raises(FileNotFoundError):
+        npx.spawn_command()

@@ -3,6 +3,7 @@
 const {
   checkLiveCall, proposalFailure, publishProposal, resolveProposalDeps,
 } = require('./propose-tool-support');
+const { manifestSchema } = require('./tool-result');
 
 const NAME = 'propose_git_action';
 const RESULT = Object.freeze({
@@ -16,12 +17,11 @@ const RESULT = Object.freeze({
 // Records a Git decision for the user; it never stages, commits or runs anything.
 module.exports = {
   name: NAME,
-  description: 'Offer the user a Commit or Test first choice for the changes you just finished.',
+  ...manifestSchema(NAME),
   category: 'builtin',
   readOnly: true,
   sideEffecting: false,
   workspaceRequired: true,
-  parameters: {},
 
   summarize(input) {
     const count = Array.isArray(input?.paths) ? input.paths.length : 0;

@@ -9,9 +9,9 @@ from sidecar.ai.tools.builtins.lsp.limits import (
     DEFAULT_MAX_DIAGNOSTICS,
     DEFAULT_MAX_REFERENCES,
     DEFAULT_MAX_SYMBOLS,
-    MAX_LSP_ITEMS,
     MAX_LSP_MESSAGE_CHARS,
     MAX_LSP_NAME_CHARS,
+    bounded_item_limit,
 )
 from sidecar.ai.tools.builtins.lsp.paths import workspace_relative_file_uri
 from sidecar.ai.tools.workspace import WorkspaceGuard
@@ -63,7 +63,7 @@ def normalize_diagnostics(
 ) -> dict[str, object]:
     """Return a deterministic, capped diagnostic payload."""
 
-    max_items = _bounded_limit(max_diagnostics, default=DEFAULT_MAX_DIAGNOSTICS)
+    max_items = bounded_item_limit(max_diagnostics, default=DEFAULT_MAX_DIAGNOSTICS)
     diagnostics: list[dict[str, object]] = []
     total_count = 0
     for item in _diagnostic_items(raw_result):
@@ -89,7 +89,7 @@ def normalize_symbols(
 ) -> dict[str, object]:
     """Flatten LSP DocumentSymbol/SymbolInformation responses."""
 
-    max_items = _bounded_limit(max_symbols, default=DEFAULT_MAX_SYMBOLS)
+    max_items = bounded_item_limit(max_symbols, default=DEFAULT_MAX_SYMBOLS)
     symbols, total_count = _flatten_symbols(
         _symbol_items(raw_result),
         file_path=file_path,
@@ -109,7 +109,7 @@ def normalize_definitions(
     workspace: WorkspaceGuard,
     max_locations: int = DEFAULT_MAX_DEFINITIONS,
 ) -> dict[str, object]:
-    max_items = _bounded_limit(max_locations, default=DEFAULT_MAX_DEFINITIONS)
+    max_items = bounded_item_limit(max_locations, default=DEFAULT_MAX_DEFINITIONS)
     (
         locations,
         total_count,
@@ -135,7 +135,7 @@ def normalize_references(
     workspace: WorkspaceGuard,
     max_references: int = DEFAULT_MAX_REFERENCES,
 ) -> dict[str, object]:
-    max_items = _bounded_limit(max_references, default=DEFAULT_MAX_REFERENCES)
+    max_items = bounded_item_limit(max_references, default=DEFAULT_MAX_REFERENCES)
     (
         locations,
         total_count,
@@ -369,14 +369,6 @@ def _as_int(value: object) -> int:
     if isinstance(value, int):
         return value
     return -1
-
-
-def _bounded_limit(value: object, *, default: int) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        return default
-    if value < 1:
-        return default
-    return min(value, MAX_LSP_ITEMS)
 
 
 def _non_empty_string(value: object) -> str | None:

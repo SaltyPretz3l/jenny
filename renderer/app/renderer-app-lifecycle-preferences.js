@@ -11,6 +11,10 @@
   const MAX_REASONING_EXPANSION_SESSIONS = 128;
   const MAX_REASONING_EXPANSIONS_PER_SESSION = 512;
   const MAX_CHAT_TIMELINE_SIGNAL_KEYS_PER_SESSION = 512;
+  // The healthy outcomes of a timeline DOM write: the keyed morph, and the
+  // row-list lane's per-row reconcile (its preferred path, which logged 72 WARNs
+  // in one owner day while every write succeeded).
+  const HEALTHY_DOM_WRITE_OUTCOMES = new Set(['morph_applied', 'reconcile_applied']);
   const TRANSCRIPT_VIEW_STORAGE_KEY = 'jenny.transcriptViewBySession.v1';
   const MAX_TRANSCRIPT_VIEW_SESSIONS = 256;
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
@@ -250,7 +254,9 @@
         return;
       }
       let pruned = false;
-      if (Array.isArray(messages)) {
+      // An empty list is a pane that rendered before its messages loaded: pruning
+      // then would wipe every saved expansion for the session.
+      if (Array.isArray(messages) && messages.length) {
         const activeMessageIds = new Set(
           messages.map((message) => String(message?.id || '').trim()).filter(Boolean)
         );
@@ -658,9 +664,19 @@
       // parse failure or a morph that threw is counted every single time it
       // happens. Those are the numbers the lane-merge decisions ride on.
       if (normalizedSignal === 'timeline_dom_write') {
-        return String(details.outcome || '').trim() === 'morph_applied'
-          ? `${normalizedSignal}:${String(details.lane || '').trim()}:morph_applied`
+        const outcome = String(details.outcome || '').trim();
+        return HEALTHY_DOM_WRITE_OUTCOMES.has(outcome)
+          ? `${normalizedSignal}:${String(details.lane || '').trim()}:${outcome}`
           : '';
+      }
+      // One line per distinct misordering of a turn: a wrong order that stays
+      // put is re-checked on every full render and must not repeat itself.
+      if (normalizedSignal === 'row_order_violation') {
+        return [
+          normalizedSignal,
+          String(details.turnId || '').trim(),
+          String(details.order || '').trim(),
+        ].join(':');
       }
       return '';
     }
@@ -673,9 +689,14 @@
       ) {
         return 'INFO';
       }
+      // The streaming article is not in the DOM yet, so a full render draws it:
+      // every new reply's first paint takes one of these two paths (owner runs
+      // 2026-10-27 logged full_render on each send, ids equal, no rollback). Only a
+      // stream-reveal patch that fell back, or a sticky rollback, is a finding.
       if (
         normalizedSignal === 'turn_article_stream_mismatch'
-        && String(details?.phase || '').trim() === 'signature_hold'
+        && ['signature_hold', 'full_render'].includes(String(details?.phase || '').trim())
+        && details?.stickyRollback !== true
       ) {
         return 'INFO';
       }
@@ -699,7 +720,7 @@
       // hundreds of routine successes. Put the finding in the level itself:
       // grepping WARN then returns exactly the lanes that did not morph.
       if (normalizedSignal === 'timeline_dom_write') {
-        return String(details?.outcome || '').trim() === 'morph_applied' ? 'INFO' : 'WARN';
+        return HEALTHY_DOM_WRITE_OUTCOMES.has(String(details?.outcome || '').trim()) ? 'INFO' : 'WARN';
       }
       return 'WARN';
     }
@@ -792,6 +813,7 @@
         ? meta.telemetry_counters
         : (meta.telemetry_counters = Object.create(null));
       counters[normalizedSignal] = Number(counters[normalizedSignal] || 0) + 1;
+      scheduleRowOrderCheck(normalizedSessionId, normalizedSignal, details);
       const signalKey = buildSignalKey(normalizedSignal, details);
       const signalKeys = meta.signal_keys instanceof Map
         ? meta.signal_keys
@@ -803,15 +825,42 @@
         signalKeys.set(signalKey, true);
         evictOldestMapEntries(signalKeys, MAX_CHAT_TIMELINE_SIGNAL_KEYS_PER_SESSION);
       }
-      const level = resolveSignalLevel(normalizedSignal, details);
+      const stickyRollback = meta.sticky_rollback === true;
+      const level = resolveSignalLevel(normalizedSignal, { ...details, stickyRollback });
       appendClientLog(level, 'chat_timeline.row_model_rollout_signal', {
         sessionId: normalizedSessionId,
         signal: normalizedSignal,
         count: counters[normalizedSignal],
-        stickyRollback: meta.sticky_rollback === true,
+        stickyRollback,
         ...(details && typeof details === 'object' ? details : {}),
       });
       return { logged: true, count: counters[normalizedSignal] };
+    }
+
+    // The two moments a turn's row order is final: a full-render DOM write, and
+    // a settle (every row-model settle emits terminal_canonical_parity). A healthy
+    // full-render write is deduped after its first line per session, so the
+    // trigger is read before that dedupe, not after it.
+    let rowOrderInvariant = null;
+    function resolveRowOrderTrigger(signal, details) {
+      if (signal === 'terminal_canonical_parity') return 'settle';
+      if (signal === 'timeline_dom_write' && String(details?.lane || '').trim() === 'full_render') return 'full_render';
+      return '';
+    }
+
+    function scheduleRowOrderCheck(sessionId, signal, details) {
+      const reason = resolveRowOrderTrigger(signal, details);
+      if (!reason) return;
+      if (!rowOrderInvariant) {
+        const factory = root.rendererRowOrderInvariant?.createRowOrderInvariant;
+        if (typeof factory !== 'function') return;
+        rowOrderInvariant = factory({
+          getTurnEvents: (id) => state.turnEventsBySession?.get?.(id)?.turnEvents || [],
+          recordSignal: (id, name, payload) => recordRolloutSignal(id, name, payload),
+          appendClientLog,
+        });
+      }
+      rowOrderInvariant.schedule(sessionId, reason);
     }
 
     function rollbackRowModel(sessionId, reason, details = {}, options = {}) {

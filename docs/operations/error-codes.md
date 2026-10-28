@@ -1,7 +1,7 @@
 # CMP-* Error Code Registry
 
 **Schema version:** 1
-**Last reconciled:** 2026-09-09
+**Last reconciled:** 2026-10-18
 
 This is the single source of truth for every `CMP-<DOMAIN>-<NNNN>` error code emitted by Jenny's sidecar (Python) and backend services (Node). Codes are wire-stable identifiers attached to error payloads (`error_code` field) so that the renderer and ops tooling can route, classify, and surface failures consistently.
 
@@ -63,6 +63,48 @@ to bounded public reasons; secrets and backend exceptions remain private.
 
 ---
 
+## CLI - `CMP-CLI-NNNN` (10 codes)
+
+Jenny CLI host failures (`services/cli-host/`). The CLI composes the desktop
+backend in-process with local engines only, no credential storage, its own
+`cli` profile and a run-scoped permission ceiling; these codes reach an agent
+as a `cli.v1` `error` frame or the final `result` exit code (1 runtime error,
+6 engine or profile unavailable, 75 profile busy).
+
+| Constant | Wire code | Meaning | Retryable | Terminal class | User message | Example site |
+|---|---|---|---|---|---|---|
+| `CLI_ERROR_CODES.NO_SECURE_STORAGE` | `CMP-CLI-0001` | A credential write reached the CLI, which has no safeStorage and never emulates it | No | denied | internal-only; the CLI reports it in its own result frame (The Jenny CLI has no secure credential storage.) | `services/cli-host/local-only-providers.js` |
+| `CLI_ERROR_CODES.ENGINE_NOT_LOCAL` | `CMP-CLI-0002` | The requested engine is a cloud engine or a non-loopback endpoint | No | denied | internal-only; the CLI reports it in its own result frame (The Jenny CLI runs local engines only.) | `services/cli-host/local-only-providers.js` |
+| `CLI_ERROR_CODES.TOOL_REGISTRY_DRIFT` | `CMP-CLI-0003` | The Electron-side tool registry no longer matches the CLI's curated set | No | runtime_error | internal-only; the CLI reports it in its own result frame (The CLI tool registry no longer matches its curated set.) | `services/cli-host/curated-tool-executor.js` |
+| `CLI_ERROR_CODES.INVALID_OPTION` | `CMP-CLI-0004` | A composition option (profile, workspace, repo root, engine, flags) is invalid | No | denied | internal-only; the CLI reports it in its own result frame (Bounded validation reason) | `services/cli-host/composition.js` |
+| `CLI_ERROR_CODES.PROFILE_BUSY` | `CMP-CLI-0005` | Another Jenny CLI process holds this profile's live lock (exit 75) | Conditional | denied | internal-only; the CLI reports it in its own result frame (Another Jenny CLI holds this profile.) | `services/cli-host/profile-lock.js` |
+| `CLI_ERROR_CODES.PROFILE_LOCK_LOST` | `CMP-CLI-0006` | The live profile lock was lost after acquisition; the host fails closed (exit 6) | Conditional | runtime_error | internal-only; the CLI reports it in its own result frame (The profile lock was lost.) | `services/cli-host/profile-lock.js` |
+| `CLI_ERROR_CODES.PROFILE_LOCK_UNAVAILABLE` | `CMP-CLI-0007` | The profile lock could not be created or acknowledged (exit 6) | Conditional | runtime_error | internal-only; the CLI reports it in its own result frame (The profile lock could not be created.) | `services/cli-host/profile-lock.js` |
+| `CLI_ERROR_CODES.INVALID_POLICY` | `CMP-CLI-0008` | A run permission selector, mode or ceiling store is invalid | No | denied | internal-only; the CLI reports it in its own result frame (Bounded validation reason) | `services/cli-host/run-permission-policy.js` |
+| `CLI_ERROR_CODES.HOST_STATE` | `CMP-CLI-0009` | The host port was used after close, or its workspace project is unavailable | No | runtime_error | internal-only; the CLI reports it in its own result frame (Bounded state reason) | `services/cli-host/host.js` |
+| `CLI_ERROR_CODES.WORK_WAIT` | `CMP-CLI-0010` | A work record could not be read or did not settle before the wait timeout | Conditional | runtime_error | internal-only; the CLI reports it in its own result frame (Bounded wait reason) | `services/cli-host/host.js` |
+
+### CLI PATH - `CMP-CLI-0101` to `CMP-CLI-0106` (6 codes)
+
+The desktop app's opt-in "Install command-line tool" action in Settings
+(`services/cli-path-service.js`, IPC `cli.path.*`). It adds or removes the
+packaged `resources\bin` directory on the current user's `Path`
+(`HKCU\Environment`) only; the machine `Path` is never touched. Results are
+bounded IPC envelopes `{ ok: false, code, reason }`; the renderer owns the copy
+(`renderer/shell/renderer-settings-cli-path.js`), so none of these goes through
+the backend-string table.
+
+| Constant | Wire code | Meaning | Retryable | Terminal class | User message | Example site |
+|---|---|---|---|---|---|---|
+| `CLI_PATH_ERROR_CODES.UNSUPPORTED` | `CMP-CLI-0101` | Not a packaged Windows install (source checkout, Linux, macOS or AppImage) | No | `ipc_result` | internal-only; the Settings row maps `reason` to its copy ("Add it to PATH by hand (Settings shows the line)") | `services/cli-path-service.js` |
+| `CLI_PATH_ERROR_CODES.SHIM_MISSING` | `CMP-CLI-0102` | `resources\bin\jenny.cmd` is absent from the install | No | `ipc_result` | internal-only; the Settings row maps `reason` to its copy ("The command-line tool is missing from this install") | `services/cli-path-service.js` |
+| `CLI_PATH_ERROR_CODES.PATH_INVALID` | `CMP-CLI-0103` | The bin directory cannot be a PATH entry, or the new value would exceed the 32,767-character limit | No | `ipc_result` | internal-only; the Settings row maps `reason` to its copy ("Your PATH is too long to add another folder") | `services/cli-path-service.js` |
+| `CLI_PATH_ERROR_CODES.REGISTRY_FAILED` | `CMP-CLI-0104` | The PowerShell helper failed, timed out or returned an unreadable result | Conditional | `ipc_result` | internal-only; the Settings row maps `reason` to its copy ("Jenny could not read or change your PATH") | `services/cli-path-service.js` |
+| `CLI_PATH_ERROR_CODES.PATH_CHANGED` | `CMP-CLI-0105` | The user `Path` changed between the read and the write; nothing was written | Yes | `ipc_result` | internal-only; the Settings row maps `reason` to its copy ("Your PATH changed while Jenny was updating it. Try again") | `services/cli-path-service.js` |
+| `CLI_PATH_ERROR_CODES.BUSY` | `CMP-CLI-0106` | Another install or remove is still running | Yes | `ipc_result` | internal-only; the Settings row maps `reason` to its copy ("Another change is still applying") | `services/cli-path-service.js` |
+
+---
+
 ## SETUP — `CMP-SETUP-NNNN` (4 codes)
 
 Electron-owned onboarding endpoint and acquisition failures. Results are bounded
@@ -99,7 +141,7 @@ an Electron result envelope, not a chat/tool terminal event.
 
 ---
 
-## TOOL — `CMP-TOOL-NNNN` (44 codes, 0 dead)
+## TOOL — `CMP-TOOL-NNNN` (45 codes, 0 dead)
 
 Tool-execution failures: approval denials, workspace policy violations, IO errors, validation failures from built-in tools.
 
@@ -150,6 +192,7 @@ Tool-execution failures: approval denials, workspace policy violations, IO error
 | `CMP_TOOL_PRECONDITION_UNMET` | `CMP-TOOL-0045` | A declared tool precondition (e.g. `git_repo` for the git read tools and worktree change tracking) is unmet at call time; the tool stays listed but blocked until the precondition is satisfied | No | `runtime_error` | "'{cwd}' is not a git repository..." (git ops) / "worktree tracking requires a git repository within the workspace" | [sidecar/ai/tools/builtins/git_ops.py](../../sidecar/ai/tools/builtins/git_ops.py) |
 | `CMP_TOOL_PAUSED_UNATTENDED` | `CMP-TOOL-0046` | Auto run changed to prompt after the batch approval scan, so a side-effecting call was paused before dispatch | Yes | `runtime_error` | "Tool '{tool_id}' was not executed: auto run was paused because the user stepped away. Re-issue the call; it will ask for approval." | [sidecar/ai/routing/tool_call_execution.py](../../sidecar/ai/routing/tool_call_execution.py) |
 | `CMP_TOOL_PDF_ADDON_MISSING` | `CMP-TOOL-0047` | Optional PDF reading add-on is not installed or could not be loaded | No | `unavailable` | "PDF reading needs the optional PDF reading add-on, which is not installed. Tell the user they can install it in Settings › Tools › PDF reading add-on. Do not retry this PDF until they say it is installed." | [sidecar/ai/tools/builtins/filesystem_content.py](../../sidecar/ai/tools/builtins/filesystem_content.py) |
+| `CMP_TOOL_REVIEW_FINDINGS_INVALID` | `CMP-TOOL-0048` | `report_findings` got no list of findings with at least one usable title | No | `runtime_error` | internal-only | [sidecar/ai/tools/builtins/review_findings.py](../../sidecar/ai/tools/builtins/review_findings.py) |
 
 ## MEM — `CMP-MEM-NNNN` (16 active codes, 1 retired number)
 
@@ -468,7 +511,7 @@ Generated artifact workspace failures from `ArtifactWorkspaceService`.
 | `ARTIFACT_ERROR_CODES.NOT_FOUND` | `CMP-ARTIFACT-0010` | Artifact id not found in session metadata | No | `runtime_error` | "Artifact not found for this session." | [services/artifact-workspace-service.js](../../services/artifact-workspace-service.js) |
 | `ARTIFACT_ERROR_CODES.REVEAL_UNAVAILABLE` | `CMP-ARTIFACT-0011` | Reveal-in-folder implementation unavailable | No | `runtime_error` | "Reveal in folder is unavailable." | [services/artifact-workspace-service.js](../../services/artifact-workspace-service.js) |
 | `ARTIFACT_ERROR_CODES.OPEN_UNAVAILABLE` | `CMP-ARTIFACT-0012` | External-open implementation unavailable | No | `runtime_error` | "Open externally is unavailable." | [services/artifact-workspace-service.js](../../services/artifact-workspace-service.js) |
-| `ARTIFACT_ERROR_CODES.DANGEROUS_EXTENSION` | `CMP-ARTIFACT-0013` | Artifact extension is unsafe for OS external action | No | `denied` | "Artifact extension is dangerous and cannot be opened externally." | [services/artifact-workspace-service.js](../../services/artifact-workspace-service.js) |
+| `ARTIFACT_ERROR_CODES.DANGEROUS_EXTENSION` | `CMP-ARTIFACT-0013` | File type is outside the OS-opener allowlist (`services/shared/external-open-policy.js`): artifact open externally and `workspaceFs.openInDefaultApp`; reveal in folder is not gated | No | `denied` | "Artifact extension is dangerous and cannot be opened externally." | [services/artifact-workspace-service.js](../../services/artifact-workspace-service.js), [services/workspace-ide-service.js](../../services/workspace-ide-service.js) |
 | `ARTIFACT_ERROR_CODES.INVALID_SESSION` | `CMP-ARTIFACT-0014` | Session id is empty after sanitization | No | `runtime_error` | "A valid session id is required for artifact operations." | [services/artifact-workspace-service.js](../../services/artifact-workspace-service.js) |
 | `ARTIFACT_ERROR_CODES.INVALID_ARTIFACT_ID` | `CMP-ARTIFACT-0015` | Artifact id argument is empty | No | `runtime_error` | "Artifact id is required." | [services/artifact-workspace-service.js](../../services/artifact-workspace-service.js) |
 | `ARTIFACT_ERROR_CODES.WORKSPACE_ROOT_STATE_DIR` | `CMP-ARTIFACT-0016` | Configured workspace root is Jenny's own `.jenny` state directory | No | `denied` | "Tools workspace root cannot be Jenny's own internal state directory (.jenny)." | [services/artifact-workspace-service.js](../../services/artifact-workspace-service.js) |
@@ -506,11 +549,25 @@ Workspace IDE page filesystem failures from `WorkspaceIdeService`, `VersionedWor
 | `WORKSPACE_FS_ERROR_CODES.OPEN_UNAVAILABLE` | `CMP-WORKSPACEFS-0061` | shell.openPath is unavailable (test / non-Electron shell) | No | `runtime_error` | "Open in Default App is unavailable in this shell mode." | [services/workspace-ide-service.js](../../services/workspace-ide-service.js) |
 | `WORKSPACE_FS_ERROR_CODES.OPEN_FAILED` | `CMP-WORKSPACEFS-0062` | shell.openPath returned a non-empty error string | No | `runtime_error` | "The OS could not open the item." | [services/workspace-ide-service.js](../../services/workspace-ide-service.js) |
 
-## TERMINAL - `CMP-TERMINAL-NNNN` (4 Node codes, 0 dead)
+## WSBACKUP - `CMP-WSBACKUP-NNNN` (7 Node codes, 0 dead)
+
+Workspace IDE hot exit backups (row 82 E3): `WorkspaceBackupService` and the `workspaceBackup.*` IPC namespace, root-scoped by main's root context. Failures are `ok:false` results with a `code`, never raised; root-not-ready answers `root_transitioning` like the `workspaceIde` handlers. `DISABLED` is returned by the IPC handlers.
+
+| Constant | Wire code | Meaning | Retryable | Terminal class | User message | Example site |
+|---|---|---|---|---|---|---|
+| `WORKSPACE_BACKUP_ERROR_CODES.DISABLED` | `CMP-WSBACKUP-0001` | Hot exit backups are turned off (`ide_hot_exit` flag); handlers answer before touching disk | No | `ipc_result` | internal-only (the renderer degrades silently; hot exit is best effort) | [services/workspace-backup-service.js](../../services/workspace-backup-service.js) |
+| `WORKSPACE_BACKUP_ERROR_CODES.INVALID_ROOT` | `CMP-WSBACKUP-0002` | Root id is not `root_<24 hex>` (it comes from main root context, never the renderer), or a write/remove's captured `expectedRootId`/`expectedGeneration` no longer matches main's root (a root switch; refused before any disk access) | No | `ipc_result` | internal-only (the renderer degrades silently; hot exit is best effort) | [services/workspace-backup-service.js](../../services/workspace-backup-service.js) |
+| `WORKSPACE_BACKUP_ERROR_CODES.INVALID_PATH` | `CMP-WSBACKUP-0003` | Backup path is not a normalized workspace-relative path (absolute, drive, UNC, `..`, backslash, non-normalized) | No | `ipc_result` | internal-only (the renderer degrades silently; hot exit is best effort) | [services/workspace-backup-service.js](../../services/workspace-backup-service.js) |
+| `WORKSPACE_BACKUP_ERROR_CODES.INVALID_PAYLOAD` | `CMP-WSBACKUP-0004` | Payload is not a plain object or content is not a string | No | `ipc_result` | internal-only (the renderer degrades silently; hot exit is best effort) | [services/workspace-backup-service.js](../../services/workspace-backup-service.js) |
+| `WORKSPACE_BACKUP_ERROR_CODES.TOO_LARGE` | `CMP-WSBACKUP-0005` | Unsaved content exceeds the per-file cap (5 MiB UTF-8) | No | `ipc_result` | internal-only (the renderer degrades silently; hot exit is best effort) | [services/workspace-backup-service.js](../../services/workspace-backup-service.js) |
+| `WORKSPACE_BACKUP_ERROR_CODES.QUOTA_EXCEEDED` | `CMP-WSBACKUP-0006` | Per-root cap (50 files or 64 MiB) would be exceeded; no other backup is evicted | No | `ipc_result` | internal-only (the renderer shows its own once-per-session toast, `ide.hotExit.storeFull`, owner D2; further refusals are silent) | [services/workspace-backup-service.js](../../services/workspace-backup-service.js) |
+| `WORKSPACE_BACKUP_ERROR_CODES.IO_FAILED` | `CMP-WSBACKUP-0007` | Backup directory or file could not be read or written | Conditional | `ipc_result` | internal-only (the renderer degrades silently; hot exit is best effort) | [services/workspace-backup-service.js](../../services/workspace-backup-service.js) |
+
+## TERMINAL - `CMP-TERMINAL-NNNN` (5 Node codes, 0 dead)
 
 Workspace IDE integrated terminal. `WorkspacePtyService` is the real ConPTY
 session (`@lydell/node-pty`) pinned to the tools workspace root; it raises all
-four codes as structured `ok:false` results, never across the IPC seam. The
+five codes as structured `ok:false` results, never across the IPC seam. The
 piped `WorkspaceTerminalService` and its `workspace_pty_terminal` flag were
 retired in post-1.2.0 sweep S8.
 
@@ -520,8 +577,9 @@ retired in post-1.2.0 sweep S8.
 | `TERMINAL_ERROR_CODES.ROOT_MISSING` | `CMP-TERMINAL-0002` | Tools workspace root is not configured | No | `runtime_error` | "No workspace root is configured; choose a workspace folder first." | [services/workspace-pty-service.js](../../services/workspace-pty-service.js) |
 | `TERMINAL_ERROR_CODES.NO_SESSION` | `CMP-TERMINAL-0003` | write/resize arrived with no running session, or spawn after dispose | No | `runtime_error` | "No terminal session is running." | [services/workspace-pty-service.js](../../services/workspace-pty-service.js) |
 | `TERMINAL_ERROR_CODES.MODULE_LOAD_FAILED` | `CMP-TERMINAL-0004` | The `@lydell/node-pty` native module failed to load (missing prebuild / ABI mismatch) | No | `runtime_error` | "The terminal engine could not be loaded." | [services/workspace-pty-service.js](../../services/workspace-pty-service.js) |
+| `TERMINAL_ERROR_CODES.CWD_OUTSIDE_ROOT` | `CMP-TERMINAL-0005` | A requested start folder (spawn `cwd`) is absolute, escapes the workspace root after realpath, or is not an existing directory | No | `runtime_error` | "The terminal can only start in a folder inside the workspace." | [services/workspace-pty-service.js](../../services/workspace-pty-service.js) |
 
-## GIT - `CMP-GIT-NNNN` (8 Node codes, 0 dead)
+## GIT - `CMP-GIT-NNNN` (9 Node codes, 0 dead)
 
 Workspace IDE SCM foundation (`WorkspaceGitService`, the `workspaceGit.*` IPC namespace): default-off, renderer-initiated, root-scoped git access. NOTE: a non-git workspace, a disabled feature flag, and "nothing to commit" are NOT errors - they degrade to clean structured results (`isRepo:false` / `available:false` / `committed:false`); only the codes below are raised.
 
@@ -535,6 +593,7 @@ Workspace IDE SCM foundation (`WorkspaceGitService`, the `workspaceGit.*` IPC na
 | `WORKSPACE_GIT_ERROR_CODES.LINE_RANGE_INVALID` | `CMP-GIT-0011` | Blame line range out of bounds (start < 1, end < start, or span > 2000) | No | `runtime_error` | "Invalid line range for blame." | [services/workspace-git-service.js](../../services/workspace-git-service.js) |
 | `WORKSPACE_GIT_ERROR_CODES.COMMIT_MESSAGE_EMPTY` | `CMP-GIT-0020` | commit() called with a blank message | No | `runtime_error` | "Commit message cannot be empty." | [services/workspace-git-service.js](../../services/workspace-git-service.js) |
 | `WORKSPACE_GIT_ERROR_CODES.GIT_COMMAND_FAILED` | `CMP-GIT-0040` | git subprocess exited non-zero (message token-masked before surfacing) | Conditional | `runtime_error` | "Git command failed." | [services/workspace-git-service.js](../../services/workspace-git-service.js) |
+| `WORKSPACE_GIT_ERROR_CODES.PATCH_INVALID` | `CMP-GIT-0410` | `applyPatch` refused a patch that is not one in-root single-file text diff (more than one file, rename/copy, binary, create/delete, mode change, quoted path, NUL, over 1 MB, malformed hunk), or asked for anything but `--cached` (no `--3way`, no extra options) | No | `runtime_error` | "Only a single-file text change can be staged here." | [services/workspace-git-service-extras.js](../../services/workspace-git-service-extras.js) |
 
 ## CHATWS - `CMP-CHATWS-NNNN` (6 Node codes, 0 dead)
 
@@ -567,6 +626,21 @@ Inline Git and command proposals (`sessionProposals.*`, row 59 checkpoint 3). Re
 | `PROPOSAL_ERROR_CODES.PREPARATION_FAILED` | `CMP-PROPOSAL-0010` | Child-session preparation failed (the linked child could not be created, or the handoff could not be recorded); retryable with the same proof | Conditional | `ipc_result` | internal-only | [services/chat-proposal-contract.js](../../services/chat-proposal-contract.js) |
 | `PROPOSAL_ERROR_CODES.DISPATCH_FAILED` | `CMP-PROPOSAL-0011` | The continuation turn was refused by durable admission for a reason other than runtime availability; the proposal is `needs_attention` and may be retried with the same dispatch key | Yes | `ipc_result` | internal-only (the proposal card words it locally) | [services/chat-proposal-continuation.js](../../services/chat-proposal-continuation.js) |
 | `PROPOSAL_ERROR_CODES.OUTCOME_UNKNOWN` | `CMP-PROPOSAL-0012` | Restart reconciliation could not prove how the continuation ended; it is never resumed or resubmitted | No | `ipc_result` | internal-only (the proposal card words it locally) | [services/chat-proposal-continuation.js](../../services/chat-proposal-continuation.js) |
+
+## PRIMARY - `CMP-PRIMARY-NNNN` (8 Node codes, 0 dead)
+
+Primary Jenny chat controls (`primaryChat.*`, row 76: launch permission, activity log, Pause, Reset / Forget). Responses are `{schema_version:1,ok:false,code,reason,retryable}`; `reason` is a stable enum (never exception prose). No envelope carries chat titles, message text or paths.
+
+| Constant | Wire code | Meaning | Retryable | Terminal class | User message | Example site |
+|---|---|---|---|---|---|---|
+| `PRIMARY_ERROR_CODES.INVALID_REQUEST` | `CMP-PRIMARY-0001` | Request failed the closed schema (unknown key, wrong `schema_version`, out-of-range limit, malformed permission id, bad project id or run mode) (`invalid_request`) | No | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/primary-chat-contract.js](../../services/primary-chat-contract.js) |
+| `PRIMARY_ERROR_CODES.UNAVAILABLE` | `CMP-PRIMARY-0002` | A controls, activity-log or reset service is absent, failed to load or threw (`unavailable`, and any unlisted reason) | Yes | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/main/primary-chat-ipc-registration.js](../../services/main/primary-chat-ipc-registration.js) |
+| `PRIMARY_ERROR_CODES.DISABLED` | `CMP-PRIMARY-0003` | The feature's kill switch is off (`JENNY_ENABLE_PRIMARY_LAUNCH_PERMISSION=0`, `..._PRIMARY_ACTIVITY_LOG=0`, `..._PRIMARY_CHAT_CONTROLS=0`) or the primary chat is off (`disabled`) | No | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/primary-chat-contract.js](../../services/primary-chat-contract.js) |
+| `PRIMARY_ERROR_CODES.NOT_FOUND` | `CMP-PRIMARY-0004` | There is no primary chat, or the named permission does not exist (`not_found`) | No | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/primary-chat-contract.js](../../services/primary-chat-contract.js) |
+| `PRIMARY_ERROR_CODES.BUSY` | `CMP-PRIMARY-0005` | Reset or Forget refused because a turn is live in the Jenny chat (`session_busy`) | Yes | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/primary-chat-contract.js](../../services/primary-chat-contract.js) |
+| `PRIMARY_ERROR_CODES.CAPACITY` | `CMP-PRIMARY-0006` | The launch-permission list holds its maximum of 32 live permissions (`capacity`) | No | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/primary-chat-contract.js](../../services/primary-chat-contract.js) |
+| `PRIMARY_ERROR_CODES.UNKNOWN_PROJECT` | `CMP-PRIMARY-0007` | A launch permission named a project that does not exist (`unknown_project`) | No | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/primary-chat-contract.js](../../services/primary-chat-contract.js) |
+| `PRIMARY_ERROR_CODES.COPY_FAILED` | `CMP-PRIMARY-0008` | Reset could not write the transcript copy under `exports/`, so nothing was cleared (`copy_failed`); the renderer may offer a reset without a copy | No | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/backend/primary-chat-reset.js](../../services/backend/primary-chat-reset.js) |
 
 ## MESSAGE - `CMP-MESSAGE-NNNN` (12 Node codes, 0 dead)
 
@@ -630,7 +704,18 @@ Headless harness errors (request-dispatch testbed).
 |---|---|---|---|---|---|---|
 | `CMP_HARNESS_TURN_NOT_FOUND` | `CMP-HARN-0001` | Harness turn id not found | No | `runtime_error` | "Turn not found." | [sidecar/runtime/request_dispatch_harness.py:234](../../sidecar/runtime/request_dispatch_harness.py#L234) |
 
-## WEB — `CMP-WEB-NNNN` (6 codes, 0 dead)
+## SPEECH - `CMP-SPEECH-NNNN` (4 codes, 0 dead)
+
+Local push-to-talk dictation (`speech.prepare`, `speech.transcribe`). The Node peer is `SPEECH_ERROR_CODES` in `services/backend/error-codes.js`; the codes arrive on `error.rpc.data.error_code`.
+
+| Constant | Wire code | Meaning | Retryable | Terminal class | User message | Example site |
+|---|---|---|---|---|---|---|
+| `CMP_SPEECH_MODEL_INVALID` | `CMP-SPEECH-0001` | Speech model files missing or invalid | No | `runtime_error` | internal-only | [sidecar/ai/speech/audio.py](../../sidecar/ai/speech/audio.py) |
+| `CMP_SPEECH_INVALID_AUDIO` | `CMP-SPEECH-0002` | Invalid audio (encoding, sample rate, format or duration) | No | `runtime_error` | internal-only | [sidecar/ai/speech/audio.py](../../sidecar/ai/speech/audio.py) |
+| `CMP_SPEECH_ENGINE_FAILED` | `CMP-SPEECH-0003` | Speech engine failed to load or run | Conditional | `runtime_error` | internal-only | [sidecar/ai/speech/engine.py](../../sidecar/ai/speech/engine.py) |
+| `CMP_SPEECH_PACKAGE_UNAVAILABLE` | `CMP-SPEECH-0004` | Speech engine package (`onnx-asr`) unavailable | No | `runtime_error` | internal-only | [sidecar/ai/speech/engine.py](../../sidecar/ai/speech/engine.py) |
+
+## WEB — `CMP-WEB-NNNN` (7 codes, 0 dead)
 
 Web-fetch tool: SSRF, rate limiting, fetch failures.
 
@@ -642,6 +727,7 @@ Web-fetch tool: SSRF, rate limiting, fetch failures.
 | `CMP_WEB_REDIRECT_BLOCKED` | `CMP-WEB-0005` | Redirect chain blocked | No | `runtime_error` | "Redirect blocked." | [sidecar/ai/tools/builtins/web.py:647](../../sidecar/ai/tools/builtins/web.py#L647) |
 | `CMP_WEB_CONTENT_TOO_LARGE` | `CMP-WEB-0006` | Response exceeds size limit | No | `runtime_error` | "Response too large." | [sidecar/ai/tools/builtins/web.py:446](../../sidecar/ai/tools/builtins/web.py#L446) |
 | `CMP_WEB_INVALID_URL` | `CMP-WEB-0007` | URL parse failed | No | `runtime_error` | "Invalid URL: {url}." | [sidecar/ai/tools/builtins/web.py:506](../../sidecar/ai/tools/builtins/web.py#L506) |
+| `CMP_WEB_INVALID_QUERY` | `CMP-WEB-0008` | Missing or oversize search query | No | `bad_arguments` | "Missing search query." / "Query exceeds maximum length of 2000 characters." | [sidecar/ai/tools/builtins/web.py:363](../../sidecar/ai/tools/builtins/web.py#L363) |
 
 ## CACHE — `CMP-CACHE-NNNN` (1 code, 0 dead)
 
@@ -786,6 +872,7 @@ This test catches the drift classes that affect runtime contracts: undocumented 
 
 ## Change log
 
+- **2026-10-25** - Added the `PRIMARY` domain (`CMP-PRIMARY-0001` to `0007`) for the primary Jenny chat controls bridge (row 76).
 - **2026-10-15** - Added the `PERFORMANCE` domain (`CMP-PERFORMANCE-0001` to `0004`) for the live inference metrics and GPU-pressure bridge (row 59 checkpoint 6).
 - **2026-10-15** - Added the `MESSAGE` domain (`CMP-MESSAGE-0001` to `0012`) for the addressed session messaging bridge (row 59 checkpoint 4).
 - **2026-10-15** - Added the `PROPOSAL` domain (`CMP-PROPOSAL-0001` to `0012`) for the inline Git/command proposal bridge (row 59 checkpoint 3).

@@ -7,9 +7,20 @@ const {
   normalizePathForComparison,
   pathsEqual,
   resolveAndCompare,
-  checkRootIsToplevel,
   detectRepoScope,
 } = require('../services/workspace-git-root-guard');
+
+// normalizePathForComparison reads process.platform at call time and works on
+// strings only, so both platform branches run on every OS by stubbing it.
+function withPlatform(platform, fn) {
+  const original = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+  try {
+    return fn();
+  } finally {
+    Object.defineProperty(process, 'platform', original);
+  }
+}
 
 describe('workspace-git-root-guard — normalizePathForComparison / pathsEqual', () => {
   test('strips a single trailing separator (both slash styles)', () => {
@@ -21,13 +32,17 @@ describe('workspace-git-root-guard — normalizePathForComparison / pathsEqual',
     assert.equal(normalizePathForComparison('C:\\repo\\sub'), normalizePathForComparison('C:/repo/sub'));
   });
 
-  test('is case-insensitive on win32', { skip: process.platform !== 'win32' }, () => {
-    assert.equal(pathsEqual('C:\\Repo\\Sub', 'c:\\repo\\sub'), true);
-    assert.equal(pathsEqual('C:\\Repo', 'C:\\repo\\'), true);
+  test('is case-insensitive on win32', () => {
+    withPlatform('win32', () => {
+      assert.equal(pathsEqual('C:\\Repo\\Sub', 'c:\\repo\\sub'), true);
+      assert.equal(pathsEqual('C:\\Repo', 'C:\\repo\\'), true);
+    });
   });
 
-  test('is case-sensitive off win32', { skip: process.platform === 'win32' }, () => {
-    assert.equal(pathsEqual('/Repo/Sub', '/repo/sub'), false);
+  test('is case-sensitive off win32', () => {
+    withPlatform('linux', () => {
+      assert.equal(pathsEqual('/Repo/Sub', '/repo/sub'), false);
+    });
   });
 
   test('non-matching paths compare false', () => {
@@ -69,51 +84,53 @@ describe('workspace-git-root-guard — resolveAndCompare (injected fs)', () => {
   });
 });
 
-describe('workspace-git-root-guard — checkRootIsToplevel (injected exec)', () => {
-  test('reports isToplevel:true when git reports the selected root itself', async () => {
-    const exec = async () => ({ success: true, stdout: 'C:\\repo\n', stderr: '', message: '', reason: '' });
-    const fakeFs = { realpath: async (p) => p };
-    const res = await checkRootIsToplevel(exec, 'C:\\repo', { fs: fakeFs });
-    assert.equal(res.isToplevel, true);
-    assert.equal(res.toplevel, 'C:\\repo');
-  });
-
-  test('reports isToplevel:false when git reports a different (parent) toplevel', async () => {
-    const exec = async () => ({ success: true, stdout: 'C:\\repo\n', stderr: '', message: '', reason: '' });
-    const fakeFs = { realpath: async (p) => p };
-    const res = await checkRootIsToplevel(exec, 'C:\\repo\\sub', { fs: fakeFs });
-    assert.equal(res.isToplevel, false);
-  });
-
-  test('a linked-worktree root reports its own toplevel and is therefore allowed', async () => {
-    // Inside a linked worktree, `git rev-parse --show-toplevel` reports the
-    // worktree's own root, not the main repository's — so root === toplevel.
-    const exec = async () => ({ success: true, stdout: 'C:\\worktrees\\feature-x\n', stderr: '', message: '', reason: '' });
-    const fakeFs = { realpath: async (p) => p };
-    const res = await checkRootIsToplevel(exec, 'C:\\worktrees\\feature-x', { fs: fakeFs });
-    assert.equal(res.isToplevel, true);
-  });
-
-  test('a spawn failure surfaces as { failure } instead of throwing', async () => {
-    const failure = { success: false, stdout: '', stderr: 'fatal: boom', message: 'boom', reason: 'aborted' };
-    const exec = async () => failure;
-    const res = await checkRootIsToplevel(exec, 'C:\\repo');
-    assert.equal(res.failure, failure);
-  });
-});
-
-test('wide-008: detectRepoScope composes repository and toplevel probes', async () => {
-  const calls = [];
-  const exec = async (_root, args) => {
+// Answers the combined probe the way git does (two lines) and the legacy split
+// probes one line each, so the spawn-count case below is red on the old shape.
+function scopeExec(calls, toplevel) {
+  return async (_root, args) => {
     calls.push(args);
-    return args.includes('--is-inside-work-tree')
-      ? { success: true, stdout: 'true\n' }
-      : { success: true, stdout: 'C:/repo\n' };
+    const lines = [];
+    if (args.includes('--is-inside-work-tree')) lines.push('true');
+    if (args.includes('--show-toplevel')) lines.push(toplevel);
+    return { success: true, stdout: `${lines.join('\n')}\n` };
   };
-  const result = await detectRepoScope(exec, 'C:/repo/subdir', {
+}
+
+test('wide-008: detectRepoScope reports repository and toplevel from one probe', async () => {
+  const calls = [];
+  const result = await detectRepoScope(scopeExec(calls, 'C:/repo'), 'C:/repo/subdir', {
     fs: { realpath: async (value) => value },
   });
   assert.equal(result.isRepo, true);
   assert.equal(result.isToplevel, false);
-  assert.equal(calls.length, 2);
+  assert.equal(result.toplevel, 'C:/repo');
+});
+
+test('row 82 G1: detectRepoScope costs exactly one git spawn', async () => {
+  const calls = [];
+  const result = await detectRepoScope(scopeExec(calls, 'C:/repo'), 'C:/repo', {
+    fs: { realpath: async (value) => value },
+  });
+  assert.deepEqual(result, { isRepo: true, isToplevel: true, toplevel: 'C:/repo' });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0], ['rev-parse', '--is-inside-work-tree', '--show-toplevel']);
+});
+
+test('row 82 G1: detectRepoScope keeps every failure classification', async () => {
+  const fs = { realpath: async (value) => value };
+  // Outside any repository: a clean miss.
+  const outside = await detectRepoScope(async () => ({ success: false, stdout: '', stderr: 'fatal: not a git repository (or any of the parent directories): .git', message: 'fatal: not a git repository' }), 'C:/x', { fs });
+  assert.deepEqual(outside, { isRepo: false });
+  // Inside `.git` or a bare repository git prints "false" and then fails on
+  // --show-toplevel: still a clean miss, as the split probe reported it.
+  const gitDir = await detectRepoScope(async () => ({ success: false, stdout: 'false\n', stderr: 'fatal: this operation must be run in a work tree', message: 'fatal: this operation must be run in a work tree' }), 'C:/x/.git', { fs });
+  assert.deepEqual(gitDir, { isRepo: false });
+  const bareOk = await detectRepoScope(async () => ({ success: true, stdout: 'false\n' }), 'C:/x.git', { fs });
+  assert.deepEqual(bareOk, { isRepo: false });
+  // A spawn failure (abort, timeout, git missing) surfaces as { failure }.
+  const failure = { success: false, stdout: '', stderr: '', message: 'Git command aborted.', reason: 'aborted' };
+  assert.deepEqual(await detectRepoScope(async () => failure, 'C:/repo', { fs }), { failure });
+  // A root switch observed after the probe reports stale.
+  const stale = await detectRepoScope(scopeExec([], 'C:/repo'), 'C:/repo', { fs, isCurrent: () => false });
+  assert.deepEqual(stale, { stale: true });
 });

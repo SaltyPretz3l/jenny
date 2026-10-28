@@ -88,15 +88,69 @@ function cancelChatStream(service, streamId, reason = CANCEL_REASON_USER) {
   return true;
 }
 
-// Manual/on-demand compaction (Settings "Compact now"): forwards the history
-// the next chat.send would carry (backend-compact-payload.js) to the sidecar's
-// chat.compact RPC, so it measures and summarizes what the meter and the next
-// request count, and, on a
-// successful compaction, persists the returned replacement messages as the
-// session's Electron-owned compaction snapshot (JCA-003) so the next
-// chat.send substitutes them for the summarized prefix. Never throws, always
-// resolves to a structured { status, ... } payload so the caller can render
-// it inline.
+// Pre-request half of compaction and /handoff (backend-handoff.js): sidecar guard,
+// model bring-up, lockdown gate, and the history the next chat.send would carry
+// (backend-compact-payload.js). Refusals log WARN `logEvent`; accessor errors throw.
+async function prepareSessionHistoryRequest(service, sessionId, { logEvent = 'chat.compact_now_result' } = {}) {
+  const normalizedSessionId = String(sessionId || '').trim();
+  const refuse = (reason, fields = {}) => {
+    service._emitServiceLog('WARN', logEvent, { sessionId: normalizedSessionId, reason, ...fields });
+    return { ok: false, reason, ...fields };
+  };
+  const fail = (reason, detail = '') => refuse(reason, { detail });
+  if (!service.sidecarClient || service.sidecarManager?.getStatus()?.phase !== 'ready') {
+    return refuse('sidecar_unavailable');
+  }
+  // Canonical history source (JCA-003): the SAME store chat.send assembles
+  // its prompt from, so the persisted boundary (count + last message id)
+  // addresses messages the next send will actually see.
+  // A locked session's transcript must not be summarised by a remote engine;
+  // the lockdown gate covers compaction and handoff as well as chat.send.
+  const session = service.sessionStore.getSession?.(normalizedSessionId) || null;
+  const lockdownActive = isSessionOfflineLockdownActive(service.featureFlags, session);
+  // The summary is sized and written by the engine's active model, so bring
+  // up the model the chat's next send would use first (CMC-4 / F22): Force
+  // local inference overrides the chat's pick, a locked chat never loads a
+  // model here, and no switch happens under another chat's live reply.
+  let target = { model: String(session?.preferred_model || '').trim(), engineType: '' };
+  try {
+    target = (await resolveForcedLocalRoute(service)) || target;
+  } catch (error) {
+    return fail('model_unavailable', String(error?.message || error || '').slice(0, 300));
+  }
+  if (target.model && target.model !== service.currentModel && !lockdownActive
+    && typeof service._resolveModel === 'function') {
+    if (Number(service.activeStreams?.size) > 0) return fail('session_busy');
+    try {
+      await service._resolveModel(target.model, target.engineType);
+    } catch (error) {
+      return fail('model_unavailable', String(error?.message || error || '').slice(0, 300));
+    }
+  }
+  try {
+    assertSessionLockdownAllowsEngine({
+      active: lockdownActive,
+      engineType: service.currentEngineType,
+      openAiCompatibleApiUrl: openAiCompatibleUrlFromService(service),
+    });
+  } catch (_lockdownError) {
+    return refuse('session_offline_lockdown');
+  }
+  const rawMessages = service.sessionStore.getSessionMessages(normalizedSessionId);
+  const canonicalMessages = Array.isArray(rawMessages) ? rawMessages : [];
+  const persistedSnapshot = session?.compaction_snapshot || null;
+  const payload = buildCompactPayload(canonicalMessages, {
+    snapshot: isCompactionSnapshotEnabled(service.featureFlags, persistedSnapshot) ? persistedSnapshot : null,
+    contextPreferences: session?.context_preferences,
+  });
+  return { ok: true, session, canonicalMessages, messages: payload.messages, payload };
+}
+
+// Manual/on-demand compaction (Settings "Compact now"): forwards the prepared
+// history to the sidecar's chat.compact RPC, so it summarizes what the meter and
+// the next request count, and on success persists the replacement messages as the
+// session's Electron-owned compaction snapshot (JCA-003) the next chat.send
+// substitutes for the summarized prefix. Never throws; resolves { status, ... }.
 async function compactContextNow(service, sessionId) {
   const normalizedSessionId = String(sessionId || '').trim();
   service._emitServiceLog('INFO', 'chat.compact_now_requested', {
@@ -105,65 +159,10 @@ async function compactContextNow(service, sessionId) {
   // Guards live inside the try so the never-throws contract is structural,
   // not dependent on these accessors never throwing.
   try {
-    if (!service.sidecarClient || service.sidecarManager?.getStatus()?.phase !== 'ready') {
-      service._emitServiceLog('WARN', 'chat.compact_now_result', {
-        sessionId: normalizedSessionId,
-        reason: 'sidecar_unavailable',
-      });
-      return { status: 'error', reason: 'sidecar_unavailable' };
-    }
-    // Canonical history source (JCA-003): the SAME store chat.send assembles
-    // its prompt from, so the persisted boundary (count + last message id)
-    // addresses messages the next send will actually see.
-    // A locked session's transcript must not be summarised by a remote engine;
-    // the lockdown gate covers compaction as well as chat.send.
-    const session = service.sessionStore.getSession?.(normalizedSessionId) || null;
-    const lockdownActive = isSessionOfflineLockdownActive(service.featureFlags, session);
-    // The summary is sized and written by the engine's active model, so bring
-    // up the model the chat's next send would use first (CMC-4 / F22): Force
-    // local inference overrides the chat's pick, a locked chat never loads a
-    // model here, and no switch happens under another chat's live reply.
-    const failCompact = (reason, detail = '') => {
-      service._emitServiceLog('WARN', 'chat.compact_now_result', { sessionId: normalizedSessionId, reason, detail });
-      return { status: 'error', reason };
-    };
-    let target = { model: String(session?.preferred_model || '').trim(), engineType: '' };
-    try {
-      target = (await resolveForcedLocalRoute(service)) || target;
-    } catch (error) {
-      return failCompact('model_unavailable', String(error?.message || error || '').slice(0, 300));
-    }
-    if (target.model && target.model !== service.currentModel && !lockdownActive
-      && typeof service._resolveModel === 'function') {
-      if (Number(service.activeStreams?.size) > 0) return failCompact('session_busy');
-      try {
-        await service._resolveModel(target.model, target.engineType);
-      } catch (error) {
-        return failCompact('model_unavailable', String(error?.message || error || '').slice(0, 300));
-      }
-    }
-    try {
-      assertSessionLockdownAllowsEngine({
-        active: lockdownActive,
-        engineType: service.currentEngineType,
-        openAiCompatibleApiUrl: openAiCompatibleUrlFromService(service),
-      });
-    } catch (_lockdownError) {
-      service._emitServiceLog('WARN', 'chat.compact_now_result', {
-        sessionId: normalizedSessionId,
-        reason: 'session_offline_lockdown',
-      });
-      return { status: 'error', reason: 'session_offline_lockdown' };
-    }
-    const rawMessages = service.sessionStore.getSessionMessages(normalizedSessionId);
-    const canonicalMessages = Array.isArray(rawMessages) ? rawMessages : [];
+    const prepared = await prepareSessionHistoryRequest(service, normalizedSessionId);
+    if (!prepared.ok) return { status: 'error', reason: prepared.reason };
+    const { canonicalMessages, messages, payload } = prepared;
     const boundaryMessage = canonicalMessages[canonicalMessages.length - 1] || null;
-    const persistedSnapshot = session?.compaction_snapshot || null;
-    const payload = buildCompactPayload(canonicalMessages, {
-      snapshot: isCompactionSnapshotEnabled(service.featureFlags, persistedSnapshot) ? persistedSnapshot : null,
-      contextPreferences: session?.context_preferences,
-    });
-    const { messages } = payload;
     // The boundary (count, last-id) compatibility check cannot see an in-place
     // edit that preserves ids and count, so fingerprint the exact history sent
     // to the sidecar and refuse to persist if it changed mid-summarization.
@@ -273,9 +272,10 @@ function alwaysAllowApplies(pending, options = {}) {
   return Boolean(toolName) && !NEVER_PERSIST_ALWAYS_ALLOW.has(toolName);
 }
 
+// Returns true only when the always-allow grant reached the permission store.
 function maybeApplyAlwaysAllowPolicy(service, pending, options = {}) {
   if (!alwaysAllowApplies(pending, options)) {
-    return;
+    return false;
   }
   const toolName = String(pending?.toolName || '').trim();
   const permissionStore = service?.toolPermissionStore || service?.toolExecutor?._permissionStore || null;
@@ -313,6 +313,7 @@ function maybeApplyAlwaysAllowPolicy(service, pending, options = {}) {
     }
   }
   if (policyUpdated) requestPermissionConfigRefresh(service);
+  return policyUpdated;
 }
 
 // A managed-sidecar refresh reinitializes the router mid-turn, so an admitted
@@ -398,12 +399,11 @@ function approveToolCall(service, approvalRef, options = {}) {
     });
     return false;
   }
-  // Settle the waiter FIRST: alwaysAllow is a side effect of this specific
-  // approval, not a precondition for it. Applying the global policy before
-  // resolve() meant a settlement throw left the policy permanently flipped
-  // even though the waiter itself hung forever (SP-13). Reordering means the
-  // policy write can never outlive/outrun the decision it is attached to, and
-  // a policy-write failure only logs — it never affects the settlement above.
+  // The always-allow grant lands before the waiter settles so the resolution
+  // records `always` only when the policy really persisted; a grant failure
+  // only logs and the approval resolves `once`. The waiter's resolve runs in
+  // its `finally`, so a settlement throw can no longer leave it hanging with
+  // the policy flipped (the SP-13 ordering concern this replaces).
   const requestedDecision = String(options?.decision || 'approved').trim();
   if (!PLAN_DECISIONS.includes(requestedDecision)) {
     // Fail closed: an unrecognized decision denies instead of executing.
@@ -419,12 +419,10 @@ function approveToolCall(service, approvalRef, options = {}) {
   const decision = requestedDecision;
   const feedback = String(options?.feedback || '').trim().slice(0, 800);
   // Recorded on the resolution so the chat's receipt can say "Always allowed"
-  // (HB-038 H2); the policy write below stays a side effect of this decision.
-  const scope = alwaysAllowApplies(entry.pending, options) ? 'always' : 'once';
-  entry.pending.resolve(true, decision, feedback, options?.plan, scope);
-  service.pendingToolApprovals.delete(entry.key);
+  // (HB-038 H2) only for a grant that persisted.
+  let granted = false;
   try {
-    maybeApplyAlwaysAllowPolicy(service, entry.pending, options);
+    granted = maybeApplyAlwaysAllowPolicy(service, entry.pending, options) === true;
   } catch (error) {
     if (typeof service?._emitServiceLog === 'function') {
       service._emitServiceLog('WARN', 'tool_permission.always_allow_apply_failed', {
@@ -434,6 +432,8 @@ function approveToolCall(service, approvalRef, options = {}) {
       });
     }
   }
+  entry.pending.resolve(true, decision, feedback, options?.plan, granted ? 'always' : 'once');
+  service.pendingToolApprovals.delete(entry.key);
   return true;
 }
 
@@ -494,6 +494,7 @@ module.exports = {
   resolveModel,
   cancelChatStream,
   compactContextNow,
+  prepareSessionHistoryRequest,
   approveToolCall,
   denyToolCall,
   handleChatStreamEnd,

@@ -257,6 +257,36 @@ def test_move_file_refuses_destination_that_is_another_source(tmp_path: Path) ->
     assert not (tmp_path / "three.txt").exists()
 
 
+def test_move_file_refuses_a_source_inside_another_entrys_source_directory(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "pkg" / "sub").mkdir(parents=True)
+    (tmp_path / "pkg" / "sub" / "mod.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "pkgx.txt").write_text("sibling", encoding="utf-8")
+
+    result = move_module.move_file_tool(
+        {
+            "moves": [
+                {"source": "pkg", "destination": "lib/pkg"},
+                {"source": "pkg/sub/mod.py", "destination": "mod.py"},
+                {"source": "pkgx.txt", "destination": "lib/pkgx.txt"},
+            ]
+        },
+        _guard(tmp_path),
+    )
+
+    assert result.success is False
+    assert "Entry 2: pkg/sub/mod.py -> mod.py: source is inside the source directory of entry 1" in (
+        result.output
+    )
+    assert "Entry 3: pkgx.txt -> lib/pkgx.txt: not moved because another entry failed" in (
+        result.output
+    ), "a name prefix (pkgx vs pkg) is not nesting"
+    assert (tmp_path / "pkg" / "sub" / "mod.py").exists()
+    assert not (tmp_path / "lib").exists()
+    assert result.metadata["moved_count"] == 0
+
+
 def test_move_file_refuses_more_than_one_hundred_entries(tmp_path: Path) -> None:
     result = move_module.move_file_tool(
         {

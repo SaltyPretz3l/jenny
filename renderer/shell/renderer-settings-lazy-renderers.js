@@ -49,10 +49,10 @@
             ? jt('settings.offline.localRuntimeReady', 'Local runtime is ready with {model}.', { model: String(offlineState.preferredLocalModel || 'a local model') })
             : jt('settings.offline.forcedOff', 'Force local inference is off.')),
       badgeText: offlineState.mode === 'local_only'
-        ? 'Forced'
+        ? jt('settings.offline.badgeForced', 'Forced')
         : offlineState.localChatReady
-          ? 'Ready'
-          : 'Optional',
+          ? jt('healthPill.ready', 'Ready')
+          : jt('settings.offline.badgeOptional', 'Optional'),
     }), escapeHtml);
   }
 

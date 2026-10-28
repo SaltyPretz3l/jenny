@@ -182,3 +182,20 @@ test('the large-file mode re-spread is skipped between consecutive normal files 
   });
   host.dispose();
 });
+
+test('leaving a large file restores the applied preferences, not the built-in defaults (row 82 E1)', async () => {
+  const { host, fake, dom } = makeHost();
+  await withWindow(dom, async () => {
+    await host.openDocument({ path: 'one.js', content: 'const a = 1;\n' });
+    await host.openDocument({ path: 'big.min.js', content: 'x'.repeat(300 * 1024) });
+    host.setEditorOptions({ stickyScroll: { enabled: false }, cursorStyle: 'block', fontSize: 17 });
+    host.activateDocument('big.min.js');
+    host.activateDocument('one.js');
+    const restored = fake.updates.at(-1);
+    assert.equal(restored.stickyScroll.enabled, false, 'the user turned sticky scroll off');
+    assert.equal(restored.cursorStyle, 'block');
+    assert.equal(restored.fontSize, 17);
+    assert.equal(restored.minimap.enabled, true, 'the minimap session toggle still wins');
+  });
+  host.dispose();
+});

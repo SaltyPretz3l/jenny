@@ -12,7 +12,7 @@ const {
 const { ALWAYS_ON_TOOL_NAMES, LEGACY_TOGGLE_TO_SURFACE, resolveRequestToolPreferences } = require('../tools/tool-surface-families');
 
 const LOCAL_AUTH_ACCOUNTS_KEY = 'local_auth_accounts_json';
-const MANAGED_REASONING_EFFORT_SUPPORTED_ENGINES = new Set(['vllm', 'openai-compatible', 'codex-cli', 'chatgpt']);
+const MANAGED_REASONING_EFFORT_SUPPORTED_ENGINES = new Set(['vllm', 'openai-compatible', 'codex-cli', 'chatgpt', 'api-provider']);
 const KNOWN_OLLAMA_THINKING_MODEL_PREFIXES = [
   'qwen3.5',
   'qwen3.6',
@@ -76,6 +76,9 @@ function inferEngineTypeFromModel(model) {
   if (token.startsWith('codex-cli/')) {
     return 'codex-cli';
   }
+  if (token.startsWith('api-provider/')) {
+    return 'api-provider';
+  }
   // Recognize Astra exactly; unknown future GPT families keep the local default.
   // The existing GPT-5 rule deliberately excludes gpt-oss and namespaced IDs.
   if (token === 'gpt-6-astra' || /^gpt-5([.:-]|$)/.test(token)) {
@@ -106,7 +109,7 @@ function inferEngineTypeFromModel(model) {
 // Astra id and 'codex-cli/', '^gpt-5', 'mock', 'replay' prefixes) rather than its
 // conservative ollama fallback. Only these may override an explicit user pin.
 const ID_ANCHORED_ENGINE_TYPES = Object.freeze(
-  new Set(['codex-cli', 'chatgpt', 'mock', 'replay'])
+  new Set(['codex-cli', 'chatgpt', 'api-provider', 'mock', 'replay'])
 );
 // Pins naming a LOCAL runtime the model string cannot reliably imply: e.g.
 // 'NousResearch/Hermes-3-Llama-3.1-8B' misses isLikelyVllmModel's prefix list

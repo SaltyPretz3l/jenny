@@ -129,6 +129,33 @@ test('phone-width chat auto-collapses but the strip toggle can explicitly expand
   assert.equal(workspace.dataset.panelAutoCollapsed, 'false');
 });
 
+test('a narrow window shows the clamped sidebar width and restores the chosen one when widened', async (t) => {
+  const { window } = await loadRendererTestApp(t, { windowInnerWidth: 1400 });
+  const doc = window.document;
+  const workspace = doc.getElementById('workspace');
+  await waitForUi(window, 80);
+  doc.getElementById('chatTopRailTab').click();
+  await waitForUi(window, 40);
+  const controller = window.rendererTopNavShellController;
+  controller.setActivePanelWidth(400);
+  await waitForUi(window, 20);
+  assert.equal(workspace.style.getPropertyValue('--view-panel-current-width'), '400px');
+
+  const resizeTo = async (width) => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+    window.dispatchEvent(new window.Event('resize'));
+    await waitForUi(window, 40);
+  };
+  await resizeTo(900);
+  assert.equal(workspace.style.getPropertyValue('--view-panel-current-width'), '248px');
+  assert.equal(controller.getActivePanelState().width, 248, 'drags start from the rendered width');
+  assert.equal(readPanelsStore(window).byView.chat.width, 400);
+
+  await resizeTo(1400);
+  assert.equal(workspace.style.getPropertyValue('--view-panel-current-width'), '400px', 'the chosen width returns');
+  assert.equal(controller.getActivePanelState().width, 400);
+});
+
 // UIUX-038 (Artifacts view aria-labelledby / focus landing) was deleted in
 // W1-5: the Artifacts studio view no longer exists, so the dangling-reference
 // concern it guarded is void. The review panel carries its own labels.

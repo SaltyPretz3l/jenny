@@ -1,6 +1,6 @@
 /* renderer/features/renderer-ide-statusbar.js - Workspace IDE editor chrome:
  * the bottom status bar (Ln/Col + selection count -> go-to-line, word-wrap
- * toggle, tab size, EOL, language id, dirty dot) and the breadcrumbs strip
+ * toggle, indentation, encoding, EOL and language pickers, dirty dot) and the breadcrumbs strip
  * above the editor (ancestor folder segments reveal in the explorer). Pure
  * render-from-callbacks module; the controller owns when to refresh. */
 (function (root, factory) {
@@ -64,6 +64,8 @@
       getRunning = () => false,
       getEol = () => 'lf',
       getTabSize = () => 2,
+      getIndentInfo = () => null,
+      getEncodingInfo = () => null,
       isDirty = () => false,
       isDiffTab = () => false,
       getDocumentKind = () => 'file',
@@ -71,6 +73,9 @@
       onGoToLine = noop,
       onToggleWordWrap = noop,
       onPickTabSize = noop,
+      onPickIndentation = null,
+      onPickLanguage = noop,
+      onPickEncoding = noop,
       onPickEol = noop,
       onSwitchBranch = noop,
       onOpenProblems = noop,
@@ -92,6 +97,14 @@
         : '';
       const language = getActiveLanguageId() || 'plaintext';
       const eol = getEol(path) === 'crlf' ? 'CRLF' : 'LF';
+      const indent = getIndentInfo(path) || { insertSpaces: true, tabSize: Number(getTabSize()) || 2 };
+      const indentSize = Number(indent.tabSize) || 2;
+      const indentLabel = indent.insertSpaces === false
+        ? jt('ide.statusbar.tabSize', 'Tab Size: {n}', { n: indentSize })
+        : jt('ide.statusbar.spaces', 'Spaces: {size}', { size: indentSize });
+      const encodingLabel = (getEncodingInfo(path) || {}).bom === true
+        ? jt('ide.statusbar.encodingUtf8Bom', 'UTF-8 with BOM')
+        : jt('ide.statusbar.encodingUtf8', 'UTF-8');
       const wrapLabel = ide.wordWrap === 'on' ? 'Wrap: On' : 'Wrap: Off';
       const dirty = isDirty(path);
       // Left-most: the git branch + live dirty count (●N). Clickable - opens the
@@ -176,9 +189,18 @@
         + actionButton({
           plain: true,
           className: 'ide-statusbar-item ide-statusbar-action',
-          title: jt('ide.statusbar.selectIndentationSize', 'Select indentation size'),
-          trustedHtml: escapeHtml(jt('ide.statusbar.spaces', 'Spaces: {size}', { size: Number(getTabSize()) || 2 })),
-          dataset: { 'ide-status-action': 'tab-size' },
+          title: jt('ide.statusbar.selectIndentation', 'Select indentation'),
+          ariaHaspopup: 'menu',
+          trustedHtml: escapeHtml(indentLabel),
+          dataset: { 'ide-status-action': 'indentation' },
+        })
+        + actionButton({
+          plain: true,
+          className: 'ide-statusbar-item ide-statusbar-action',
+          title: jt('ide.statusbar.encodingInfo', 'File encoding'),
+          ariaHaspopup: 'menu',
+          trustedHtml: escapeHtml(encodingLabel),
+          dataset: { 'ide-status-action': 'encoding' },
         })
         + actionButton({
           plain: true,
@@ -187,7 +209,14 @@
           trustedHtml: escapeHtml(eol),
           dataset: { 'ide-status-action': 'eol' },
         })
-        + `<span class="ide-statusbar-item">${escapeHtml(language)}</span>`
+        + actionButton({
+          plain: true,
+          className: 'ide-statusbar-item ide-statusbar-action',
+          title: jt('ide.statusbar.selectLanguageMode', 'Select Language Mode'),
+          ariaHaspopup: 'dialog',
+          trustedHtml: escapeHtml(language),
+          dataset: { 'ide-status-action': 'language' },
+        })
         // Far-right layout control: an always-present bottom-panel toggle so the
         // panel is discoverable without knowing the Ctrl+` shortcut. Pressed
         // state mirrors bottomPanelOpen.
@@ -274,28 +303,24 @@
       }
     }
 
+    // data-ide-status-action -> handler (the picker chips anchor on the clicked chip).
+    const STATUS_ACTIONS = new Map([
+      ['go-to-line', () => onGoToLine()],
+      ['toggle-wrap', () => onToggleWordWrap()],
+      // An old wiring that only knows the tab-size picker keeps working.
+      ['indentation', (chip) => (onPickIndentation || onPickTabSize)(chip)],
+      ['language', (chip) => onPickLanguage(chip)],
+      ['encoding', (chip) => onPickEncoding(chip)],
+      ['eol', (chip) => onPickEol(chip)],
+      ['switch-branch', () => onSwitchBranch()],
+      ['open-problems', () => onOpenProblems()],
+      ['toggle-panel', () => onToggleBottomPanel()],
+      ['open-run', () => onOpenRun()],
+    ]);
+
     function handleStatusClick(event) {
       const action = event.target?.closest?.('[data-ide-status-action]');
-      if (!action) {
-        return;
-      }
-      if (action.dataset.ideStatusAction === 'go-to-line') {
-        onGoToLine();
-      } else if (action.dataset.ideStatusAction === 'toggle-wrap') {
-        onToggleWordWrap();
-      } else if (action.dataset.ideStatusAction === 'tab-size') {
-        onPickTabSize(action);
-      } else if (action.dataset.ideStatusAction === 'eol') {
-        onPickEol(action);
-      } else if (action.dataset.ideStatusAction === 'switch-branch') {
-        onSwitchBranch();
-      } else if (action.dataset.ideStatusAction === 'open-problems') {
-        onOpenProblems();
-      } else if (action.dataset.ideStatusAction === 'toggle-panel') {
-        onToggleBottomPanel();
-      } else if (action.dataset.ideStatusAction === 'open-run') {
-        onOpenRun();
-      }
+      STATUS_ACTIONS.get(action?.dataset.ideStatusAction)?.(action);
     }
 
     function bindEvents() {

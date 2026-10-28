@@ -27,6 +27,10 @@
   // the terminal render, once a plain streaming check would say no).
   const TAIL_CUSHION_SETTLE_WINDOW_MS = 250;
   const SENTINEL_SELECTOR = '.chat-thread-scroll-sentinel';
+  // Visible rows remembered above the tail, so a frame that swaps the tail row
+  // (a tool row replacing the activity row, a run folding the live reasoning
+  // line) still has a row that survived to measure the above-the-tail shift.
+  const TAIL_CUSHION_ANCHOR_ROWS = 4;
 
   function finite(value) {
     const number = Number(value);
@@ -65,8 +69,7 @@
       sessionId: '',
       timelineHeight: 0,
       clientHeight: 0,
-      tailNode: null,
-      tailOffset: 0,
+      anchors: [],
       lastScrollTop: 0,
       lastReaderIntentAt: 0,
       glideFrame: 0,
@@ -86,23 +89,48 @@
     // the turn, makes a Thinking panel collapsing above a newer answer row an
     // above-the-tail shift the clamp absorbs: as a tail shrink it became room
     // that dropped the whole view at reply end (gate 2026-10-14).
-    function readLastRow(turn) {
+    function readLastRows(turn) {
       let rows;
       try { rows = turn.querySelectorAll?.('.turn-row-list > .chat-row') || null; } catch (_error) { rows = null; }
-      for (let index = (rows?.length || 0) - 1; index >= 0; index -= 1) {
-        if (finite(readRect(rows[index])?.height) > 0) return rows[index];
+      const visible = [];
+      for (let index = (rows?.length || 0) - 1; index >= 0 && visible.length < TAIL_CUSHION_ANCHOR_ROWS; index -= 1) {
+        if (finite(readRect(rows[index])?.height) > 0) visible.unshift(rows[index]);
       }
-      return null;
+      return visible;
+    }
+
+    function readOffset(node, timelineTop) {
+      return finite(readRect(node)?.top) - timelineTop;
     }
 
     function readTail() {
       let turn = chatTimeline?.lastElementChild || null;
       while (turn && turn.classList?.contains?.('turn-activity-row')) turn = turn.previousElementSibling;
-      if (!turn) return { node: null, offset: 0 };
-      const node = readLastRow(turn) || turn;
-      const timelineRect = readRect(chatTimeline);
-      const tailRect = readRect(node);
-      return { node, offset: finite(tailRect?.top) - finite(timelineRect?.top) };
+      if (!turn) return { node: null, offset: 0, turn: null, anchors: [] };
+      const rows = readLastRows(turn);
+      if (!rows.length) rows.push(turn);
+      const timelineTop = finite(readRect(chatTimeline)?.top);
+      const anchors = rows.map((node) => ({ node, offset: readOffset(node, timelineTop) }));
+      const tail = anchors[anchors.length - 1];
+      return { node: tail.node, offset: tail.offset, turn, anchors };
+    }
+
+    // The newest remembered row still shown in the same turn, with its offset
+    // then and now. Usually the tail itself; when the tail row was swapped, an
+    // earlier row that survived the frame.
+    function findSurvivingAnchor(tail) {
+      if (!tail.node || !tail.turn) return null;
+      const timelineTop = finite(readRect(chatTimeline)?.top);
+      for (let index = runtime.anchors.length - 1; index >= 0; index -= 1) {
+        const anchor = runtime.anchors[index];
+        const node = anchor.node;
+        if (node === tail.node) return { before: anchor.offset, after: tail.offset };
+        if (node?.isConnected === false) continue;
+        if (tail.turn.contains?.(node) !== true) continue;
+        if (!(finite(readRect(node)?.height) > 0)) continue;
+        return { before: anchor.offset, after: readOffset(node, timelineTop) };
+      }
+      return null;
     }
 
     function readTimelineHeight() {
@@ -113,8 +141,7 @@
       if (isStreaming() === true) runtime.lastStreamingAt = now();
       const tail = readTail();
       runtime.timelineHeight = readTimelineHeight();
-      runtime.tailNode = tail.node;
-      runtime.tailOffset = tail.offset;
+      runtime.anchors = tail.anchors;
       runtime.lastScrollTop = finite(chatThreadScroll?.scrollTop);
       runtime.sessionId = String(getSessionId() || '');
     }
@@ -227,13 +254,14 @@
       const height = readTimelineHeight();
       const tail = readTail();
       const shrink = runtime.timelineHeight - height;
-      if (!shrink || !tail.node || tail.node !== runtime.tailNode) {
+      const anchor = shrink ? findSurvivingAnchor(tail) : null;
+      if (!anchor) {
         record();
         return;
       }
-      // Height lost above the tail's top is not a tail shrink: there the clamp
-      // keeps the visible content still on its own.
-      const aboveShift = Math.max(0, runtime.tailOffset - tail.offset);
+      // Height lost above the anchor's top is not a tail shrink: there the
+      // clamp keeps the visible content still on its own.
+      const aboveShift = Math.max(0, anchor.before - anchor.after);
       const tailShrink = shrink - aboveShift;
       const previous = runtime.cushionPx;
       let next = previous;
@@ -313,7 +341,7 @@
       if (runtime.attached) chatThreadScroll?.removeEventListener?.('scroll', handleScroll, { passive: true });
       runtime.attached = false;
       runtime.disposed = true;
-      runtime.tailNode = null;
+      runtime.anchors = [];
       runtime.sentinel = null;
     }
 

@@ -56,12 +56,6 @@ function makeController(dom, overrides) {
   return createCodebaseCiteController(opts);
 }
 
-// Flush a couple of microtask turns so a settled/rejected openInDefaultApp()
-// promise's handler has run.
-function flush() {
-  return Promise.resolve().then(() => Promise.resolve());
-}
-
 // ---------------------------------------------------------------------------
 // findCodebaseCitations — pure
 // ---------------------------------------------------------------------------
@@ -218,15 +212,18 @@ test('an in-place terminal article morph linkifies a citation skipped while stre
 });
 
 // ---------------------------------------------------------------------------
-// click handling — dispatch + fallback
+// click handling — dispatch + unclaimed cue (no OS fallback)
 // ---------------------------------------------------------------------------
 
-test('clicking a cite link dispatches ide:open-file-at-line and falls back to openInDefaultApp', () => {
+test('an unclaimed cite click dispatches ide:open-file-at-line and never calls the OS opener', () => {
+  // F2: no automatic shell.openPath fallback; the link explains itself instead.
   const dom = buildDom(assistantBubble('go to services/auth/login.js:42 here'));
   const opens = [];
   const events = [];
+  const notices = [];
   dom.window.addEventListener('ide:open-file-at-line', (e) => { events.push(e.detail); });
   const controller = makeController(dom, {
+    notifyError(message) { notices.push(message); },
     getWorkspaceFs() {
       return { openInDefaultApp(arg) { opens.push(arg); return Promise.resolve({ opened: true }); } };
     },
@@ -240,11 +237,13 @@ test('clicking a cite link dispatches ide:open-file-at-line and falls back to op
 
   assert.equal(event.defaultPrevented, true);
   assert.deepEqual(events, [{ path: 'services/auth/login.js', line: 42, column: null, pane: 0 }]);
-  // No listener claimed the event (none called preventDefault) -> OS fallback.
-  assert.deepEqual(opens, [{ path: 'services/auth/login.js' }]);
+  assert.deepEqual(opens, []);
+  assert.equal(anchor.getAttribute('data-codebase-cite-error'), '1');
+  assert.equal(anchor.getAttribute('title'), 'Couldn’t open services/auth/login.js from here.');
+  assert.equal(notices.length, 1);
 });
 
-test('a claiming listener (preventDefault) suppresses the openInDefaultApp fallback', () => {
+test('a claiming listener (preventDefault) owns the navigation', () => {
   const dom = buildDom(assistantBubble('go to a/b.js:7 here'));
   const opens = [];
   dom.window.addEventListener('ide:open-file-at-line', (e) => { e.preventDefault(); });
@@ -310,9 +309,9 @@ test('parseCodebaseCiteHref rejects whitespace in the path (find/parse alphabet 
   assert.equal(parseCodebaseCiteHref('#codebase:a b.js:1'), null);
 });
 
-test('double-open guard: a listener that omits preventDefault still hits the OS fallback', () => {
+test('a listener that omits preventDefault leaves the link unclaimed, not OS-opened', () => {
   // Locks the contract that the in-editor listener MUST preventDefault to claim
-  // the navigation; otherwise the OS fallback fires (the documented hazard).
+  // the navigation; an unclaimed click only marks the link.
   const dom = buildDom(assistantBubble('go to a/b.js:7 here'));
   const opens = [];
   dom.window.addEventListener('ide:open-file-at-line', () => { /* no preventDefault */ });
@@ -322,54 +321,10 @@ test('double-open guard: a listener that omits preventDefault still hits the OS 
     },
   });
   controller.attach();
-  dom.window.document
-    .querySelector('a.codebase-cite-link')
-    .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
-  assert.deepEqual(opens, [{ path: 'a/b.js' }]);
-});
-
-test('a structured NOT_FOUND open error marks the link with a specific cue', async () => {
-  const dom = buildDom(assistantBubble('see ghost/missing.js:9 here'));
-  const notices = [];
-  const controller = makeController(dom, {
-    notifyError(message) { notices.push(message); },
-    getWorkspaceFs() {
-      return {
-        openInDefaultApp() {
-          // Mirrors a WorkspaceFsError: human-prose message + structured code.
-          return Promise.reject(Object.assign(
-            new Error('File or folder not found in the workspace.'),
-            { error_code: 'CMP-WORKSPACEFS-0004' }
-          ));
-        },
-      };
-    },
-  });
-  controller.attach();
   const anchor = dom.window.document.querySelector('a.codebase-cite-link');
   anchor.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
-  await flush();
+  assert.deepEqual(opens, []);
   assert.equal(anchor.getAttribute('data-codebase-cite-error'), '1');
-  assert.match(anchor.getAttribute('title'), /not found/i);
-  assert.equal(notices.length, 1);
-  assert.match(notices[0], /missing\.js/);
-});
-
-test('a code-less open error still marks the link with a generic cue', async () => {
-  // The realistic case if the structured code does not survive the IPC
-  // boundary: the cue degrades to the generic line but is still shown.
-  const dom = buildDom(assistantBubble('see ghost/missing.js:9 here'));
-  const controller = makeController(dom, {
-    getWorkspaceFs() {
-      return { openInDefaultApp() { return Promise.reject(new Error('Error invoking remote method')); } };
-    },
-  });
-  controller.attach();
-  const anchor = dom.window.document.querySelector('a.codebase-cite-link');
-  anchor.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
-  await flush();
-  assert.equal(anchor.getAttribute('data-codebase-cite-error'), '1');
-  assert.equal(anchor.getAttribute('title'), 'Couldn’t open ghost/missing.js.');
 });
 
 test('no workspace bridge marks the link unavailable synchronously', () => {
@@ -386,26 +341,18 @@ test('no workspace bridge marks the link unavailable synchronously', () => {
   assert.equal(notices.length, 1);
 });
 
-test('a successful retry clears a prior error stamp', async () => {
+test('a successful retry clears a prior error stamp', () => {
   const dom = buildDom(assistantBubble('see a/b.js:3 here'));
-  let failNext = true;
-  const controller = makeController(dom, {
-    getWorkspaceFs() {
-      return {
-        openInDefaultApp() {
-          if (failNext) { failNext = false; return Promise.reject(new Error('NOT_FOUND')); }
-          return Promise.resolve({ opened: true });
-        },
-      };
-    },
-  });
+  let claim = false;
+  dom.window.addEventListener('ide:open-file-at-line', (e) => { if (claim) e.preventDefault(); });
+  const controller = makeController(dom);
   controller.attach();
   const anchor = dom.window.document.querySelector('a.codebase-cite-link');
   anchor.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
-  await flush();
   assert.equal(anchor.getAttribute('data-codebase-cite-error'), '1');
   // Second click: the stamp is cleared synchronously at the top of the handler,
-  // and the now-successful open does not re-mark it.
+  // and the now-claimed open does not re-mark it.
+  claim = true;
   anchor.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
   assert.equal(anchor.getAttribute('data-codebase-cite-error'), null);
 });

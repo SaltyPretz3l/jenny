@@ -216,7 +216,7 @@ def test_linux_bundle_rejects_extra_marker_excluded_wheel(
     _checker, contract_path, _embed, wheelhouse = linux_bundle
     contract = json.loads(contract_path.read_text(encoding="utf-8"))
     manifest = json.loads((wheelhouse / contract["wheelhouse_manifest"]).read_text())
-    tzdata = wheelhouse / "tzdata-2026.3-py2.py3-none-any.whl"
+    tzdata = wheelhouse / "tzdata-2026.5-py2.py3-none-any.whl"
     tzdata.write_bytes(b"tzdata")
     manifest["files"] = _file_manifest(wheelhouse, contract["wheelhouse_manifest"])
     (wheelhouse / contract["wheelhouse_manifest"]).write_text(json.dumps(manifest))
@@ -263,7 +263,7 @@ def test_windows_bundle_marker_keeps_tzdata(tmp_path: Path) -> None:
         tmp_path, embed_dir=embed, wheelhouse_dir=wheelhouse, probe_python=False
     ) == []
 
-    (wheelhouse / "tzdata-2026.3-py2.py3-none-any.whl").unlink()
+    (wheelhouse / "tzdata-2026.5-py2.py3-none-any.whl").unlink()
     manifest_path = wheelhouse / "wheelhouse-manifest.json"
     manifest = json.loads(manifest_path.read_text())
     manifest["files"] = _file_manifest(wheelhouse, manifest_path.name)

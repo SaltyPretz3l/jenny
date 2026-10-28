@@ -136,6 +136,42 @@ test('derived index caches never make a profile non-fresh', async t => {
   assert.equal(isMeaningfullyFresh({ userDataPath: root }), true);
 });
 
+test('the empty primary Jenny chat minted at first launch keeps the profile fresh; a message or another chat does not', async t => {
+  const { root } = await fixture(t);
+  const primary = { id: 'sess_primary', session_role: 'primary', message_count: 0, title: 'Jenny' };
+  const storeWith = (...summaries) => ({ listSessions: () => summaries });
+  assert.equal(isMeaningfullyFresh({ userDataPath: root, sessionStore: storeWith(primary) }), true);
+  assert.equal(isMeaningfullyFresh({ userDataPath: root, sessionStore: storeWith({ ...primary, message_count: 2 }) }), false);
+  assert.equal(isMeaningfullyFresh({ userDataPath: root, sessionStore: storeWith(primary, { id: 'sess_other', message_count: 0 }) }), false);
+  assert.equal(isMeaningfullyFresh({ userDataPath: root, sessionStore: storeWith({ id: 'sess_plain', message_count: 0 }) }), false);
+});
+
+test('without a store, the sessions directory of an untouched primary chat is fresh; a message or any other file is not', async t => {
+  const { root } = await fixture(t);
+  const dir = path.join(root, 'sessions');
+  fs.mkdirSync(dir);
+  const id = 'sess_1_primary';
+  const write = (name, value) => fs.writeFileSync(path.join(dir, name), JSON.stringify(value));
+  write('_index.json', { journal_epoch: 1, schema_version: 26, sessions: { [id]: { id, session_role: 'primary', message_count: 0 } } });
+  write('_active_turns.state', { version: 1, schema_version: 26, session_ids: [] });
+  write(`${id}.json`, { journal_epoch: 1, schema_version: 26, session: { id, session_role: 'primary', messages: [] } });
+  assert.equal(isMeaningfullyFresh({ userDataPath: root }), true);
+
+  write(`${id}.json`, { session: { id, session_role: 'primary', messages: [{ role: 'user', content: 'hi' }] } });
+  assert.equal(isMeaningfullyFresh({ userDataPath: root }), false, 'a message in the record');
+  write(`${id}.json`, { session: { id, session_role: 'primary', messages: [] } });
+  write('_active_turns.state', { version: 1, session_ids: [id] });
+  assert.equal(isMeaningfullyFresh({ userDataPath: root }), false, 'an active turn');
+  write('_active_turns.state', { version: 1, session_ids: [] });
+  write('sess_2_other.json', { session: { id: 'sess_2_other', messages: [] } });
+  assert.equal(isMeaningfullyFresh({ userDataPath: root }), false, 'a record the index does not name');
+  fs.rmSync(path.join(dir, 'sess_2_other.json'));
+  write('_index.json', { sessions: { [id]: { id, session_role: null, message_count: 0 } } });
+  assert.equal(isMeaningfullyFresh({ userDataPath: root }), false, 'a chat that is not the primary');
+  fs.writeFileSync(path.join(dir, '_index.json'), '{not json');
+  assert.equal(isMeaningfullyFresh({ userDataPath: root }), false, 'an unreadable index');
+});
+
 test('pending WAL bytes and linked personality directories block restore', async t => {
   const { root, file } = await fixture(t);
   fs.writeFileSync(file + '-wal', 'unsettled');

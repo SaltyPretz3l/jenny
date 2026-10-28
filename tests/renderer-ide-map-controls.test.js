@@ -3,7 +3,7 @@
 /* tests/renderer-ide-map-controls.test.js - red-first coverage for
  * renderer/features/renderer-ide-map-controls.js: the Living Atlas controls
  * bar (search field with debounce/Enter-submit/Escape-clear, three layer
- * toggle chips, hide-tests toggle + N/N readout, status chip, overview
+ * toggle chips, hide-tests toggle + count readout, status chip, overview
  * pressed state, inventory-only markup, dispose). Uses jsdom directly;
  * t.after() teardown, never dom.window.close(). */
 
@@ -213,13 +213,68 @@ test('Generate and Refresh buttons invoke their respective callbacks', (t) => {
   assert.equal(refreshed, 1);
 });
 
-test('setTestCounts renders an N/N readout', (t) => {
+test('setTestCounts renders a plain-language readout: empty / "1 test" / "N tests" / "N hidden"', (t) => {
   const { hostEl } = setupHost();
   const controls = createMapControls({ hostEl });
   t.after(() => controls.dispose());
 
+  const readout = () => hostEl.querySelector('[data-map-hide-tests-count]').textContent;
+  assert.equal(readout(), '', 'empty before any count lands');
+  controls.setTestCounts(0, 0);
+  assert.equal(readout(), '', 'no tests -> empty');
+  controls.setTestCounts(0, 1);
+  assert.equal(readout(), '1 test');
+  controls.setTestCounts(0, 12);
+  assert.equal(readout(), '12 tests');
   controls.setTestCounts(3, 12);
-  assert.equal(hostEl.querySelector('[data-map-hide-tests-count]').textContent, '3/12');
+  assert.equal(readout(), '3 hidden');
+  controls.setTestCounts(12, 12);
+  assert.equal(readout(), '12 hidden');
+  controls.setTestCounts(0, 0);
+  assert.equal(readout(), '', 'back to empty');
+});
+
+test('setHasMap(true) hides Generate and keeps Refresh; false shows it again', (t) => {
+  const { hostEl } = setupHost();
+  const controls = createMapControls({ hostEl });
+  t.after(() => controls.dispose());
+
+  const generate = () => hostEl.querySelector('[data-action="generate"]');
+  const refresh = () => hostEl.querySelector('[data-action="refresh"]');
+  assert.equal(generate().hidden, false, 'Generate is visible before a map exists');
+  controls.setHasMap(true);
+  assert.equal(generate().hidden, true, 'Generate hidden while a map is drawn');
+  assert.equal(refresh().hidden, false, 'Refresh stays visible');
+  controls.setHasMap(false);
+  assert.equal(generate().hidden, false, 'Generate shown again');
+});
+
+test('the setHasMap flag survives setState re-renders', (t) => {
+  const { hostEl } = setupHost();
+  const controls = createMapControls({ hostEl });
+  t.after(() => controls.dispose());
+
+  controls.setHasMap(true);
+  controls.setState({ hideTests: true }); // forces a full render()
+  assert.equal(hostEl.querySelector('[data-action="generate"]').hidden, true);
+  assert.equal(hostEl.querySelector('[data-action="refresh"]').hidden, false);
+  controls.setHasMap(false);
+  controls.setState({ hideTests: false });
+  assert.equal(hostEl.querySelector('[data-action="generate"]').hidden, false);
+});
+
+test('the Overview button is a normal secondary button; layer chips stay plain', (t) => {
+  const { hostEl } = setupHost();
+  const controls = createMapControls({ hostEl });
+  t.after(() => controls.dispose());
+
+  const overview = hostEl.querySelector('[data-action="overview"]');
+  assert.ok(overview.classList.contains('btn'), 'Overview carries the shared .btn class');
+  assert.ok(overview.classList.contains('ide-map-overview-toggle'));
+  assert.ok(hostEl.querySelector('[data-action="refresh"]').classList.contains('btn'));
+  for (const chip of hostEl.querySelectorAll('.ide-map-layer-chip')) {
+    assert.ok(!chip.classList.contains('btn'), 'layer chips stay plain (CSS restyles them)');
+  }
 });
 
 test('setState restores search/hideTests/layers without re-firing change callbacks', (t) => {
@@ -349,12 +404,11 @@ test('status chip emits no raw input/select primitives', (t) => {
   assert.equal(slot.querySelector('button'), null);
 });
 
-test('focusSearch focuses the search field; focusFilter is kept as an alias', (t) => {
+test('focusSearch focuses the search field', (t) => {
   const { hostEl } = setupHost();
   const controls = createMapControls({ hostEl });
   t.after(() => controls.dispose());
 
-  assert.equal(typeof controls.focusFilter, 'function', 'focusFilter alias must exist for the a11y module');
   controls.focusSearch();
   assert.equal(hostEl.ownerDocument.activeElement, hostEl.querySelector('.ide-map-search .inv-text-field-control'));
 });
@@ -371,4 +425,24 @@ test('dispose() removes listeners and clears the host; further input does nothin
   controls.dispose();
   assert.equal(hostEl.innerHTML, '');
   assert.deepEqual(calls, []);
+});
+
+test('the Atlas | Components switch leads the bar, fires onLensChange and restores via setState (row 77)', (t) => {
+  const { hostEl } = setupHost();
+  const calls = [];
+  const controls = createMapControls({ hostEl, onLensChange: (lens) => calls.push(lens) });
+  t.after(() => controls.dispose());
+
+  const group = () => hostEl.querySelector('.ide-map-lens[role="radiogroup"]');
+  assert.equal(hostEl.firstElementChild, group(), 'the switch is the first item of the bar');
+  const option = (value) => group().querySelector(`[data-value="${value}"]`);
+  assert.equal(option('atlas').getAttribute('aria-checked'), 'true', 'atlas is the default');
+  option('components').dispatchEvent(new hostEl.ownerDocument.defaultView.MouseEvent('click', { bubbles: true }));
+  assert.deepEqual(calls, ['components']);
+  assert.equal(option('components').getAttribute('aria-checked'), 'true');
+  controls.setState({ lens: 'atlas' });
+  assert.equal(option('atlas').getAttribute('aria-checked'), 'true', 'setState restores the lens');
+  controls.setState({ lens: 'bogus', hideTests: true });
+  assert.equal(option('atlas').getAttribute('aria-checked'), 'true', 'an unknown lens keeps the current one');
+  assert.deepEqual(calls, ['components'], 'setState never fires onLensChange');
 });

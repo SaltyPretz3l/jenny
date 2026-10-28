@@ -11,6 +11,8 @@ from __future__ import annotations
 import base64
 import json
 import re
+import struct
+import zlib
 from types import SimpleNamespace
 from typing import Any
 
@@ -43,11 +45,30 @@ from sidecar.runtime.multiplexer import _OUTPUT_HIGH_WATER_MARK_BYTES
 _BASE64_RUN_RE = re.compile(r"[A-Za-z0-9+/=]{100,}")
 
 
+def _jpeg_bytes(byte_length: int, *, width: int = 10, height: int = 10) -> bytes:
+    """SOI, a baseline SOF0 frame header with the given size, filler, EOI."""
+    sof = (b"\xff\xc0\x00\x11\x08" + height.to_bytes(2, "big") + width.to_bytes(2, "big")
+           + b"\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01")
+    head = b"\xff\xd8" + sof
+    return head + b"j" * (byte_length - len(head) - 2) + b"\xff\xd9"
+
+
+def _png_bytes(width: int = 2, height: int = 3) -> bytes:
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        crc = struct.pack(">I", zlib.crc32(kind + payload))
+        return struct.pack(">I", len(payload)) + kind + payload + crc
+
+    rows = b"".join(b"\x00" + b"\x00\x00\x00" * width for _ in range(height))
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(rows))
+            + chunk(b"IEND", b""))
+
+
 def _attachment(*, byte_length: int = 64, kind: str = "image") -> dict[str, Any]:
     return build_trusted_attachment(
         kind=kind,
         mime_type="image/jpeg",
-        data=b"\xff\xd8" + (b"j" * (byte_length - 4)) + b"\xff\xd9",
+        data=_jpeg_bytes(byte_length),
         source_tool="read_file",
         width=10,
         height=10,
@@ -73,7 +94,7 @@ def test_admission_admits_builtin_python_execute() -> None:
     attachment = build_trusted_attachment(
         kind="chart",
         mime_type="image/png",
-        data=b"\x89PNG-fake-bytes",
+        data=_png_bytes(),
         source_tool="python_execute",
     )
     admitted = admit_trusted_attachments(
@@ -82,6 +103,74 @@ def test_admission_admits_builtin_python_execute() -> None:
         source_kind="builtin",
     )
     assert len(admitted) == 1
+
+
+def _admit_image(data: bytes, mime_type: str, width: int, height: int) -> tuple[dict[str, Any], ...]:
+    attachment = build_trusted_attachment(
+        kind="image", mime_type=mime_type, data=data, source_tool="read_file",
+        width=width, height=height,
+    )
+    return admit_trusted_attachments(
+        attachments=[attachment], tool_id="read_file", source_kind="builtin"
+    )
+
+
+def _webp_vp8l(width: int, height: int) -> bytes:
+    bits = (width - 1) | ((height - 1) << 14)
+    payload = b"\x2f" + bits.to_bytes(4, "little") + b"\x00" * 16
+    chunk = b"VP8L" + len(payload).to_bytes(4, "little") + payload
+    return b"RIFF" + (4 + len(chunk)).to_bytes(4, "little") + b"WEBP" + chunk
+
+
+def _webp_vp8x(width: int, height: int) -> bytes:
+    payload = b"\x00" * 4 + (width - 1).to_bytes(3, "little") + (height - 1).to_bytes(3, "little")
+    chunk = b"VP8X" + len(payload).to_bytes(4, "little") + payload
+    return b"RIFF" + (4 + len(chunk)).to_bytes(4, "little") + b"WEBP" + chunk
+
+
+@pytest.mark.parametrize(
+    ("data", "mime_type", "width", "height"),
+    [
+        (_png_bytes(2, 3), "image/png", 2, 3),
+        (_png_bytes(2, 3), "image/png", 0, 0),  # undeclared dimensions (charts) stay 0 x 0
+        (_jpeg_bytes(256, width=640, height=480), "image/jpeg", 640, 480),
+        (_webp_vp8l(5, 7), "image/webp", 5, 7),
+        (_webp_vp8x(1200, 900), "image/webp", 1200, 900),
+    ],
+)
+def test_admission_accepts_signature_and_declared_size_that_match(
+    data: bytes, mime_type: str, width: int, height: int
+) -> None:
+    admitted = _admit_image(data, mime_type, width, height)
+    assert len(admitted) == 1
+    assert (admitted[0]["width"], admitted[0]["height"]) == (width, height)
+
+
+@pytest.mark.parametrize(
+    ("data", "mime_type"),
+    [
+        (b"\x00arbitrary bytes, not an image\x00" * 4, "image/png"),
+        (_png_bytes(2, 3), "image/jpeg"),  # a real PNG labelled as JPEG
+        (_jpeg_bytes(256, width=2, height=3), "image/webp"),
+        (b"RIFF\x10\x00\x00\x00WAVEfmt " + b"\x00" * 24, "image/webp"),
+        (b"\xff\xd8\xff\xda\x00\x08" + b"\x00" * 40, "image/jpeg"),  # a scan before any frame
+    ],
+)
+def test_admission_rejects_bytes_that_do_not_carry_the_declared_format(
+    data: bytes, mime_type: str
+) -> None:
+    assert _admit_image(data, mime_type, 2, 3) == ()
+
+
+def test_admission_rejects_a_declared_size_that_differs_from_the_pixels() -> None:
+    assert _admit_image(_png_bytes(2, 3), "image/png", 3, 2) == ()
+    assert _admit_image(_jpeg_bytes(256, width=10, height=10), "image/jpeg", 4096, 4096) == ()
+
+
+def test_admission_rejects_dimensions_past_the_vision_pixel_cap() -> None:
+    header = struct.pack(">IIBBBBB", 10_000, 10_000, 8, 2, 0, 0, 0)
+    oversized = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR" + header + b"\x00" * 16
+    assert _admit_image(oversized, "image/png", 10_000, 10_000) == ()
 
 
 def test_admission_strips_external_mcp_spoof_and_logs(caplog: pytest.LogCaptureFixture) -> None:

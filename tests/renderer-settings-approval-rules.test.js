@@ -536,3 +536,55 @@ test('the tool row link to PDF reading opens Tools with keyboard focus on the fi
   assert.equal(doc.activeElement, host.querySelector('[data-action="pdfAddonSetup"]'));
   assert.ok(scrolled > 0, 'the group is scrolled into view');
 });
+
+test('an inactive render neither reads nor paints, and an unchanged render keeps the painted rows', async () => {
+  const { container } = harness();
+  const api = fakeApi(savedFixture());
+  container.innerHTML = '<div id="placeholder"></div>';
+  assert.equal(await coreRenderers.renderApprovalRules({ container, api, actionButton, active: false }), null);
+  assert.deepEqual(api.calls, [], 'no IPC while Tools is not the section on screen');
+  assert.ok(container.querySelector('#placeholder'), 'nothing is painted either');
+
+  await coreRenderers.renderApprovalRules({ container, api, actionButton, active: true });
+  assert.deepEqual(api.calls, [['getPermissions']]);
+  const row = container.querySelector('.tools-approval-rule');
+  await coreRenderers.renderApprovalRules({ container, api, actionButton, active: true });
+  assert.equal(container.querySelector('.tools-approval-rule'), row, 'the same rows are not rewritten');
+
+  // A stale cache on another section still waits for Tools; a forced render reads.
+  const realNow = Date.now;
+  Date.now = () => realNow() + 60 * 1000;
+  try {
+    await coreRenderers.renderApprovalRules({ container, api, actionButton, active: false });
+    assert.equal(api.calls.length, 1);
+    await coreRenderers.renderApprovalRules({ container, api, actionButton, active: false, force: true });
+    assert.equal(api.calls.length, 2);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test('a repaint with new data keeps the chosen review project and its enabled "Always allow"', async () => {
+  const h = reviewHarness();
+  await coreRenderers.renderApprovalRules(h.options);
+  h.click('[data-action="permission-review-open"]');
+  await flush();
+  const select = h.container.querySelector('#permission-review-project');
+  select.value = 'project_a';
+  select.dispatchEvent(new h.dom.window.Event('change', { bubbles: true }));
+  h.saved.policies.run_command = 'auto';
+  await coreRenderers.renderApprovalRules({ ...h.options, force: true });
+  assert.notEqual(h.container.querySelector('#permission-review-project'), select, 'the rows were repainted');
+  assert.equal(h.container.querySelector('#permission-review-project').value, 'project_a');
+  assert.equal(h.container.querySelector('[data-decision="auto"]').disabled, false);
+});
+
+test('opening the review with a fresh cache moves focus to the project select', async () => {
+  const h = reviewHarness();
+  await coreRenderers.renderApprovalRules(h.options);
+  const callsBefore = h.options.api.calls.length;
+  h.click('[data-action="permission-review-open"]');
+  await flush();
+  assert.equal(h.options.api.calls.length, callsBefore, 'the fresh cache serves the repaint');
+  assert.equal(h.dom.window.document.activeElement, h.container.querySelector('#permission-review-project'));
+});

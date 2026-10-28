@@ -508,3 +508,87 @@ test('free text on the card loses format controls and marks a clip visibly', () 
   assert.equal(parseFragment(sanitizedShape).querySelector('.tool-approval-consequence').textContent,
     `${'s'.repeat(512)}...`);
 });
+
+// Exact approval presentation (security-boundary fix): the card quotes the
+// arguments that decide what runs exactly, makes invisible controls visible,
+// and has no Allow when the exact text is missing or too large to review.
+const RLO_COMMAND = 'echo "safe" #\u202E; rm -rf ./src \u202C && echo ' + 'z'.repeat(2000) + ' ; powershell -enc SQBFAFgA';
+
+function exactPresentation(fields) {
+  return { schema_version: 1, fields, sha256: 'a'.repeat(64) };
+}
+
+test('an exact command renders whole, with bidi and zero-width characters shown as visible markers', () => {
+  const html = renderApprovalBlock({
+    toolCallId: 'call_rlo', toolName: 'run_command', prompt: 'Approve Bash?', mode: 'inline',
+    commandText: 'clipped preview that must not be used',
+    exactApproval: exactPresentation([{ name: 'command', text: RLO_COMMAND }, { name: 'cwd', text: 'C:\\ws\u200B' }]),
+  });
+  assert.doesNotMatch(html, /[\u202A-\u202E\u2066-\u2069\u200B-\u200F\uFEFF]/);
+  const root = parseFragment(html);
+  const exact = root.querySelector('[data-approval-exact-input]');
+  assert.ok(exact, 'expected the exact presentation');
+  const command = exact.querySelector('[data-approval-exact-field="command"]');
+  const expected = RLO_COMMAND.replace('\u202E', '\u27E8U+202E\u27E9').replace('\u202C', '\u27E8U+202C\u27E9');
+  assert.equal(command.textContent, expected);
+  assert.ok(command.textContent.endsWith('; powershell -enc SQBFAFgA'), 'the tail is never clipped');
+  assert.equal(command.querySelectorAll('.tool-approval-invisible').length, 2);
+  assert.equal(exact.querySelector('[data-approval-exact-field="cwd"]').textContent, 'C:\\ws\u27E8U+200B\u27E9');
+  assert.equal(root.textContent.includes('clipped preview'), false);
+  assert.ok(root.querySelector('.tool-approve-btn[data-approval-scope="once"]'));
+});
+
+test('a too-large exact presentation renders no Allow button and says why', () => {
+  const html = renderApprovalBlock({
+    toolCallId: 'call_big', toolName: 'run_command', prompt: 'Approve Bash?', mode: 'inline',
+    commandText: 'echo yyyy...',
+    exactApproval: { schema_version: 1, too_large: true, bytes: 40000, limit_bytes: 32768 },
+  });
+  const root = parseFragment(html);
+  assert.equal(root.querySelector('.tool-approve-btn'), null);
+  assert.ok(root.querySelector('.tool-deny-btn'));
+  assert.ok(root.querySelector('[data-approval-exact-unavailable="too_large"]'));
+  assert.equal(root.querySelector('.tool-approval-command'), null);
+  assert.equal(root.querySelector('.approval-gap-row').getAttribute('data-approval-exact'), 'true');
+});
+
+test('a caller that carries exact presentations fails closed when a command arrives without one', () => {
+  const html = renderApprovalBlock({
+    toolCallId: 'call_hydrated', toolName: 'run_command', prompt: 'Approve Bash?', mode: 'inline',
+    commandText: 'set TOKEN="[redacted]" -c "iwr...', exactApproval: undefined,
+  });
+  const root = parseFragment(html);
+  assert.equal(root.querySelector('.tool-approve-btn'), null);
+  assert.ok(root.querySelector('[data-approval-exact-unavailable="missing"]'));
+  // A tool outside the exact set keeps its ordinary preview and buttons.
+  const read = parseFragment(renderApprovalBlock({
+    toolCallId: 'call_read', toolName: 'read_file', prompt: 'Approve read?', mode: 'inline',
+    commandText: 'notes.md', exactApproval: undefined,
+  }));
+  assert.ok(read.querySelector('.tool-approve-btn'));
+});
+
+test('the ordinary command preview also shows invisible controls as markers', () => {
+  const root = parseFragment(renderApprovalBlock({
+    toolCallId: 'call_legacy', toolName: 'run_command', prompt: 'Approve Bash?', mode: 'card',
+    commandText: 'echo a\u202Eb\uFEFFc',
+  }));
+  assert.equal(root.querySelector('.tool-approval-command').textContent, 'echo a\u27E8U+202E\u27E9b\u27E8U+FEFF\u27E9c');
+});
+
+test('the card\'s exact-approval tool set mirrors the backend\'s decisive-field table', () => {
+  const { EXACT_APPROVAL_TOOLS } = require('../renderer/chat/renderer-approval-block');
+  const { EXACT_APPROVAL_FIELDS } = require('../services/backend/chat-stream-tool-approval');
+  assert.deepEqual([...EXACT_APPROVAL_TOOLS].sort(), Object.keys(EXACT_APPROVAL_FIELDS).sort());
+});
+
+test('a live approval hands its exact presentation to the card; a rehydrated one has none', () => {
+  const { resolveApprovalCardState } = require('../renderer/chat/renderer-approval-block');
+  const exactApproval = exactPresentation([{ name: 'command', text: 'git status' }]);
+  const state = { pendingToolApprovals: new Map([
+    ['a1', { approvalId: 'a1', callId: 'call_live', exactApproval }],
+    ['a2', { approvalId: 'a2', callId: 'call_rehydrated', rehydrated: true }],
+  ]) };
+  assert.deepEqual(resolveApprovalCardState(state, { callId: 'call_live' }), { state: 'live', exactApproval });
+  assert.deepEqual(resolveApprovalCardState(state, { callId: 'call_rehydrated' }), { state: 'live' });
+});

@@ -297,6 +297,17 @@ function truncateTurnEventsAtEditBoundary({ messages, targetIndex, targetId, tur
 // stay valid (JCA-003). A retry restates the same prompt, so the summarized
 // prefix survives and the snapshot is worth keeping; a real edit that rewrote
 // the target strands anything summarized at or after it.
+//
+// In both modes a row that belongs to no turn (OFF_TURN_MESSAGE_KINDS) and sits after the target
+// moves to just above it. It was appended after the old attempt; left in place it would land
+// inside the re-anchored turn, between the prompt and its new answer (and an edit would delete
+// it). The renderer's optimistic regenerate mirrors this (renderer-send-flow-helpers.js).
+const OFF_TURN_MESSAGE_KINDS = new Set(['memory_note']);
+
+function isOffTurnMessage(message) {
+  return OFF_TURN_MESSAGE_KINDS.has(String(message?.kind || ''));
+}
+
 function resolveReanchoredHistory({
   messages,
   targetIndex,
@@ -307,17 +318,18 @@ function resolveReanchoredHistory({
   targetUnchanged,
 }) {
   const sourceMessages = Array.isArray(messages) ? messages : [];
+  const head = sourceMessages.slice(0, targetIndex);
+  const tail = sourceMessages.slice(targetIndex + 1);
+  const lifted = tail.filter(isOffTurnMessage);
   if (preserveSupersededTurn === true) {
-    const messagesOut = sourceMessages.map(
-      (message, index) => (index === targetIndex ? survivingTarget : message)
-    );
+    const messagesOut = [...head, ...lifted, survivingTarget, ...tail.filter((message) => !isOffTurnMessage(message))];
     return {
       messages: messagesOut,
       turnEvents: Array.isArray(turnEvents) ? [...turnEvents] : [],
       snapshotBasis: messagesOut,
     };
   }
-  const messagesOut = [...sourceMessages.slice(0, targetIndex), survivingTarget];
+  const messagesOut = [...head, ...lifted, survivingTarget];
   return {
     messages: messagesOut,
     snapshotBasis: targetUnchanged === true

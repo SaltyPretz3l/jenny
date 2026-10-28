@@ -88,7 +88,8 @@ test('confirming a restored send records a fresh user_send authorization, clears
   const inbox = f.mail(dst).inbox;
   assert.equal(inbox.length, 1);
   assert.deepEqual(inbox[0].envelope, op.envelope);
-  assert.deepEqual(inbox[0].context, { state: 'queued' }, 'delivery wakes nothing and queues the message');
+  assert.deepEqual(inbox[0].context, { state: 'queued' }, 'the restored delivery queues the message');
+  assert.equal(f.wakes.length, 0, 'a restore confirmation wakes nothing (row 70 D4)');
   assert.notEqual(inbox[0].source_receipt_confirmed_at, null);
   assert.equal(f.store.getSession(src).coordination_receipts.filter((receipt) => receipt.method === 'chatMessages.confirmRestored').length, 1);
   assert.ok(f.coordination.includes(src));
@@ -202,6 +203,7 @@ test('an agent-composed send is delivered only on the user gesture and starts no
   assert.equal(done.operation.state, 'delivered');
   assert.equal(f.mail(src).authorizations.find((auth) => auth.operation_id === op.operation_id).kind, 'user_send');
   assert.equal(f.admission.length, 0, 'no admission or wake ran');
+  assert.equal(f.wakes.length, 0, 'a restore confirmation wakes nothing (row 70 D4)');
   assert.equal(f.mail(dst).inbox[0].context.state, 'queued');
 });
 

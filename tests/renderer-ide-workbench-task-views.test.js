@@ -100,6 +100,47 @@ test('Show output on a failed test run opens its Test output tab, and Ask Jenny 
   assert.equal(harness.sentToJenny[0].path, 'Tests: Unit');
   assert.match(harness.sentToJenny[0].code, /expected 2/);
 });
+test('T2: the New Terminal chevron lists the detected shells, and Terminal: Rename renames the tab', async (t) => {
+  const harness = createHarness({ beforeController: (win, bridge) => {
+    bridge.jennyShell.workspacePty = Object.assign({}, bridge.jennyShell.workspacePty, {
+      listProfiles: async () => ({ ok: true, profiles: [{ id: 'cmd', label: 'Command Prompt' }, { id: 'git-bash', label: 'Git Bash' }], defaultId: 'cmd' }),
+    });
+  } });
+  t.after(() => harness.dispose());
+  await harness.controller.activateIde();
+  await settle();
+  const doc = harness.dom.window.document;
+  const q = (sel) => doc.querySelector(`#ideWorkbench ${sel}`);
+  const click = (el) => el.dispatchEvent(new harness.dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  click(q('[data-wb-tab="terminal"]'));
+  await settle();
+  const chevron = q('[data-wb-action="view:new-terminal-profile"]');
+  assert.ok(chevron, 'the split-button chevron sits beside +');
+  assert.equal(chevron.previousElementSibling?.getAttribute('data-wb-action'), 'view:new-terminal');
+  click(chevron);
+  await settle();
+  const rows = [...doc.querySelectorAll('.inv-context-menu .inv-context-menu-item')].map((el) => el.textContent.trim());
+  assert.deepEqual(rows, ['Command PromptDefault', 'Git Bash', 'Select Default Profile...']);
+  doc.body.dispatchEvent(new harness.dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+  harness.controller.getIdeCommandItems().find((row) => row.id === 'ide:terminal-rename').run();
+  const input = q('.wb-tabs input');
+  assert.ok(input, 'an inline name field replaces the tab');
+  input.value = 'dev server';
+  input.dispatchEvent(new harness.dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await settle();
+  assert.equal(q('[data-wb-tab="terminal"]').textContent.trim(), 'dev server');
+
+  // A name is text, never markup.
+  harness.controller.getIdeCommandItems().find((row) => row.id === 'ide:terminal-rename').run();
+  const again = q('.wb-tabs input');
+  again.value = '<img src=x onerror=alert(1)>';
+  again.dispatchEvent(new harness.dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await settle();
+  assert.equal(q('[data-wb-tab="terminal"]').textContent.trim(), '<img src=x onerror=alert(1)>');
+  assert.equal(q('[data-wb-tab="terminal"] img'), null);
+});
+
 test('Reset Layout keeps open terminals running in the terminal stack', async (t) => {
   const { harness, q, click } = await openIde(t);
   click(q('[data-wb-tab="terminal"]'));

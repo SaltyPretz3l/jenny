@@ -6,47 +6,8 @@
  * category color encodes NODE KIND (one channel), edge style encodes RELATION
  * (call = solid + arrow, read = dashed, import = faint dotted). Default calm,
  * reveal on interaction. All rules scoped under .ide-exploded-host. Loaded via
- * @import in styles.css (IDE block), mirroring styles/ide-file-map.css. */
-
-.ide-exploded-host {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  overflow: hidden;
-  background: var(--bg-base);
-}
-
-.ide-exploded-host.hidden {
-  display: none;
-}
-
-/* Stage switch (code ↔ exploded) crossfade-in. */
-.ide-exploded-host:not(.hidden) {
-  animation: scrim-in var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-/* Pannable/zoomable viewport; the shared transform controller owns its cursor. */
-.ide-explode-viewport {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  touch-action: none;
-  cursor: grab;
-}
-
-.ide-explode-viewport.is-panning {
-  cursor: grabbing;
-}
-
-/* The transformed content plane — translate/scale applied by the transform
- * controller; everything inside is positioned in content coordinates. */
-.ide-explode-content {
-  position: absolute;
-  left: 0; /* rtl:physical */
-  top: 0;
-  transform-origin: 0 0;
-  will-change: transform;
-}
+ * @import in styles.css (IDE block), after styles/ide-file-map.css, which
+ * owns the shared host / viewport / content-plane / crossfade rules. */
 
 /* ---- Zone lanes -------------------------------------------------------- */
 

@@ -1,18 +1,44 @@
 const mainModuleEntryAt = Date.now(); // first executable line: anchors the cold-start audit's 'main-entry' mark
-const { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Menu, nativeImage, powerMonitor, protocol, safeStorage, screen, session, shell } = require('electron');
+const { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, ipcMain, Menu, nativeImage, powerMonitor, protocol, safeStorage, screen, session, shell } = require('electron');
 // Agent/dev profile isolation must precede every require that can touch userData.
 // This lets automation use a throwaway profile beside the user's real one.
 const jennyUserDataDirOverride = String(process.env.JENNY_USER_DATA_DIR || '').trim();
 if (jennyUserDataDirOverride) {
   app.setPath('userData', require('path').resolve(jennyUserDataDirOverride));
 }
-const { applySingleInstance, startWhenSingleInstanceAvailable } = require('./services/apply-single-instance');
+// Route this process before the module graph below loads: a second launch takes
+// the single-instance lock here (waking the running window) and exits at once.
+const { MAIN_BOOT_MODES, resolveMainBootMode } = require('./services/main/main-boot-gate');
+const {
+  DEFAULT_PACKAGED_SMOKE_TIMEOUT_MS,
+  resolvePackagedSmokeConfig,
+  shouldUsePackagedSidecarRuntime,
+  createPackagedSmokeController,
+} = require('./services/main/packaged-smoke');
+const PACKAGED_SMOKE_CONFIG = resolvePackagedSmokeConfig();
+const mainBootMode = resolveMainBootMode({
+  app, packagedSmokeConfig: PACKAGED_SMOKE_CONFIG, onSecondInstance: () => focusMainWindow(),
+});
+// V8 compile cache for the module graph below, under the settled userData path
+// (NODE_DISABLE_COMPILE_CACHE=1 turns it off; runtimes without it no-op).
+if (mainBootMode === MAIN_BOOT_MODES.PRIMARY) {
+  const nodeModule = require('node:module');
+  if (typeof nodeModule.enableCompileCache === 'function') {
+    try {
+      nodeModule.enableCompileCache(require('path').join(app.getPath('userData'), 'compile-cache'));
+    } catch (_error) {
+      // Only a startup speedup: never block launch on it.
+    }
+  }
+}
+const { revealExistingWindow, startWhenSingleInstanceAvailable } = require('./services/apply-single-instance');
+const { ensureDevPreloadBundle } = require('./services/main/dev-preload-bundle');
 const { createSuggestionCache, clearSuggestionCache } = require('./services/backend/backend-suggestions');
 const { ensureDesktopShortcut, ensureDevStartMenuShortcut, resolveAppUserModelId } = require('./services/desktop-shortcut');
 const { createFeatureSettingsFacade } = require('./services/main/feature-settings-facade');
-const { stopRuntimeWithDependencies } = require('./services/runtime-stop');
+const { createClipboardAdapter } = require('./services/main/clipboard-adapter');
 const { createMainErrorHardening } = require('./services/main-error-hardening');
-const { normalizeCrashDetail, readSidecarLogTail, showSidecarCrashDialog } = require('./services/sidecar-crash-dialog');
+const { showSidecarCrashDialog } = require('./services/sidecar-crash-dialog');
 const { getBridgeChannel } = require('./services/ipc-contract');
 const { createMainWindowStartupLifecycle } = require('./services/main-window-startup-lifecycle');
 const { getWindowStateSnapshot } = require('./services/window-state-service');
@@ -25,21 +51,12 @@ const {
 const { probeGpuTelemetry } = require('./services/gpu-telemetry-probe');
 const { createGpuMemorySampleController } = require('./services/main/gpu-memory-sample');
 const { MainLifecycleController, registerEmergencyShutdownHandlers, registerMainProcessLifecycleHandlers } = require('./services/main-lifecycle');
-const {
-  DEFAULT_PACKAGED_SMOKE_TIMEOUT_MS,
-  resolvePackagedSmokeConfig,
-  shouldBypassSingleInstanceForPackagedSmoke,
-  shouldUsePackagedSidecarRuntime,
-  createPackagedSmokeController,
-} = require('./services/main/packaged-smoke');
 const { createStartupAudit } = require('./services/main/startup-audit');
 const { createSetupReadinessProbe } = require('./services/main/setup-readiness');
 const { createLogRedactionPrefixesProvider } = require('./services/main/client-log-forwarding');
-const { createBackendServiceWithDeps } = require('./services/main/backend-service-wiring');
-const mainIpcRegistration = require('./services/main/ipc-handler-registration');
 const { createMainWindowWithDeps, resolveWindowIconPath } = require('./services/main/main-window-composition');
+const { shouldRevealWindowInactive } = require('./services/agent-quiet-launch');
 const { createRuntimeServicesWithDeps, resolveUiLanguage } = require('./services/main/runtime-service-composition');
-const { createRuntimeShutdownController } = require('./services/main/runtime-shutdown');
 const { scheduleStartupRetentionTasks } = require('./services/main/startup-retention-tasks');
 const dataLifecycleStartup = require('./services/main/data-lifecycle-startup');
 const { registerArtifactFramePrivilegedScheme } = require('./services/artifact-frame-protocol');
@@ -63,6 +80,7 @@ let linkStatusService;
 let calendarService;
 let deferredServicesStarted = false;
 let startDeferredBackgroundRefreshes = () => {};
+let startPostWindowServices = () => {};
 let offlineIntelligenceService;
 let companionService;
 let systemStats;
@@ -137,7 +155,6 @@ const { probeSetupReadiness } = createSetupReadinessProbe({
   getBackendService: () => backendService,
   emitLog: (level, event, details) => log(level, event, details),
 });
-const PACKAGED_SMOKE_CONFIG = resolvePackagedSmokeConfig();
 let packagedSmokeController = null;
 
 const {
@@ -161,6 +178,12 @@ const getLogRedactionPrefixes = createLogRedactionPrefixesProvider({
 });
 
 function log(level, event, details = {}) {
+  // Boot failures before createRuntimeServices() wires the store must still
+  // reach their dialog/exit path instead of throwing from the logger.
+  if (!logStore) {
+    try { console.error(`[${level}] ${event}`, details); } catch (_error) { /* stderr gone */ }
+    return null;
+  }
   const redactionPrefixes = getLogRedactionPrefixes();
   // DiagnosticLogService owns normalizeLogEntry, persistence, and broadcast.
   return logStore.append({
@@ -202,12 +225,10 @@ const createWindow = () => createMainWindowWithDeps({
   mainErrorHardening,
   mainLifecycle,
   isPackagedSmokeEnabled,
-  // GUI smokes (and any opt-in background launch) set JENNY_WINDOW_REVEAL_INACTIVE
-  // so the window reveals via showInactive() — visible but not activated — and
-  // never steals focus from a foreground full-screen app.
-  revealWindowInactive: /^(1|true|yes|on)$/i.test(
-    String(process.env.JENNY_WINDOW_REVEAL_INACTIVE || '').trim()
-  ),
+  // Agent launches and GUI smokes (JENNY_AGENT_DEV / JENNY_WINDOW_REVEAL_INACTIVE)
+  // reveal via showInactive() — visible but not activated — and never steal
+  // focus from the owner's foreground app (services/agent-quiet-launch.js).
+  revealWindowInactive: shouldRevealWindowInactive(process.env),
   getStartupElapsedMs,
   emitStartupAuditMark,
   log,
@@ -240,7 +261,11 @@ function sendBridgeEvent(methodPath, payload) {
   sendToWindow(getBridgeChannel(methodPath, 'subscribe'), payload);
 }
 
+// Backend wiring, IPC registration and runtime shutdown load lazily: their
+// first use comes after createWindow(), so their module graphs stay off the
+// path to the window.
 const createBackendService = () => {
+  const { createBackendServiceWithDeps } = require('./services/main/backend-service-wiring');
   const created = createBackendServiceWithDeps({
     app,
     processRef: process,
@@ -286,6 +311,7 @@ const createBackendService = () => {
   offlineIntelligenceService = created.offlineIntelligenceService;
   companionService = created.companionService;
   startDeferredBackgroundRefreshes = created.startDeferredBackgroundRefreshes;
+  startPostWindowServices = created.startPostWindowServices;
 };
 
 const createRuntimeServices = () => {
@@ -352,28 +378,10 @@ function getProactiveStatePayload() {
 }
 
 function focusMainWindow() {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return;
-  }
-  if (mainWindow.isMinimized()) {
-    mainWindow.restore();
-  }
-  mainWindow.focus();
+  revealExistingWindow(mainWindow);
 }
 
-const registerWorkspaceIpcHandlers = (ipcMainLike = ipcMain, configService = shellConfigService) =>
-  mainIpcRegistration.registerWorkspaceIpcHandlers(ipcMainLike, configService);
-
-const registerWorkspaceRootIpcHandlers = (ipcMainLike = ipcMain, deps = {}) =>
-  mainIpcRegistration.registerWorkspaceRootIpcHandlers(ipcMainLike, deps);
-
-const registerGuidanceIpcHandlers = (ipcMainLike = ipcMain, skillService = skillsService) =>
-  mainIpcRegistration.registerGuidanceIpcHandlers(ipcMainLike, skillService);
-
-const registerFeatureIpcHandlers = (ipcMainLike = ipcMain, deps = {}) =>
-  mainIpcRegistration.registerFeatureIpcHandlers(ipcMainLike, deps);
-
-const registerIpcHandlers = () => mainIpcRegistration.registerMainIpcHandlers({
+const registerIpcHandlers = () => require('./services/main/ipc-handler-registration').registerMainIpcHandlers({
   app,
   ipcMain,
   backendService,
@@ -393,7 +401,7 @@ const registerIpcHandlers = () => mainIpcRegistration.registerMainIpcHandlers({
   getMainWindow: () => mainWindow,
   attachmentAssetStore,
   processRef: process,
-  clipboard,
+  clipboard: createClipboardAdapter({ clipboard, ClipboardItem }),
   nativeImage,
   log,
   getLlamaServerManager: () => getRuntimeShutdownController().getLlamaServerManager(),
@@ -435,6 +443,7 @@ const registerIpcHandlers = () => mainIpcRegistration.registerMainIpcHandlers({
 });
 function getRuntimeShutdownController() {
   if (!runtimeShutdownController) {
+    const { createRuntimeShutdownController } = require('./services/main/runtime-shutdown');
     runtimeShutdownController = createRuntimeShutdownController({
       app,
       processRef: process,
@@ -483,7 +492,7 @@ const stopRuntimeBeforeQuit = (context) => {
 };
 const runEmergencyRuntimeShutdownSync = () => getRuntimeShutdownController().runEmergencyRuntimeShutdownSync();
 function startDeferredServices() {
-  if (deferredServicesStarted) { return; }
+  if (deferredServicesStarted || mainLifecycle?.isAppQuitting?.()) { return; }
   deferredServicesStarted = true;
   try {
     startDeferredBackgroundRefreshes();
@@ -502,10 +511,24 @@ function requestMainProcessShutdown(exitCode = 1) {
   if (mainLifecycle && typeof mainLifecycle.requestEmergencyShutdown === 'function') return mainLifecycle.requestEmergencyShutdown({ exitCode });
   app.exit(exitCode);
 }
+// Push a 'failed' backend status. Guarded: a throw inside createRuntimeServices()
+// fails startup *before* backendService is assigned, and an unguarded
+// getBackendStatus() would raise a secondary TypeError so the 'failed' status
+// never reached the UI. failure_context is set only when one is given.
+function emitFailedBackendStatus(detail, failureContext) {
+  const baseStatus = backendService && typeof backendService.getBackendStatus === 'function'
+    ? backendService.getBackendStatus()
+    : {};
+  const failedStatus = { ...baseStatus, phase: 'failed', detail };
+  if (failureContext !== undefined) failedStatus.failure_context = failureContext;
+  sendBridgeEvent('backend.onStatus', failedStatus);
+  return failedStatus;
+}
 function handleBootFailure(failedStatus, detail) {
   const action = resolveBootFailureAction({
     hasPackagedSmoke: Boolean(packagedSmokeController),
-    hasLiveWindow: Boolean(mainWindow && !mainWindow.isDestroyed()),
+    // registerIpcHandlers() returns the exit guard last: without it the window has no Retry.
+    hasLiveWindow: Boolean(workspaceProcessServices.windowExitGuard && mainWindow && !mainWindow.isDestroyed()),
   });
   if (action === 'packaged-smoke') packagedSmokeController.markBackendFailed(failedStatus, detail);
   else if (action === 'keep-window') log('WARN', 'backend.start_failed_window_kept', { reason: 'awaiting_retry' });
@@ -513,23 +536,24 @@ function handleBootFailure(failedStatus, detail) {
 }
 function startMainProcess() {
   return startWhenSingleInstanceAvailable({
-    acquireLock: () => (
-      shouldBypassSingleInstanceForPackagedSmoke(PACKAGED_SMOKE_CONFIG)
-      || applySingleInstance(app, focusMainWindow)
-    ),
+    // resolveMainBootMode took the lock (or the packaged-smoke bypass) at the top.
+    acquireLock: () => mainBootMode === MAIN_BOOT_MODES.PRIMARY,
     onStart: () => {
       mainErrorHardening = createMainErrorHardening({
         app, processRef: process, log, stopRuntimeBeforeQuit,
         getMainLifecycle: () => mainLifecycle,
         emitFailedBackendStatus: (detail, context = {}) => {
-          const normalizedDetail = String(detail || '').trim() || 'Unexpected runtime failure.';
-          const baseStatus = backendService && typeof backendService.getBackendStatus === 'function' ? backendService.getBackendStatus() : {};
-          sendBridgeEvent('backend.onStatus', { ...baseStatus, phase: 'failed', detail: normalizedDetail, failure_context: context });
+          emitFailedBackendStatus(String(detail || '').trim() || 'Unexpected runtime failure.', context);
         },
         unhandledFailureEvent: 'app.unhandled_failure',
       });
       mainErrorHardening.resetForStartup();
       mainErrorHardening.registerGlobalCrashGuards();
+      const preloadBundle = ensureDevPreloadBundle({ isPackaged: app.isPackaged, rootDir: __dirname });
+      if (preloadBundle.status === 'failed') {
+        dialog.showErrorBox('Jenny could not start', `The preload bundle could not be rebuilt.\n\n${preloadBundle.detail}`);
+        return app.exit(1);
+      }
       app.whenReady().then(async () => {
         emitStartupAuditMark('electron-ready', { source: 'main' });
         if (process.platform === 'win32') {
@@ -577,8 +601,10 @@ function startMainProcess() {
             },
             sendBridgeEvent,
             log,
+            getMainWindow: () => mainWindow,
+            getShellConfigService: () => shellConfigService,
           }));
-          log('INFO', 'app.ready', { startupMs: getStartupElapsedMs() });
+          log('INFO', 'app.ready', { startupMs: getStartupElapsedMs(), preloadBundle: preloadBundle.status });
           if (/^(1|true|yes|on)$/i.test(String(process.env.JENNY_AGENT_DEV || '').trim())) {
             log('INFO', 'app.agent_mode_active', {
               userDataOverridden: Boolean(jennyUserDataDirOverride),
@@ -595,13 +621,6 @@ function startMainProcess() {
               // ensureDesktopShortcut already logs failures; never block startup.
             }
           });
-          createBackendService();
-          scheduleStartupRetentionTasks({
-            artifactService,
-            backendService,
-            attachmentAssetStore,
-            log,
-          });
           mainLifecycle = new MainLifecycleController({
             appQuit: () => app.quit(),
             appExit: (exitCode = 0) => app.exit(exitCode),
@@ -614,9 +633,17 @@ function startMainProcess() {
           app.on('window-all-closed', () => {
             log('INFO', 'app.window_all_closed');
           });
-          workspaceProcessServices = registerIpcHandlers() || {};
-          emitStartupAuditMark('main-sync-init-end', { source: 'main' });
+          // The renderer boots (spawn, preload, HTML parse) while the backend and
+          // IPC handlers are built below. No await may sit between createWindow()
+          // and registerIpcHandlers(): renderer IPC is dispatched only after this
+          // synchronous block yields, when every handler already exists.
           createWindow();
+          createBackendService();
+          scheduleStartupRetentionTasks({ artifactService, backendService, attachmentAssetStore, log });
+          workspaceProcessServices = registerIpcHandlers() || {};
+          workspaceProcessServices.windowExitGuard?.attach?.(mainWindow);
+          startPostWindowServices();
+          emitStartupAuditMark('main-sync-init-end', { source: 'main' });
           systemStats.start();
           log('INFO', 'app.bootstrap_ready', { startupMs: getStartupElapsedMs() });
           const localServerReadyPromise = startLlamaServerBeforeBackend();
@@ -637,15 +664,7 @@ function startMainProcess() {
             message: String(error.message || error),
           });
           emitStartupProgress('ready', {}, String(error.message || error));
-          // Guard the deref: a throw inside createRuntimeServices() lands here
-          // *before* backendService is assigned, so an unguarded
-          // backendService.getBackendStatus() would raise a secondary TypeError
-          // and the intended 'failed' status would never reach the UI.
-          const baseStatus = backendService && typeof backendService.getBackendStatus === 'function'
-            ? backendService.getBackendStatus()
-            : {};
-          const failedStatus = { ...baseStatus, phase: 'failed', detail: String(error.message || error) };
-          sendBridgeEvent('backend.onStatus', failedStatus);
+          const failedStatus = emitFailedBackendStatus(String(error.message || error));
           handleBootFailure(failedStatus, error.message || error);
         }
 
@@ -664,12 +683,7 @@ function startMainProcess() {
         // screen with no 'failed' status. Surface it deterministically instead.
         const detail = String((error && error.message) || error || 'Unexpected startup failure.');
         log('ERROR', 'app.whenready_failed', { message: detail });
-        const baseStatus = backendService && typeof backendService.getBackendStatus === 'function'
-          ? backendService.getBackendStatus()
-          : {};
-        const failedStatus = { ...baseStatus, phase: 'failed', detail };
-        sendBridgeEvent('backend.onStatus', failedStatus);
-        handleBootFailure(failedStatus, detail);
+        handleBootFailure(emitFailedBackendStatus(detail), detail);
       });
 
       registerEmergencyShutdownHandlers(process, {
@@ -686,26 +700,16 @@ function startMainProcess() {
   });
 }
 
-if (shouldAutoStartMainProcess() && !dataLifecycleStartup.startUninstallAssistant(process.argv, __dirname)) {
+if (mainBootMode === MAIN_BOOT_MODES.UNINSTALL) {
+  dataLifecycleStartup.startUninstallAssistant(process.argv, __dirname);
+} else if (mainBootMode === MAIN_BOOT_MODES.PRIMARY) {
   startMainProcess();
 }
 
+// Consumed by tests that load main.js with a mocked Electron.
 module.exports = {
   createMainWindowStartupLifecycle,
-  normalizeCrashDetail,
-  registerFeatureIpcHandlers,
-  readSidecarLogTail,
-  registerGuidanceIpcHandlers,
-  registerWorkspaceIpcHandlers,
-  registerWorkspaceRootIpcHandlers,
-  registerIpcHandlers,
   createPackagedSmokeController,
-  resolvePackagedSmokeConfig,
-  showSidecarCrashDialog,
-  shouldUsePackagedSidecarRuntime,
   shouldAutoStartMainProcess,
   shouldRefreshManagedConfigForShellConfigReason,
-  startMainProcess,
-  stopRuntimeWithDependencies,
-  stopRuntimeBeforeQuit,
 };

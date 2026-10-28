@@ -61,3 +61,15 @@ test('pointer leave cancels a pending throttled hit test before clearing hover',
   assert.deepEqual(hover, [null]);
   assert.deepEqual(selected, [null]);
 });
+
+test('hovering a tile while a blast radius is shown keeps the blast (no selection swap)', () => {
+  const selected = [];
+  const interactions = createContentInteractions(baseDeps({
+    isBlastActive: () => true,
+    selectNode: (id) => selected.push(id),
+  }));
+  const nodeEl = { dataset: { mapNode: 'src/a.js' } };
+  const nodeTarget = { closest: (selector) => (selector.includes('[data-map-node]') ? nodeEl : null) };
+  interactions.handleHoverIn({ target: nodeTarget, relatedTarget: null });
+  assert.deepEqual(selected, []);
+});

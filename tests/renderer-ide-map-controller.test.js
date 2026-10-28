@@ -8,7 +8,7 @@
  * presentation; the camera fits content ONCE per mount). Uses jsdom directly.
  * Sibling modules are stubbed via globalThis (resolveModule checks globals
  * first) for isolation; renderer-ide-map-controller-utils.js is always the
- * REAL module (its pure helpers, including the new queryNeighborsLocal/
+ * REAL module (its pure helpers, including the new createNeighborIndex/
  * rankSearchMatches, are exercised through the controller's real behavior
  * below). Always dispose via t.after(), never dom.window.close().
  *
@@ -150,8 +150,10 @@ test('viewport resize retries a pending first fit, then reclamps on later resize
   // The stage becomes visible: the viewport now measures a real size.
   const viewportEl = hostEl.querySelector('.ide-map-viewport');
   viewportEl.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 600 });
+  const layouts = spies.layoutCalls.length;
   observers[0].cb();
   assert.equal(spies.fitToContentCalls.length, 2, 'resize retried the pending first fit');
+  assert.equal(spies.layoutCalls.length, layouts + 1, 'the retry lays out again at the real viewport size');
   assert.deepEqual(spies.fitToContentCalls[1][0], STUB_BOUNDS, 'retried with the full content bounds');
   assert.equal(spies.reclampCalls.length, 0);
 
@@ -217,8 +219,54 @@ test('a buckets-only graph (every file ignored) renders the empty state but keep
   assert.ok(spies.stateRenders.some((r) => r.name === 'empty'), 'empty state rendered — no blank canvas');
   const lastRender = spies.renderAtlasCalls[spies.renderAtlasCalls.length - 1];
   assert.equal((lastRender.graph.nodes || []).length, 0, 'no bucket-only atlas is drawn');
-  const lastStrip = spies.bucketStripCalls[spies.bucketStripCalls.length - 1];
-  assert.deepEqual(lastStrip, bucketChips, 'bucket chips still show what was excluded');
+  const lastFooter = spies.footerUpdates[spies.footerUpdates.length - 1];
+  assert.deepEqual(lastFooter.buckets, bucketChips, 'bucket chips still show what was excluded');
+  assert.deepEqual(lastFooter.districts, [], 'no districts in the empty branch');
+  assert.equal(lastFooter.hasTests, false);
+  assert.equal(spies.setHasMapCalls[spies.setHasMapCalls.length - 1], false, 'no map drawn: Generate stays available');
+});
+
+// ── footer + hasMap wiring (2026-10-26 atlas fit pass) ──────────────────────
+
+test('a drawn map feeds the footer (buckets, districts, hasTests; health and hide-tests state) and marks the controls hasMap', async (t) => {
+  const { hostEl } = setupDom();
+  const spies = makeSpies();
+  const chips = [{ key: 'dist', label: 'dist', count: 3 }];
+  const restore = stubSiblings(globalThis, spies, {
+    layout: {
+      layout: (graph) => ({
+        districts: [{ key: '.', ...STUB_DISTRICT_RECT }],
+        positions: Object.fromEntries(graph.nodes.map((n) => [n.id, { x: n.x, y: n.y }])),
+        buckets: chips,
+        bounds: { ...STUB_BOUNDS },
+      }),
+    },
+  });
+  t.after(() => restore());
+  const graph = graphA();
+  graph.nodes[0] = { ...graph.nodes[0], isTest: true };
+  const ctrl = makeController(hostEl, { windowRef: windowStubFor(graph) });
+  t.after(() => ctrl.dispose());
+  await mountAndScan(ctrl);
+
+  assert.equal(spies.footerAdopted.length, 1, 'the findings host is adopted into the footer');
+  assert.ok(spies.footerAdopted[0].classList.contains('ide-map-findings'));
+  assert.ok(hostEl.querySelector('.ide-map-viewport > .ide-map-footer'), 'footer host lives in the viewport');
+  const last = spies.footerUpdates[spies.footerUpdates.length - 1];
+  assert.deepEqual(last.buckets, chips);
+  assert.equal(last.districts.length, 1);
+  assert.equal(last.hasTests, true);
+  assert.equal(spies.footerHealth[spies.footerHealth.length - 1], false, 'mount syncs Health off');
+  assert.deepEqual(spies.footerHideTests, [false], 'mount syncs the hide-tests state');
+  assert.equal(spies.setHasMapCalls[spies.setHasMapCalls.length - 1], true);
+  assert.equal(spies.transformOpts[0].capFit, true, 'the Atlas opts into the fit cap');
+
+  const updates = spies.footerUpdates.length;
+  spies.controlsDepsList[0].onLayerToggle('health', true);
+  assert.equal(spies.footerHealth[spies.footerHealth.length - 1], true, 'the Health toggle swaps the footer key');
+  spies.controlsDepsList[0].onHideTestsChange(true);
+  assert.deepEqual(spies.footerHideTests, [false, true], 'Hide tests drops the ring item');
+  assert.equal(spies.footerUpdates.length, updates, 'toggles do not resend the model');
 });
 
 // ── 3. empty / no-root / error states ───────────────────────────────────────
@@ -708,7 +756,9 @@ test('root commit: full teardown (host emptied) then remount + rescan; prefs res
   const rootADeps = spies.controlsDepsList[0];
   rootADeps.onHideTestsChange(true);
   rootADeps.onLayerToggle('health', true);
+  rootADeps.onLensChange('components');
   assert.equal(JSON.parse(storage.getItem('jenny.fileMap.prefs.root_a')).hideTests, true);
+  assert.equal(JSON.parse(storage.getItem('jenny.fileMap.prefs.root_a')).lens, 'components');
 
   const viewportBeforeCommit = hostEl.querySelector('.ide-map-viewport');
 
@@ -726,8 +776,8 @@ test('root commit: full teardown (host emptied) then remount + rescan; prefs res
   const lastSetState = spies.setStateCalls[spies.setStateCalls.length - 1];
   assert.deepEqual(
     lastSetState,
-    { hideTests: false, layers: { activity: true, health: false, deps: true }, search: '' },
-    'root B (no persisted prefs) renders with DEFAULT hideTests/layers/search, not root A\'s leftovers'
+    { hideTests: false, layers: { activity: true, health: false, deps: true }, search: '', lens: 'atlas' },
+    'root B (no persisted prefs) renders with DEFAULT hideTests/layers/search/lens, not root A\'s leftovers'
   );
 });
 

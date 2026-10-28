@@ -1,59 +1,54 @@
 'use strict';
 
-const { TOOL_ERROR_CODES } = require('../../backend/error-codes');
 const { normalizeString } = require('../../shared/normalize');
+const {
+  invalidArguments,
+  manifestSchema,
+  readStringArgument,
+  serviceFailure,
+  serviceUnavailable,
+  summaryArgument,
+} = require('./tool-result');
 
-function serviceUnavailable() {
-  return {
-    content: 'Worktree service is unavailable.',
-    summary: 'Worktree create unavailable',
-    isError: true,
-    errorCode: TOOL_ERROR_CODES.DISABLED,
-    metadata: {
-      result_kind: 'worktree_create',
-      unavailable: true,
-    },
-  };
+const RESULT_KIND = 'worktree_create';
+const LABEL = 'Worktree create';
+// Matches the service's ref bounds; the name only seeds a slug and branch.
+const MAX_REF_ARGUMENT_CHARS = 200;
+
+function readCreateArguments(input) {
+  const out = {};
+  for (const [key, required] of [['name', true], ['branch', false], ['base_ref', false]]) {
+    const read = readStringArgument(input, key, { required, maxLength: MAX_REF_ARGUMENT_CHARS });
+    if (read.error) return { error: read.error };
+    out[key] = read.value;
+  }
+  return out;
 }
 
 module.exports = {
   name: 'worktree_create',
-  description: 'Create a local Git worktree in the configured parent without fetching remotes or changing the active tools workspace root.',
+  ...manifestSchema('worktree_create'),
   category: 'builtin',
   readOnly: false,
   workspaceRequired: true,
-  parameters: {
-    type: 'object',
-    properties: {
-      name: {
-        type: 'string',
-        description: 'Human-readable worktree name. Used to derive the target folder and default jenny/<slug> branch.',
-      },
-      branch: {
-        type: 'string',
-        description: 'Optional new local branch name. Defaults to jenny/<slug-from-name>.',
-      },
-      base_ref: {
-        type: 'string',
-        description: 'Optional local base ref for git worktree add. Defaults to HEAD.',
-      },
-    },
-    required: ['name'],
-  },
 
   summarize(input) {
-    return `Create worktree ${normalizeString(input?.name || input?.branch || '')}`.trim();
+    return `Create worktree ${summaryArgument(input, 'name', MAX_REF_ARGUMENT_CHARS)}`.trim();
   },
 
   async execute(input, context) {
     if (!context.worktreeService || typeof context.worktreeService.createWorktree !== 'function') {
-      return serviceUnavailable();
+      return serviceUnavailable(RESULT_KIND, { label: LABEL, content: 'Worktree service is unavailable.' });
+    }
+    const args = readCreateArguments(input);
+    if (args.error) {
+      return invalidArguments(RESULT_KIND, { label: LABEL, content: args.error });
     }
     const request = {
       workspaceRoot: context.workingDirectory,
-      name: normalizeString(input?.name),
-      branch: normalizeString(input?.branch),
-      baseRef: normalizeString(input?.base_ref || input?.baseRef),
+      name: args.name,
+      branch: args.branch,
+      baseRef: args.base_ref,
       parentPath: '',
       owner: {
         session_id: normalizeString(context.sessionId),
@@ -65,16 +60,7 @@ module.exports = {
     }
     const result = await context.worktreeService.createWorktree(request);
     if (!result.success) {
-      return {
-        content: result.message || 'Worktree create failed.',
-        summary: 'Worktree create failed',
-        isError: true,
-        errorCode: result.error_code || TOOL_ERROR_CODES.EXECUTION_FAILED,
-        metadata: {
-          result_kind: 'worktree_create',
-          reason: result.reason || 'execution_failed',
-        },
-      };
+      return serviceFailure(RESULT_KIND, result, { label: LABEL });
     }
     const worktree = result.worktree || {};
     const registryNote = result.registry_persisted === false
@@ -85,7 +71,7 @@ module.exports = {
       summary: `Created worktree ${worktree.branch}`,
       isError: false,
       metadata: {
-        result_kind: 'worktree_create',
+        result_kind: RESULT_KIND,
         active_root_changed: result.active_root_changed === true,
         registry_persisted: result.registry_persisted === true,
         worktree,

@@ -229,3 +229,83 @@ test('a delayed formatter cannot edit a replacement model or continue after disp
   const disposed = await runScenario({ dispose: true });
   assert.equal(disposed.replacement._batches.length, 0, 'dispose invalidates the continuation');
 });
+
+// Row 82 E2: .editorconfig overrides passed as the second argument.
+function eolHost(model, startEol = 'lf') {
+  const eol = { value: startEol, sets: [] };
+  const host = {
+    ...fakeHost(model),
+    getEol: () => eol.value,
+    setEol: (_path, next) => { eol.sets.push(next); eol.value = next; },
+  };
+  return { host, eol };
+}
+
+test('overrides: a true override beats a false pref, a false override beats a true pref', () => {
+  const model = fakeModel(['abc  ']);
+  const off = createIdeSaveHygiene({
+    editorHost: fakeHost(model), getIde: () => ({ trimTrailingWhitespace: false, insertFinalNewline: false }),
+  });
+  assert.deepEqual(off.applySaveHygiene('a.js', { trimTrailingWhitespace: true, insertFinalNewline: true }),
+    { formatStatus: 'disabled', formatReason: '' });
+  assert.equal(model._batches.length, 2, 'trim and final-newline both ran');
+  off.dispose();
+
+  const model2 = fakeModel(['abc  ']);
+  const on = createIdeSaveHygiene({
+    editorHost: fakeHost(model2), getIde: () => ({ trimTrailingWhitespace: true, insertFinalNewline: true }),
+  });
+  on.applySaveHygiene('a.js', { trimTrailingWhitespace: false, insertFinalNewline: false });
+  assert.equal(model2._batches.length, 0, 'false overrides switch both transforms off');
+  on.dispose();
+});
+
+test('overrides: a non-boolean key or no second argument falls back to the prefs', () => {
+  const model = fakeModel(['abc  ']);
+  const hygiene = createIdeSaveHygiene({
+    editorHost: fakeHost(model), getIde: () => ({ trimTrailingWhitespace: true }),
+  });
+  hygiene.applySaveHygiene('a.js', { trimTrailingWhitespace: 'no', insertFinalNewline: undefined, endOfLine: 'cr' });
+  assert.equal(model._batches.length, 1);
+  hygiene.applySaveHygiene('a.js', null);
+  hygiene.applySaveHygiene('a.js');
+  assert.equal(model._batches.length, 3);
+  hygiene.dispose();
+});
+
+test('overrides: endOfLine converts when it differs, counts as work, and runs before the trim', () => {
+  const order = [];
+  const model = fakeModel(['abc  ']);
+  const original = model.pushEditOperations;
+  model.pushEditOperations = (...args) => { order.push('edit'); return original(...args); };
+  const { host, eol } = eolHost(model, 'lf');
+  const setEol = host.setEol;
+  host.setEol = (...args) => { order.push('eol'); return setEol(...args); };
+  const hygiene = createIdeSaveHygiene({ editorHost: host, getIde: () => ({ trimTrailingWhitespace: true }) });
+  hygiene.applySaveHygiene('a.js', { endOfLine: 'crlf' });
+  assert.deepEqual(eol.sets, ['crlf']);
+  assert.deepEqual(order, ['eol', 'edit']);
+  hygiene.applySaveHygiene('a.js', { endOfLine: 'crlf' });
+  assert.deepEqual(eol.sets, ['crlf'], 'no second conversion when the EOL already matches');
+  hygiene.dispose();
+});
+
+test('overrides: endOfLine alone still converts although every other transform is disabled', () => {
+  const { host, eol } = eolHost(fakeModel(['abc']), 'crlf');
+  const hygiene = createIdeSaveHygiene({ editorHost: host, getIde: () => ({}) });
+  const outcome = hygiene.applySaveHygiene('a.js', { endOfLine: 'lf' });
+  assert.deepEqual(eol.sets, ['lf']);
+  assert.deepEqual(outcome, { formatStatus: 'disabled', formatReason: '' });
+  hygiene.dispose();
+});
+
+test('overrides: format-on-save behaviour is unchanged when overrides are passed', async () => {
+  const model = fakeModel(['abc  ']);
+  const host = fakeHost(model);
+  const hygiene = createIdeSaveHygiene({ editorHost: host, getIde: () => ({ formatOnSave: true }) });
+  assert.deepEqual(await hygiene.applySaveHygiene('a.js', { trimTrailingWhitespace: true }),
+    { formatStatus: 'formatted', formatReason: '' });
+  assert.equal(host._calls.formatPath, 1);
+  assert.equal(model._batches.length, 1, 'override trim ran after the format');
+  hygiene.dispose();
+});

@@ -6,7 +6,7 @@
  * No extension arguments are consumed by this bounded, one-shot tool. */
 
 const { normalizeString } = require('../../shared/normalize');
-const { PRESS_KEYS, resolvePressKeyAlias } = require('../../browser-interaction-utils');
+const { MAX_TYPE_TEXT_LENGTH, PRESS_KEYS, resolvePressKeyAlias } = require('../../browser-interaction-utils');
 
 const INPUT_KEYS = new Set(['path', 'viewport', 'wait_ms', 'screenshot', 'events', 'observe']);
 const EVENT_KEYS = new Set(['action', 'selector', 'key', 'text', 'press_enter']);
@@ -36,6 +36,10 @@ function unknownEventArgumentFailure(event) {
 }
 
 const EVENT_ACTIONS = Object.freeze(['click', 'type', 'hover', 'focus', 'press']);
+// Checked before the window opens: past these the browser service would throw
+// mid-probe and lose every result gathered so far.
+const MAX_EVENT_SELECTOR_CHARS = 200;
+const MAX_EVENT_TEXT_CHARS = MAX_TYPE_TEXT_LENGTH;
 
 function invalidEvent(message) {
   return { reason: 'invalid_event', message, summary: 'Invalid preview event' };
@@ -61,13 +65,22 @@ function normalizePreviewEvent(raw) {
   if ((action === 'press') !== (raw.key !== undefined) || (action === 'press' && !PRESS_KEYS.includes(key))) {
     return { failure: invalidEvent(`A press event requires key to be one of: ${PRESS_KEYS.join(', ')}; key is not allowed on other actions.`) };
   }
+  if (selector.length > MAX_EVENT_SELECTOR_CHARS) {
+    return { failure: invalidEvent(`An event selector may be at most ${MAX_EVENT_SELECTOR_CHARS} characters.`) };
+  }
+  const text = String(raw.text ?? '');
+  if (text.length > MAX_EVENT_TEXT_CHARS) {
+    return { failure: invalidEvent(`Event text may be at most ${MAX_EVENT_TEXT_CHARS} characters.`) };
+  }
   return {
-    event: { action, selector, key, text: String(raw.text ?? ''), press_enter: raw.press_enter === true },
+    event: { action, selector, key, text, press_enter: raw.press_enter === true },
   };
 }
 
 module.exports = {
   EVENT_ACTIONS,
+  MAX_EVENT_SELECTOR_CHARS,
+  MAX_EVENT_TEXT_CHARS,
   normalizePreviewEvent,
   unknownArgumentFailure,
 };

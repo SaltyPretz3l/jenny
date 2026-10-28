@@ -41,21 +41,8 @@ from sidecar.ai.repo_delta.git_delta import (
 )
 
 # ---------------------------------------------------------------------------
-# Real-git fixtures/helpers (mirrors tests/sidecar/test_server_tools.py's
-# _git_available skip-guard + tmp_path git init/config/add/commit pattern).
+# Real-git fixtures/helpers (tmp_path git init/config/add/commit pattern).
 # ---------------------------------------------------------------------------
-
-
-def _git_available() -> bool:
-    return (
-        subprocess.run(
-            ["git", "--version"],
-            capture_output=True,
-            text=True,
-            check=False,
-        ).returncode
-        == 0
-    )
 
 
 def _init_repo(path: Path) -> None:
@@ -113,11 +100,6 @@ def _head_sha(path: Path) -> str:
     return subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True, check=True
     ).stdout.strip()
-
-
-def _skip_if_no_git() -> None:
-    if not _git_available():
-        pytest.skip("git is unavailable in this environment")
 
 
 def _blank_delta(**overrides: object) -> RepoDelta:
@@ -338,7 +320,6 @@ def test_compute_repo_delta_timed_out_cat_file_does_not_yield_history_rewritten(
 
 
 def test_read_repo_snapshot_unborn_repo_yields_none_head_and_branch(tmp_path: Path) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)  # no commits yet -> unborn HEAD
 
@@ -350,7 +331,6 @@ def test_read_repo_snapshot_unborn_repo_yields_none_head_and_branch(tmp_path: Pa
 
 
 def test_read_repo_snapshot_detached_head(tmp_path: Path) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     first_sha = _commit(repo, "a.txt", "one\n", "initial")
@@ -368,7 +348,6 @@ def test_read_repo_snapshot_detached_head(tmp_path: Path) -> None:
 
 
 def test_read_repo_snapshot_non_git_directory_returns_none(tmp_path: Path) -> None:
-    _skip_if_no_git()
     plain_dir = tmp_path / "not_a_repo"
     plain_dir.mkdir()
 
@@ -381,7 +360,6 @@ def test_read_repo_snapshot_non_git_directory_returns_none(tmp_path: Path) -> No
 
 
 def test_compute_repo_delta_ahead_behind_is_asymmetric_not_swapped(tmp_path: Path) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     anchor_sha = _commit(repo, "a.txt", "one\n", "initial")
@@ -405,7 +383,6 @@ def test_compute_repo_delta_ahead_behind_is_asymmetric_not_swapped(tmp_path: Pat
 def test_compute_repo_delta_amended_anchor_yields_history_rewritten_but_still_populates(
     tmp_path: Path,
 ) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "base.txt", "base\n", "base")
@@ -448,7 +425,6 @@ def test_compute_repo_delta_dropped_anchor_object_yields_history_rewritten(
     # The loose object is deleted directly rather than by actually invoking
     # `git gc`, which is timing/host-config sensitive; deleting the object
     # file produces the exact same terminal state cat-file -e observes.
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "base.txt", "base\n", "base")
@@ -481,7 +457,6 @@ def test_compute_repo_delta_dropped_anchor_object_yields_history_rewritten(
 def test_compute_repo_delta_caps_commit_log_and_still_reports_true_ahead_count(
     tmp_path: Path,
 ) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     anchor_sha = _commit(repo, "base.txt", "base\n", "base")
@@ -505,7 +480,6 @@ def test_compute_repo_delta_caps_commit_log_and_still_reports_true_ahead_count(
 
 
 def test_compute_repo_delta_file_changes_add_modify_delete_rename(tmp_path: Path) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     # The anchor commit already contains keep/to_modify/to_delete, so the
@@ -561,7 +535,6 @@ def test_compute_repo_delta_file_changes_add_modify_delete_rename(tmp_path: Path
 def test_compute_repo_delta_commit_log_parses_x1f_fields_and_preserves_embedded_cr(
     tmp_path: Path,
 ) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     anchor_sha = _commit(repo, "a.txt", "one\n", "initial")
@@ -593,7 +566,6 @@ def test_compute_repo_delta_commit_log_parses_x1f_fields_and_preserves_embedded_
 def test_compute_repo_delta_deadline_already_exhausted_degrades_to_none_not_false_values(
     tmp_path: Path,
 ) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     anchor_sha = _commit(repo, "a.txt", "one\n", "initial")
@@ -634,7 +606,6 @@ def test_deadline_starved_delta_renders_an_explicit_incomplete_warning(
     emit a block carrying nothing but two opaque SHAs, which reads exactly like a
     complete delta whose only change was the HEAD move.
     """
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     anchor_sha = _commit(repo, "a.txt", "one\n", "initial")
@@ -666,7 +637,6 @@ def test_render_omits_the_incomplete_warning_for_a_fully_measured_delta() -> Non
 
 
 def test_root_changed_true_for_a_genuinely_different_root(tmp_path: Path) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     sha = _commit(repo, "a.txt", "one\n", "initial")
@@ -688,7 +658,6 @@ def test_root_changed_case_differing_path_is_not_a_true_root_change(tmp_path: Pa
     # false "the worktree root changed" signal.
     if os.path.normcase("REPO") != os.path.normcase("repo"):
         pytest.skip("case-only path aliases require a case-insensitive platform")
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     sha = _commit(repo, "a.txt", "one\n", "initial")

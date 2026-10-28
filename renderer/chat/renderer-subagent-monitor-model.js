@@ -63,8 +63,52 @@
       text_truncated: value.text_truncated === true,
       visible_output_tokens_estimate: Number.isSafeInteger(estimate) && estimate >= 0 ? Math.min(2147483647, estimate) : null,
     };
+    // Sent only when it changed; a frame without one keeps the last (agent-status merge).
+    if (Array.isArray(value.transcript)) {
+      activity.transcript = normalizeTranscript(value.transcript);
+      activity.transcript_version = Number.isSafeInteger(value.transcript_version) ? value.transcript_version : 0;
+    }
     normalizedActivities.add(activity);
     return activity;
+  }
+
+  // A live frame carries the transcript only when it changed, so the
+  // agent-status merge keeps the last one. The copy stays marked normalized:
+  // a second pass would read the camelCase entries as raw ones and blank them.
+  function carryTranscript(next, previous) {
+    if (!next || Array.isArray(next.transcript) || !Array.isArray(previous?.transcript)) return next;
+    const carried = { ...next, transcript: previous.transcript, transcript_version: previous.transcript_version };
+    if (normalizedActivities.has(next)) normalizedActivities.add(carried);
+    return carried;
+  }
+
+  // The child's reduced transcript (Electron already bounded and redacted
+  // it): the known kinds and fields, in order.
+  const TRANSCRIPT_STATUSES = ['running', 'completed', 'failed', 'interrupted'];
+  function normalizeTranscript(value) {
+    if (!Array.isArray(value)) return [];
+    return value.slice(0, 80).map((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+      const ms = Number.isSafeInteger(entry.ms) && entry.ms >= 0 ? entry.ms : 0;
+      if (entry.kind === 'thought') {
+        return { kind: 'thought', text: normalizeText(entry.text, 1500), live: entry.live === true, truncated: entry.truncated === true, ms };
+      }
+      if (entry.kind === 'text') {
+        const text = normalizeText(entry.text, 1500);
+        return text ? { kind: 'text', text, truncated: entry.truncated === true } : null;
+      }
+      const tool = entry.kind === 'tool' ? normalizeText(entry.tool, 64) : '';
+      if (!tool) return null;
+      return {
+        kind: 'tool', tool, callId: normalizeText(entry.call_id, 200),
+        display: normalizeText(entry.display, 64) || tool,
+        status: TRANSCRIPT_STATUSES.includes(entry.status) ? entry.status : 'completed',
+        input: normalizeText(entry.input, 1000), inputTruncated: entry.input_truncated === true,
+        output: normalizeText(entry.output, 2000),
+        outputChars: Number.isSafeInteger(entry.output_chars) && entry.output_chars > 0 ? entry.output_chars : 0,
+        errorCode: normalizeText(entry.error_code, 64), ms,
+      };
+    }).filter(Boolean);
   }
 
   function toneForStatus(status) {
@@ -85,11 +129,45 @@
       const step = { tool, display, ok: entry.ok !== false };
       if (['running', 'completed', 'failed', 'interrupted'].includes(entry.status)) step.status = entry.status;
       const target = normalizeText(entry.target, 160);
+      const range = normalizeText(entry.range, 40);
+      const path = normalizeText(entry.path, 300);
       const detail = normalizeText(entry.detail, 160);
       if (target) step.target = target;
+      if (range) step.range = range;
+      if (step.ok && path) step.path = path;
       if (!step.ok && detail) step.detail = detail;
       return step;
     }).filter(Boolean);
+  }
+
+  // Consecutive successful calls of one tool on one target collapse into one
+  // group (the ranges they read, in order); a failed or running call always
+  // stands alone. A singleton is a group of one.
+  function groupSteps(steps) {
+    const groups = [];
+    (Array.isArray(steps) ? steps : []).forEach((step, start) => {
+      const mergeable = step.ok && step.status !== 'running' && step.status !== 'interrupted';
+      const last = groups[groups.length - 1];
+      if (mergeable && last?.mergeable && last.tool === step.tool && last.target === (step.target || '')) {
+        last.calls.push(step);
+        if (step.range && !last.ranges.includes(step.range)) last.ranges.push(step.range);
+        return;
+      }
+      groups.push({
+        start,
+        tool: step.tool,
+        display: step.display,
+        target: step.target || '',
+        mergeable,
+        ranges: step.range ? [step.range] : [],
+        calls: [step],
+      });
+    });
+    // A whole-file read has no range: a merged list would read as if it did.
+    for (const group of groups) {
+      if (group.calls.some((call) => !call.range)) group.ranges = [];
+    }
+    return groups;
   }
 
   // The plain state word for a status ("Completed", "Running", ...); the
@@ -137,6 +215,8 @@
     const budget = source.budget && typeof source.budget === 'object' ? { ...source.budget } : {};
     const usage = normalizeUsage(source.usage);
     const used = Number.isSafeInteger(budget.tool_results_used) && budget.tool_results_used > 0 ? budget.tool_results_used : 0;
+    const maxTurns = Number.isSafeInteger(budget.max_steps) && budget.max_steps > 0 ? budget.max_steps : 0;
+    const turnsUsed = Number.isSafeInteger(budget.iterations_used) && budget.iterations_used > 0 ? budget.iterations_used : 0;
     return {
       key: normalizeText(source.task_id || source.agent_id, 200) || `child-${index + 1}`,
       taskId: normalizeText(source.task_id, 200),
@@ -149,6 +229,16 @@
       success: status === 'completed',
       summary: normalizeText(source.summary, 1000) || jt('chat.subagentMonitor.detailsUnavailable', 'Details unavailable.'),
       answer: normalizeText(source.answer, 4000),
+      answerTruncated: source.answer_truncated === true,
+      prompt: normalizeText(source.prompt, 2000),
+      transcript: normalizeTranscript(source.transcript),
+      transcriptDropped: Number.isSafeInteger(source.transcript_dropped) && source.transcript_dropped > 0 ? source.transcript_dropped : 0,
+      // The child spent every model turn it had: its answer may be cut short.
+      // A reason that already says so (work limit) needs no second note, and
+      // a failed or cancelled child has no answer to doubt.
+      stepLimit: maxTurns && turnsUsed >= maxTurns && (status === 'completed' || status === 'partial')
+        && !['budget_exhausted', 'max_iterations_summary'].includes(reason)
+        ? { used: turnsUsed, max: maxTurns } : null,
       steps,
       stepCount: Math.max(steps.length, used),
       evidence: normalizeEvidence(source.evidence),
@@ -192,7 +282,9 @@
       terminal: source.childTerminal === true || source.terminal === true || TERMINAL.has(status),
       success: source.childSuccess === true || source.success === true,
       summary: normalizeText(source.summary, 240) || jt('chat.subagentMonitor.working', 'Working on it.'),
-      answer: '', steps: activity?.steps || [], stepCount: activity?.step_count || 0,
+      answer: '', answerTruncated: false, prompt: '', stepLimit: null,
+      transcript: activity?.transcript || [], transcriptDropped: 0,
+      steps: activity?.steps || [], stepCount: activity?.step_count || 0,
       activity,
       reasoningEffort: normalizeText(source.reasoningEffort, 16),
       evidence: [], tools: [], uncertainties: [],
@@ -403,8 +495,10 @@
     extractTerminalReport,
     formatElapsed,
     formatTokens,
+    groupSteps,
     normalizeUsage,
     normalizeChildActivity,
+    carryTranscript,
     selectLiveDelegationSteps,
     terminalCopy,
     toneForStatus,

@@ -101,7 +101,23 @@
       return `<div class="changes-wt-note" role="listitem">${escape(text)}</div>`;
     }
 
-    function buildRowBody(file, languageId) {
+    // Row 64: a chat findings list's comments under their lines (renderer-review-findings.js markup).
+    function buildReviewAnnotations(file, review) {
+      const findings = Array.isArray(file.reviewFindings) ? file.reviewFindings : [];
+      const module = globalThis.rendererReviewFindings || (typeof require === 'function' ? require('../chat/renderer-review-findings') : null);
+      if (!findings.length || !review || !module || typeof module.buildDiffCommentMarkup !== 'function') return [];
+      return findings.filter((finding) => finding.line > 0).map((finding) => {
+        const options = { escapeHtml: escape, actionButton, sessionId: review.sessionId, toolCallId: review.toolCallId, focus: finding.index === review.focusIndex };
+        return {
+          line: finding.line,
+          severity: finding.severity,
+          html: module.buildDiffCommentMarkup(finding, options),
+          unplacedHtml: module.buildDiffCommentMarkup(finding, { ...options, unplaced: true }),
+        };
+      });
+    }
+
+    function buildRowBody(file, languageId, review) {
       const diff = file.diff || null;
       if (file.binary === true || (diff && diff.state === 'binary')) return bodyNote(jt('chat.changesDetail.binaryNotShown', 'Binary file · not shown'));
       if (!diff || diff.state === 'loading') return bodyNote(jt('chat.changesDetail.loadingDiff', 'Loading the diff…'));
@@ -109,12 +125,12 @@
       const hunks = Array.isArray(diff.hunks) ? diff.hunks : [];
       if (!hunks.length) return bodyNote(jt('chat.changesDetail.noLineChanges', 'No line changes to show.'));
       const body = typeof diffView.buildFileDiffBodyMarkup === 'function'
-        ? diffView.buildFileDiffBodyMarkup({ hunks, languageId, highlight: codeHighlight.highlightLine, escapeHtml: escape })
+        ? diffView.buildFileDiffBodyMarkup({ hunks, languageId, highlight: codeHighlight.highlightLine, escapeHtml: escape, annotations: buildReviewAnnotations(file, review) })
         : '';
       return body + (diff.truncated === true ? bodyNote(jt('chat.changesDetail.diffTruncated', 'Only the start of this diff is shown.')) : '');
     }
 
-    function buildRowHtml(file) {
+    function buildRowHtml(file, review) {
       if (typeof diffView.buildFileDiffMarkup !== 'function') return '';
       const languageId = codeHighlight.getLanguageId ? codeHighlight.getLanguageId(file.path) || '' : '';
       const additions = Number.isFinite(file.additions) ? file.additions : undefined;
@@ -130,7 +146,7 @@
         deletions: file.binary === true ? 0 : deletions,
         languageId,
         languageDot: codeHighlight.getLanguageDot ? codeHighlight.getLanguageDot(languageId) : undefined,
-        bodyHtml: file.expanded === true ? buildRowBody(file, languageId) : undefined,
+        bodyHtml: file.expanded === true ? buildRowBody(file, languageId, review) : undefined,
         openDataset: { 'changes-wt-open': file.path },
         openLabel: jt('chat.changesDetail.openInWorkspace', 'Open {path} in Workspace', { path: String(file.path).slice(0, 240) }),
         escapeHtml: escape,
@@ -195,7 +211,7 @@
       else if (model.status === 'unavailable') content = stateNote(jt('chat.changesDetail.unavailable', 'Working tree changes are unavailable right now.')) + buildFooterHtml();
       else if (model.status === 'empty') content = stateNote(jt('chat.changesDetail.clean', 'No uncommitted changes')) + buildFooterHtml();
       else {
-        const rows = files.map(buildRowHtml).join('');
+        const rows = files.map((file) => buildRowHtml(file, model.review)).join('');
         const list = files.length
           ? `<div class="file-diff-list changes-wt-list" data-changes-wt-list>${rows}</div>`
           : stateNote(jt('chat.changesDetail.noMatches', 'No files match.'));

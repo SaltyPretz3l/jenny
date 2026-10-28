@@ -12,9 +12,10 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { windowsOnly } = require('./helpers/platform-skips');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'worktree-agent.ps1');
-const skip = process.platform !== 'win32' ? 'worktree-agent.ps1 is Windows-only' : false;
+const skip = windowsOnly('worktree-agent.ps1 and its .cmd shims');
 
 function makeSandbox(t, { gitExit = 0 } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-wt-agent-'));

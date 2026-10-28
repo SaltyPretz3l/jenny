@@ -37,6 +37,9 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
 
+  const { isPrimarySession = () => false } = (root && root.stringUtils)
+    || (typeof require === 'function' ? require('../shared/string-utils') : null) || {};
+
   const PROJECTS_TTL_MS = 15000;
   const CHANGED_EVENT = 'jenny:projects-changed';
   // Backend refusal reasons that mean "this chat is working right now".
@@ -303,9 +306,11 @@
       return new Set(projects.map((project) => project.id));
     }
 
+    // The primary Jenny chat (row 69) is never the project's "latest chat": it is pinned, not a workspace chat.
     function latestChat(projectId) {
       return sessionsList()
-        .filter((session) => session && !session.archived_at && session.session_type !== 'plugin' && sessionProjectId(session) === projectId)
+        .filter((session) => session && !session.archived_at && session.session_type !== 'plugin'
+          && !isPrimarySession(session) && sessionProjectId(session) === projectId)
         .sort((a, b) => String(b.updated_at || b.created_at || '').localeCompare(String(a.updated_at || a.created_at || '')))[0] || null;
     }
 
@@ -350,8 +355,14 @@
       await refresh({ force: true });
       if (disposed || token !== transitionSeq) return outcome;
       const current = currentProject();
-      // The Chats filter follows the Workspace until the user picks one (D8).
-      if (state.ui && !filterPickedByUser) state.ui.chatsProjectFilter = current ? current.id : '';
+      // Grouped Chats (D10): the list keeps every project (a filter the user did not pick is cleared)
+      // and the new current one opens. Otherwise the Chats filter follows the Workspace until the user
+      // picks one (D8).
+      const groups = root && root.rendererChatsPanelProjects;
+      if (groups && typeof groups.prefersProjectGroups === 'function' && groups.prefersProjectGroups(windowRef)) {
+        if (state.ui && !filterPickedByUser) state.ui.chatsProjectFilter = '';
+        if (typeof groups.expandProject === 'function') groups.expandProject(windowRef, current ? current.id : GENERAL_PROJECT_ID);
+      } else if (state.ui && !filterPickedByUser) state.ui.chatsProjectFilter = current ? current.id : '';
       await Promise.resolve(refreshSessions()).catch(noop);
       if (disposed || token !== transitionSeq) return outcome;
       const provisioning = outcome.project_provisioning

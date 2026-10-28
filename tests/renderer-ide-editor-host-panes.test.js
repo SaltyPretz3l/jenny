@@ -131,7 +131,7 @@ test('a vetoed apply closes the pane copy and returns null; refused bytes throw 
 
   await assert.rejects(
     host.openBinaryDocument({ path: 'c.pdf', base64: 'BAD', format: 'pdf', size: 3, mtimeMs: 1 }),
-    (error) => error.code === 'CMP-WORKSPACEFS-0015' && /corrupt/.test(error.message)
+    (error) => error.code === 'CMP-WORKSPACEFS-0015' && /corrupt/.test(error.message) && /corrupt/.test(error.reason)
   );
   assert.equal(host.hasDocument('c.pdf'), false);
   await assert.rejects(

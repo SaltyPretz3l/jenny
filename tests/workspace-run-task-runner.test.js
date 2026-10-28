@@ -11,6 +11,7 @@ const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 
 const { startRunTask } = require('../services/backend/workspace-run-task-runner');
+const { posixOnly } = require('./helpers/platform-skips');
 const { RUN_TASK_ERROR_CODES } = require('../services/backend/error-codes');
 
 function makeFakeChild() {
@@ -218,7 +219,7 @@ test('a retried kill on win32 never targets the pid of a shell that has already 
 });
 
 test('real POSIX cancellation terminates the detached run-task process group', {
-  skip: process.platform === 'win32',
+  skip: posixOnly('detached process-group cancellation'),
 }, async (t) => {
   let child = null;
   let ready;

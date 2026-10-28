@@ -32,6 +32,7 @@ def test_build_provider_capabilities_exposes_local_runtime_engines_plus_codex_cl
         "openai-compatible",
         "codex-cli",
         "chatgpt",
+        "api-provider",
         "replay",
         "mock",
     }
@@ -966,6 +967,7 @@ def test_initialize_response_provider_capabilities_unchanged() -> None:
         "openai-compatible",
         "codex-cli",
         "chatgpt",
+        "api-provider",
         "replay",
         "mock",
     }
@@ -1072,19 +1074,22 @@ _CHAT_WORKSPACE_REQUEST = {
     "producer_tools": ["propose_session", "complete_session_handoff"],
     "context_kinds": ["session_message", "session_handoff"],
     "session_messages": True,
+    "mid_turn_mail": True,
 }
-# What a checkpoint-4 Electron asks for: no producer tools, no handoff context kind.
+# A messages-only request: no producer tools, no handoff context kind, no mid-turn mail.
 _CHAT_WORKSPACE_MESSAGES_ONLY = {
     "schema_version": 1,
     "producer_tools": [],
     "context_kinds": ["session_message"],
     "session_messages": True,
+    "mid_turn_mail": False,
 }
 _CHAT_WORKSPACE_EMPTY = {
     "schema_version": 1,
     "producer_tools": [],
     "context_kinds": [],
     "session_messages": False,
+    "mid_turn_mail": False,
 }
 
 
@@ -1119,6 +1124,7 @@ def test_initialize_drops_unsupported_chat_workspace_requests() -> None:
             "producer_tools": ["session_message", "unknown_tool", "propose_session"],
             "context_kinds": ["session_message", "session_handoff", "session_message_receipt"],
             "session_messages": True,
+            "mid_turn_mail": True,
         }
     )
 
@@ -1138,6 +1144,7 @@ def test_initialize_negotiates_each_producer_tool_and_context_kind_independently
             "producer_tools": ["complete_session_handoff"],
             "context_kinds": ["session_handoff"],
             "session_messages": False,
+            "mid_turn_mail": False,
         }
     )
     assert handoff_only["chat_workspace_capabilities"] == {
@@ -1145,7 +1152,35 @@ def test_initialize_negotiates_each_producer_tool_and_context_kind_independently
         "producer_tools": ["complete_session_handoff"],
         "context_kinds": ["session_handoff"],
         "session_messages": False,
+        "mid_turn_mail": False,
     }
+
+
+def test_initialize_negotiates_mid_turn_mail_only_with_session_messages() -> None:
+    granted = _initialize_requesting({**_CHAT_WORKSPACE_MESSAGES_ONLY, "mid_turn_mail": True})
+    assert granted["chat_workspace_capabilities"]["mid_turn_mail"] is True
+
+    without_messages = _initialize_requesting(
+        {**_CHAT_WORKSPACE_REQUEST, "session_messages": False}
+    )["chat_workspace_capabilities"]
+    assert without_messages["session_messages"] is False
+    assert without_messages["mid_turn_mail"] is False
+
+    without_kind = _initialize_requesting(
+        {**_CHAT_WORKSPACE_REQUEST, "context_kinds": ["session_handoff"]}
+    )["chat_workspace_capabilities"]
+    assert without_kind["mid_turn_mail"] is False
+
+    not_requested = _initialize_requesting(_CHAT_WORKSPACE_MESSAGES_ONLY)
+    assert not_requested["chat_workspace_capabilities"]["mid_turn_mail"] is False
+
+
+def test_initialize_answers_the_empty_form_without_the_mid_turn_mail_key() -> None:
+    # Lockstep: an older request without the key is not the closed shape.
+    legacy = {key: value for key, value in _CHAT_WORKSPACE_REQUEST.items() if key != "mid_turn_mail"}
+    assert _initialize_requesting(legacy)["chat_workspace_capabilities"] == _CHAT_WORKSPACE_EMPTY
+    malformed = {**_CHAT_WORKSPACE_REQUEST, "mid_turn_mail": "true"}
+    assert _initialize_requesting(malformed)["chat_workspace_capabilities"] == _CHAT_WORKSPACE_EMPTY
 
 
 def test_initialize_requires_session_message_kind_for_the_session_messages_flag() -> None:

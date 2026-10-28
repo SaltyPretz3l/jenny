@@ -90,6 +90,12 @@ function buildController({
     resolveLaunchAccelerationImpl: () => ({ mode: 'off', reason: 'flag_off', extraArgs: [], drafter: '', vramHeadroomMb: 0 }),
     ninferManager,
     log: (level, event, fields) => logs.push({ level, event, fields }),
+    // Inert stand-ins: the quit path ends in the emergency sweep, whose real
+    // helpers taskkill / `ollama stop` / `wsl --shutdown` on this machine.
+    clearSuggestionCache: () => {},
+    shutdownLlamaServerSyncImpl: () => ({ hadState: false, killed: false }),
+    shutdownManagedSidecarSyncImpl: () => ({ hadState: false, killed: false }),
+    shutdownAnyLocalOllamaSyncImpl: () => ({ skipped: 'no_owned_state' }),
   });
   return { controller, logs, launches, ninferLaunches, backend, ninferManager, ninferLifecycle, bridgeEvents };
 }
@@ -172,4 +178,46 @@ test('leaving readiness re-brokers the sidecar once (not a parked identity), and
   assert.deepEqual(backend.refreshes, ['ninfer_ready', 'ninfer_stopped'], 'a stop of a stopped server re-brokers nothing');
   assert.deepEqual(bridgeEvents.map((event) => event.channel), bridgeEvents.map(() => 'ninfer.onChanged'));
   assert.deepEqual(bridgeEvents.map((event) => event.payload.state), ['starting', 'ready', 'stopping', 'stopped', 'starting', 'ready', 'stopping', 'stopped']);
+});
+
+// The live-session logs showed every quit re-initializing the sidecar against the
+// NInfer it had just stopped (sidecar.config_refresh_failed reason=ninfer_stopped).
+async function readyNinfer() {
+  const ctx = buildController({ lastUsedArtifactId: '', lastUsedTag: '', ownManager: true });
+  const ninfer = ctx.controller.getNinferManager();
+  await ninfer.ensureRunning({ artifactId: 'qwen3.8-27b-nvfp4' });
+  assert.deepEqual(ctx.backend.refreshes, ['ninfer_ready']);
+  return { ...ctx, ninfer };
+}
+
+// 2026-10-27: a chat's switch to an Ollama model stopped NInfer, the stop
+// re-brokered the sidecar for the OLD model, and the switch's own initialize
+// was refused busy (CMP-AI-0002, "Provider issue").
+test('an engine-switch stop leaves the sidecar to the switch instead of re-brokering it', async () => {
+  const { backend, ninfer } = await readyNinfer();
+  const stopped = await ninfer.stop({ stoppedBy: 'engine_switch' });
+  assert.equal(stopped.state, 'stopped');
+  assert.equal(stopped.stoppedBy, 'engine_switch');
+  assert.deepEqual(backend.refreshes, ['ninfer_ready'], 'no ninfer_stopped re-broker during an engine switch');
+  await ninfer.ensureRunning({ artifactId: 'qwen3.8-27b-nvfp4' });
+  assert.equal(ninfer.getStatus().stoppedBy, '', 'a relaunch clears the stop reason');
+  await ninfer.stop();
+  assert.deepEqual(backend.refreshes, ['ninfer_ready', 'ninfer_ready', 'ninfer_stopped'], 'a plain stop still re-brokers');
+});
+
+test('app shutdown stops NInfer without re-brokering the sidecar to the stopped endpoint', async () => {
+  const { controller, backend, logs, ninfer } = await readyNinfer();
+  backend.stop = async () => {};
+  await controller.stopRuntimeBeforeQuit();
+  assert.equal(ninfer.getStatus().state, 'stopped');
+  const llamaStage = logs.find((entry) => entry.event === 'runtime.shutdown_stage' && entry.fields.stage === 'llama_server');
+  assert.equal(llamaStage?.fields.status, 'ok', 'NInfer is stopped by the awaited llama_server stage');
+  assert.deepEqual(backend.refreshes, ['ninfer_ready'], 'no ninfer_stopped re-broker during app shutdown');
+});
+
+test('the emergency shutdown path stops NInfer without re-brokering the sidecar', async () => {
+  const { controller, backend, ninfer } = await readyNinfer();
+  controller.runEmergencyRuntimeShutdownSync();
+  assert.equal(ninfer.getStatus().state, 'stopped');
+  assert.deepEqual(backend.refreshes, ['ninfer_ready'], 'no ninfer_stopped re-broker during emergency shutdown');
 });

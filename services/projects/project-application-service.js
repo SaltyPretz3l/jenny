@@ -11,6 +11,7 @@ const { ProjectFolderStatus } = require('./project-folder-status');
 const { canonicalizeProjectRootAsync } = require('./project-service');
 const { workspaceRootId } = require('../workspace-root-identity');
 const { assignSessionProjectDurably } = require('./session-project-assignment');
+const { PRIMARY_PROTECTED, isPrimaryRole } = require('../backend/primary-session');
 
 const REVIEW_DECISIONS = new Set(['auto', 'ask', 'deny', 'dismiss']);
 
@@ -100,7 +101,7 @@ function projectFailure(reason, details = {}) {
   const invalid = [
     'invalid_name', 'invalid_project_id', 'invalid_project_request',
     'general_root_reserved', 'invalid_root', 'workspace_root_unset', 'general_protected',
-    'folder_already_project', 'project_is_current',
+    'folder_already_project', 'project_is_current', PRIMARY_PROTECTED,
   ];
   const notFound = ['project_not_found', 'session_not_found'];
   const stale = reason === 'stale_root_revision' || reason === 'project_authority_stale';
@@ -510,6 +511,8 @@ class ProjectApplicationService {
     }
     const summary = this._sessions.getSessionSummary(sessionId);
     if (!summary) return projectFailure('session_not_found');
+    // Row 69: the primary Jenny chat lives in General; moving it back there stays allowed as a repair.
+    if (isPrimaryRole(summary) && projectId !== GENERAL_PROJECT_ID) return projectFailure(PRIMARY_PROTECTED);
     let busy = true;
     try {
       busy = this._isSessionBusy(sessionId) !== false;

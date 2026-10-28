@@ -323,8 +323,9 @@ test('shell config serialization persists codex CLI settings without frontier di
 test('window UI app zoom defaults to 110% and round-trips through serialize', () => {
   const state = normalizeState({});
   const notifications = normalizeNotificationSettings();
-  assert.deepEqual(state.windowUi, { appZoomPercent: 110, notifications });
-  assert.deepEqual(serializeState(state).windowUi, { appZoomPercent: 110, notifications });
+  const dictation = { deviceId: '' };
+  assert.deepEqual(state.windowUi, { appZoomPercent: 110, notifications, dictation });
+  assert.deepEqual(serializeState(state).windowUi, { appZoomPercent: 110, notifications, dictation });
 });
 
 test('v33 migration backfills the windowUi app zoom default for older configs', () => {
@@ -333,6 +334,7 @@ test('v33 migration backfills the windowUi app zoom default for older configs', 
   assert.deepEqual(migrated.windowUi, {
     appZoomPercent: 110,
     notifications: normalizeNotificationSettings(),
+    dictation: { deviceId: '' },
   });
 });
 
@@ -362,15 +364,16 @@ test('normalizeWindowUiSettings reads legacy and snake_case app zoom keys', () =
 
 test('windowUi always carries a full notifications block without a CONFIG_VERSION bump', () => {
   const defaults = normalizeNotificationSettings();
-  assert.deepEqual(normalizeWindowUiSettings({}), { appZoomPercent: 110, notifications: defaults });
+  const dictation = { deviceId: '' };
+  assert.deepEqual(normalizeWindowUiSettings({}), { appZoomPercent: 110, notifications: defaults, dictation });
   assert.deepEqual(normalizeWindowUiSettings(null).notifications, defaults);
   // A current-version file written before the block existed gains the defaults.
   const current = normalizeState({ version: CONFIG_VERSION, windowUi: { appZoomPercent: 120 } });
   assert.equal(current.version, CONFIG_VERSION);
-  assert.deepEqual(current.windowUi, { appZoomPercent: 120, notifications: defaults });
+  assert.deepEqual(current.windowUi, { appZoomPercent: 120, notifications: defaults, dictation });
   // An old (pre-windowUi) config migrates to the same full shape.
   const migrated = normalizeState({ version: 32, appZoomPercent: 90 });
-  assert.deepEqual(migrated.windowUi, { appZoomPercent: 90, notifications: defaults });
+  assert.deepEqual(migrated.windowUi, { appZoomPercent: 90, notifications: defaults, dictation });
   // Stored partial/junk values normalize and survive a serialize round trip.
   const stored = normalizeState({
     version: CONFIG_VERSION,
@@ -529,4 +532,18 @@ test('a state already at v58 keeps its stored token_budget override', () => {
 test('a state already at v58 keeps stored engine-tuning keys', () => {
   const state = normalizeState({ version: 58, engineTuning: { ...RETIRED_ENGINE_TUNING } });
   assert.deepEqual(state.engineTuning, RETIRED_ENGINE_TUNING);
+});
+
+test('the apiProviders block defaults empty, normalizes, and round trips without a version bump (row 78)', () => {
+  assert.deepEqual(normalizeState({}).apiProviders, { instances: [], lastSelected: null });
+  const stored = {
+    instances: [{ id: 'groq', presetId: 'groq', label: 'Groq', models: [{ id: 'openai/gpt-oss-120b', enabled: true }] }],
+    lastSelected: null,
+  };
+  const state = normalizeState({ version: 59, apiProviders: stored });
+  assert.equal(state.version, 59);
+  assert.equal(state.apiProviders.instances[0].id, 'groq');
+  assert.equal(state.apiProviders.instances[0].endpoint, 'https://api.groq.com/openai/v1');
+  assert.deepEqual(normalizeState(serializeState(state)).apiProviders, state.apiProviders);
+  assert.deepEqual(normalizeState({ apiProviders: 'junk' }).apiProviders, { instances: [], lastSelected: null });
 });

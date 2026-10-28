@@ -13,6 +13,7 @@ const path = require('node:path');
 const { startLlamaServer } = require('../services/llama-server-lifecycle');
 const { FakeChildProcess, getClosedPort } = require('./helpers/llama-server-lifecycle-fixtures');
 const { cleanupTrackedResources, trackDirectory } = require('./helpers/resource-cleanup');
+const { windowsOnly } = require('./helpers/platform-skips');
 
 test.afterEach(async () => {
   await cleanupTrackedResources();
@@ -206,7 +207,7 @@ test('a long run of separators in an output line is redacted in linear time', as
     'loaded CPU backend from [llama-server folder]/libggml-cpu.so');
 });
 
-test('an env build at the root of a network share is still redacted', { skip: process.platform !== 'win32' }, async () => {
+test('an env build at the root of a network share is still redacted', { skip: windowsOnly('a UNC path is absolute only under the win32 path module') }, async () => {
   const { logs } = await launch({
     binaryPath: '\\\\nas\\John Smith\\llama-server.exe',
     runtimeSource: 'env',

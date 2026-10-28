@@ -121,24 +121,38 @@
   line-height: 1.6;
 }
 
-.ide-search-replace-field {
+/* .ide-search-replace-field shares the .ide-search-field rules in ide-view.css. */
+
+/* Row 82 X2: the "…" details region (files to include / exclude) under the
+ * toolbar; the fields mirror .ide-search-field (ide-view.css) at caption size. */
+.ide-search-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ide-search-include-field,
+.ide-search-exclude-field {
   display: block;
 }
 
-.ide-search-replace-field .inv-text-field-control {
+.ide-search-include-field .inv-text-field-control,
+.ide-search-exclude-field .inv-text-field-control {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  padding: 5px 8px;
+  padding: 4px 8px;
   border: 1px solid var(--line);
   border-radius: 4px;
   background: var(--bg-base);
   color: var(--text-primary);
-  font-size: var(--font-size-body);
+  font-size: var(--font-size-caption);
   line-height: 1.4;
 }
 
-.ide-search-replace-field .inv-text-field-control:focus-visible {
+.ide-search-include-field .inv-text-field-control:focus-visible,
+.ide-search-exclude-field .inv-text-field-control:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
 }

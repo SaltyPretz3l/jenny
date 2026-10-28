@@ -131,8 +131,10 @@ _SMART_QUOTES = {
     "’": "'",
 }
 
-_FENCE_RE = re.compile(r"^\s*```[a-zA-Z_]*\s*\n?|\n?\s*```\s*$")
-_TOOL_CALL_TAG_RE = re.compile(r"^\s*<tool_call>\s*|\s*</tool_call>\s*$", re.IGNORECASE)
+_FENCE = "```"
+_FENCE_LABEL_RE = re.compile(r"[a-zA-Z_]*")
+_TOOL_CALL_OPEN = "<tool_call>"
+_TOOL_CALL_CLOSE = "</tool_call>"
 
 
 def _try_parse_dict(text: str) -> dict | None:
@@ -172,23 +174,52 @@ def _scan_string_spans(text: str) -> list[tuple[int, int]]:
     return spans
 
 
-def _in_any_span(index: int, spans: list[tuple[int, int]]) -> bool:
-    """Return True when ``index`` falls inside one of the string spans."""
-    for start, end in spans:
-        if start <= index < end:
-            return True
-    return False
+def _string_mask(text: str) -> bytearray:
+    """One byte per character, non-zero inside a double-quoted string span.
+
+    Built in one pass so the passes below test membership in O(1) instead of
+    scanning every span per character (tool review C4 #H: a 12k-member
+    payload took seconds).
+    """
+    mask = bytearray(len(text))
+    for start, end in _scan_string_spans(text):
+        mask[start:end] = b"\x01" * (end - start)
+    return mask
 
 
 def _strip_debris(text: str) -> str:
-    """Remove envelope tags only at the payload boundaries."""
-    return _TOOL_CALL_TAG_RE.sub("", text)
+    """Remove envelope tags only at the payload boundaries.
+
+    Plain string scans: a boundary regex here (``\\s*</tool_call>\\s*$``)
+    retried its whitespace run from every position, quadratic on a long
+    whitespace tail.
+    """
+    stripped = text.lstrip()
+    if stripped[: len(_TOOL_CALL_OPEN)].lower() == _TOOL_CALL_OPEN:
+        text = stripped[len(_TOOL_CALL_OPEN) :].lstrip()
+    stripped = text.rstrip()
+    if len(stripped) >= len(_TOOL_CALL_CLOSE) and (
+        stripped[-len(_TOOL_CALL_CLOSE) :].lower() == _TOOL_CALL_CLOSE
+    ):
+        text = stripped[: -len(_TOOL_CALL_CLOSE)].rstrip()
+    return text
+
+
+def _strip_fence_pair(text: str) -> str:
+    """Strip one leading ```` ```label ```` and one trailing ```` ``` ```` fence."""
+    stripped = text.lstrip()
+    if stripped.startswith(_FENCE):
+        label = _FENCE_LABEL_RE.match(stripped, len(_FENCE))
+        text = stripped[label.end() if label else len(_FENCE) :].lstrip()
+    stripped = text.rstrip()
+    if stripped.endswith(_FENCE):
+        text = stripped[: -len(_FENCE)].rstrip()
+    return text
 
 
 def _strip_fences(text: str) -> str:
-    """Strip a single leading/trailing markdown fence pair from ``text``."""
-    stripped = _FENCE_RE.sub("", text)
-    return _FENCE_RE.sub("", stripped)
+    """Strip up to two leading/trailing markdown fence layers from ``text``."""
+    return _strip_fence_pair(_strip_fence_pair(text))
 
 
 def _isolate_outermost_object(text: str) -> str | None:
@@ -197,19 +228,16 @@ def _isolate_outermost_object(text: str) -> str | None:
     return objects[0] if objects else None
 
 
-_ANY_FENCE_RE = re.compile(r"```")
-
-
 def _strip_wrapping(raw: str) -> tuple[str, tuple[str, ...]]:
     """Strip fences/debris/prose; return cleaned text and applied tags.
 
     A backtick fence anywhere in the raw string tags ``stripped_fence``;
     ``<tool_call>`` markup tags ``stripped_debris``; isolating a balanced
-    object out of surrounding prose (with no fence) also tags
-    ``stripped_debris``.
+    object out of anything else left around it (prose, a second object, a
+    stray fence) also tags ``stripped_debris``, since that drops text.
     """
     tags: list[str] = []
-    had_fence = bool(_ANY_FENCE_RE.search(raw))
+    had_fence = _FENCE in raw
     without_debris = _strip_debris(raw)
     if without_debris != raw:
         tags.append("stripped_debris")
@@ -218,7 +246,7 @@ def _strip_wrapping(raw: str) -> tuple[str, tuple[str, ...]]:
         tags.append("stripped_fence")
     isolated = _isolate_outermost_object(without_fence)
     if isolated is not None:
-        if not had_fence and isolated != without_fence.strip():
+        if isolated != without_fence.strip():
             tags.append("stripped_debris")
         without_fence = isolated
     # Deduplicate while preserving order.
@@ -254,19 +282,24 @@ def _replace_smart_quotes(text: str) -> str:
     return "".join(out)
 
 
+_PYTHON_LITERAL_RE = re.compile(r"\b(True|False|None)\b")
+_PYTHON_LITERALS = {"True": "true", "False": "false", "None": "null"}
+
+
 def _replace_python_literals(text: str) -> str:
-    """Rewrite ``True``/``False``/``None`` outside strings to JSON literals."""
-    spans = _scan_string_spans(text)
-    mapping = {"True": "true", "False": "false", "None": "null"}
-    result = text
-    # Walk matches right-to-left so indices stay valid as we splice.
-    matches = list(re.finditer(r"\b(True|False|None)\b", text))
-    for match in reversed(matches):
-        if _in_any_span(match.start(), spans):
-            continue
-        replacement = mapping[match.group(1)]
-        result = result[: match.start()] + replacement + result[match.end() :]
-    return result
+    """Rewrite ``True``/``False``/``None`` outside strings to JSON literals.
+
+    Runs after ``_convert_single_quotes`` so a single-quoted value is already
+    a double-quoted span here: ``'None of the above'`` stays verbatim.
+    """
+    mask = _string_mask(text)
+
+    def _replace(match: re.Match[str]) -> str:
+        if mask[match.start()]:
+            return match.group(0)
+        return _PYTHON_LITERALS[match.group(1)]
+
+    return _PYTHON_LITERAL_RE.sub(_replace, text)
 
 
 def _convert_single_quotes(text: str) -> str:
@@ -276,13 +309,13 @@ def _convert_single_quotes(text: str) -> str:
     treated as string delimiters. Handles escaped inner content by swapping to
     double quotes at the boundaries.
     """
-    dq_spans = _scan_string_spans(text)
+    in_double_quoted = _string_mask(text)
     out: list[str] = []
     i = 0
     length = len(text)
     while i < length:
         ch = text[i]
-        if ch == "'" and not _in_any_span(i, dq_spans):
+        if ch == "'" and not in_double_quoted[i]:
             out.append('"')
             i += 1
             while i < length:
@@ -313,11 +346,11 @@ def _convert_single_quotes(text: str) -> str:
 
 def _remove_trailing_commas(text: str) -> str:
     """Drop commas that directly precede ``}``/``]`` outside strings."""
-    spans = _scan_string_spans(text)
+    in_string = _string_mask(text)
     result_chars: list[str] = []
     length = len(text)
     for i, ch in enumerate(text):
-        if ch == "," and not _in_any_span(i, spans):
+        if ch == "," and not in_string[i]:
             j = i + 1
             while j < length and text[j] in " \t\r\n":
                 j += 1
@@ -343,11 +376,8 @@ def _has_complete_member(text: str) -> bool:
     ``repair_json_payload`` conservative for first-value truncation inside a
     nested arguments object.
     """
-    spans = _scan_string_spans(text)
-    for i, ch in enumerate(text):
-        if ch == "," and not _in_any_span(i, spans):
-            return True
-    return False
+    in_string = _string_mask(text)
+    return any(ch == "," and not in_string[i] for i, ch in enumerate(text))
 
 
 def _scan_open_structure(text: str) -> tuple[bool, list[str]]:
@@ -398,15 +428,29 @@ def _close_open_structures(text: str) -> tuple[str, tuple[str, ...]]:
     return repaired, tuple(tags)
 
 
+# The healer's own character-level passes: each rewrites quoting or punctuation
+# outside string values and can neither change a value nor drop text. The
+# dispatch policy (routing/tool_call_repair_policy.py) and the Codex CLI
+# transport accept exactly this set for a side-effecting call.
+CHARACTER_LEVEL_ARGUMENT_REPAIRS = frozenset(
+    {"ascii_quotes", "python_literals", "single_quotes", "trailing_comma"}
+)
+
+
 def _repair_passes(text: str) -> tuple[dict | None, tuple[str, ...]]:
-    """Apply ordered cheap passes, parsing after each; stop at first success."""
+    """Apply ordered cheap passes, parsing after each; stop at first success.
+
+    Single quotes become double quotes before the literal pass, so that pass
+    sees every string span and never rewrites a word inside a value.
+    """
     applied: list[str] = []
     passes: list[tuple[str, Any]] = [
         ("ascii_quotes", _replace_smart_quotes),
-        ("python_literals", _replace_python_literals),
         ("single_quotes", _convert_single_quotes),
+        ("python_literals", _replace_python_literals),
         ("trailing_comma", _remove_trailing_commas),
     ]
+    assert {tag for tag, _transform in passes} == CHARACTER_LEVEL_ARGUMENT_REPAIRS
     for tag, transform in passes:
         transformed = transform(text)
         if transformed != text:

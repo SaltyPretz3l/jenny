@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('path');
+const { preserveCorruptFile, readWithRetry } = require('./backend/corrupt-file-preserve');
 const { FileJsonStore } = require('./backend/file-json-store');
 const { normalizeString } = require('./backend/path-utils');
 
@@ -91,13 +92,35 @@ function normalizeEntry(value) {
   };
 }
 
+// The journal holds the only record of what Jenny can undo, so its bytes are
+// never replaced blind (rows J2-J5 in docs/plans/PERSISTENCE_FAULTS_2026-10-26.md):
+// damaged or wrong-shaped bytes are moved aside before a fresh journal starts;
+// a file that could not be read, or one stamped by a newer build, is served
+// empty and refuses writes. An injected store without readWithStatus keeps the
+// plain read.
+function loadJournal(store, logger) {
+  if (typeof store.readWithStatus !== 'function') {
+    return { raw: store.read({}), writable: true };
+  }
+  const result = readWithRetry(store, {});
+  if (result.missing) return { raw: {}, writable: true };
+  if (result.unreadable) return { raw: {}, writable: false };
+  const raw = result.value;
+  const isObject = !result.corrupted && raw && typeof raw === 'object' && !Array.isArray(raw);
+  if (isObject && Number(raw.version) > JOURNAL_STORE_VERSION) return { raw: {}, writable: false };
+  if (isObject && Array.isArray(raw.entries)) return { raw, writable: true };
+  const moved = preserveCorruptFile(store.filePath, { logger });
+  return { raw: {}, writable: moved.preserved || moved.reason === 'missing' };
+}
+
 class HomeAiJournalStore {
   constructor({ userDataPath, store, logger = () => {} } = {}) {
     if (!store && !userDataPath) {
       throw new Error('userDataPath (or an injected store) is required for HomeAiJournalStore.');
     }
     this.store = store || new FileJsonStore(path.join(userDataPath, JOURNAL_STORE_FILE), { logger });
-    const raw = this.store.read({});
+    const { raw, writable } = loadJournal(this.store, logger);
+    this._writable = writable;
     this.entries = (Array.isArray(raw?.entries) ? raw.entries : [])
       .map((entry) => normalizeEntry(entry))
       .filter(Boolean)
@@ -163,6 +186,9 @@ class HomeAiJournalStore {
   }
 
   _persist(entries) {
+    if (!this._writable) {
+      throw new Error('home journal is unavailable');
+    }
     this.store.writeImmediate({ version: JOURNAL_STORE_VERSION, entries });
   }
 }

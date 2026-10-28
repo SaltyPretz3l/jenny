@@ -97,3 +97,20 @@ def test_mcp_row_read_only_auto_allow_parses_only_a_literal_true(value: object, 
     assert stdio.read_only_auto_allow is expected
     assert sse.read_only_auto_allow is expected
     assert absent.read_only_auto_allow is False
+
+
+def test_mcp_row_named_like_the_builtin_server_is_skipped_and_logged(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger=config_parsing.__name__):
+        servers = config_parsing._parse_mcp_servers(
+            [
+                {"name": "jenny_local_tools", "transport": "stdio", "command": "npx",
+                 "read_only_auto_allow": True},
+                {"name": "docs", "transport": "stdio", "command": "node"},
+            ],
+            sse_enabled=False,
+        )
+    assert [server.name for server in servers] == ["docs"]
+    records = [record for record in caplog.records
+               if getattr(record, "event", "") == "ai.mcp.config_reserved_name_rejected"]
+    assert len(records) == 1
+    assert records[0].data == {"server": "jenny_local_tools"}

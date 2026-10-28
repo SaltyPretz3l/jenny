@@ -6,6 +6,7 @@ const {
   buildQuestionBatchTerminalMutation,
 } = require('./chat-stream-session-lifecycle');
 const { settleTerminalMutation } = require('./chat-terminal-settlement-service');
+const { rendererCompleteContent } = require('./chat-stream-managed-runtime-completion');
 const {
   buildTerminalMessageExtras, completionEventFields, patchLastSegmentDiscardedDrafts,
 } = require('./chat-stream-discarded-drafts');
@@ -15,6 +16,7 @@ const {
 } = require('./chat-stream-terminal-utils');
 const { buildInteractiveQuestionBatchVisibleText } = require('./interactive-session-utils');
 const { finishTerminalReport, prepareTerminalReport } = require('./session-report-admission');
+const { finishMidTurnMail, releaseMidTurnMailForStream, settleMidTurnMail } = require('./session-mail-mid-turn');
 
 function supportsManagedTerminalCoordinator(ctx) {
   return Boolean(
@@ -34,6 +36,8 @@ async function settleMutation(ctx, {
 } = {}) {
   ctx.emitThinkingStatus?.('');
   if (ctx.unfinishedToolRepairFailure) {
+    // Nothing persists on this path: mid-turn mail (row 70 W2a) returns to queued.
+    releaseMidTurnMailForStream(ctx, 'terminal_refused');
     ctx.terminalCoordinatorHandled = true;
     ctx.terminalPersistRefused = true;
     return {
@@ -52,24 +56,36 @@ async function settleMutation(ctx, {
   // A linked child's reserved report: the marker rides this terminal patch, the conversion follows a durable settle.
   const report = prepareTerminalReport(ctx, { kind, mutation, rendererPayload });
   if (report && !report.anchor && repairMessage?.role === 'assistant') repairMessage.terminal_report_message_id = report.messageId;
-  const settled = await settleTerminalMutation(ctx.service, {
-    lease: ctx.turnLease,
-    rawStore: ctx.turnLease.store,
-    terminal: {
-      kind,
-      model: ctx.model,
-      timestamp,
-      rendererPayload,
-      ...(questionBatch ? { questionBatch } : {}),
-      ...(repairMessage ? { repairMessage } : {}),
-      ...(preexistingRefusalReason ? { preexistingRefusalReason } : {}),
-    },
-    messages: mutation.messages,
-    toolRepairs: ctx.unfinishedToolRepairs,
-    preferencePatch: mutation.preferencePatch,
-    title: mutation.title,
-    turnEventCollector: ctx.turnEventCollector,
-  });
+  // Mid-turn mail the model consumed (row 70 W2a) persists with this turn, after the rows it already
+  // persisted and before the refused segments and the assistant row; finalized once durable.
+  const mail = settleMidTurnMail(ctx);
+  if (mail.rows.length) mutation.messages = [...mail.rows, ...mutation.messages];
+  let settled;
+  try {
+    settled = await settleTerminalMutation(ctx.service, {
+      lease: ctx.turnLease,
+      rawStore: ctx.turnLease.store,
+      terminal: {
+        kind,
+        model: ctx.model,
+        timestamp,
+        rendererPayload,
+        ...(questionBatch ? { questionBatch } : {}),
+        ...(repairMessage ? { repairMessage } : {}),
+        ...(preexistingRefusalReason ? { preexistingRefusalReason } : {}),
+      },
+      messages: mutation.messages,
+      toolRepairs: ctx.unfinishedToolRepairs,
+      preferencePatch: mutation.preferencePatch,
+      title: mutation.title,
+      turnEventCollector: ctx.turnEventCollector,
+    });
+  } catch (error) {
+    // Unknown outcome: the reserved snapshot stays for reconcileAdmissionSnapshots to judge.
+    finishMidTurnMail(ctx, { handled: true, result: null });
+    throw error;
+  }
+  finishMidTurnMail(ctx, settled);
   if (settled.handled) {
     ctx.terminalCoordinatorHandled = true;
     ctx.terminalPersistRefused = settled.result?.durableTerminal !== true;
@@ -178,7 +194,7 @@ async function settleManagedAssistantCompletion(ctx) {
     repairMessage,
     rendererPayload: {
       type: 'complete',
-      content: ctx.assistantText,
+      content: rendererCompleteContent(ctx),
       ...(ctx.turnUsage ? { usage: ctx.turnUsage } : {}),
       ...(ctx.resumableStop ? { resumableStop: ctx.resumableStop } : {}),
       ...completionEventFields(ctx.completion),

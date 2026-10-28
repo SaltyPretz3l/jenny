@@ -268,6 +268,37 @@ def test_batch_of_only_noop_items_fails(tmp_path: Path) -> None:
     assert (tmp_path / "page.js").read_text(encoding="utf-8") == "a = 1\nb = 2\n"
 
 
+def test_net_zero_batch_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = _write(tmp_path, "page.js", "alpha = 1\n")
+    before = target.stat()
+
+    def _must_not_run(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("a net-zero batch must not checkpoint, journal or write")
+
+    monkeypatch.setattr(edit_module, "_prepare_edit_recovery", _must_not_run)
+    monkeypatch.setattr(edit_module, "write_edit_bytes_after_read", _must_not_run)
+    result = edit_module.edit_file_tool(
+        {
+            "file_path": "page.js",
+            "edits": [
+                {"old_string": "alpha", "new_string": "X"},
+                {"old_string": "X", "new_string": "alpha"},
+            ],
+        },
+        _guard(tmp_path),
+    )
+
+    assert result.success is True, result.output
+    assert result.output.startswith("No changes written to page.js")
+    assert result.metadata["changed"] is False
+    assert result.metadata["bytes_written"] == 0
+    assert target.read_text(encoding="utf-8") == "alpha = 1\n"
+    assert target.stat().st_mtime_ns == before.st_mtime_ns
+    assert not list((tmp_path / ".jenny" / "backups").glob("*@v*.bak"))
+
+
 def test_batch_reports_every_failing_item_at_once(tmp_path: Path) -> None:
     original = "a = 1\nb = 2\nc = 3\n"
     _write(tmp_path, "many.txt", original)

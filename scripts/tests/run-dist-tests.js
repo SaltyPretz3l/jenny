@@ -26,6 +26,9 @@ const DIST_NODE_TESTS = Object.freeze([
   'tests/release-compat/test_shell_config_v57_app_zoom.js',
   'tests/release-compat/test_shell_config_v59_weather_retirement.js',
   'tests/release-compat/test_shell_config_v50_tool_retirement.js',
+  // The packaged `jenny` CLI: builder globs, resources/bin shims, asarUnpack
+  // and the no-fuse pin that keeps ELECTRON_RUN_AS_NODE working (row 9 S9).
+  'tests/release-compat/test_cli_packaging.js',
 ]);
 
 const DIST_PYTHON_TESTS = Object.freeze([

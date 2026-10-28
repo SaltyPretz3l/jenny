@@ -7,29 +7,17 @@
   root.rendererBootstrapUtils = factory(root.rendererSettingsSupport);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (settingsSupport) {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  const MAX_CACHED_SESSION_MESSAGE_SETS = 6;
   const globalRoot = typeof globalThis !== 'undefined' ? globalThis : null;
   const bootstrapDom = globalRoot?.rendererBootstrapDom
     || (typeof require === 'function' ? require('./renderer-bootstrap-dom') : null);
-  const createLazyDomResolver = bootstrapDom?.createLazyDomResolver
-    || function missingLazyDomResolver() { return function emptyDomResolver() { return {}; }; };
-  const createRendererDomRegistry = bootstrapDom?.createRendererDomRegistry
-    || function missingRendererDomRegistry() { return {}; };
-  const createRendererSurfaceDom = bootstrapDom?.createRendererSurfaceDom
-    || function missingRendererSurfaceDom() { return { status: {}, settings: {}, chat: {} }; };
+  const { createLazyDomResolver, createRendererDomRegistry, createRendererSurfaceDom } = bootstrapDom;
   const settingsNavUtils = globalRoot?.rendererSettingsNavUtils
     || (typeof require === 'function' ? require('./renderer-settings-nav-utils') : null);
-  // Split view W0-2: the pane layout the boot state is seeded with. Resolved
-  // the same optional way as the siblings above; without it the seed still
-  // produces the one blank pane and the empty current session it always had.
+  // Split view W0-2: the pane layout the boot state is seeded with. index.html
+  // loads bootstrap-dom and pane-model before this file, so both are required.
   const paneModel = globalRoot?.rendererPaneModel
     || (typeof require === 'function' ? require('./renderer-pane-model') : null);
-  const normalizePaneLayout = paneModel?.normalizePaneLayout
-    || function missingPaneLayout() {
-      return Object.freeze({ panes: Object.freeze([Object.freeze({ paneId: 0, sessionId: '' })]), focusedPaneId: 0, splitRatio: 0.5 });
-    };
-  const deriveCurrentSessionId = paneModel?.deriveCurrentSessionId
-    || function missingCurrentSessionId(layout) { return String(layout?.panes?.[0]?.sessionId || ''); };
+  const { normalizePaneLayout, deriveCurrentSessionId } = paneModel;
   const inventoryActionButton = globalRoot?.inventoryActionButton
     || (typeof require === 'function' ? require('../inventory/action-button') : null);
   const inventorySelectField = globalRoot?.inventorySelectField
@@ -85,15 +73,6 @@
       appearanceUtils,
     } = deps;
 
-    const staticModel = {
-      tabs: [
-        { id: 'home', label: jt('shell.bootstrap.navigation.home', 'Home') },
-        { id: 'chat', label: jt('shell.bootstrap.navigation.chat', 'Chat') },
-        { id: 'ide', label: jt('shell.bootstrap.navigation.workspace', 'Workspace') },
-        { id: 'logs', label: jt('shell.bootstrap.navigation.diagnostics', 'Diagnostics') },
-        { id: 'settings', label: jt('shell.bootstrap.navigation.settings', 'Settings') },
-      ],
-    };
     const ACTIVITY_SCOPE = {
       backendFailed: 'backend.failed', backendRetrying: 'backend.retrying', backendStarting: 'backend.starting',
       composerRunMode: 'composer.runMode',
@@ -436,7 +415,6 @@
         followLatest: true,
         animateNextChatActivation: false,
         composerPopoverOpen: false,
-        commandPopoverOpen: false,
         contextOverheadTokens: 0,
         composerStatusNotice: '',
         composerStatusNoticeAt: 0,
@@ -621,8 +599,6 @@
     });
 
     return {
-      MAX_CACHED_SESSION_MESSAGE_SETS,
-      staticModel,
       ACTIVITY_SCOPE,
       TOAST_SOURCE,
       state,
@@ -707,6 +683,7 @@
     ThinkingPanelController: ['chatThinkingUtils', 'ThinkingPanelController'],
     getThinkingSummary: ['chatThinkingUtils', 'getThinkingSummary'],
     shouldShowThinkingToggle: ['chatThinkingUtils', 'shouldShowThinkingToggle'],
+    groupReasoningByPhase: ['chatThinkingUtils', 'groupReasoningByPhase'],
     getLatestUserMessageId: ['chatScrollUtils', 'getLatestUserMessageId'],
     isChatNearBottom: ['chatScrollUtils', 'isNearBottom'],
     deriveFollowLatestFromScroll: ['chatScrollUtils', 'deriveFollowLatestFromScroll'],

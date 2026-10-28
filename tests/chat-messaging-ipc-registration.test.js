@@ -141,7 +141,6 @@ test('the admission reconcile adapter is a logged no-op when the module or expor
 });
 
 test('startup reconciliation hands a reserved snapshot to the real admission module, which releases it to queued', async (t) => {
-  if (!fs.existsSync(ADMISSION_MODULE)) { t.skip('session-mail-admission is not present'); return; }
   const f = createFixture(t);
   // Re-compose with the real admission adapter instead of the fixture's recording fake.
   const { createChatMessagingService } = require('../services/chat-messaging-wiring');

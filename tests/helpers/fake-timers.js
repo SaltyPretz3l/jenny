@@ -31,12 +31,34 @@ function createFakeTimers() {
   function schedule(callback, delayMs, intervalMs = 0) {
     const id = nextId;
     nextId += 1;
+    const delay = Math.max(Number(delayMs) || 0, 0);
     tasks.set(id, {
       callback,
-      dueAt: currentTime + Math.max(Number(delayMs) || 0, 0),
+      delayMs: delay,
+      dueAt: currentTime + delay,
       intervalMs: Math.max(Number(intervalMs) || 0, 0),
     });
     return id;
+  }
+
+  // Fires every task pending at call time, whatever its due time, in due-time
+  // order (schedule order on ties); the clock moves forward to each due time.
+  // Tasks those callbacks schedule stay pending; one cleared by an earlier
+  // callback is skipped. For debounce tests that only care that the window closed.
+  function runPending() {
+    const due = [...tasks.entries()].sort((a, b) => a[1].dueAt - b[1].dueAt);
+    for (const [id, task] of due) {
+      if (tasks.get(id) !== task) {
+        continue;
+      }
+      currentTime = Math.max(currentTime, task.dueAt);
+      if (task.intervalMs > 0) {
+        task.dueAt += task.intervalMs;
+      } else {
+        tasks.delete(id);
+      }
+      task.callback();
+    }
   }
 
   function clear(id) {
@@ -75,8 +97,11 @@ function createFakeTimers() {
     setInterval: (callback, delayMs) => schedule(callback, delayMs, delayMs),
     clearInterval: clear,
     tick,
+    runPending,
     /** Number of still-pending (unfired, uncleared) tasks. */
     pending: () => tasks.size,
+    /** Requested delays of the pending tasks, in schedule order. */
+    delays: () => [...tasks.values()].map((task) => task.delayMs),
   };
 }
 

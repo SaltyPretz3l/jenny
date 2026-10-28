@@ -26,12 +26,15 @@
    * @param {() => Promise<object|null>} deps.loadChangesView resolves rendererChangesView
    * @param {object} deps.viewDeps createChangesView deps (host is forced to 'dock')
    * @param {() => void} [deps.focusChatInput] focuses the composer when Chat is chosen
+   * @param {() => boolean} deps.isChatOnScreen whether the chat's transcript is on screen
+   * @param {() => boolean} [deps.isActive] whether the Workspace is the active view (default true)
    */
   function createChatDockChanges(deps = {}) {
     const loadChangesView = typeof deps.loadChangesView === 'function' ? deps.loadChangesView : async () => null;
     const appendClientLog = typeof deps.appendClientLog === 'function' ? deps.appendClientLog : noop;
     const focusChatInput = typeof deps.focusChatInput === 'function' ? deps.focusChatInput : noop;
     const onSync = typeof deps.onSync === 'function' ? deps.onSync : noop;
+    const isActive = typeof deps.isActive === 'function' ? deps.isActive : () => true;
     const viewDeps = deps.viewDeps || {};
     const workbench = deps.workbench && typeof deps.workbench.getChangesHost === 'function' ? deps.workbench : null;
     // Suggested changes (row 35): the Changes tab counts the ones waiting for a decision.
@@ -46,6 +49,9 @@
     let view = null;
     let viewLoad = null;
     let disposed = false;
+    // What the mounted view last painted: its session and turn view models
+    // (a copy, compared by identity). null forces the next repaint.
+    let painted = null;
 
     function ensureView() {
       if (view) return Promise.resolve(view);
@@ -81,10 +87,15 @@
     // The chat's activity key: the turn count and the newest reply's id. New activity
     // while the chat view is hidden is unread; showing the chat view clears it. The first
     // observation and a session switch only reset the key.
-    function noteChatActivity() {
-      const turns = typeof viewDeps.getTurnViewModels === 'function' ? viewDeps.getTurnViewModels() || [] : [];
+    function chatSnapshot() {
+      return {
+        turns: typeof viewDeps.getTurnViewModels === 'function' ? viewDeps.getTurnViewModels() || [] : [],
+        sessionId: String(typeof viewDeps.getSessionId === 'function' ? viewDeps.getSessionId() || '' : ''),
+      };
+    }
+
+    function noteChatActivity({ turns, sessionId }) {
       const last = turns[turns.length - 1];
-      const sessionId = String(typeof viewDeps.getSessionId === 'function' ? viewDeps.getSessionId() || '' : '');
       const key = `${turns.length}:${last && last.rootMessageIds ? last.rootMessageIds.assistant || '' : ''}`;
       const chatVisible = isChatOnScreen();
       const changed = seen !== null && sessionId === seen.sessionId && key !== seen.key;
@@ -95,8 +106,16 @@
     }
 
     function isChatOnScreen() {
-      if (typeof deps.isChatOnScreen === 'function') return deps.isChatOnScreen() === true;
-      return workbench ? workbench.isVisible('chat') === true : true;
+      return deps.isChatOnScreen?.() === true;
+    }
+
+    // The view rebuilds its ledger and markup on render: only a changed
+    // session or turn list (view models are replaced, never edited) repaints.
+    function chatChangedSincePaint({ turns, sessionId }) {
+      const same = painted && painted.sessionId === sessionId && painted.turns.length === turns.length
+        && turns.every((vm, index) => vm === painted.turns[index]);
+      if (!same) painted = { sessionId, turns: turns.slice() };
+      return !same;
     }
 
     function waitingCount() {
@@ -114,7 +133,8 @@
     /** Called on every dock reconcile: mount while the Changes view is visible, unmount when it hides. */
     function sync() {
       if (disposed) return;
-      noteChatActivity();
+      const chat = chatSnapshot();
+      noteChatActivity(chat);
       onSync();
       if (!isChangesShown()) {
         if (mounted && view) view.unmount();
@@ -122,7 +142,9 @@
         return;
       }
       if (mounted) {
-        view?.render?.(); // a session switch or a new turn shows without waiting for another event
+        // A session switch or a new turn shows without waiting for another
+        // event; a hidden Workspace catches up on its first sync back.
+        if (isActive() && chatChangedSincePaint(chat)) view?.render?.();
         return;
       }
       ensureView().then((ready) => {
@@ -131,6 +153,8 @@
         if (!host || mounted) return;
         ready.mount(host);
         mounted = true;
+        painted = null;
+        chatChangedSincePaint(chatSnapshot()); // mount painted the current chat
       });
     }
 
@@ -176,7 +200,6 @@
 
     return {
       dispose,
-      getView: () => view,
       // Cleared as soon as the chat shows, even before the next sync (a workbench-only render).
       hasUnread: () => unread && !isChatOnScreen(),
       reveal,

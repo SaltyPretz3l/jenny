@@ -116,6 +116,7 @@
     const pick = (key) => (typeof given[key] === 'function' ? given[key] : configured[key]);
     return {
       escapeHtml: typeof given.escapeHtml === 'function' ? given.escapeHtml : stringUtils.escapeHtml,
+      wokeTurn: str(given.wokeTurn),
       getSessions: pick('getSessions') || (() => []),
       getProjectName: pick('getProjectName') || (() => ''),
       formatTime: pick('formatTime') || defaultFormatTime,
@@ -162,9 +163,12 @@
         + `<span class="session-message-state">${escapeHtml(jt('chat.sessionMessage.discarded', 'Discarded · never shown to the model'))}</span>${extra}</div>`;
     }
     const time = deps.formatTime(row.payload.timestamp);
-    const word = time
+    // The first card of a wake turn says it started the turn (the wake's own user row draws nothing).
+    let word = time
       ? jt('chat.sessionMessage.includedAt', 'Included in the turn at {time}', { time })
       : jt('chat.sessionMessage.included', 'Included in the turn');
+    if (time && deps.wokeTurn === 'jenny') word = jt('chat.sessionMessage.wokeJennyAt', 'Woke Jenny at {time}', { time });
+    else if (time && deps.wokeTurn === 'chat') word = jt('chat.sessionMessage.wokeChatAt', 'Woke this chat at {time}', { time });
     return '<div class="session-message-status" data-tone="ok"><span class="status-dot status-dot--ok" aria-hidden="true"></span>'
       + `<span class="session-message-state">${escapeHtml(word)}</span>${extra}</div>`;
   }
@@ -198,8 +202,8 @@
   function buildStartedFromLabel(session, sessions) {
     const spawned = asObject(session && session.spawned_from);
     const parentId = str(spawned && spawned.parent_session_id);
-    if (!parentId) return '';
     const list = Array.isArray(sessions) ? sessions : [];
+    if (!parentId) return buildContinuedFromLabel(session, list);
     const parent = list.find((entry) => entry && str(entry.id) === parentId);
     const parentIncarnation = str(spawned.parent_session_incarnation);
     const replaced = Boolean(parent && parentIncarnation && str(parent.session_incarnation)
@@ -208,6 +212,17 @@
     return jt('chat.sessionHandoff.startedFrom', 'Started from {title}', {
       title: str(parent.title) || jt('chat.sessionMessage.untitledChat', 'Untitled chat'),
     });
+  }
+
+  /** "Continued from {source}" for a chat started by /handoff or a branch (summary branch_origin); '' otherwise. */
+  function buildContinuedFromLabel(session, sessions) {
+    const origin = asObject(session && session.branch_origin);
+    const sourceId = str(origin && origin.source_session_id);
+    if (!sourceId) return '';
+    const source = sessions.find((entry) => entry && str(entry.id) === sourceId);
+    const title = str(source && source.title) || str(origin.source_title);
+    if (!title) return jt('chat.sessionHandoff.continuedFromUnavailable', 'Continued from an earlier chat');
+    return jt('chat.sessionHandoff.continuedFrom', 'Continued from {title}', { title });
   }
 
   /** The attributed card for one projected row. */
@@ -307,6 +322,7 @@
     ROW_KIND,
     ROW_KIND_HANDOFF,
     buildStartedFromLabel,
+    buildContinuedFromLabel,
     isSessionMessageRecord,
     buildSessionMessageRow,
     buildSessionMessageRowMarkup,

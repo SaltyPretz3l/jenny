@@ -8,7 +8,6 @@ one release but pre-validates the known-fatal POSIX-heredoc-into-cmd.exe shape.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -18,6 +17,7 @@ from sidecar.ai.tools.builtins import temp_script as temp_script_module
 from sidecar.ai.tools.builtins.temp_script import run_temp_script_tool
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
+from tests.sidecar._platform_skips import windows_only
 
 
 def _guard(tmp_path: Path) -> WorkspaceGuard:
@@ -95,7 +95,7 @@ def test_empty_language_refuses_obvious_python_script(tmp_path: Path) -> None:
     assert "script looks like python" in excinfo.value.message
 
 
-@pytest.mark.skipif(os.name != "nt", reason="platform gate is windows-specific")
+@windows_only("Windows platform gate")
 def test_sh_language_is_rejected_on_windows(tmp_path: Path) -> None:
     with pytest.raises(ToolExecutionFailure) as excinfo:
         run_temp_script_tool(
@@ -106,7 +106,7 @@ def test_sh_language_is_rejected_on_windows(tmp_path: Path) -> None:
     assert "python" in excinfo.value.message
 
 
-@pytest.mark.skipif(os.name != "nt", reason="raw-mode heredoc pre-validation is windows-specific")
+@windows_only("raw-mode heredoc pre-validation")
 def test_raw_mode_heredoc_into_cmd_is_prevalidated(tmp_path: Path) -> None:
     script = "python - <<'EOF'\nprint(1)\nEOF\n"
     with pytest.raises(ToolExecutionFailure) as excinfo:

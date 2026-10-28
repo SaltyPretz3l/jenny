@@ -536,6 +536,21 @@ def test_list_pages_with_a_cursor_and_empty_recall_says_so(harness: _Harness) ->
     assert empty.output == "No memories match."
 
 
+@pytest.mark.parametrize("cursor", ["garbage", "v1:not-base64!"])
+def test_list_with_a_malformed_cursor_fails_as_an_invalid_argument(
+    harness: _Harness, cursor: str
+) -> None:
+    _remember(harness, "Prefers tabs")
+
+    with pytest.raises(ToolExecutionFailure) as excinfo:
+        harness.run({"action": "list", "cursor": cursor})
+
+    assert excinfo.value.code == CMP_TOOL_EXECUTION_FAILED
+    assert excinfo.value.retryable is False
+    assert "memory list 'cursor' is not valid" in excinfo.value.message
+    assert isinstance(excinfo.value.__cause__, ValueError)
+
+
 def test_project_falls_back_to_the_memory_policy_without_an_execution_context(
     harness: _Harness,
 ) -> None:

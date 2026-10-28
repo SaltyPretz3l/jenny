@@ -46,7 +46,9 @@ const OLLAMA_PORT = 11434;
 const OLLAMA_HOST = '127.0.0.1';
 const HEALTH_TIMEOUT_MS = 500;
 const STARTUP_POLL_MS = 300;
-const STARTUP_MAX_WAIT_MS = 15000;
+// Ollama answers health only after GPU discovery (12-15 s on CUDA + Vulkan,
+// 2026-10-20): a 15 s window failed 4 of 10 cold launches and killed the engine.
+const STARTUP_MAX_WAIT_MS = 45000;
 const STOP_GRACE_MS = 3000;
 // Delay before probing the port after an unexpected (crash) exit, so a clearer
 // operator signal can be emitted: still listening => an external instance holds
@@ -739,8 +741,8 @@ class OllamaProcessManager {
           return;
         }
         const { execFile } = require('child_process');
-        const cmd = this._platform === 'win32' ? 'where' : 'which';
-        execFile(cmd, ['ollama'], { encoding: 'utf-8', timeout: 3000, windowsHide: true }, (error, stdout) => {
+        const [cmd, args] = require('./executable-on-path').pathLookupCommand('ollama', { env: this._env, platform: this._platform });
+        execFile(cmd, args, { encoding: 'utf-8', timeout: 3000, windowsHide: true }, (error, stdout) => {
           if (error) {
             resolve(null);
             return;

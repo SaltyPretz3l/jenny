@@ -27,14 +27,10 @@
   color: color-mix(in srgb, var(--home-live-accent) 80%, var(--text-primary));
 }
 
-.cal-agenda__day--selected .cal-agenda__day-label {
-  font-weight: 500;
-}
-
 .cal-agenda__day-rule {
   flex: 1;
   height: 1px;
-  background: color-mix(in srgb, var(--border-subtle) 85%, transparent);
+  background: var(--cal-hairline);
 }
 
 .cal-agenda__day-count {
@@ -61,7 +57,7 @@
   bottom: 0;
   inset-inline-start: 64px;
   width: 1px;
-  background: color-mix(in srgb, var(--border-subtle) 85%, transparent);
+  background: var(--cal-hairline);
   content: "";
 }
 
@@ -177,10 +173,6 @@
   background: color-mix(in srgb, var(--cal-event-hue, var(--accent)) 12%, transparent);
 }
 
-.cal-agenda__item--next .cal-agenda__title {
-  font-weight: 500;
-}
-
 .cal-agenda__item--next .cal-agenda__time {
   color: var(--text-secondary);
 }
@@ -219,10 +211,6 @@
 .cal-agenda__item--open:hover,
 .cal-agenda__item--open:focus-visible {
   color: var(--text-secondary);
-}
-
-.cal-agenda__item--open .cal-agenda__title {
-  font-weight: 500;
 }
 
 .cal-agenda__item--open .cal-agenda__title,
@@ -311,7 +299,6 @@
 
 .cal-week-strip__day--today .cal-week-strip__num {
   color: color-mix(in srgb, var(--home-live-accent) 80%, var(--text-primary));
-  font-weight: 500;
 }
 
 .cal-week-strip__day--selected {
@@ -349,10 +336,6 @@
     0 0 0 3px color-mix(in srgb, var(--bg-surface) 88%, var(--bg-base));
 }
 
-.cal-agenda__item--reminder .cal-agenda__title {
-  font-weight: 500;
-}
-
 .cal-agenda__item--reminder .cal-agenda__badge {
   color: color-mix(in srgb, var(--accent-strong) 70%, var(--text-secondary));
 }
@@ -374,7 +357,7 @@
   display: grid;
   gap: var(--space-2);
   padding-top: var(--space-4);
-  border-top: 1px solid color-mix(in srgb, var(--border-subtle) 85%, transparent);
+  border-top: 1px solid var(--cal-hairline);
   color: var(--text-muted);
   font-size: var(--font-size-sm);
 }

@@ -18,6 +18,7 @@ from sidecar.ai.tools.builtins.shell import _shell_argv, run_command_tool
 from sidecar.ai.tools.builtins.shell_command_split import cmd_exe_multiline_refusal
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
+from tests.sidecar._platform_skips import posix_only, windows_only
 
 
 def test_windows_uses_resolved_cmd_with_hardening_flags(
@@ -219,7 +220,7 @@ def test_cmd_exe_multiline_refusal_predicate(
     assert (cmd_exe_multiline_refusal(command) is not None) is refused
 
 
-@pytest.mark.skipif(os.name != "nt", reason="pins the real cmd.exe behaviour behind HB-013")
+@windows_only("pins the real cmd.exe behaviour behind HB-013")
 def test_real_cmd_exe_drops_every_line_after_the_first() -> None:
     completed = subprocess.run(
         [shutil.which("cmd.exe") or "cmd.exe", "/d", "/s", "/c", "echo one\necho two"],
@@ -230,7 +231,7 @@ def test_real_cmd_exe_drops_every_line_after_the_first() -> None:
     assert completed.stdout.split() == ["one"]
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX /bin/sh runs every line")
+@posix_only("POSIX /bin/sh runs every line")
 def test_real_posix_shell_runs_every_line(tmp_path: Path) -> None:
     result = run_command_tool({"command": "echo one\necho two"}, WorkspaceGuard(str(tmp_path)))
 

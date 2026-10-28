@@ -41,6 +41,7 @@ def test_every_method_constant_is_classified() -> None:
     inbound_notification_methods = {
         protocol.ENGINE_ACTIVITY_METHOD,
         protocol.SESSION_RUN_MODE_UPDATED_METHOD,
+        protocol.SESSION_MAIL_ARRIVED_METHOD,
     }
     known_request_methods = set(protocol.INBOUND_VERSIONED_REQUEST_METHODS) | {
         # Sidecar -> Electron blocking requests; they are deliberately not part of

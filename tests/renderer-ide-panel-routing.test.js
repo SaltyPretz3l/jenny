@@ -8,7 +8,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const ideState = require('../renderer/features/renderer-ide-state');
 const layoutModel = require('../renderer/shared/workbench-layout-model');
 const { stk, editor, spl, ch, LEFT, BOTTOM, CHAT } = require('./helpers/workbench-layout-fixtures');
 const { createHarness, findMenuItem, openContextMenu, settle } = require('./helpers/renderer-ide-harness');
@@ -37,36 +36,6 @@ function activeTabs(harness, view) {
 function stackState(harness, view) {
   return harness.viewHost(view).closest('[data-wb-stack]').getAttribute('data-state');
 }
-
-test('showPanel reveals a view in its stack (opening a collapsed one) and a primary one in the left stack', () => {
-  const ide = ideState.createIdeUiState();
-  // Search lives in its own stack and starts collapsed.
-  ideState.commitWorkbenchLayout(ide, ownStackLayout('search'));
-  assert.equal(ide.secondaryPanelOpen, false);
-  const calls = { opened: [], persist: 0, render: 0 };
-  const hooks = {
-    openSecondary: (id) => calls.opened.push(id),
-    schedulePersist: () => { calls.persist += 1; },
-    requestRender: () => { calls.render += 1; },
-  };
-
-  assert.equal(ideState.showPanel(ide, 'search', hooks), 'secondary');
-  // The tree owns the reveal (it opens the stack itself); the old openSecondary
-  // hook is accepted but no longer called.
-  assert.deepEqual(calls.opened, []);
-  assert.equal(ide.secondaryPanelOpen, true, 'the stack opens on the panel');
-  assert.equal(ide.secondaryPanel, 'search');
-  assert.equal(ide.railPanel, 'explorer', 'railPanel never points at a panel in another stack');
-  assert.deepEqual([calls.persist, calls.render], [1, 1]);
-
-  assert.equal(ideState.showPanel(ide, 'source-control', hooks), 'primary');
-  assert.equal(ide.railPanel, 'source-control');
-  assert.deepEqual([calls.persist, calls.render], [2, 2]);
-
-  // Already active: render only, no redundant persist.
-  ideState.showPanel(ide, 'source-control', hooks);
-  assert.deepEqual([calls.persist, calls.render], [2, 3]);
-});
 
 test('Reveal in Explorer opens the collapsed stack Explorer lives in, and reveals the row in it', async (t) => {
   const harness = createHarness({ bridgeOptions: { files: { 'src/deep/x.js': '1' }, persisted: { workbenchLayout: ownStackLayout('explorer') } } });

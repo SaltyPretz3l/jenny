@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
 from typing import Any
 
-from sidecar.ai.routing.delegate_child_steps import MAX_CHILD_ANSWER_CHARS, build_child_steps
+from sidecar.ai.routing.delegate_child_steps import build_child_steps, child_answer
 from sidecar.ai.routing.delegate_contracts import (
     DELEGATE_EXECUTION_FAILURE_CODE as CMP_TOOL_EXECUTION_FAILED,
 )
@@ -19,8 +20,8 @@ from sidecar.ai.routing.delegate_contracts import (
     _safe_text,
     build_compact_delegate_settlement,
     delegate_task_label,
+    delegate_task_prompt,
     extract_tool_observed_evidence,
-    strip_format_controls,
     validate_delegate_arguments,
 )
 from sidecar.ai.routing.sub_agent_invocation import (
@@ -301,6 +302,10 @@ def execute_delegate_tool(  # noqa: PLR0913 - synthetic boundary mirrors router 
             "result_kind": "subagent_batch_report",
             "subagent_batch_report": rich_report,
             "invocation_kind": INVOCATION_KIND_RESEARCH,
+            # Router-local tool: no PhaseTrace, so report the wall time here.
+            "phase_timings_json": json.dumps(
+                {"execute": {"elapsed_ms": rich_report["budget"]["elapsed_ms"]}}
+            ),
         },
         call_id=canonical_call_id,
     )
@@ -325,6 +330,7 @@ def _task_report(  # noqa: PLR0913 - terminal and live fallback report inputs.
             "task_id": identity.task_id,
             "ordinal": task.ordinal,
             "label": delegate_task_label(task),
+            "prompt": delegate_task_prompt(task),
             "agent_id": identity.agent_id,
             "parent_agent_id": identity.parent_agent_id,
             "status": "failed",
@@ -361,13 +367,17 @@ def _task_report(  # noqa: PLR0913 - terminal and live fallback report inputs.
                 "retryable": bool(result.error_retryable),
             }
         )
-    answer = _safe_text(result.response_text, max_chars=1_000)
+    answer, stored_answer, answer_truncated = child_answer(
+        result.response_text, summary_chars=1_000
+    )
     if not answer and error:
         answer = str(error["message"])
-    return {
+    live = activity or {}
+    report: dict[str, Any] = {
         "task_id": identity.task_id,
         "ordinal": task.ordinal,
         "label": delegate_task_label(task),
+        "prompt": delegate_task_prompt(task),
         "agent_id": result.agent_id or identity.agent_id,
         "parent_agent_id": result.parent_agent_id or identity.parent_agent_id,
         "status": status,
@@ -397,13 +407,17 @@ def _task_report(  # noqa: PLR0913 - terminal and live fallback report inputs.
             error_message=result.error_message,
         ),
         "error": error,
-        # UI-only fields for the monitor: parent-facing output is built from
-        # summary/evidence/status only (build_compact_delegate_settlement).
-        "steps": build_child_steps(result.decision) or (activity or {}).get('steps', []),
-        "answer": strip_format_controls(
-            _safe_text(result.response_text, max_chars=MAX_CHILD_ANSWER_CHARS)
-        ),
+        # Monitor fields. The parent-facing output (build_compact_delegate_settlement)
+        # reads answer (else summary), evidence and status; steps and the
+        # transcript stay UI-only.
+        "steps": build_child_steps(result.decision) or live.get('steps', []),
+        "answer": stored_answer,
+        "answer_truncated": answer_truncated,
+        "transcript": live.get("transcript") or [],
     }
+    if live.get("transcript_dropped", 0) > 0:
+        report["transcript_dropped"] = live["transcript_dropped"]
+    return report
 
 
 def _rich_report(  # noqa: PLR0913 - explicit aggregate accounting.

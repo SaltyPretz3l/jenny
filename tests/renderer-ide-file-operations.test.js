@@ -155,6 +155,22 @@ test('a mid-save edit stays dirty while the landed file version advances', async
   assert.equal(operations.captureSave('src/file.js', { content: 'second edit' }).fileVersion, 'vf2_saved');
 });
 
+test('pinConflict makes the next write send a version main never matches (hot exit onto a changed file)', async () => {
+  const writes = [];
+  const api = {
+    readText: async ({ path }) => readResult(path),
+    async writeText(payload) { writes.push(payload); throw Object.assign(new Error('File changed on disk since it was loaded.'), { code: 'CMP-WSFS-0020' }); },
+  };
+  const operations = createIdeFileOperations({ getWorkspaceFsApi: () => api, platform: 'win32' });
+  await openDocument(operations);
+  assert.equal(operations.pinConflict('SRC/file.js'), true);
+  const snapshot = operations.captureSave('src/File.js', { content: 'restored edits' });
+  await assert.rejects(operations.write(snapshot), /changed on disk/);
+  assert.notEqual(writes[0].expectedFileVersion, 'vf2_open', 'the freshly read version is not offered');
+  assert.ok(writes[0].expectedFileVersion.length > 0 && writes[0].expectedFileVersion.length <= 256);
+  assert.equal(operations.pinConflict('src/missing.js'), false, 'an unopened path is refused');
+});
+
 test('closing a document during an async save prevents late renderer mutation', async () => {
   const writeCalled = deferred();
   const writeResult = deferred();

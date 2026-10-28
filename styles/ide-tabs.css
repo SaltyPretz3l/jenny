@@ -1,0 +1,375 @@
+/* styles/ide-tabs.css - Workspace IDE editor tab row (row 81, direction A).
+ * The row speaks the workbench panel-tab grammar (.wb-stack-header / .wb-tabs /
+ * .wb-tab in ide-workbench.css): one 32px row on the base surface, an underline
+ * on the active tab, no dividers, no band, no side highlight bars. Markup comes
+ * from renderer-ide-tabs.js; the toolbar markup from renderer-ide-stage-switch.js.
+ * Loaded via @import in styles.css right after ide-view.css. */
+
+/* == Row == */
+
+.ide-tabbar {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  height: var(--wb-header-height);
+  min-width: 0;
+  background: var(--bg-base);
+  border-bottom: 1px solid var(--line);
+}
+
+/* The strip scrolls without a scrollbar and reuses the panel tabs' scroll-driven
+   edge fade (--wb-tabs-fade-*, @keyframes wb-tabs-fade in ide-workbench.css). A
+   strip that fits has an inactive timeline, so both fades stay 0. */
+.ide-tabstrip {
+  display: flex;
+  align-items: stretch;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  --wb-tabs-fade-start: 0px;
+  --wb-tabs-fade-end: 0px;
+  mask-image: linear-gradient(to right, transparent 0, #000 var(--wb-tabs-fade-start), #000 calc(100% - var(--wb-tabs-fade-end)), transparent 100%);
+  animation: wb-tabs-fade linear both;
+  animation-timeline: scroll(self inline);
+}
+
+.ide-tabstrip:dir(rtl) {
+  mask-image: linear-gradient(to left, transparent 0, #000 var(--wb-tabs-fade-start), #000 calc(100% - var(--wb-tabs-fade-end)), transparent 100%);
+}
+
+/* A tab dragged over the strip: the caret sits between tabs (the events module
+   inserts it), the strip itself only gets the accent underline of ide-workbench.css. */
+.ide-tab-drop-caret {
+  flex: none;
+  align-self: center;
+  width: 2px;
+  height: 20px;
+  margin-inline: -1px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+/* "+N": how many tabs are cut off by the strip; click opens the open-tabs list. */
+.ide-tabstrip-count {
+  flex: none;
+  align-self: center;
+  height: 22px;
+  min-width: 30px;
+  margin-inline: 2px 4px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.ide-tabstrip-count[hidden] {
+  display: none;
+}
+
+.ide-tabstrip-count:hover {
+  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  color: var(--text-primary);
+}
+
+.ide-tabstrip-count:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* == Tab ==
+ * Label button (icon, name, optional folder suffix) + one fixed 20px slot that
+ * holds the dirty/stale mark, the pin glyph and the close cross, so the row and
+ * the tab widths never change when a mark appears. */
+
+.ide-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 120px;
+  max-width: 240px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body);
+  transition: color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+/* These tabs never shrink: pinned ones, tabs carrying a folder suffix, and the
+   surface tab. The active tab sizes like the rest, so selecting a tab never moves
+   its neighbours (the second click of a double-click lands on the same tab). */
+.ide-tab--pinned,
+.ide-tab--has-dir,
+.ide-tab--surface {
+  flex-shrink: 0;
+}
+
+.ide-tab--pinned {
+  min-width: auto;
+}
+
+.ide-tab:hover,
+.ide-tab--active {
+  color: var(--text-primary);
+}
+
+.ide-tab--active {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* The group that does not have focus keeps its selection, quieter. */
+.ide-group:not([data-ide-group-focused]) .ide-tab--active,
+#ideMain:not([data-ide-group-focused]) > .ide-tabbar .ide-tab--active {
+  color: var(--text-secondary);
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--text-muted) 55%, transparent);
+}
+
+.ide-tab-label {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  flex: 1 1 auto;
+  gap: 6px;
+  min-width: 0;
+  padding-block: 0;
+  padding-inline: 10px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--font-size-body);
+  text-align: start;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ide-tab-label:focus-visible,
+.ide-tab-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ide-tab--surface .ide-tab-label {
+  cursor: default;
+}
+
+.ide-tab .ide-tree-icon,
+.ide-tab-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.ide-tab-glyph {
+  color: var(--text-muted);
+}
+
+.ide-tab-glyph svg {
+  display: block;
+}
+
+.ide-tab-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ide-tab-dir {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+}
+
+/* A transient preview tab reads italic until it is kept open. */
+.ide-tab--preview .ide-tab-name {
+  font-style: italic;
+}
+
+/* Git tint, only for tabs without a dirty/stale mark. */
+.ide-tab--git-modified .ide-tab-name,
+.ide-tab--git-renamed .ide-tab-name,
+.ide-tab--git-copied .ide-tab-name {
+  color: color-mix(in srgb, var(--state-warning) 70%, var(--text-primary));
+}
+
+.ide-tab--git-untracked .ide-tab-name,
+.ide-tab--git-added .ide-tab-name {
+  color: color-mix(in srgb, var(--state-success) 70%, var(--text-primary));
+}
+
+.ide-tab--git-deleted .ide-tab-name,
+.ide-tab--git-conflicted .ide-tab-name {
+  color: color-mix(in srgb, var(--state-danger) 70%, var(--text-primary));
+}
+
+.ide-tab--dragging {
+  opacity: 0.45;
+}
+
+/* == Slot: mark / pin / close share one cell == */
+
+.ide-tab-slot {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-inline: 2px 4px;
+}
+
+.ide-tab-mark,
+.ide-tab-pin,
+.ide-tab-close {
+  grid-area: 1 / 1;
+}
+
+.ide-tab-mark {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.ide-tab--dirty .ide-tab-mark {
+  background: var(--text-primary);
+  opacity: 0.8;
+}
+
+/* Dirty buffer whose file changed on disk: a hollow danger-hued ring (distinct
+ * shape, not just color) keeps it readable next to the filled dirty dot. */
+.ide-tab--stale .ide-tab-mark {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--state-danger);
+  opacity: 1;
+}
+
+.ide-tab-pin {
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+}
+
+.ide-tab-pin svg,
+.ide-tab-close svg {
+  display: block;
+}
+
+.ide-tab--pinned.ide-tab--active .ide-tab-pin {
+  color: var(--accent);
+}
+
+.ide-tab-close {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.ide-tab-close:hover {
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  color: var(--text-primary);
+}
+
+/* The cross shows on the active tab (unless a mark owns the slot), on hover and
+   while focus is inside the tab; it then replaces the mark. A pinned tab keeps
+   its pin and never offers the cross. */
+.ide-tab--active .ide-tab-close,
+.ide-tab:hover .ide-tab-close,
+.ide-tab:focus-within .ide-tab-close {
+  opacity: 1;
+}
+
+.ide-tab--active:is(.ide-tab--dirty, .ide-tab--stale):not(:hover):not(:focus-within) .ide-tab-close {
+  opacity: 0;
+}
+
+.ide-tab:hover .ide-tab-mark,
+.ide-tab:focus-within .ide-tab-mark {
+  opacity: 0;
+}
+
+.ide-tab--pinned .ide-tab-close {
+  display: none;
+}
+
+/* Pinned and unsaved: the mark owns the slot until the tab is hovered. */
+.ide-tab--pinned.ide-tab--dirty .ide-tab-pin,
+.ide-tab--pinned.ide-tab--stale .ide-tab-pin {
+  opacity: 0;
+}
+
+.ide-tab--pinned:hover .ide-tab-pin,
+.ide-tab--pinned:focus-within .ide-tab-pin {
+  opacity: 1;
+}
+
+/* == Toolbar at the row end: Preview / File Map, Split Editor, More == */
+
+:is(.ide-stage-switch, .ide-editor-actions) {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 2px;
+  padding-inline: 4px 6px;
+}
+
+:is(.ide-stage-switch, .ide-editor-actions):empty {
+  display: none;
+}
+
+:is(.ide-stage-switch, .ide-editor-actions) .ide-editor-action {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+:is(.ide-stage-switch, .ide-editor-actions) .ide-editor-action svg {
+  display: block;
+}
+
+:is(.ide-stage-switch, .ide-editor-actions) .ide-editor-action:hover {
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  color: var(--text-primary);
+}
+
+:is(.ide-stage-switch, .ide-editor-actions) .ide-editor-action[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text-primary);
+}
+
+:is(.ide-stage-switch, .ide-editor-actions) .ide-editor-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}

@@ -10,22 +10,29 @@
  *                     records a one-off approval, moves the operation to `pending` with a coordination
  *                     receipt, then delivers through the existing delivery transaction;
  *   agentCancel       cancels a still-prepared operation (the deny / timeout path);
- *   agentRead         an included inbox message of this chat (never queued, excluded or reserved mail).
+ *   agentRead         an included inbox message of this chat (never queued, excluded or reserved mail);
+ *   agentListInbox    this chat's own inbox, newest first, with 280-character previews (row 69); it never
+ *                     marks anything read.
  * Every state change is one synchronous mail mutation with no await inside. Diagnostics carry ids and
  * reason tokens only, never message bodies, titles or purposes.
  */
 
 const E = require('./backend/session-message-envelope');
 const {
-  MAIL_LIMITS, authorizationBlocked, countAgentSendsForTurn, findAgentOperation, isLiveGrant, outboxCapacity, pruneMail,
+  MAIL_LIMITS, authorizationBlocked, computeCounts, countAgentSendsForTurn, findAgentOperation, isLiveGrant, outboxCapacity,
+  pruneMail,
 } = require('./backend/session-mail-records');
 const { appendReceipt, buildReceipt } = require('./backend/coordination-receipts');
 const contract = require('./chat-messaging-contract');
 const { agentOnceAuthorization, bestLiveGrant, modelGrant } = require('./chat-messaging-grants');
 const { projectSessionRef } = require('./chat-messaging-recipients');
+const { sortedInbox } = require('./chat-messaging-projection');
 
 const { fail, succeed } = contract;
 const SEND_METHOD = 'session_message.send';
+const PREVIEW_CHARS = 280;
+const INBOX_STATES = Object.freeze({ queued: 'queued', reserved: 'queued', included: 'included',
+  excluded_by_user: 'discarded', discarded: 'discarded' });
 const hasKeys = (value, keys) => contract.isPlainObject(value) && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 
 function validAuthorization(value) {
@@ -35,7 +42,7 @@ function validAuthorization(value) {
 
 function createAgentOps({
   mail, getSessionSummary = () => null, getProjectName = () => null, isContinuable = () => true, now = () => new Date(),
-  createId, notify = () => {}, storeFailure, runDelivery, projectOperation, track = () => {},
+  createId, notify = () => {}, storeFailure, runDelivery, projectOperation, projectInboxPage = () => [], track = () => {},
 }) {
   const continuable = (sessionId) => {
     const summary = getSessionSummary(sessionId);
@@ -299,7 +306,38 @@ function createAgentOps({
     return record && record.context.state === 'included' ? succeed({ envelope: record.envelope }) : fail('not_found');
   }
 
-  return { agentCancel, agentPrepare, agentRead, agentSend, listAgentTargets };
+  // ---- list_inbox -------------------------------------------------------------------
+
+  // This chat's own mail only: queued (and reserved) mail reads as queued, included as included, and a
+  // discard receipt or a user exclusion as discarded. A discarded message counts as seen. Only included
+  // mail carries a preview: queued text waits for its admitted turn and excluded text stays unread
+  // (the same line agentRead draws).
+  function inboxView(item) {
+    const envelope = item.envelope || null;
+    const state = INBOX_STATES[item.context?.state] || 'queued';
+    return {
+      message_id: item.message_id,
+      kind: envelope?.kind ?? null,
+      from: { session_id: item.source?.session_id ?? envelope?.source_session_id ?? null, title: item.source?.title ?? null },
+      created_at: envelope?.created_at ?? null,
+      state,
+      read: state === 'discarded' || item.read_at !== null,
+      preview: state === 'included' && typeof envelope?.body === 'string' ? envelope.body.slice(0, PREVIEW_CHARS) : '',
+    };
+  }
+
+  async function agentListInbox({ sourceSessionId, sourceIncarnation, limit = 20 } = {}) {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) return fail('invalid_request');
+    const bound = readSource(sourceSessionId, sourceIncarnation);
+    if (!bound.ok) return bound;
+    const { mail: current } = bound.read;
+    const newest = sortedInbox(current).reverse();
+    const messages = projectInboxPage(sourceSessionId, newest.slice(0, limit).map((entry) => entry.record)).map(inboxView);
+    return succeed({ messages, counts: { ...computeCounts(current), discarded: current.discarded.length },
+      truncated: newest.length > limit });
+  }
+
+  return { agentCancel, agentListInbox, agentPrepare, agentRead, agentSend, listAgentTargets };
 }
 
 module.exports = { createAgentOps };

@@ -152,7 +152,8 @@ function createBridgeStub({ files = {}, failWriteWith = null } = {}) {
           return { workspaceRoot: 'G:/fake-root', workspaceRootStatus: { state: 'ready', message: '' } };
         },
         async readFile(payload) {
-          calls.readFile.push(payload);
+          // .editorconfig chain lookups (row 82 E2) are not document reads.
+          if (String(payload.path).split('/').pop() !== '.editorconfig') calls.readFile.push(payload);
           if (!(payload.path in files)) {
             const error = new Error('File not found in the workspace.');
             error.code = 'CMP-WORKSPACEFS-0004';

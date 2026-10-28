@@ -12,6 +12,61 @@
   const MAX_QUEUED_SEND_AUTO_RETRIES = 3;
   const QUEUED_SEND_AUTO_RETRY_BASE_DELAY_MS = 2000;
 
+  // Mirrors the composer chrome (renderer-render-pipeline-chrome.js).
+  const BACKEND_USABLE_PHASES = ['ready', 'model_unavailable'];
+  const BACKEND_STARTING_PHASES = ['sidecar_spawned', 'model_acquiring', 'model_loading', 'starting', 'retrying'];
+
+  function phaseOf(value) {
+    return String(value?.phase || '').trim();
+  }
+
+  // A Send while the engine is still starting waits in the outbox instead of
+  // doing nothing (row 62). The send controller parks each such session here;
+  // once a status push reports a usable backend, the parked sessions drain
+  // through the outbox dispatcher. Each pane's controller owns its own queue,
+  // so two panes never drain the same entry.
+  function createBackendStartQueue({ state, shell, isDisposed = () => false, getDispatch, setTimeoutImpl = setTimeout }) {
+    const parkedSessionIds = new Set();
+    const isBackendUsable = () => BACKEND_USABLE_PHASES.includes(phaseOf(state.backend));
+    const isBackendStarting = () => BACKEND_STARTING_PHASES.includes(phaseOf(state.backend));
+
+    function drain() {
+      if (isDisposed() || !isBackendUsable()) return;
+      const dispatch = getDispatch();
+      for (const sessionId of [...parkedSessionIds]) {
+        parkedSessionIds.delete(sessionId);
+        Promise.resolve(dispatch(sessionId)).catch(() => {
+          /* dispatch failures are recorded on the entry itself */
+        });
+      }
+    }
+
+    const unsubscribe = shell?.backend?.onStatus?.((payload) => {
+      if (!parkedSessionIds.size || !BACKEND_USABLE_PHASES.includes(phaseOf(payload))) return;
+      // The shell's own status listener stores the phase first; drain after it.
+      setTimeoutImpl(drain, 0);
+    });
+
+    return {
+      isBackendUsable,
+      isBackendStarting,
+      // True when a Send for this chat should wait in the outbox for the
+      // engine; the chat is parked for the ready-transition drain (a parked
+      // chat whose stash did not happen drains to a no-op). Edits, question
+      // answers, outbox replays and pending question batches never wait here.
+      claim(sessionId, excluded) {
+        const normalized = String(sessionId || '').trim();
+        if (!normalized || excluded || isBackendUsable() || !isBackendStarting()) return false;
+        parkedSessionIds.add(normalized);
+        return true;
+      },
+      dispose() {
+        if (typeof unsubscribe === 'function') unsubscribe();
+        parkedSessionIds.clear();
+      },
+    };
+  }
+
   function createQueuedSendDispatcher(deps) {
     const {
       sendOutbox,
@@ -23,6 +78,7 @@
       renderComposerState,
       renderSessions,
       appendClientLog = () => {},
+      isBackendStarting = () => false,
       setTimeoutImpl = setTimeout,
       clearTimeoutImpl = clearTimeout,
       maxAutoRetries = MAX_QUEUED_SEND_AUTO_RETRIES,
@@ -81,6 +137,12 @@
         if (!queuedSend) return null;
       }
       if (!['ready', 'waiting_for_turn'].includes(queuedSend.status)) return null;
+      // The engine is still starting: the entry waits (no failure, no
+      // auto-retry) and the send controller drains it on the ready transition.
+      if (isBackendStarting()) {
+        sendOutbox.replace(queuedSend, { status: 'waiting_for_turn' });
+        return null;
+      }
       if (isSessionBusy(normalizedSessionId)
         || (hasPendingToolApprovalForSession(normalizedSessionId) && !isDockApprovalSteerActive())) {
         sendOutbox.replace(queuedSend, { status: 'waiting_for_turn' });
@@ -227,5 +289,5 @@
     return dispatchQueuedSendForSession;
   }
 
-  return { createQueuedSendDispatcher };
+  return { BACKEND_USABLE_PHASES, BACKEND_STARTING_PHASES, createBackendStartQueue, createQueuedSendDispatcher };
 });

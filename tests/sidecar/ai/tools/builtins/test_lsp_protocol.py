@@ -18,6 +18,7 @@ from sidecar.ai.tools.builtins.lsp.protocol import (
     LSPRequestTimeout,
     LSPServerTerminated,
 )
+from tests.sidecar._platform_skips import windows_only
 
 
 def _write_fake_server(tmp_path: Path, body: str) -> Path:
@@ -191,18 +192,41 @@ def test_start_failure_uses_protocol_error_without_raw_command_path(tmp_path: Pa
     assert "failed to start LSP process" in str(excinfo.value)
 
 
-def test_request_timeout_closes_process(tmp_path: Path) -> None:
-    session = _session(tmp_path, "slow", request_timeout_seconds=0.05)
+@pytest.mark.parametrize(
+    ("method", "limit"),
+    [
+        ("textDocument/hover", {"request_timeout_seconds": 0.05}),
+        ("initialize", {"initialize_timeout_seconds": 0.05}),
+    ],
+)
+def test_request_timeout_closes_process(
+    tmp_path: Path, method: str, limit: dict[str, float]
+) -> None:
+    session = _session(tmp_path, "slow", **limit)
     session.start()
     try:
         with pytest.raises(LSPRequestTimeout):
-            session.request("initialize", {})
+            session.request(method, {})
 
         assert not session.is_running
     finally:
         # close() shuts down the per-session reader ThreadPoolExecutor. The failure
         # path leaves the process dead but the executor thread alive, so without this
         # these tests stack up reader threads for the rest of the run.
+        session.close()
+
+
+def test_initialize_has_its_own_longer_limit(tmp_path: Path) -> None:
+    defaults = LSPProcessSessionLimits()
+    assert (defaults.request_timeout_seconds, defaults.initialize_timeout_seconds) == (15.0, 30.0)
+    session = _session(
+        tmp_path, "slow", request_timeout_seconds=0.05, initialize_timeout_seconds=10.0
+    )
+    try:
+        # The slow server answers after ~2 s: past the feature limit, inside initialize's.
+        assert session.request("initialize", {}) == {"capabilities": {"textDocumentSync": 1}}
+        assert session.is_running
+    finally:
         session.close()
 
 
@@ -505,3 +529,25 @@ def test_close_can_terminate_without_waiting_for_operation_lock(tmp_path, monkey
         release.set()
         holder.join(1)
         session._reader.shutdown(wait=True)
+
+
+@windows_only("bare-name launches search the cwd only on Windows")
+def test_lsp_children_never_resolve_bare_names_from_the_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The server runs with cwd=<workspace>; a cloned repository's go.exe or node.exe
+    # must not answer the server's own bare-name launches (security review item 8).
+    captured: dict[str, object] = {}
+
+    def refuse(*_args: object, **kwargs: object) -> None:
+        captured.update(kwargs)
+        raise OSError("stop")
+
+    monkeypatch.setattr(protocol_module.subprocess, "Popen", refuse)
+    session = LSPProcessSession(command=("language-server",), workspace_root=tmp_path)
+    with pytest.raises(LSPServerTerminated):
+        session.start()
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert env["NoDefaultCurrentDirectoryInExePath"] == "1"
+    assert env.get("PATH") == protocol_module.os.environ.get("PATH")

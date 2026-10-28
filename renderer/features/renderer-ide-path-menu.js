@@ -46,51 +46,38 @@
       ? settings.appendClientLog
       : noop;
 
-    // OS-level reveal: opens the system file manager with the item selected
-    // (distinct from revealInExplorer, which targets Jenny's explorer panel).
-    async function revealInFileExplorer(path) {
+    // One workspace-fs OS action ({ path } payload): an unavailable bridge or a
+    // failure becomes one deduped toast (failures are logged too).
+    async function runOsAction(method, path, { unavailable, failed, dedupeKey, logEvent }) {
       const api = getWorkspaceFsApi();
-      if (typeof api?.revealInFolder !== 'function') {
-        showShellErrorToast(jt('ide.pathMenu.revealUnavailable', 'Reveal in File Explorer is unavailable in this shell mode.'), {
-          title: jt('ide.explorer.workspace', 'Workspace'),
-          dedupeKey: 'ide:path:reveal',
-        });
+      const toastMeta = { title: jt('ide.explorer.workspace', 'Workspace'), dedupeKey };
+      if (typeof api?.[method] !== 'function') {
+        showShellErrorToast(unavailable, toastMeta);
         return;
       }
       try {
-        await api.revealInFolder({ path });
+        await api[method]({ path });
       } catch (error) {
-      showShellErrorToast(toErrorMessage(error, jt('ide.pathMenu.revealFailed', 'Could not reveal the item.')), {
-          title: jt('ide.explorer.workspace', 'Workspace'),
-          dedupeKey: 'ide:path:reveal',
-        });
-        appendClientLog('WARN', 'ide.reveal_in_folder_failed', {
-          message: String(error?.message || error || ''),
-        });
+        showShellErrorToast(toErrorMessage(error, failed), toastMeta);
+        appendClientLog('WARN', logEvent, { message: String(error?.message || error || '') });
       }
     }
 
-    async function openInDefaultApp(path) {
-      const api = getWorkspaceFsApi();
-      if (typeof api?.openInDefaultApp !== 'function') {
-        showShellErrorToast(jt('ide.pathMenu.openDefaultUnavailable', 'Open in Default App is unavailable in this shell mode.'), {
-          title: jt('ide.explorer.workspace', 'Workspace'),
-          dedupeKey: 'ide:path:open-default',
-        });
-        return;
-      }
-      try {
-        await api.openInDefaultApp({ path });
-      } catch (error) {
-      showShellErrorToast(toErrorMessage(error, jt('ide.pathMenu.openFailed', 'Could not open the item.')), {
-          title: jt('ide.explorer.workspace', 'Workspace'),
-          dedupeKey: 'ide:path:open-default',
-        });
-        appendClientLog('WARN', 'ide.open_default_app_failed', {
-          message: String(error?.message || error || ''),
-        });
-      }
-    }
+    // OS-level reveal: opens the system file manager with the item selected
+    // (distinct from revealInExplorer, which targets Jenny's explorer panel).
+    const revealInFileExplorer = (path) => runOsAction('revealInFolder', path, {
+      unavailable: jt('ide.pathMenu.revealUnavailable', 'Reveal in File Explorer is unavailable in this shell mode.'),
+      failed: jt('ide.pathMenu.revealFailed', 'Could not reveal the item.'),
+      dedupeKey: 'ide:path:reveal',
+      logEvent: 'ide.reveal_in_folder_failed',
+    });
+
+    const openInDefaultApp = (path) => runOsAction('openInDefaultApp', path, {
+      unavailable: jt('ide.pathMenu.openDefaultUnavailable', 'Open in Default App is unavailable in this shell mode.'),
+      failed: jt('ide.pathMenu.openFailed', 'Could not open the item.'),
+      dedupeKey: 'ide:path:open-default',
+      logEvent: 'ide.open_default_app_failed',
+    });
 
     async function copyTextToClipboard(text, dedupeKey) {
       const clipboard = windowRef.jennyShell?.clipboard;

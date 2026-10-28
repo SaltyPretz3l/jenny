@@ -269,15 +269,8 @@ def test_result_serialization_omits_absolute_path(
         status="inspected",
         adapter="pdf",
         source=source,
-        summary={"page_count": 1},
-        previews=(
-            {
-                "artifact_id": "artifact_file_session_doc-preview_deadbeef",
-                "page": 1,
-                "mime_type": "image/png",
-            },
-        ),
-        warnings=("preview skipped",),
+        summary={"page_count": 1, "absolute_path": str(tmp_path / "secret.pdf")},
+        warnings=("a warning",),
     )
 
     tool_result = rich_inspect_result_to_tool_result(result)
@@ -288,6 +281,9 @@ def test_result_serialization_omits_absolute_path(
     assert "absolute_path" not in tool_result.metadata["source"]
     assert str(tmp_path) not in tool_result.output
     assert "page_count" in tool_result.output
+    # The preview path was never reachable; the envelope no longer carries it.
+    assert "previews" not in tool_result.metadata
+    assert "previews" not in json.loads(tool_result.output)
 
 
 def test_result_serialization_bounded_output_stays_json(
@@ -308,19 +304,13 @@ def test_result_serialization_bounded_output_stays_json(
         summary={
             "page_count": 1,
             "notes": "x" * (MAX_RICH_INSPECT_OUTPUT_CHARS * 3),
+            "data_uri": "data:image/png;base64," + ("a" * 400),
+            "absolute_path": str(tmp_path / "secret.png"),
             "pages": [
                 {"page": page_number, "text_excerpt": "hello" * 5_000}
                 for page_number in range(1, 80)
             ],
         },
-        previews=(
-            {
-                "artifact_id": "artifact_file_session_doc-preview_deadbeef",
-                "data_uri": "data:image/png;base64," + ("a" * 400),
-                "absolute_path": str(tmp_path / "secret.png"),
-            },
-        )
-        * 20,
         warnings=("warning " * 200,) * 20,
     )
 
@@ -394,3 +384,107 @@ def test_bounded_read_os_error_is_a_structured_failure(tmp_path):
     with pytest.raises(ToolExecutionFailure) as caught:
         read_bounded_file_bytes(missing, max_bytes=10)
     assert str(tmp_path) not in caught.value.message
+
+
+def test_validate_returns_the_hashed_bytes_once(
+    workspace: WorkspaceGuard,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import hashlib
+
+    payload = b"%PDF-1.4\n%validated bytes\n"
+    (tmp_path / "doc.pdf").write_bytes(payload)
+    opens: list[Path] = []
+    original = file_state_module.open_regular_file
+
+    def _spy(path: Path, mode: str = "rb", **kwargs):
+        opens.append(path)
+        return original(path, mode, **kwargs)
+
+    monkeypatch.setattr(rich_base_module, "open_regular_file", _spy)
+
+    source = validate_rich_file_source(requested_path="doc.pdf", workspace=workspace, adapter="pdf")
+
+    assert source.raw == payload
+    assert source.sha256 == hashlib.sha256(payload).hexdigest()
+    assert len(opens) == 1
+
+
+def test_validate_skips_reading_an_unsupported_suffix(
+    workspace: WorkspaceGuard,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "legacy.doc").write_bytes(b"legacy binary")
+    monkeypatch.setattr(
+        rich_base_module,
+        "open_regular_file",
+        lambda *_a, **_k: pytest.fail("an unsupported suffix must not be read"),
+    )
+
+    source = validate_rich_file_source(
+        requested_path="legacy.doc",
+        workspace=workspace,
+        adapter="document",
+        supported_suffixes=frozenset({".docx"}),
+    )
+
+    assert source.raw is None
+    assert source.sha256 == ""
+    assert source.size_bytes == len(b"legacy binary")
+
+
+def test_validate_read_past_the_limit_is_too_large(
+    workspace: WorkspaceGuard,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "doc.pdf"
+    target.write_bytes(b"%PDF-1.4 small")
+    original = file_state_module.open_regular_file
+
+    def _grow_then_open(path: Path, mode: str = "rb", **kwargs):
+        target.write_bytes(b"%PDF-1.4 " + b"x" * 200)
+        return original(path, mode, **kwargs)
+
+    monkeypatch.setattr(rich_base_module, "open_regular_file", _grow_then_open)
+
+    with pytest.raises(ToolExecutionFailure) as caught:
+        validate_rich_file_source(
+            requested_path="doc.pdf", workspace=workspace, adapter="pdf", max_bytes=50
+        )
+    assert caught.value.code == CMP_TOOL_RICH_FILES_TOO_LARGE
+    assert str(tmp_path) not in caught.value.message
+
+
+def test_validate_rejects_a_handle_redirected_outside_the_workspace(tmp_path: Path) -> None:
+    import builtins
+    import io
+
+    from sidecar.ai.error_codes import CMP_TOOL_OUTSIDE_WORKSPACE
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    path = root / "doc.pdf"
+    outside = tmp_path / "outside.pdf"
+    path.write_bytes(b"%PDF-1.4 inside")
+    outside.write_bytes(b"%PDF-1.4 outside")
+    original_open = builtins.open
+    original_io_open = io.open
+
+    def _redirect(opener):
+        def _open(file, *args, **options):
+            target = outside if isinstance(file, (str, Path)) and Path(file) == path else file
+            return opener(target, *args, **options)
+
+        return _open
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(builtins, "open", _redirect(original_open))
+        patch.setattr(io, "open", _redirect(original_io_open))
+        with pytest.raises(ToolExecutionFailure) as caught:
+            validate_rich_file_source(
+                requested_path="doc.pdf", workspace=WorkspaceGuard(str(root)), adapter="pdf"
+            )
+    assert caught.value.code == CMP_TOOL_OUTSIDE_WORKSPACE

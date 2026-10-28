@@ -24,6 +24,8 @@
 @import url("./styles/view-panel.css");
 @import url("./styles/chats-panel.css");
 @import url("./styles/chats-panel-tree.css");
+@import url("./styles/chats-panel-row-trail.css");
+@import url("./styles/chats-panel-projects.css");
 @import url("./styles/attention-inbox.css");
 @import url("./styles/away-digest.css");
 @import url("./styles/chats-panel-selection.css");
@@ -46,10 +48,12 @@
 @import url("./styles/chat-hero-v2.css");
 @import url("./styles/chat-tools.css");
 @import url("./styles/chat-calendar-block.css");
+@import url("./styles/chat-review-findings.css");
 @import url("./styles/chat-tool-diff.css");
 @import url("./styles/chat-proposal-cards.css");
 @import url("./styles/chat-session-messages.css");
 @import url("./styles/chat-messages.css");
+@import url("./styles/primary-chat.css");
 @import url("./styles/chat-tool-markers.css");
 @import url("./styles/chat-tool-block-v2.css");
 @import url("./styles/chat-machinery.css");
@@ -69,11 +73,13 @@
 @import url("./styles/chat-citation-v2.css");
 @import url("./styles/chat-citation-chips.css");
 @import url("./styles/chat-composer.css");
+@import url("./styles/chat-composer-menus.css");
 @import url("./styles/chat-composer-meta-affordances.css");
 @import url("./styles/chat-composer-v2-affordances.css");
 @import url("./styles/chat-composer-v2.css");
 @import url("./styles/chat-composer-shell-v2.css");
 @import url("./styles/chat-composer-fit.css");
+@import url("./styles/chat-composer-dictation.css");
 @import url("./styles/chat-attachments-v2.css");
 @import url("./styles/views-home-artifacts.css");
 @import url("./styles/views-surface-effects.css");
@@ -88,6 +94,7 @@
 @import url("./styles/views-artifacts.css");
 @import url("./styles/views-home-setup.css");
 @import url("./styles/ide-view.css");
+@import url("./styles/ide-tabs.css");
 @import url("./styles/ide-statusbar-quickpick.css");
 @import url("./styles/ide-workbench.css");
 @import url("./styles/ide-view-replace.css");
@@ -100,6 +107,8 @@
 @import url("./styles/ide-preview.css");
 @import url("./styles/ide-presentation.css");
 @import url("./styles/ide-file-map.css");
+@import url("./styles/ide-file-map-atlas-fit.css");
+@import url("./styles/ide-file-map-components.css");
 @import url("./styles/ide-explode-view.css");
 @import url("./styles/ide-active-file-context.css");
 @import url("./styles/ide-gutter.css");
@@ -116,6 +125,7 @@
 @import url("./styles/chat-media-queries.css");
 @import url("./styles/chat-subagent-monitor.css");
 @import url("./styles/chat-subagent-monitor-detail.css");
+@import url("./styles/chat-subagent-transcript.css");
 @import url("./styles/ide-chat-dock.css");
 @import url("./styles/changes-view.css");
 @import url("./styles/chat-changes-detail.css");

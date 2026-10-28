@@ -15,25 +15,20 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_PRECONDITION_UNMET,
 )
 from sidecar.ai.tools.argument_coercion import BoolArgumentError, extract_bool_argument
-from sidecar.ai.tools.builtins.git_ops_settings import (
-    _GIT_RUNTIME_OPTIONS,
-)
-from sidecar.ai.tools.builtins.git_ops_settings import (
-    GIT_TIMEOUT_SECONDS as _GIT_TIMEOUT_SECONDS,
-)
-from sidecar.ai.tools.builtins.git_ops_settings import (
-    MAX_GIT_TIMEOUT_SECONDS as _MAX_GIT_TIMEOUT_SECONDS,
-)
-from sidecar.ai.tools.builtins.git_ops_settings import (
-    configure_git_tools as _configure_git_tools,
+from sidecar.ai.tools.builtins.git_ops_settings import (  # noqa: F401 - re-exported settings.
+    GIT_TIMEOUT_SECONDS,
+    MAX_GIT_TIMEOUT_SECONDS,
+    configure_git_tools,
+    git_timeout_seconds,
 )
 from sidecar.ai.tools.builtins.git_process import (
-    git_environment as _git_environment,
-)
-from sidecar.ai.tools.builtins.git_process import (
+    OwnedProcessResult,
     resolve_git_blob_path,
     validate_git_blob_ref,
     validate_git_blob_text,
+)
+from sidecar.ai.tools.builtins.git_process import (
+    git_environment as _git_environment,
 )
 from sidecar.ai.tools.builtins.git_process import (
     run_owned_git_process as _run_owned_process,
@@ -41,11 +36,8 @@ from sidecar.ai.tools.builtins.git_process import (
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
 
-GIT_TIMEOUT_SECONDS = _GIT_TIMEOUT_SECONDS
-MAX_GIT_TIMEOUT_SECONDS = _MAX_GIT_TIMEOUT_SECONDS
-configure_git_tools = _configure_git_tools
-
 MAX_OUTPUT_CHARS = 32_000
+_OUTPUT_INCOMPLETE_NOTE = "\n...[output incomplete: git output exceeded the capture limit]"
 MAX_DIFF_DETAIL_FILES = 200
 MAX_DIFF_DETAIL_LINES = 20_000
 # Git pointer files (.git gitfile, gitdir, commondir) are tiny single-line
@@ -391,17 +383,22 @@ def _non_repo_message(cwd: Path, workspace_root: Path, *, cwd_explicit: bool) ->
 
 
 def _run_git_completed(arguments: list[str], *, cwd: Path,
-                       workspace: WorkspaceGuard | None = None) -> object:
+                       workspace: WorkspaceGuard | None = None,
+                       env_overrides: dict[str, str] | None = None) -> OwnedProcessResult:
     git_root = _validate_git_cwd(cwd, workspace) if workspace is not None else None
     trusted_root = (git_root if workspace is not None
                     and git_root == workspace.require_root().resolve() else None)
+    # The validated checkout is the work tree: a repository-controlled
+    # core.worktree must not redirect git to files outside the workspace.
+    work_tree = [f"--work-tree={git_root}"] if git_root is not None else []
     try:
         completed = _run_owned_process(
-            ["git", "--no-pager", "--no-optional-locks", *arguments],
+            ["git", "--no-pager", "--no-optional-locks", *work_tree, *arguments],
             cwd=cwd,
-            timeout_seconds=_GIT_RUNTIME_OPTIONS["timeout_seconds"],
-            env=_git_environment(),
+            timeout_seconds=git_timeout_seconds(),
+            env={**_git_environment(), **(env_overrides or {})},
             trusted_repo_root=trusted_root,
+            repo_root=git_root,
         )
     except FileNotFoundError as error:
         raise ToolExecutionFailure(
@@ -424,55 +421,75 @@ def _run_git_completed(arguments: list[str], *, cwd: Path,
     return completed
 
 
-def _run_git(arguments: list[str], *, cwd: Path,
-             workspace: WorkspaceGuard | None = None) -> str:
-    completed = _run_git_completed(arguments, cwd=cwd, workspace=workspace)
-    stdout = _truncate(str(getattr(completed, "stdout", "") or ""))
-    stderr = _truncate(str(getattr(completed, "stderr", "") or ""))
-    if int(getattr(completed, "returncode", -1)) != 0:
-        detail = stderr.strip() or stdout.strip() or "git command failed"
+@dataclass(frozen=True)
+class _GitOutput:
+    stdout: str
+    # The capture limit or an unfinished drain cut the output short.
+    incomplete: bool
+
+
+def _run_git_output(arguments: list[str], *, cwd: Path,
+                    workspace: WorkspaceGuard | None = None,
+                    env_overrides: dict[str, str] | None = None) -> _GitOutput:
+    """Run git and raise on a non-zero exit; shared by the text and raw readers."""
+    completed = _run_git_completed(
+        arguments, cwd=cwd, workspace=workspace, env_overrides=env_overrides
+    )
+    stdout = completed.stdout or ""
+    if completed.returncode != 0:
+        stderr = _truncate(completed.stderr or "")
         raise ToolExecutionFailure(
             code=CMP_TOOL_IO_FAILED,
-            message=detail,
+            message=stderr.strip() or _truncate(stdout).strip() or "git command failed",
             retryable=False,
         )
+    # Injected CompletedProcess-style fakes (tests and the cleanup-observation
+    # seam) carry no capture flags, so these two stay optional reads.
+    incomplete = bool(getattr(completed, "drain_incomplete", False)) or bool(
+        getattr(getattr(completed, "output", None), "truncated", False)
+    )
+    return _GitOutput(stdout=stdout, incomplete=incomplete)
 
-    return stdout.strip()
+
+def _with_incomplete_note(text: str, output: _GitOutput) -> str:
+    return f"{text}{_OUTPUT_INCOMPLETE_NOTE}" if output.incomplete else text
+
+
+def _run_git(arguments: list[str], *, cwd: Path,
+             workspace: WorkspaceGuard | None = None,
+             env_overrides: dict[str, str] | None = None) -> str:
+    output = _run_git_output(
+        arguments, cwd=cwd, workspace=workspace, env_overrides=env_overrides
+    )
+    return _with_incomplete_note(_truncate(output.stdout).strip(), output)
 
 
 def _run_git_raw(arguments: list[str], *, cwd: Path,
              workspace: WorkspaceGuard | None = None) -> str:
-    completed = _run_git_completed(arguments, cwd=cwd, workspace=workspace)
-    stdout = str(getattr(completed, "stdout", "") or "")
-    stderr = _truncate(str(getattr(completed, "stderr", "") or ""))
-    if int(getattr(completed, "returncode", -1)) != 0:
-        raise ToolExecutionFailure(
-            code=CMP_TOOL_IO_FAILED,
-            message=stderr.strip() or "git command failed",
-            retryable=False,
-        )
-    return stdout
+    # Machine-parsed output (porcelain -z, ls-tree): no note is appended.
+    return _run_git_output(arguments, cwd=cwd, workspace=workspace).stdout
 
 
 def _run_git_blob(ref: str, path: str, *, cwd: Path,
                   workspace: WorkspaceGuard | None = None) -> str:
-    stdout = _run_git_raw(
+    output = _run_git_output(
         ["show", "--no-show-signature", f"{ref}:{path}"],
         cwd=cwd,
         workspace=workspace,
     )
-    validate_git_blob_text(stdout)
-    return _truncate(stdout)
+    validate_git_blob_text(output.stdout)
+    return _with_incomplete_note(_truncate(output.stdout), output)
 
 
 def _parse_shortstat(output: str) -> _ShortStat | None:
-    match = _SHORTSTAT_PATTERN.search(output)
-    if match is None:
+    # A range (git show A..B) prints one shortstat line per commit; judge the sum.
+    matches = list(_SHORTSTAT_PATTERN.finditer(output))
+    if not matches:
         return None
     return _ShortStat(
-        files_changed=int(match.group(1) or 0),
-        lines_added=int(match.group(2) or 0),
-        lines_removed=int(match.group(3) or 0),
+        files_changed=sum(int(match.group(1) or 0) for match in matches),
+        lines_added=sum(int(match.group(2) or 0) for match in matches),
+        lines_removed=sum(int(match.group(3) or 0) for match in matches),
     )
 
 
@@ -492,6 +509,12 @@ def _format_oversized_diff_response(summary: str, *, subject: str) -> str:
     return f"{normalized_summary}\n\n({guidance})"
 
 
+# A submodule's worktree is examined by a child git that reads the submodule's
+# own config, where the parent's -c overrides cannot name its filters (security
+# review 2026-10-25 item 16). "dirty" still reports submodule commit changes.
+_SKIP_SUBMODULE_WORKTREES = "--ignore-submodules=dirty"
+
+
 def _build_git_diff_arguments(
     *,
     staged: bool,
@@ -499,7 +522,7 @@ def _build_git_diff_arguments(
     path_filter: str | None,
     shortstat: bool = False,
 ) -> list[str]:
-    arguments = ["diff", "--no-ext-diff", "--no-textconv"]
+    arguments = ["diff", "--no-ext-diff", "--no-textconv", _SKIP_SUBMODULE_WORKTREES]
     if shortstat:
         arguments.append("--shortstat")
     if staged:
@@ -507,13 +530,36 @@ def _build_git_diff_arguments(
     if ref is not None:
         arguments.append(ref)
     if path_filter is not None:
-        arguments.extend(["--", path_filter])
+        # Literal, like _paths_at_ref: a model path is a file name, not a glob.
+        arguments.extend(["--", f":(literal){path_filter}"])
+    elif ref is not None:
+        # The ref is always a revision, never a path that happens to match.
+        arguments.append("--")
     return arguments
+
+
+# The English shortstat wording is only stable under the C locale.
+_C_LOCALE = {"LC_ALL": "C"}
+
+
+def _patch_was_cut(output: _GitOutput) -> bool:
+    return output.incomplete or len(output.stdout) > MAX_OUTPUT_CHARS
+
+
+def _truncated_patch_response(patch: _GitOutput, summary: str, *, subject: str) -> str:
+    target = "the commit diff" if subject == "commit" else "the diff"
+    stats = f" {summary.strip()}." if summary.strip() else ""
+    return (
+        f"{_truncate(patch.stdout).strip()}\n\n(Patch truncated; {target} is larger than "
+        f"{MAX_OUTPUT_CHARS} characters.{stats} Narrow with path=... to see the rest.)"
+    )
 
 
 def git_status_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> str:
     cwd = _resolve_cwd(arguments, workspace)
-    output = _run_git(["status", "--short", "--branch"], cwd=cwd, workspace=workspace)
+    output = _run_git(
+        ["status", "--short", "--branch", _SKIP_SUBMODULE_WORKTREES], cwd=cwd, workspace=workspace
+    )
     return output or "(clean working tree)"
 
 
@@ -557,28 +603,23 @@ def git_diff_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> st
     if raw_path_filter is not None:
         path_filter = _resolve_git_path_filter(raw_path_filter, cwd=cwd, workspace=workspace)
 
+    patch = _run_git_output(
+        _build_git_diff_arguments(staged=staged, ref=ref, path_filter=path_filter),
+        cwd=cwd, workspace=workspace,
+    )
+    if not _patch_was_cut(patch):
+        return patch.stdout.strip() or "(no changes found)"
+    # Only a patch too large to return pays for the summary.
     shortstat_output = _run_git(
         _build_git_diff_arguments(
-            staged=staged,
-            ref=ref,
-            path_filter=path_filter,
-            shortstat=True,
+            staged=staged, ref=ref, path_filter=path_filter, shortstat=True,
         ),
-        cwd=cwd, workspace=workspace,
+        cwd=cwd, workspace=workspace, env_overrides=_C_LOCALE,
     )
     stats = _parse_shortstat(shortstat_output)
     if stats is not None and _diff_is_oversized(stats):
         return _format_oversized_diff_response(shortstat_output, subject="diff")
-
-    output = _run_git(
-        _build_git_diff_arguments(
-            staged=staged,
-            ref=ref,
-            path_filter=path_filter,
-        ),
-        cwd=cwd, workspace=workspace,
-    )
-    return output or "(no changes found)"
+    return _truncated_patch_response(patch, shortstat_output, subject="diff")
 
 
 def git_show_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> str:
@@ -599,39 +640,26 @@ def git_show_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> st
         )
         return _run_git_blob(ref, blob_path, cwd=cwd, workspace=workspace)
 
-    shortstat_output = _run_git(
-        [
-            "show",
-            "--no-show-signature",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--format=",
-            "--shortstat",
-            ref,
-        ],
+    show = ["show", "--no-show-signature", "--no-ext-diff", "--no-textconv"]
+    patch = _run_git_output(
+        [*show, "--stat", "--patch", "--end-of-options", ref],
         cwd=cwd, workspace=workspace,
+    )
+    if not _patch_was_cut(patch):
+        return patch.stdout.strip() or "(no commit details found)"
+    shortstat_output = _run_git(
+        [*show, "--format=", "--shortstat", "--end-of-options", ref],
+        cwd=cwd, workspace=workspace, env_overrides=_C_LOCALE,
     )
     stats = _parse_shortstat(shortstat_output)
     if stats is not None and _diff_is_oversized(stats):
         metadata_output = _run_git(
-            ["show", "--no-show-signature", "--format=medium", "--no-patch", ref],
+            ["show", "--no-show-signature", "--format=medium", "--no-patch",
+             "--end-of-options", ref],
             cwd=cwd, workspace=workspace,
         )
         summary_output = "\n".join(
             part for part in (metadata_output.strip(), shortstat_output.strip()) if part
         )
         return _format_oversized_diff_response(summary_output, subject="commit")
-
-    output = _run_git(
-        [
-            "show",
-            "--no-show-signature",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--stat",
-            "--patch",
-            ref,
-        ],
-        cwd=cwd, workspace=workspace,
-    )
-    return output or "(no commit details found)"
+    return _truncated_patch_response(patch, shortstat_output, subject="commit")

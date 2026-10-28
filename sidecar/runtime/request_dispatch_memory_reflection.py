@@ -100,7 +100,11 @@ def _reflect_response(  # noqa: PLR0913 - the dispatch ports, passed through
             event="memory.reflect.inference_failed",
             message="Reflection inference failed.",
             status="failed",
-            data={"error_type": str(error), "reason": error.reason},
+            data={
+                "error_type": str(error),
+                "reason": error.reason,
+                **error.details,
+            },
         )
         return error_response(
             message_id,

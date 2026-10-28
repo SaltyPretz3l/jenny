@@ -1,6 +1,6 @@
 'use strict';
 
-// Pure terminal-report helpers for linked children (row 59 checkpoint 5b-1, slice B1).
+// Pure terminal-report helpers for linked children and report-back wakes (row 59 checkpoint 5b-1, slice B1).
 // No IO, no Electron: ids, the outcome table, the sanitized/clipped report body, and
 // the reservation lifecycle over a normalized `session_mail` value. Callers (the
 // managed turn seam and the messaging service) own the durable mutation; every
@@ -123,6 +123,31 @@ function reserveReport(mail, { spawnedFrom, reportingEnabled, parentExists, turn
   return { mail: { ...structuredClone(mail), report_reservations: [...structuredClone(reservations(mail)), reservation] } };
 }
 
+// Report-back: a chat woken by another chat's own turn reports that turn's final reply to the sender. No link
+// grants this, so the consent id derives from the waking message and the slot needs no spawned_from or
+// reporting_enabled. A linked reporter (reporting_enabled) keeps its own reservation and parent untouched.
+// Results: {mail} reserved | {skip: reason} nothing written | {refused:'report_backpressure'}.
+function reserveReportBack(mail, {
+  childSessionId, childIncarnation, parentSessionId, parentIncarnation, messageId, turnId, now,
+} = {}) {
+  if (![turnId, parentSessionId, parentIncarnation, messageId, childSessionId, childIncarnation].every(isId)) return { skip: 'invalid' };
+  if (findReservation(mail, turnId)) return { skip: 'already_reserved' };
+  if (mail.reporting_enabled === true) return { skip: 'linked_reporter' };
+  const reported = reportMessageId(childSessionId, childIncarnation, turnId);
+  if ((mail.outbox || []).some((record) => record.envelope?.message_id === reported)) return { skip: 'already_reported' };
+  const reservation = normalizeReportReservation({
+    turn_id: turnId,
+    slot_bytes: REPORT_SLOT_BYTES,
+    reserved_at: stampIso(now),
+    parent_session_id: parentSessionId,
+    parent_session_incarnation: parentIncarnation,
+    reporting_consent_id: derivedUuid('report_back', messageId),
+  });
+  if (!reservation) return { skip: 'invalid' };
+  if (outboxCapacity(mail, REPORT_SLOT_BYTES).full) return { refused: 'report_backpressure' };
+  return { mail: { ...structuredClone(mail), report_reservations: [...structuredClone(reservations(mail)), reservation] } };
+}
+
 function releaseReservation(mail, turnId) {
   return { ...structuredClone(mail), report_reservations: structuredClone(reservations(mail).filter((entry) => entry?.turn_id !== turnId)) };
 }
@@ -172,5 +197,6 @@ module.exports = {
   reportOperationId,
   reportOutcome,
   reserveReport,
+  reserveReportBack,
   sanitizeReportText,
 };

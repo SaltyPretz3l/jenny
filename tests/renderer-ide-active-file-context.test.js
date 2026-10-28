@@ -325,3 +325,23 @@ test('appendClientLog forwarding never resurrects logs.append and is a safe no-o
   assert.equal(appendCalls.length, 0, 'must not fall back to the dead logs.append path');
   assert.doesNotThrow(() => forwardClientLog(null, 'INFO', 'x', {}));
 });
+
+test('with a text model the slice reads only its window of lines, never the whole buffer', () => {
+  const longLine = 'y'.repeat(300);
+  const text = Array.from({ length: 2000 }, (_, i) => (i % 3 === 0 ? `${longLine}${i}` : `L${i + 1}`)).join('\n') + '\n';
+  for (const [cursor, radius] of [[{ lineNumber: 1000, column: 7 }, 60], [{ lineNumber: 3, column: 1 }, 10], [{ lineNumber: 2001, column: 1 }, 5]]) {
+    const plain = makeReader({ value: text, cursor });
+    const lines = text.split('\n');
+    const read = [];
+    const modelReader = {
+      ...makeReader({ value: text, cursor }),
+      getValue: () => { throw new Error('the whole buffer was copied'); },
+      getModel: () => ({
+        getLineCount: () => lines.length,
+        getLineContent: (lineNumber) => { read.push(lineNumber); return lines[lineNumber - 1]; },
+      }),
+    };
+    assert.deepEqual(computeActiveSlice(modelReader, radius), computeActiveSlice(plain, radius));
+    assert.ok(read.length <= radius * 2 + 1, `read ${read.length} lines`);
+  }
+});

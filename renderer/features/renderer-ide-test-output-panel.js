@@ -6,14 +6,15 @@
  * Render-only off injected getters; every action routes through injected callbacks.
  * Paints into getMountEl() behind a markup-equality render guard (an idle re-render
  * never rewrites the DOM or loses the output's scroll position) and binds one
- * delegated click listener on its host. */
+ * delegated click listener on its host. File:line references in the output are link
+ * buttons (renderer-ide-output-links.js) that open the file in the IDE. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./renderer-ide-run-task-footer.js'));
+    module.exports = factory(require('./renderer-ide-run-task-footer.js'), require('./renderer-ide-output-links.js'));
     return;
   }
-  root.rendererIdeTestOutputPanel = factory(root.rendererIdeRunTaskFooter);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (footerModule) {
+  root.rendererIdeTestOutputPanel = factory(root.rendererIdeRunTaskFooter, root.rendererIdeOutputLinks);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (footerModule, outputLinks) {
   'use strict';
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const defaultEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
@@ -55,9 +56,11 @@
     const onAskJenny = typeof options.onAskJenny === 'function' ? options.onAskJenny : () => {};
     const escapeHtml = typeof options.escapeHtml === 'function' ? options.escapeHtml : defaultEscapeHtml;
     const actionButton = typeof options.actionButton === 'function' ? options.actionButton : null;
-    const footer = footerModule || {};
+    const getRootPath = typeof options.getRootPath === 'function' ? options.getRootPath : () => '';
+    const footer = footerModule; // loaded first (script manifest order)
 
     let boundHost = null;
+    let unbindLinks = null;
 
     function selectedConfigId() {
       const selection = getSelection();
@@ -85,15 +88,13 @@
         return '<div class="ide-rail-placeholder">' + escapeHtml(jt('ide.testOutput.empty', 'No test output yet. Run a test, then choose Show output.')) + '</div>';
       }
       // The header carries the result, so the footer's status line stays empty here.
-      const footerMarkup = typeof footer.buildFooterMarkup === 'function'
-        ? footer.buildFooterMarkup({ actionButton, escapeHtml, text: '', showAsk: outcomeOf(record) === 'failed', rerunDisabled: options.canRunAgain?.(configId) === false })
-        : '';
+      const footerMarkup = footer.buildFooterMarkup({ actionButton, escapeHtml, text: '', showAsk: outcomeOf(record) === 'failed', rerunDisabled: options.canRunAgain?.(configId) === false });
       return '<div class="ide-task-view" data-ide-test-output>'
         + '<div class="ide-task-output-header">'
         + `<span class="ide-task-output-title">${escapeHtml(titleFor(configId))}</span>`
         + `<span class="ide-task-output-result" data-outcome="${outcomeOf(record)}">${escapeHtml(resultLabel(record))}</span>`
         + '</div>'
-        + `<pre class="ide-task-output" tabindex="0">${escapeHtml(outputText(record))}</pre>`
+        + `<pre class="ide-task-output" tabindex="0">${outputLinks.renderLinkedHtml(outputText(record), { rootPath: getRootPath(), actionButton, escapeHtml })}</pre>`
         + footerMarkup
         + '</div>';
     }
@@ -102,7 +103,7 @@
       if (!isActivePanel()) {
         return;
       }
-      const action = typeof footer.actionOf === 'function' ? footer.actionOf(event) : '';
+      const action = footer.actionOf(event);
       const configId = selectedConfigId();
       if (!action || !configId) {
         return;
@@ -121,8 +122,10 @@
       const host = getMountEl();
       if (host && host !== boundHost) {
         boundHost?.removeEventListener('click', onClick);
+        unbindLinks?.();
         boundHost = host;
         host.addEventListener('click', onClick);
+        unbindLinks = outputLinks.bindOutputLinkClicks(host, { windowRef: options.windowRef, appendClientLog: options.appendClientLog });
       }
     }
 
@@ -144,6 +147,8 @@
 
     function dispose() {
       boundHost?.removeEventListener('click', onClick);
+      unbindLinks?.();
+      unbindLinks = null;
       boundHost = null;
     }
 

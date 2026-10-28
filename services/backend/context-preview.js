@@ -6,6 +6,10 @@ const { API_VERSION } = require('./sidecar-client');
 const { buildPreparedContextHistory } = require('./chat-stream-reasoning');
 const { applyCompactionSnapshotToHistory, isCompactionSnapshotEnabled } = require('./session-compaction-snapshot');
 const { normalizeContextPreferences } = require('./context-preferences');
+const { contextCalibrationSendField } = require('./session-context-usage');
+const { isPrimaryChatTurn, primaryChatRoleFields } = require('./chat-send-optional-fields');
+const { withDirectoryToolGate } = require('./session-directory-tool-gate');
+const { composeProfileOverviewContextBlock } = require('./profile-overview-block');
 
 const unavailable = (reason) => ({ status: 'unavailable', reason });
 const inFlight = new WeakMap(); // service -> Map(sessionId -> { key, promise })
@@ -53,12 +57,18 @@ async function runPreview(service, sessionId, session) {
       const compiled = await service.personalityWorkspace.getCompiledContext({ projectId: executionContext.project_id, ensure: false });
       if (compiled) contextBlocks.push({ kind: 'personality', content: String(compiled) });
     }
+    // Row 69: mirror the primary chat's role overlay and profile overview block.
+    const overview = isPrimaryChatTurn(service, session) ? await composeProfileOverviewContextBlock(service, sessionId) : null;
+    if (overview) contextBlocks.push(overview);
     const params = {
       accept_version: API_VERSION, session_id: sessionId, request_id: requestId,
       execution_context: executionContext, messages, context_blocks: contextBlocks,
       run_mode: session.run_mode || 'ask', session_start_date: session.session_start_date || null,
       preferred_model: session.preferred_model || null,
-      tool_preferences: { disabled_tools: resolveSessionToolDenyList(session, service.currentStatus?.tools_status) },
+      ...contextCalibrationSendField(session), ...primaryChatRoleFields(service, session),
+      // Mirrors the turn's session-directory tool gate so the ring does not count schemas the turn hides.
+      tool_preferences: withDirectoryToolGate(service, { sessionId, session },
+        { disabled_tools: resolveSessionToolDenyList(session, service.currentStatus?.tools_status) }),
     };
     if (Buffer.byteLength(JSON.stringify(params), 'utf8') > 8 * 1024 * 1024) return unavailable('preview_too_large');
     const result = await service.sidecarClient.request('context.preview', params, { timeoutMs: 5000 });

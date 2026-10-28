@@ -4,7 +4,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { collectDataInventory, countSessionAttachments } = require('../services/data-lifecycle/data-inventory');
+const {
+  collectDataInventory, countSessionAttachments, countSessionAttachmentsAsync,
+} = require('../services/data-lifecycle/data-inventory');
 const { CheckpointStore } = require('../services/session-runtime/checkpoint-store');
 const { RootRunBudgetStore } = require('../services/session-runtime/budgets');
 const { RuntimeLineageStore } = require('../services/session-runtime/lineage-store');
@@ -116,6 +118,21 @@ describe('collectDataInventory', () => {
       getSession: () => ({ messages: [{ attachments: [{ id: 'a' }, { id: 'b' }] }] }),
     };
     assert.equal(countSessionAttachments(sessionStore), 2);
+  });
+
+  it('counts attachments for the boot-time overview without holding the event loop for every chat', async () => {
+    // Row 62: each chat read is one step; a slice that used its budget yields, so queued IPC runs mid-count.
+    const busy = (ms) => { const end = Date.now() + ms; while (Date.now() < end) { /* simulate a cold read */ } };
+    const order = [];
+    const sessionStore = {
+      listSessions: () => [{ id: 'one' }, { id: 'two' }, { id: 'three' }],
+      getSession: (id) => { order.push(id); busy(10); return { messages: [{ attachments: [{ id }] }, {}] }; },
+    };
+    setTimeout(() => order.push('ipc'), 0);
+    assert.equal(await countSessionAttachmentsAsync(sessionStore), 3);
+    assert.equal(order.at(-1), 'three');
+    assert.ok(order.indexOf('ipc') > 0 && order.indexOf('ipc') < 3, order.join(','));
+    assert.equal(await countSessionAttachmentsAsync(null), 0);
   });
 
   it('archives a profile whose runtime coordination roots were never kept', () => withTempDir((root) => {

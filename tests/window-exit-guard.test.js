@@ -463,3 +463,34 @@ test('a window destroyed during a pending quit preflight resolves it true', asyn
   assert.equal(guard.isPreflightPending(), false);
   assert.equal(timers.size(), 0);
 });
+
+test('a reload while the acked prompt is up drops the pending entry so later closes and quits still work', async () => {
+  const { win, state, fireClose } = createFakeWindow();
+  const navListeners = [];
+  win.webContents.on = (name, handler) => { if (name === 'did-start-navigation') navListeners.push(handler); };
+  const timers = createManualTimers();
+  const { log, entries } = captureLog();
+  const guard = createWindowExitGuard({ log, timeoutMs: 3000, ...timers });
+  guard.attach(win);
+
+  fireClose();
+  guard.resolvePreflight({ requestId: state.sent[0].payload.requestId, ack: true });
+  navListeners.forEach((handler) => handler({ isMainFrame: true, isSameDocument: true }));
+  assert.equal(guard.isPreflightPending(), true, 'a same-document navigation keeps the prompt');
+  navListeners.forEach((handler) => handler({ isMainFrame: false, isSameDocument: false }));
+  assert.equal(guard.isPreflightPending(), true, 'a subframe navigation keeps the prompt');
+  navListeners.forEach((handler) => handler({ isMainFrame: true, isSameDocument: false }));
+  assert.equal(guard.isPreflightPending(), false, 'a main-frame reload drops the orphaned prompt');
+  assert.equal(state.closeCount, 0, 'dropping never closes the window');
+  assert.ok(entries.some((entry) => entry.event === 'window.exit_preflight_dropped'));
+
+  assert.equal(fireClose().prevented, true);
+  assert.equal(state.sent.length, 2, 'the next close asks the new page again');
+
+  guard.resolvePreflight({ requestId: state.sent[1].payload.requestId, proceed: false });
+  const quit = guard.requestQuitPreflight();
+  guard.resolvePreflight({ requestId: state.sent[2].payload.requestId, ack: true });
+  navListeners.forEach((handler) => handler(undefined, 'file:///index.html', false, true));
+  assert.equal(await quit, false, 'a quit whose prompt was reloaded away keeps the app open');
+  assert.equal(guard.isPreflightPending(), false);
+});

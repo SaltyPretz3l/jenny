@@ -28,6 +28,9 @@ MODEL_TOOL_ID_ALIASES: dict[str, str] = {
     "web:fetch_url": "fetch_url",
 }
 COALESCIBLE_TOOL_IDS = frozenset({"mermaid_generate"})
+# Tag on a web_search call whose empty query was filled from the user's prompt.
+WEB_SEARCH_QUERY_FROM_PROMPT = "query_from_prompt"
+_WEB_SEARCH_FALLBACK_QUERY_CHARS = 200
 
 
 def _canonical_tool_call_key(call: ToolCallRequest) -> tuple[str, str]:
@@ -182,7 +185,11 @@ def canonicalize_tool_call_arguments(
     list[dict[str, str]],
     tuple[tuple[ToolCallRequest, ToolExecutionFailure], ...],
 ]:
-    """Canonicalize per-tool argument aliases and isolate conflicting calls."""
+    """Canonicalize per-tool argument aliases and isolate conflicting calls.
+
+    Runs after ``canonicalize_tool_calls``, which already stripped the
+    sidecar-only plan-artifact capability from every call's arguments.
+    """
 
     canonical_calls: list[ToolCallRequest] = []
     aliases: list[dict[str, str]] = []
@@ -194,7 +201,7 @@ def canonicalize_tool_call_arguments(
         try:
             arguments, call_aliases = canonicalize_tool_arguments(
                 tool_name=str(call.tool_id or "").strip(),
-                arguments=strip_plan_artifact_write_arg(call.arguments),
+                arguments=call.arguments,
             )
         except ToolExecutionFailure as error:
             conflicts.append((call, error))
@@ -218,10 +225,15 @@ def repair_web_search_query_arguments(
     Some local tool-call parsers can emit the correct read-only tool name but
     drop its argument object. For `web_search`, the user's latest request is
     already the intended search query, so repair that narrow shape before
-    schema validation rejects it.
+    schema validation rejects it. The query is the prompt's first non-blank
+    line, capped, and the call carries the ``query_from_prompt`` repair tag.
     """
 
-    fallback_query = str(latest_user_content or "").strip()
+    first_line = next(
+        (line.strip() for line in str(latest_user_content or "").splitlines() if line.strip()),
+        "",
+    )
+    fallback_query = first_line[:_WEB_SEARCH_FALLBACK_QUERY_CHARS].rstrip()
     if not fallback_query:
         return tool_calls, []
 
@@ -237,7 +249,13 @@ def repair_web_search_query_arguments(
             repaired_calls.append(call)
             continue
         arguments["query"] = fallback_query
-        repaired_calls.append(replace(call, arguments=arguments))
+        repaired_calls.append(
+            replace(
+                call,
+                arguments=arguments,
+                argument_repairs=(*call.argument_repairs, WEB_SEARCH_QUERY_FROM_PROMPT),
+            )
+        )
         repairs.append(
             {
                 "call_id": str(call.call_id or "").strip(),
@@ -246,14 +264,6 @@ def repair_web_search_query_arguments(
             }
         )
     return tuple(repaired_calls), repairs
-
-
-__all__ = [
-    "canonicalize_tool_call_arguments",
-    "canonicalize_tool_calls",
-    "repair_web_search_query_arguments",
-    "validate_provider_tool_call_limits",
-]
 
 
 def canonicalize_generation_result(
@@ -288,3 +298,16 @@ def canonicalize_generation_result(
                 request_id=request_id,
             )
     return result
+
+
+__all__ = [
+    "COALESCIBLE_TOOL_IDS",
+    "MODEL_TOOL_ID_ALIASES",
+    "WEB_SEARCH_QUERY_FROM_PROMPT",
+    "canonical_model_tool_id",
+    "canonicalize_generation_result",
+    "canonicalize_tool_call_arguments",
+    "canonicalize_tool_calls",
+    "repair_web_search_query_arguments",
+    "validate_provider_tool_call_limits",
+]

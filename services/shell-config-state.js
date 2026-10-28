@@ -79,7 +79,7 @@ const {
   normalizeWorkspaceIdeRelativePath,
   normalizeWorkspaceIdeStore,
 } = require('./workspace-ide-config-schema');
-const { migrateWorkspaceIdeV36 } = require('./shell-config-workspace-ide-migration');
+const { isStructuredWorkspaceIde, migrateWorkspaceIdeV36 } = require('./shell-config-workspace-ide-migration');
 const {
   cloneModelTuning,
   normalizeModelTuning,
@@ -120,6 +120,8 @@ const {
 const { normalizeCommandSandbox } = require('./shell-config-command-sandbox');
 const { normalizeSessionRuntime } = require('./shell-config-session-runtime');
 const { normalizePerformanceTelemetry } = require('./shell-config-performance');
+const { normalizePrimaryChat } = require('./shell-config-primary-chat');
+const { normalizeApiProvidersConfig } = require('./backend/api-provider-config');
 const { normalizeSubagentRouting } = require('./subagent-routing-settings');
 const CONFIG_VERSION = 59;
 const RETIRED_ENGINE_TUNING_KEYS = Object.freeze([
@@ -232,18 +234,22 @@ function migrateState(value = {}, validWorkspaceSessionIds = null) {
     // Home dashboard config (link-tile groups).
     migrated.home = normalizeHomeConfig(source.home);
   }
-  if (version < 24) {
+  // A slice already in the per-root store shape (v37+, e.g. a current file
+  // whose version key was lost) skips the flat v24-v35 steps: they would drop
+  // its preferences and roots. The v36 step normalizes it as a store.
+  const flatIde = !isStructuredWorkspaceIde(source.workspaceIde || source.workspace_ide);
+  if (version < 24 && flatIde) {
     // Workspace IDE page UI state (open tabs, rail layout).
     migrated.workspaceIde = normalizeWorkspaceIde(source.workspaceIde || source.workspace_ide);
   }
-  if (version < 25) {
+  if (version < 25 && flatIde) {
     // Workspace IDE editor preferences (fontSize/tabSize/minimap/lineNumbers/
     // renderWhitespace/eol). Base off the already-migrated slice so a v24 payload
     // keeps its tabs/rail layout and only gains the new defaults; normalizeWorkspaceIde
     // is idempotent so re-normalizing is harmless.
     migrated.workspaceIde = normalizeWorkspaceIde(migrated.workspaceIde || source.workspaceIde || source.workspace_ide);
   }
-  if (version < 26) {
+  if (version < 26 && flatIde) {
     // Workspace IDE bottom panel: Terminal + Problems were re-homed out of the
     // rail into a collapsible bottom container, adding bottomPanelOpen/Height/
     // ActiveView and dropping 'terminal'/'problems' from the railPanel whitelist.
@@ -253,7 +259,7 @@ function migrateState(value = {}, validWorkspaceSessionIds = null) {
     // migrated slice so tabs + editor prefs survive the v24/v25 chain.
     migrated.workspaceIde = normalizeWorkspaceIde(migrated.workspaceIde || source.workspaceIde || source.workspace_ide);
   }
-  if (version < 27) {
+  if (version < 27 && flatIde) {
     // Workspace IDE secondary sidebar: a second static side container opposite
     // the primary rail, hosting one of the existing rail panels. Adds
     // secondaryPanelOpen/secondaryPanel/secondaryWidth. normalizeWorkspaceIde is
@@ -261,7 +267,7 @@ function migrateState(value = {}, validWorkspaceSessionIds = null) {
     // already-migrated slice keeps tabs/rail/editor/bottom-panel state intact.
     migrated.workspaceIde = normalizeWorkspaceIde(migrated.workspaceIde || source.workspaceIde || source.workspace_ide);
   }
-  if (version < 28) {
+  if (version < 28 && flatIde) {
     // Workspace IDE secondary sidebar moves from a second-instance "clone" model
     // to a single-instance per-panel LOCATION model (VSCode "Move View"): adds
     // panelLocations (id -> 'primary'|'secondary', all 'primary' by default).
@@ -273,7 +279,7 @@ function migrateState(value = {}, validWorkspaceSessionIds = null) {
     // keeps tabs/rail/editor/bottom-panel state intact.
     migrated.workspaceIde = normalizeWorkspaceIde(migrated.workspaceIde || source.workspaceIde || source.workspace_ide);
   }
-  if (version < 29) {
+  if (version < 29 && flatIde) {
     // v29 added the Workspace IDE inline-autocomplete preferences (the feature
     // was removed 2026-10-01; normalizing now drops those keys). The step stays
     // a plain re-normalize: normalizeWorkspaceIde is idempotent, so one re-run
@@ -290,7 +296,7 @@ function migrateState(value = {}, validWorkspaceSessionIds = null) {
     // survive the chain.
     migrated.home = normalizeHomeConfig(migrated.home || source.home);
   }
-  if (version < 31) {
+  if (version < 31 && flatIde) {
     // Workspace IDE debounced auto-save adds `autoSaveEnabled` (DEFAULT-OFF —
     // this writes the user's files, so existing configs must NOT silently start
     // auto-writing; normalizeWorkspaceIde defaults a missing/non-true value to
@@ -299,7 +305,7 @@ function migrateState(value = {}, validWorkspaceSessionIds = null) {
     // state intact (the v24–v29 idiom).
     migrated.workspaceIde = normalizeWorkspaceIde(migrated.workspaceIde || source.workspaceIde || source.workspace_ide);
   }
-  if (version < 32) {
+  if (version < 32 && flatIde) {
     // Workspace IDE pinned tabs now persist across restart. Previously the
     // normalizer stripped `pinned` from each open tab (runtime-only); the
     // schema now passes it through. This migration is a pure re-normalize:
@@ -314,7 +320,7 @@ function migrateState(value = {}, validWorkspaceSessionIds = null) {
     // the current default — nothing to backfill.
     migrated.windowUi = normalizeWindowUiSettings(source.windowUi || source.window_ui, source);
   }
-  if (version < 34) {
+  if (version < 34 && flatIde) {
     // Workspace IDE editor column rulers (`rulers`, array of column ints, default
     // []) + save-time hygiene (`formatOnSave`/`trimTrailingWhitespace`/
     // `insertFinalNewline`, all DEFAULT-OFF). Old configs have none, so
@@ -324,7 +330,7 @@ function migrateState(value = {}, validWorkspaceSessionIds = null) {
     // workspaceIde unconditionally on every read).
     migrated.workspaceIde = normalizeWorkspaceIde(migrated.workspaceIde || source.workspaceIde || source.workspace_ide);
   }
-  if (version < 35) {
+  if (version < 35 && flatIde) {
     // The default Workspace IDE rail layout split: Explorer + Search dock left
     // (primary rail), Jenny's Changes + Source Control dock right (secondary
     // sidebar, collapsed). Flip a slice still on the prior default; keep any
@@ -354,6 +360,8 @@ function migrateState(value = {}, validWorkspaceSessionIds = null) {
         ...migrated.workspaceIde,
         preferences: {
           ...migrated.workspaceIde.preferences,
+          // Row 82: the mode is the gate; the boolean is its mirror.
+          autoSaveMode: 'off',
           autoSaveEnabled: false,
         },
       };
@@ -600,6 +608,8 @@ function normalizeState(value = {}, options = {}) {
     sessionRuntime: normalizeSessionRuntime(source.sessionRuntime || source.session_runtime),
     // Additive (row 59 cp6): no CONFIG_VERSION bump; a newer nested schema survives untouched.
     performanceTelemetry: normalizePerformanceTelemetry(source.performanceTelemetry),
+    primaryChat: normalizePrimaryChat(source.primaryChat), // row 76: additive, no version bump
+    apiProviders: normalizeApiProvidersConfig(source.apiProviders), // row 78: additive, no version bump
     subagentRouting: normalizeSubagentRouting(source.subagentRouting),
     toolsWorkspaceRoot: normalizeWorkspaceRoot(source.toolsWorkspaceRoot || source.tools_workspace_root),
     // maxBudgetUsd is stored in the owned engineTuning block like every other
@@ -662,6 +672,8 @@ function cloneState(state) {
     ...state,
     sessionRuntime: normalizeSessionRuntime(state.sessionRuntime),
     performanceTelemetry: normalizePerformanceTelemetry(state.performanceTelemetry),
+    primaryChat: normalizePrimaryChat(state.primaryChat),
+    apiProviders: normalizeApiProvidersConfig(state.apiProviders),
     subagentRouting: normalizeSubagentRouting(state.subagentRouting),
     maxBudgetUsd: normalizeMaxBudgetUsd(state.maxBudgetUsd ?? state.max_budget_usd),
     modelTuning: cloneModelTuning(state.modelTuning),
@@ -740,6 +752,8 @@ function serializeState(state) {
     commandSandbox: normalizeCommandSandbox(state.commandSandbox),
     session_runtime: normalizeSessionRuntime(state.sessionRuntime),
     performanceTelemetry: normalizePerformanceTelemetry(state.performanceTelemetry),
+    primaryChat: normalizePrimaryChat(state.primaryChat),
+    apiProviders: normalizeApiProvidersConfig(state.apiProviders),
     subagentRouting: normalizeSubagentRouting(state.subagentRouting),
     toolsWorkspaceRoot: state.toolsWorkspaceRoot,
     modelTuning: cloneModelTuning(state.modelTuning),

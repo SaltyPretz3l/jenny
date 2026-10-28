@@ -10,8 +10,24 @@
   const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const TREE_DRAG_MIME = 'application/x-jenny-tree-path';
   const TREE_DRAG_PATHS_MIME = 'application/x-jenny-tree-paths';
-  const EXISTS_CODE = 'CMP-WORKSPACEFS-0030';
+  const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
+
+  function resolveModule(globalName, requirePath) {
+    if (globalRef[globalName]) return globalRef[globalName];
+    if (typeof require === 'function') {
+      try {
+        return require(requirePath);
+      } catch (_error) {
+        /* unavailable */
+      }
+    }
+    return {};
+  }
+
+  const { filterAncestorPaths } = resolveModule('rendererIdeTreeSelection', './renderer-ide-tree-selection');
+  const { isExistsError } = resolveModule('rendererIdeTreeMutations', './renderer-ide-tree-mutations');
+
   function hasType(transfer, type) {
     const types = transfer?.types;
     if (!types) return false;
@@ -34,25 +50,50 @@
     return path ? [String(path)] : [];
   }
 
-  function filterAncestorPaths(paths) {
-    const unique = [...new Set((Array.isArray(paths) ? paths : []).map(String).filter(Boolean))];
-    return unique.filter((path) => !unique.some(
-      (candidate) => candidate !== path && path.startsWith(`${candidate}/`)
-    ));
+  // One attribute lookup instead of scanning every rendered row.
+  function findRow(host, path) {
+    if (typeof host?.querySelector !== 'function') return null;
+    const escape = host.ownerDocument?.defaultView?.CSS?.escape || globalRef.CSS?.escape;
+    const value = typeof escape === 'function'
+      ? escape(String(path)) : String(path).replace(/["\\]/g, '\\$&');
+    return host.querySelector(`[data-ide-tree-path="${value}"]`);
+  }
+
+  // The directory a drop over `row` lands in ('' = root) and the node to paint.
+  function dropTargetFor(host, row, parentDirOf) {
+    if (row && !host.contains(row)) return null;
+    const isDirectory = row?.dataset.ideTreeKind === 'directory';
+    const path = isDirectory ? row.dataset.ideTreePath : row ? parentDirOf(row.dataset.ideTreePath) : '';
+    const paintNode = isDirectory ? row : path ? findRow(host, path) : host.querySelector('.ide-tree');
+    return { path, hoverRow: row || null, paintNode };
+  }
+
+  function createDropPainter() {
+    let paintedNode = null;
+    function clear() {
+      paintedNode?.classList.remove('ide-tree-row--drop-target', 'ide-tree--drop-root');
+      paintedNode = null;
+    }
+    function paint(target) {
+      if (!target || paintedNode === target.paintNode) return;
+      clear();
+      paintedNode = target.paintNode;
+      paintedNode?.classList.add(target.path ? 'ide-tree-row--drop-target' : 'ide-tree--drop-root');
+    }
+    return { paint, clear };
   }
 
   function createIdeTreeDnd(deps) {
-    const getDom = typeof deps?.getDom === 'function' ? deps.getDom : () => ({});
     const getMountEl = typeof deps?.getMountEl === 'function'
       ? deps.getMountEl : () => null;
     const isActivePanel = typeof deps?.isActivePanel === 'function'
       ? deps.isActivePanel : () => true;
-    const getIde = typeof deps?.getIde === 'function' ? deps.getIde : () => ({});
     const getRootEpoch = typeof deps?.getRootEpoch === 'function' ? deps.getRootEpoch : () => 0;
     const moveEntry = typeof deps?.moveEntry === 'function' ? deps.moveEntry : async () => {};
-    const getApi = typeof deps?.getApi === 'function' ? deps.getApi : () => null;
-    const getMutationContext = typeof deps?.getMutationContext === 'function'
-      ? deps.getMutationContext : async () => null;
+    // The tree's fenced copy (tree-mutations): refuses without a ready root context.
+    const copyEntry = typeof deps?.copyEntry === 'function' ? deps.copyEntry : async () => {
+      throw new Error('Workspace file access is unavailable; nothing was copied.');
+    };
     const refreshDirectory = typeof deps?.refreshDirectory === 'function'
       ? deps.refreshDirectory : async () => {};
     const showError = typeof deps?.showError === 'function' ? deps.showError : noop;
@@ -67,10 +108,11 @@
     const selection = deps?.selection || {};
     const parentDirOf = typeof deps?.parentDirOf === 'function' ? deps.parentDirOf : () => '';
     const nameOf = typeof deps?.nameOf === 'function' ? deps.nameOf : (path) => String(path || '');
+    const painter = createDropPainter();
     let boundHosts = [];
+    let documentRef = null;
     let draggedPaths = [];
     let draggedKinds = new Map();
-    let paintedNode = null;
     let springPath = '';
     let springTimer = null;
     let springPulseTimer = null;
@@ -86,16 +128,6 @@
     function eventBelongs(event) {
       const host = event?.currentTarget;
       return Boolean(isActivePanel() && host && host === getMountEl() && host.contains(event.target));
-    }
-
-    function findRow(host, path) {
-      return [...(host?.querySelectorAll?.('[data-ide-tree-path]') || [])]
-        .find((row) => row.dataset.ideTreePath === path) || null;
-    }
-
-    function clearPaint() {
-      paintedNode?.classList.remove('ide-tree-row--drop-target', 'ide-tree--drop-root');
-      paintedNode = null;
     }
 
     function clearSpringTimer() {
@@ -169,7 +201,7 @@
     }
 
     function clearDragState() {
-      clearPaint();
+      painter.clear();
       clearSpringTimer();
       clearSpringPulse();
       stopAutoScroll();
@@ -210,6 +242,8 @@
       const row = event.target?.closest?.('[data-ide-tree-path]');
       const transfer = event.dataTransfer;
       if (!row || !transfer) return;
+      // A previous drag whose dragend never arrived must not leak its ghost.
+      clearDragState();
       const resolved = resolveDragRows(event.currentTarget, row);
       if (!resolved.paths.length) return;
       draggedPaths = resolved.paths;
@@ -224,15 +258,13 @@
       transfer.effectAllowed = 'copyMove';
       for (const path of draggedPaths) findRow(event.currentTarget, path)?.classList.add('ide-tree-row--dragging');
       createGhost(event.currentTarget, draggedPaths.length, transfer);
+      // A spring-load repaint detaches the source row, so its dragend never
+      // bubbles to the host: listen on the row itself as well.
+      row.addEventListener('dragend', handleDragEnd, { once: true });
     }
 
     function targetForEvent(event) {
-      const host = event.currentTarget;
-      const row = event.target?.closest?.('[data-ide-tree-path]');
-      if (row && !host.contains(row)) return null;
-      const path = row?.dataset.ideTreeKind === 'directory'
-        ? row.dataset.ideTreePath : row ? parentDirOf(row.dataset.ideTreePath) : '';
-      return { path, hoverRow: row, paintNode: path ? findRow(host, path) : host.querySelector('.ide-tree') };
+      return dropTargetFor(event.currentTarget, event.target?.closest?.('[data-ide-tree-path]'), parentDirOf);
     }
 
     function isRefused(paths, target, allowSameParent = false) {
@@ -267,13 +299,6 @@
       }, 600);
     }
 
-    function paintTarget(target) {
-      if (paintedNode === target.paintNode) return;
-      clearPaint();
-      paintedNode = target.paintNode;
-      paintedNode?.classList.add(target.path ? 'ide-tree-row--drop-target' : 'ide-tree--drop-root');
-    }
-
     function handleDragOver(event) {
       if (!eventBelongs(event)) return;
       if (!hasType(event.dataTransfer, TREE_DRAG_MIME)
@@ -283,27 +308,22 @@
       const copying = event.ctrlKey === true;
       startAutoScroll(event.currentTarget, event.clientY);
       if (!target || isRefused(paths, target.path, copying)) {
-        clearPaint();
+        painter.clear();
         clearSpringTimer();
         return;
       }
       event.preventDefault();
       if (event.dataTransfer) event.dataTransfer.dropEffect = copying ? 'copy' : 'move';
-      paintTarget(target);
+      painter.paint(target);
       armSpringLoad(target, event.currentTarget);
     }
 
     function handleDragLeave(event) {
       if (event.relatedTarget && event.currentTarget?.contains?.(event.relatedTarget)) return;
-      clearPaint();
+      painter.clear();
       clearSpringTimer();
       clearSpringPulse();
       stopAutoScroll();
-    }
-
-    function isExistsError(error) {
-      const code = String(error?.code || '').toUpperCase();
-      return code === EXISTS_CODE || code === 'EXISTS';
     }
 
     function undoIsStale(context) {
@@ -353,26 +373,12 @@
       if (shouldPersist) schedulePersistExpansion();
       const moved = [];
       let copied = 0;
-      let context = null;
-      if (copying) {
-        try {
-          context = await getMutationContext();
-        } catch (_error) {
-          context = null;
-        }
-      }
       for (const path of paths) {
         if (disposed || generation !== operationGeneration || rootEpoch !== getRootEpoch()) break;
         const to = target.path ? `${target.path}/${nameOf(path)}` : nameOf(path);
         try {
           if (copying) {
-            const api = getApi();
-            if (typeof api?.copyEntry !== 'function') throw new Error('Workspace file access is unavailable; nothing was copied.');
-            await api.copyEntry({
-              from: path, to, onCollision: 'auto-rename',
-              ...(Number.isSafeInteger(context?.generation)
-                ? { expectedGeneration: context.generation } : {}),
-            });
+            await copyEntry(path, to);
             copied += 1;
           } else {
             const didMove = await moveEntry(path, to, kinds.get(path));
@@ -385,6 +391,8 @@
           if (!disposed && generation === operationGeneration && rootEpoch === getRootEpoch()) {
             showError(message, { title: jt('ide.treeDnd.workspaceTitle', 'Workspace'), dedupeKey: `ide:tree:${copying ? 'copy' : 'move'}` });
           }
+          // A stale root context refuses every remaining item the same way.
+          if (error?.code === 'workspace_root_context_stale') break;
         }
       }
       if (copying && !disposed && generation === operationGeneration
@@ -407,6 +415,14 @@
       clearDragState();
     }
 
+    // Document-level backstop for drag ends and drops the host never sees (a
+    // detached source, a drop outside the tree). Deferred so the host's own
+    // drop handler reads the drag state first.
+    function handleDocumentDragFinish() {
+      const windowRef = documentRef?.defaultView || globalRef;
+      windowRef.setTimeout?.(() => { if (!disposed) clearDragState(); }, 0);
+    }
+
     function bindEvents() {
       if (boundHosts.length) return;
       disposed = false;
@@ -420,6 +436,9 @@
         host.addEventListener('dragleave', handleDragLeave);
         host.addEventListener('drop', handleDrop);
       }
+      documentRef = boundHosts[0]?.ownerDocument || null;
+      documentRef?.addEventListener('dragend', handleDocumentDragFinish, true);
+      documentRef?.addEventListener('drop', handleDocumentDragFinish, true);
     }
 
     function dispose() {
@@ -435,13 +454,20 @@
         host.removeEventListener('drop', handleDrop);
       }
       boundHosts = [];
+      documentRef?.removeEventListener('dragend', handleDocumentDragFinish, true);
+      documentRef?.removeEventListener('drop', handleDocumentDragFinish, true);
+      documentRef = null;
     }
 
     return { bindEvents, dispose };
   }
 
   return {
+    createDropPainter,
     createIdeTreeDnd,
+    dropTargetFor,
+    findRow,
+    hasType,
     TREE_DRAG_MIME,
     TREE_DRAG_PATHS_MIME,
   };

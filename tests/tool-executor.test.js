@@ -7,6 +7,12 @@ const { createDefaultRegistry } = require('../services/tools');
 const { ToolExecutor } = require('../services/tools/tool-executor');
 const { TOOL_ERROR_CODES } = require('../services/backend/error-codes');
 
+// The executor's live policy path (executePreApproved evaluates the same way).
+function policyFor(executor, toolName, input = {}, context = {}) {
+  const tool = executor.registry.getTool(toolName);
+  return executor._evaluateToolPolicy(tool, input, executor._bindExecutionContext(context)).decision;
+}
+
 function noop() {}
 
 function makeMockTool(overrides = {}) {
@@ -168,6 +174,30 @@ describe('ToolExecutor', () => {
     assert.equal(result.metadata.policy_decision.decision, 'deny');
   });
 
+  test('a missing or non-object input reaches policy and producer as one plain object', async () => {
+    const seen = [];
+    const tool = makeMockTool({
+      name: 'verify',
+      readOnly: true,
+      execute: async (input) => {
+        seen.push(input);
+        return { content: 'ok', isError: false };
+      },
+    });
+    const executor = new ToolExecutor({
+      registry: makeRegistry([tool]),
+      permissionStore: makePermissionStore({ verify: 'auto' }),
+      pathPolicy: {},
+      logger: noop,
+    });
+    const context = makeContext({ beforeProducer: async () => {} });
+    for (const input of [undefined, null, ['list'], 'list']) {
+      const result = await executor.executePreApproved({ callId: 'c', toolName: 'verify', input }, context);
+      assert.equal(result.isError, false, result.content);
+    }
+    assert.deepEqual(seen, [{}, {}, {}, {}]);
+  });
+
   test('unknown tool returns error result', async () => {
     const executor = new ToolExecutor({
       registry: makeRegistry([]),
@@ -232,8 +262,9 @@ describe('ToolExecutor', () => {
 
     assert.equal(result.isError, false);
     assert.equal(result.approvalState, 'auto');
+    // The session is the calling chat's (context), never the model's argument.
     assert.deepEqual(capturedOptions, {
-      session_id: 'session-a',
+      session_id: 'sess_1',
       include_harness: false,
       recent_log_limit: 3,
     });
@@ -408,7 +439,7 @@ describe('ToolExecutor', () => {
     assert.equal(result.metadata.policy_decision.matched_rule_id, 'auto-test-fs');
   });
 
-  test('getToolPolicy previews rule-list decisions with tool input and context', () => {
+  test('policy evaluation previews rule-list decisions with tool input and context', () => {
     const tool = makeMockTool({
       name: 'write_file',
       readOnly: false,
@@ -438,14 +469,14 @@ describe('ToolExecutor', () => {
       logger: noop,
     });
 
-    const autoPolicy = executor.getToolPolicy(
+    const autoPolicy = policyFor(executor,
       'write_file',
       { file_path: 'safe/output.txt' },
       makeContext({ mode: 'assist' })
     );
     assert.equal(autoPolicy, 'auto');
 
-    const defaultPolicy = executor.getToolPolicy(
+    const defaultPolicy = policyFor(executor,
       'write_file',
       { file_path: 'other/output.txt' },
       makeContext({ mode: 'assist' })

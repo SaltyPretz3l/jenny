@@ -9,7 +9,6 @@ const { JSDOM } = require('jsdom');
 const { SKIP, withBrowser, mountComposer, measureButtons, measureControlSizes, assertControlSizes, assertOneCleanLine, isCompact } = require('./helpers/composer-layout-harness');
 
 const HOST = '#ideChatDockBody';
-const CONTROLS = ['Attach', 'Tools', 'Composer settings', 'Pause', 'Stop', 'Queue'];
 const settle = (page) => page.evaluate(() => new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve))));
 
 test('S5: at 320px the streaming dock collapses and keeps every control on one line', { skip: SKIP }, async () => {
@@ -18,7 +17,7 @@ test('S5: at 320px the streaming dock collapses and keeps every control on one l
       const page = await mountComposer(browser, { paneWidth: 320, hostSelector: HOST, streaming: true, mode, waitCompact: false });
       await settle(page);
       assert.equal(await page.evaluate(isCompact), true, `${mode}: compact`);
-      assertOneCleanLine(await measureButtons(page, HOST), `${mode}: 320px dock`, CONTROLS);
+      assertOneCleanLine(await measureButtons(page, HOST), `${mode}: 320px dock`);
       assert.ok(await page.locator('.composer-settings-summary').evaluate((pill) => pill.getBoundingClientRect().width) > 0);
       await page.close();
     }

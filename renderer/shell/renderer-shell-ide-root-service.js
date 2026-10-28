@@ -281,6 +281,7 @@
           showShellErrorToast: (...args) => callbacks.showShellErrorToast?.(...args),
           toErrorMessage: callbacks.toErrorMessage,
           setActiveView: (...args) => callbacks.setActiveView?.(...args),
+          openSettingsSection: (...args) => callbacks.openSettingsSection?.(...args),
           getTurnViewModelsForActiveSession: (...args) => callbacks.getTurnViewModelsForActiveSession?.(...args),
           getSessionMessages: (...args) => callbacks.getSessionMessages?.(...args) || [],
           getChangesUndoController: () => callbacks.getChangesUndoController?.() || null,

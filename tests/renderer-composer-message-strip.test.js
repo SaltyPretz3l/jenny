@@ -130,13 +130,18 @@ test('a failure that cannot be retried offers only Cancel send, and a deleted de
   assert.match(h.text(), /that chat was deleted/u);
 });
 
-test('deliveries older than 24 hours drop out and at most three receipts show, newest first', () => {
+test('deliveries older than 24 hours drop out; only the newest shows until "N earlier" opens the rest in place', () => {
   const outbox = [
     outboxItem({ operation_id: 'old', state: 'delivered', delivered_at: '2026-10-14T15:00:00.000Z' }),
     ...[1, 2, 3, 4].map((n) => outboxItem({ operation_id: `d${n}`, state: 'delivered', delivered_at: `2026-10-15T15:0${n}:00.000Z` })),
   ];
   const view = buildStripView({ counts: {}, outbox }, NOW);
-  assert.deepEqual(view.receipts.map((receipt) => receipt.id), ['d4', 'd3', 'd2']);
+  assert.deepEqual(view.receipts.map((receipt) => receipt.id), ['d4']);
+  assert.equal(view.earlier, 3);
+  const open = buildStripView({ counts: {}, outbox }, NOW, { expanded: true });
+  assert.deepEqual(open.receipts.map((receipt) => receipt.id), ['d4', 'd3', 'd2', 'd1']);
+  assert.equal(open.earlier, 0);
+  assert.equal(open.expanded, true);
 });
 
 test('titles are untrusted: they render as text, never markup', async (t) => {
@@ -331,6 +336,9 @@ test('a delivered report reads "Report to {parent}" and an ordinary send still r
   ];
   const h = harness(t, { data: { 'session-1': { outbox, inbox: [], counts: {} } } });
   await flush();
+  assert.match(h.text(), /1 earlier$/u);
+  h.host.querySelector('[data-message-strip-action="earlier"]').click();
+  assert.match(h.text(), /Show fewer$/u);
   const rows = Array.from(h.host.querySelectorAll('.composer-message-strip__receipt'));
   assert.match(rows[0].querySelector('.composer-message-strip__sent').textContent, /^Report to “Original chat”$/u);
   assert.match(rows[1].querySelector('.composer-message-strip__sent').textContent, /^Sent to “/u);

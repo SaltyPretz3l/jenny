@@ -1,17 +1,18 @@
 /* renderer/chat/renderer-stream-handler-live-events.js -- non-terminal live stream event handlers (UMD) */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./renderer-stream-text-cursor'), require('./renderer-stream-handler-reducer-wiring'), require('./renderer-subagent-monitor-model'));
+    module.exports = factory(require('./renderer-stream-text-cursor'), require('./renderer-stream-handler-reducer-wiring'), require('./renderer-subagent-monitor-model'), require('./renderer-stream-handler-tools'));
     return;
   }
-  root.rendererStreamHandlerLiveEvents = factory(root.rendererStreamTextCursor || {}, root.rendererStreamHandlerReducerWiring || {}, root.rendererSubagentMonitorModel || {});
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (streamTextCursor, segmentIdentityUtils, subagentModel) {
+  root.rendererStreamHandlerLiveEvents = factory(root.rendererStreamTextCursor || {}, root.rendererStreamHandlerReducerWiring || {}, root.rendererSubagentMonitorModel || {}, root.rendererStreamHandlerTools || {});
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (streamTextCursor, segmentIdentityUtils, subagentModel, streamHandlerTools) {
   const {
     createTextCursor,
     resetCursor,
     readDelta,
     usesAggregate,
   } = streamTextCursor;
+  const { pruneSupersededApprovals } = streamHandlerTools;
 
   function createStreamLiveEventHandlers(deps = {}) {
     const {
@@ -71,31 +72,12 @@
       applyLiveTurnPayload(payload, {
         primaryAssistantMessageId: buildAssistantShellMessageId(payload.streamId, 0),
       });
-      const pruned = pruneSupersededApprovals(payload.sessionId, payload.streamId);
+      const pruned = pruneSupersededApprovals(state.pendingToolApprovals, payload.sessionId, payload.streamId);
       multiStreamController?.registerStream?.(payload.sessionId, payload.streamId);
       setChatSendLifecycle(payload.sessionId, 'streaming');
       syncThinkingIndicatorMode(payload.sessionId, 'thinking');
       queueSessionRender(payload.sessionId, { composer: true, header: true, ...(pruned ? { sessions: true } : {}) });
       return { buffered: false, terminal: false };
-    }
-
-    // A session runs one turn at a time, so a new stream supersedes approvals
-    // still filed under an older stream of the same session (a runtime pause
-    // suspends them main-side; Resume re-offers under a new approval id).
-    function pruneSupersededApprovals(sessionId, liveStreamId) {
-      const approvals = state.pendingToolApprovals;
-      const session = String(sessionId || '').trim();
-      const live = String(liveStreamId || '').trim();
-      if (!approvals?.entries || !session || !live) return 0;
-      let pruned = 0;
-      for (const [key, approval] of [...approvals.entries()]) {
-        const streamId = String(approval?.streamId || '').trim();
-        if (String(approval?.sessionId || '').trim() === session && streamId && streamId !== live) {
-          approvals.delete(key);
-          pruned += 1;
-        }
-      }
-      return pruned;
     }
 
     async function handleAgentStatus(payload) {

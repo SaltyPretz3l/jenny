@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import shutil
 import subprocess
 from types import SimpleNamespace
 from typing import Any
@@ -301,7 +300,6 @@ def test_oversized_builtin_read_error_releases_resource_after_server_reply(tmp_p
     assert events[-1] == ("settle", "failed", "confirmed")
 
 
-@pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
 def test_failed_git_process_releases_resource_with_its_cleanup_verdict(tmp_path) -> None:
     # 2026-09-18: git_log on a repository with no commits exits non-zero. The
     # process is gone, but the error reply carried no cleanup verdict, so the

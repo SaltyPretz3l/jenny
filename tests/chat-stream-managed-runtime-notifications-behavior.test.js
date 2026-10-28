@@ -263,9 +263,10 @@ test('bridge tool_execution_started notes a running step, persists the segment, 
   assert.equal(ctx.canonicalToolStartedCallIds.has('call-7'), true);
   assert.equal(ctx.unfinishedToolsSettled, false);
 
+  // 2026-10-27: the segment is cut before the event is captured, then again (a no-op) by the bridge.
   const persisted = callsOf(ctx, 'persistCurrentTextSegment');
-  assert.equal(persisted.length, 1);
-  assert.equal(persisted[0].opts.allowReasoningOnly, true);
+  assert.equal(persisted.length, 2);
+  assert.ok(persisted.every((call) => call.opts.allowReasoningOnly === true && call.opts.atToolBoundary === true));
 
   const diag = callsOf(ctx, 'noteDiagnosticToolEvent');
   assert.equal(diag.length, 1);
@@ -566,4 +567,17 @@ test('canonical tool_execution_completed restores the Electron-stashed artifact 
   // No stash entry: the event passes through unchanged (and the normalizer
   // still refuses a path-less artifact, which is the contract this works with).
   assert.deepEqual(capture(null), []);
+});
+
+test('session.mail_consumed is a known method that marks reserved mid-turn mail consumed (row 70 W2a)', () => {
+  const ctx = makeCtx();
+  ctx.midTurnMail = { reserved: new Map([['snap-1', { rows: [], messageIds: ['m-1', 'm-2'] }]]), consumed: new Set(), settled: false, pending: [] };
+  const options = { toolContext: {}, handleToolNotification: makeHandleToolNotification(ctx) };
+  handleNotification(ctx, { method: 'session.mail_consumed', params: { request_id: 'stream-1', message_ids: ['m-2', 'm-9'], iteration: 2 } }, options);
+  assert.deepEqual([...ctx.midTurnMail.consumed], ['m-2'], 'an id this stream never reserved is ignored');
+  handleNotification(ctx, { method: 'session.mail_consumed', params: { message_ids: 'm-1' } }, options);
+  assert.deepEqual([...ctx.midTurnMail.consumed], ['m-2'], 'a malformed acknowledgement changes nothing');
+  assert.equal(callsOf(ctx, 'serviceLog').filter((l) => l.code === 'chat.unknown_notification_method').length, 0);
+  assert.equal(callsOf(ctx, 'emitChatStream').length, 0);
+  assert.equal(callsOf(ctx, 'touchActiveTurn').length, 0);
 });

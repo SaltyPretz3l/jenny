@@ -142,88 +142,122 @@ test('settings shell controller centralizes programmatic navigation through the 
     global.document = previousDocument;
   }
 });
-test('settings shell controller logs storage failure without blocking navigation', () => {
+// A host with a nav controller that runs the shell's leave guard the way the
+// real one does (renderer-settings-nav-utils.js setActiveSection).
+function createGuardedHost({ state, callbacks = {}, shown = [] }) {
+  let navArgs = null;
+  const controller = createSettingsShellController({
+    state,
+    composerLayoutRuntime: {},
+    dom: { settingsView: { querySelector() { return null; } }, getSectionDom() { return {}; } },
+    constants: { ACTIVITY_SCOPE: {}, TOAST_SOURCE: {} },
+    callbacks: {
+      setActiveView(nextView) { state.ui.activeView = nextView; },
+      appendClientLog() {}, renderAll() {}, renderSessions() {},
+      getCurrentRuntimePreferences() { return {}; }, getRuntimePreferenceSnapshot() { return {}; },
+      runRuntimePreferenceActivity: async () => {}, listSlashCommands() { return []; },
+      ...callbacks,
+    },
+    factories: {
+      settingsRendererUtils: { createSettingsRenderer() { return { renderSettings() {} }; } },
+      settingsEventUtils: {
+        createSettingsEventBindings() {
+          return { bind() {}, dispose() {}, ensureSectionBindings() { return true; }, sectionShown(id) { shown.push(id); } };
+        },
+      },
+      settingsNavUtils: {
+        createSettingsNavController(args) {
+          navArgs = args;
+          return {
+            bind() {}, dispose() {}, restoreActiveSection() {},
+            setActiveSection(sectionId) {
+              const previous = state.ui.activeSettingsSection;
+              if (sectionId !== previous && args.beforeSectionChange(sectionId, previous) === false) return false;
+              state.ui.activeSettingsSection = sectionId;
+              if (sectionId !== previous) args.onSectionChange(sectionId, previous);
+              return true;
+            },
+          };
+        },
+      },
+    },
+  });
+  controller.bind();
+  return { controller, navArgs: () => navArgs };
+}
+
+test('navigateSettingsSection reports a shown section as true and a vetoed leave as false, asking once', () => {
   const previousWindow = global.window;
   const previousDocument = global.document;
+  let answer = false;
+  let asked = 0;
+  global.window = { localStorage: createLocalStorage(), confirm() { asked += 1; return answer; } };
+  global.document = { getElementById() { return null; } };
+  const state = { ui: { activeView: 'chat', activeSettingsSection: 'personality' } };
+  try {
+    const { controller } = createGuardedHost({ state, callbacks: { hasPersonalityUnsavedChanges: () => true } });
+    // The app's openSettingsSection seam calls this once and reads its result:
+    // a cancelled confirm must not be asked again by a second call.
+    assert.equal(controller.navigateSettingsSection('tools'), false);
+    assert.equal(asked, 1);
+    assert.equal(state.ui.activeSettingsSection, 'personality');
+    answer = true;
+    assert.equal(controller.navigateSettingsSection('tools'), true);
+    assert.equal(asked, 2);
+    assert.equal(state.ui.activeSettingsSection, 'tools');
+    controller.dispose();
+  } finally {
+    global.window = previousWindow;
+    global.document = previousDocument;
+  }
+});
 
-  global.window = { localStorage: createLocalStorage({ throwOnSet: true }) };
+test('showing Tools again tells it it is shown, so subagent routing re-reads (non-lazy refresher)', () => {
+  const previousWindow = global.window;
+  const previousDocument = global.document;
+  global.window = { localStorage: createLocalStorage() };
+  global.document = { getElementById() { return null; } };
+  const shown = [];
+  const state = { ui: { activeView: 'settings', activeSettingsSection: 'models' } };
+  try {
+    const { controller } = createGuardedHost({ state, shown });
+    controller.navigateSettingsSection('tools');
+    assert.deepEqual(shown, ['tools'], 'a section pick shows it');
+    controller.navigateSettingsSection('models');
+    void controller.refreshSettingsSection('tools');
+    assert.deepEqual(shown, ['tools', 'tools'], 'the return from another view shows it again');
+    controller.dispose();
+  } finally {
+    global.window = previousWindow;
+    global.document = previousDocument;
+  }
+});
+
+test('a failed companion refresh is logged instead of rejecting unhandled', async () => {
+  const previousWindow = global.window;
+  const previousDocument = global.document;
+  global.window = { localStorage: createLocalStorage() };
   global.document = { getElementById() { return null; } };
   const logs = [];
-  const state = {
-    ui: {
-      activeView: 'chat',
-      activeSettingsSection: 'models',
-    },
-  };
-
+  const state = { ui: { activeView: 'settings', activeSettingsSection: 'models' } };
   try {
-    const controller = createSettingsShellController({
+    const { controller } = createGuardedHost({
       state,
-      composerLayoutRuntime: {},
-      dom: {
-        settingsView: { querySelector() { return null; } },
-        getSectionDom() { return {}; },
-      },
-      constants: {
-        ACTIVITY_SCOPE: {},
-        TOAST_SOURCE: {},
-      },
       callbacks: {
-        setActiveView(nextView) { state.ui.activeView = nextView; },
-        appendClientLog(level, event, payload) {
-          logs.push({ level, event, payload });
-        },
-        renderAll() {},
-        renderSessions() {},
-        getCurrentRuntimePreferences() { return {}; },
-        getRuntimePreferenceSnapshot() { return {}; },
-        runRuntimePreferenceActivity: async () => {},
-        listSlashCommands() { return []; },
-      },
-      factories: {
-        settingsRendererUtils: {
-          createSettingsRenderer() {
-            return {
-              renderSettings() {},
-            };
-          },
-        },
-        settingsEventUtils: {
-          createSettingsEventBindings() {
-            return {
-              bind() {},
-              dispose() {},
-              ensureSectionBindings() {},
-            };
-          },
-        },
-        settingsNavUtils: {
-          createSettingsNavController() {
-            return {
-              bind() {},
-              dispose() {},
-              restoreActiveSection() {},
-            };
-          },
-        },
+        appendClientLog(level, event, payload) { logs.push({ level, event, payload }); },
+        refreshSkillsState: () => Promise.reject(new Error('mcp discovery failed')),
       },
     });
-
-    controller.bind();
-    controller.navigateSettingsSection('tools');
-
-    assert.equal(state.ui.activeView, 'settings');
-    assert.equal(state.ui.activeSettingsSection, 'tools');
-    assert.deepEqual(logs, [
-      {
-        level: 'WARN',
-        event: 'settings.active_section_persist_failed',
-        payload: {
-          section: 'tools',
-          message: 'storage blocked',
-        },
-      },
-    ]);
+    controller.navigateSettingsSection('extensions');
+    await flushAsyncWork();
+    await flushAsyncWork();
+    assert.deepEqual(logs, [{
+      level: 'WARN',
+      event: 'settings.section_refresh_failed',
+      payload: { message: 'mcp discovery failed', section: 'skills' },
+    }]);
+    assert.equal(controller.getSectionRefreshPromise('skills'), null, 'the settled refresh is no longer pending');
+    controller.dispose();
   } finally {
     global.window = previousWindow;
     global.document = previousDocument;

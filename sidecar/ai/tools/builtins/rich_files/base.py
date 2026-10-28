@@ -31,7 +31,6 @@ MAX_RICH_INSPECT_OUTPUT_CHARS = 12_000
 MAX_RICH_INSPECT_STRING_CHARS = 2_000
 MAX_RICH_INSPECT_SUMMARY_STRING_CHARS = 512
 MAX_RICH_INSPECT_WARNINGS = 8
-MAX_RICH_INSPECT_PREVIEWS = 8
 
 RichFileAdapter = Literal[
     "pdf",
@@ -51,7 +50,10 @@ class RichFileSource:
     absolute_path: Path
     mime_type: str
     size_bytes: int
-    sha256: str
+    sha256: str  # "" when the source was not read (unsupported suffix)
+    # The bounded bytes ``sha256`` was computed from; adapters parse these
+    # instead of reopening the file, so the inspected bytes are the hashed ones.
+    raw: bytes | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -68,26 +70,15 @@ class RichInspectFailure:
 class RichInspectResult:
     """The shared result envelope every rich-file adapter returns.
 
-    Adapters fill ``summary`` and optional ``previews`` per format. Preview
-    artifacts are created through ``create_artifact_tool``.
+    Adapters fill ``summary`` per format.
     """
 
     status: Literal["inspected", "unavailable", "unsupported"]
     adapter: RichFileAdapter
     source: RichFileSource
     summary: dict[str, Any] = field(default_factory=dict)
-    previews: tuple[dict[str, Any], ...] = ()
     warnings: tuple[str, ...] = ()
     failure: RichInspectFailure | None = None
-
-
-@dataclass(frozen=True)
-class RichPreviewResult:
-    """Preview artifact data returned by adapters after optional generation."""
-
-    previews: tuple[dict[str, object], ...] = ()
-    warnings: tuple[str, ...] = ()
-    generated_artifacts: tuple[dict[str, object], ...] = ()
 
 
 class RichSourceValidator:
@@ -102,12 +93,20 @@ class RichSourceValidator:
         *,
         max_bytes: int = DEFAULT_MAX_SOURCE_BYTES,
         expected_mime_prefix: str | None = None,
+        supported_suffixes: frozenset[str] | None = None,
     ) -> None:
         self._workspace = workspace
         self._max_bytes = max_bytes
         self._expected_mime_prefix = expected_mime_prefix
+        self._supported_suffixes = supported_suffixes
 
     def validate(self, *, requested_path: str, adapter: RichFileAdapter) -> RichFileSource:
+        """Resolve, check and read the source once (bounded).
+
+        A suffix outside ``supported_suffixes`` is returned unread (empty
+        ``sha256``, no ``raw``) so the adapter can report it as unsupported.
+        """
+
         if not isinstance(requested_path, str) or not requested_path.strip():
             raise ToolExecutionFailure(
                 code=CMP_TOOL_INVALID_PATH,
@@ -172,29 +171,44 @@ class RichSourceValidator:
                 retryable=False,
             )
 
-        sha256 = _sha256_file(
+        if (
+            self._supported_suffixes is not None
+            and absolute.suffix.lower() not in self._supported_suffixes
+        ):
+            return RichFileSource(
+                workspace_path=display_path,
+                absolute_path=absolute,
+                mime_type=mime_type,
+                size_bytes=size,
+                sha256="",
+            )
+
+        raw = read_bounded_file_bytes(
             absolute,
             max_bytes=self._max_bytes,
-            display_path=display_path,
+            message=f"file exceeds {self._max_bytes} byte limit while reading: {display_path}",
             authorized_root=workspace_root,
+            code=CMP_TOOL_RICH_FILES_TOO_LARGE,
         )
 
         return RichFileSource(
             workspace_path=display_path,
             absolute_path=absolute,
             mime_type=mime_type,
-            size_bytes=size,
-            sha256=sha256,
+            size_bytes=len(raw),
+            sha256=hashlib.sha256(raw).hexdigest(),
+            raw=raw,
         )
 
 
-def validate_rich_file_source(
+def validate_rich_file_source(  # noqa: PLR0913 - keyword-only mirror of the validator
     *,
     requested_path: str,
     workspace: WorkspaceGuard,
     adapter: RichFileAdapter,
     max_bytes: int = DEFAULT_MAX_SOURCE_BYTES,
     expected_mime_prefix: str | None = None,
+    supported_suffixes: frozenset[str] | None = None,
 ) -> RichFileSource:
     """Convenience wrapper for adapters that only need a one-shot validation."""
 
@@ -202,8 +216,28 @@ def validate_rich_file_source(
         workspace,
         max_bytes=max_bytes,
         expected_mime_prefix=expected_mime_prefix,
+        supported_suffixes=supported_suffixes,
     )
     return validator.validate(requested_path=requested_path, adapter=adapter)
+
+
+def source_bytes(
+    source: RichFileSource,
+    *,
+    workspace: WorkspaceGuard,
+    max_bytes: int,
+    message: str,
+) -> bytes:
+    """The bytes validation read, or a bounded read for a source built without them."""
+
+    if source.raw is not None:
+        return source.raw
+    return read_bounded_file_bytes(
+        source.absolute_path,
+        max_bytes=max_bytes,
+        authorized_root=workspace.require_root(),
+        message=message,
+    )
 
 
 def string_argument(arguments: dict[str, object], key: str, *, required: bool = False) -> str:
@@ -299,21 +333,12 @@ def rich_inspect_result_payload(result: RichInspectResult) -> dict[str, object]:
         "adapter": result.adapter,
         "source": rich_source_to_metadata(result.source),
         "summary": _sanitize_model_payload(result.summary),
-        "previews": [
-            _sanitize_model_payload(preview)
-            for preview in result.previews[:MAX_RICH_INSPECT_PREVIEWS]
-            if isinstance(preview, dict)
-        ],
         "warnings": _serialize_warnings(result.warnings),
         "failure": rich_failure_to_metadata(result.failure),
     }
 
 
-def rich_inspect_result_to_tool_result(
-    result: RichInspectResult,
-    *,
-    generated_artifacts: tuple[dict[str, object], ...] = (),
-) -> ToolHandlerResult:
+def rich_inspect_result_to_tool_result(result: RichInspectResult) -> ToolHandlerResult:
     """Convert adapter results into bounded ToolHandlerResult output/metadata."""
 
     payload = rich_inspect_result_payload(result)
@@ -331,27 +356,8 @@ def rich_inspect_result_to_tool_result(
             else CMP_TOOL_RICH_FILES_UNSUPPORTED if result.status == "unsupported"
             else None
         ),
-        generated_artifacts=generated_artifacts,
         metadata=metadata,
     )
-
-
-def preview_artifact_metadata(
-    metadata: dict[str, object],
-    *,
-    extra: dict[str, object] | None = None,
-) -> dict[str, object]:
-    """Return model-facing preview metadata shared by rich-file adapters."""
-
-    payload = {
-        "artifact_id": metadata.get("artifact_id"),
-        "display_path": metadata.get("display_path"),
-        "file_name": metadata.get("file_name"),
-        "mime_type": metadata.get("mime_type"),
-    }
-    if extra:
-        payload.update(extra)
-    return payload
 
 
 def _sanitize_model_payload(value: object) -> object:
@@ -403,15 +409,11 @@ def _bounded_json_output(payload: dict[str, object]) -> tuple[str, dict[str, obj
     warnings = normalized.get("warnings")
     if isinstance(warnings, list):
         normalized["warnings"] = [str(item)[:320] for item in warnings[:5]]
-    previews = normalized.get("previews")
-    if isinstance(previews, list):
-        normalized["previews"] = previews[:5]
     raw = _compact_json(normalized)
     if len(raw) <= MAX_RICH_INSPECT_OUTPUT_CHARS:
         return raw, normalized
 
     normalized["summary"] = {"truncated": True}
-    normalized["previews"] = []
     raw = _compact_json(normalized)
     if len(raw) <= MAX_RICH_INSPECT_OUTPUT_CHARS:
         return raw, normalized
@@ -421,7 +423,6 @@ def _bounded_json_output(payload: dict[str, object]) -> tuple[str, dict[str, obj
         "adapter": normalized.get("adapter"),
         "source": normalized.get("source"),
         "summary": {"truncated": True},
-        "previews": [],
         "warnings": ["rich inspect output truncated to fit model budget"],
         "failure": normalized.get("failure"),
         "truncated": True,
@@ -434,7 +435,6 @@ def _bounded_json_output(payload: dict[str, object]) -> tuple[str, dict[str, obj
         "status": normalized.get("status"),
         "adapter": normalized.get("adapter"),
         "summary": {"truncated": True},
-        "previews": [],
         "warnings": ["rich inspect output truncated to fit model budget"],
         "failure": normalized.get("failure"),
         "truncated": True,
@@ -467,42 +467,16 @@ def _trim_summary_for_output(summary: object) -> None:
             )
 
 
-def _sha256_file(
-    path: Path,
-    *,
-    chunk_size: int = 65_536,
-    max_bytes: int | None = None,
-    display_path: str | None = None,
-    authorized_root: Path | None = None,
-) -> str:
-    digest = hashlib.sha256()
-    total = 0
-    with open_regular_file(path, "rb", authorized_root=authorized_root) as handle:
-        while True:
-            chunk = handle.read(chunk_size)
-            if not chunk:
-                break
-            total += len(chunk)
-            if max_bytes is not None and total > max_bytes:
-                raise ToolExecutionFailure(
-                    code=CMP_TOOL_RICH_FILES_TOO_LARGE,
-                    message=(
-                        f"file exceeds {max_bytes} byte limit while hashing: "
-                        f"{display_path or path.name}"
-                    ),
-                    retryable=False,
-                )
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def read_bounded_file_bytes(
     path: Path,
     *,
     max_bytes: int,
-    message: str = "preview source changed beyond rich-file size limit",
+    message: str = "rich-file source changed beyond rich-file size limit",
     authorized_root: Path | None = None,
+    code: str = CMP_TOOL_RICH_FILES_UNSUPPORTED,
 ) -> bytes:
+    """Read at most ``max_bytes``; past it, fail with ``code`` and ``message``."""
+
     content = bytearray()
     total = 0
     try:
@@ -514,7 +488,7 @@ def read_bounded_file_bytes(
                 total += len(chunk)
                 if total > max_bytes:
                     raise ToolExecutionFailure(
-                        code=CMP_TOOL_RICH_FILES_UNSUPPORTED,
+                        code=code,
                         message=message,
                         retryable=False,
                     )

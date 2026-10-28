@@ -22,6 +22,7 @@ const proposeGitActionTool = require('../services/tools/builtin/propose-git-acti
 const proposeCommandTool = require('../services/tools/builtin/propose-command-tool');
 const { createFixture } = require('./helpers/chat-proposal-service-fixture');
 const { cleanupTrackedResources, createTrackedTempDir } = require('./helpers/resource-cleanup');
+const { windowsOnly } = require('./helpers/platform-skips');
 
 const STREAM_ID = 'stream_it_1';
 const TURN_ID = 'turn_it_1';
@@ -338,7 +339,7 @@ test('Run recaptures the command binding: a vanished cwd or a bumped authority m
   assert.equal(submits.length, 0);
 });
 
-test('a multi-line command on the native cmd.exe shell is refused with no record (D4)', { skip: !IS_WIN32 }, async (t) => {
+test('a multi-line command on the native cmd.exe shell is refused with no record (D4)', { skip: windowsOnly('native cmd.exe shell') }, async (t) => {
   const { fx, context } = createHarness(t);
   const before = coordination(fx);
   const result = await proposeCommandTool.execute(

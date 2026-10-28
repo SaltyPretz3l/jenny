@@ -30,6 +30,12 @@ const defaultFs = require('node:fs/promises');
 
 const { TOOL_ERROR_CODES } = require('../../backend/error-codes');
 const { normalizeString } = require('../../shared/normalize');
+const {
+  extensionOf,
+  realpathSafe,
+  toRelativePosix,
+} = require('../../shared/workspace-tool-helpers');
+const { manifestSchema, toolFailure } = require('./tool-result');
 const { workspaceRootId } = require('../../workspace-root-identity');
 
 // Kept in sync BY CONVENTION with renderer/features/renderer-ide-preview-stage.js
@@ -42,50 +48,11 @@ const BINARY_SNIFF_TIMEOUT_MS = 2000;
 const VALID_VIEWS = new Set(['preview', 'file_map', 'change_diff']);
 const CHANGE_ID_PATTERN = /^[A-Za-z0-9._:-]{1,160}$/;
 
-function extensionOf(relPath) {
-  const name = relPath.split('/').pop() || relPath;
-  const dot = name.lastIndexOf('.');
-  return dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
-}
-
-// Wire-safe workspace-relative POSIX form of the caller's path input; '' when
-// the input is not expressible as one (absolute, drive, escape, scheme-like).
-function toRelativePosix(value) {
-  if (typeof value !== 'string') {
-    return '';
-  }
-  const raw = value.trim().replace(/\\/g, '/');
-  if (!raw || raw.includes('\0') || raw.includes(':') || raw.startsWith('/')) {
-    return '';
-  }
-  const segments = raw.split('/').filter((segment) => segment.length > 0 && segment !== '.');
-  if (!segments.length || segments.some((segment) => segment === '..')) {
-    return '';
-  }
-  return segments.join('/');
-}
-
-function failure({ reason, message, summary, errorCode = TOOL_ERROR_CODES.EXECUTION_FAILED, extra = {} }) {
-  return {
-    content: message,
-    summary,
-    isError: true,
-    errorCode,
-    metadata: {
-      result_kind: 'workspace_present',
-      status: 'failed',
-      reason,
-      ...extra,
-    },
-  };
-}
-
-async function realpathSafe(fsLike, target) {
-  try {
-    return await fsLike.realpath(target);
-  } catch (_error) {
-    return path.resolve(target);
-  }
+// Shared failure shape; this tool's callers pass `message` and `extra`.
+function failure({ reason, message, summary, errorCode, extra = {} }) {
+  return toolFailure('workspace_present', {
+    content: message, summary, reason, errorCode, metadata: { status: 'failed', ...extra },
+  });
 }
 
 function normalizeForComparison(value) {
@@ -156,29 +123,10 @@ function createWorkspacePresentTool({
   ));
   return {
   name: 'workspace_present',
-  description: 'Request that the user\'s workspace IDE presents a workspace surface: view="preview" renders a supported file, view="file_map" opens the dependency map, and view="change_diff" opens a recorded Jenny change for review. This is a presentation request, so the UI may defer it while the user is actively working; what the IDE actually did (shown, prompted, dismissed, rendered or failed) is reported at the start of your next request. The in-app Preview renders HTML self-contained: external scripts, stylesheets and images are not loaded.',
+  ...manifestSchema('workspace_present'),
   category: 'builtin',
   readOnly: true,
   workspaceRequired: true,
-  parameters: {
-    type: 'object',
-    properties: {
-      view: {
-        type: 'string',
-        enum: ['preview', 'file_map', 'change_diff'],
-        description: 'Which workspace surface to present.',
-      },
-      path: {
-        type: 'string',
-        description: 'Workspace-relative file path. Required for view="preview" and view="change_diff"; optional for view="file_map".',
-      },
-      change_id: {
-        type: 'string',
-        description: 'Optional recorded change id used to select the exact change when view="change_diff".',
-      },
-    },
-    required: ['view'],
-  },
 
   summarize(input) {
     const view = normalizeString(input?.view);

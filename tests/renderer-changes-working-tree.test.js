@@ -9,6 +9,7 @@ const { createWorkingTreeRender } = require('../renderer/features/renderer-chang
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 const flush = async () => { await settle(); await settle(); await settle(); };
+const settleAll = async () => { for (let pass = 0; pass < 6; pass += 1) await settle(); };
 
 const DIFF_A = [
   'diff --git a/sidecar/ai/trailing_row.py b/sidecar/ai/trailing_row.py',
@@ -437,4 +438,100 @@ test('the render module words every change kind and keeps the end-edge tools out
   assert.match(checking, /Working tree/);
   const thisChat = render.buildScopeRowHtml({ scope: 'this_chat', status: 'ready', branch: 'main' });
   assert.doesNotMatch(thisChat, /changes-scope-branch/);
+});
+
+test('review findings: Show in diff opens the focused file and puts each finding under its line', async () => {
+  const h = harness();
+  await flush();
+  h.page.setReviewFindings({
+    sessionId: 'sess_owner',
+    toolCallId: 'call-9',
+    focusIndex: 2,
+    findings: [
+      { index: 1, severity: 'high', title: 'Returns the wrong value', body: 'Should stay 1.', file: 'sidecar/ai/trailing_row.py', line: 13, endLine: 13 },
+      { index: 2, severity: 'low', title: 'Test never <runs>', body: '', file: 'tests/test_row.py', line: 99, endLine: 99 },
+      { index: 3, severity: 'medium', title: 'No location', body: '', file: '', line: 0, endLine: 0 },
+    ],
+  });
+  await flush();
+  // The focused finding's file opened and loaded its diff.
+  assert.equal(h.row('tests/test_row.py').getAttribute('data-expanded'), 'true');
+  assert.ok(h.calls.diff.some((request) => request.path === 'tests/test_row.py'));
+  // A finding on a changed line sits right under it, with a gutter dot.
+  const first = h.row('sidecar/ai/trailing_row.py');
+  const marked = first.querySelector('.diff-line[data-review-severity]');
+  assert.equal(marked.getAttribute('data-review-severity'), 'high');
+  assert.equal(marked.querySelector('.diff-gutter').textContent, '13');
+  assert.ok(marked.nextElementSibling.classList.contains('diff-annotation'));
+  assert.match(marked.nextElementSibling.textContent, /Returns the wrong value/);
+  assert.ok(marked.nextElementSibling.querySelector('[data-review-finding-action="fix"]'));
+  // A line the hunks do not reach is listed at the top of its file, focused and escaped.
+  const second = h.row('tests/test_row.py');
+  const unplaced = second.querySelector('.diff-annotation--unplaced');
+  assert.match(unplaced.textContent, /Line 99, outside the changed lines/);
+  assert.equal(unplaced.querySelector('.review-diff-comment').getAttribute('data-review-focus'), 'true');
+  assert.equal(unplaced.innerHTML.includes('<runs>'), false);
+  // Once the comment was shown, a refresh keeps the user's collapse of the focused file.
+  h.click(second.querySelector('[data-file-diff-toggle]'));
+  assert.equal(h.row('tests/test_row.py').getAttribute('data-expanded'), 'false');
+  h.page.refresh();
+  await flush();
+  assert.equal(h.row('tests/test_row.py').getAttribute('data-expanded'), 'false');
+  // A plain open (no findings) clears the comments.
+  h.page.setReviewFindings({ findings: [] });
+  await flush();
+  assert.equal(h.root.querySelectorAll('.diff-annotation').length, 0);
+  h.page.setReviewFindings({ sessionId: 'sess_owner', toolCallId: 'call-9', focusIndex: 1, findings: [
+    { index: 1, severity: 'high', title: 'Returns the wrong value', body: '', file: 'sidecar/ai/trailing_row.py', line: 13, endLine: 13 },
+  ] });
+  await flush();
+  // A new owner drops the findings.
+  h.owner.id = 'sess_other';
+  h.page.refresh();
+  await flush();
+  assert.equal(h.root.querySelectorAll('.diff-annotation').length, 0);
+});
+
+test('two overlapping loads for the same owner still show the open file diff (no stuck Loading)', async () => {
+  const h = harness();
+  // A second load while the first listing is in flight (mount plus scope change on open).
+  h.page.refresh();
+  await settleAll();
+  assert.ok(h.calls.list.length >= 2, 'the listing was requested twice');
+  const body = h.row('sidecar/ai/trailing_row.py').querySelector('.file-diff-body');
+  assert.doesNotMatch(body.textContent, /Loading the diff/);
+  assert.equal(body.querySelectorAll('.diff-line').length, 4);
+});
+
+test('switching owner while a listing is in flight lists the new owner instead of staying on checking', async () => {
+  const held = [];
+  const h = harness({ listChanges: (request) => new Promise((resolve) => held.push({ request, resolve })) });
+  await settle();
+  assert.equal(held.length, 1);
+  // Show in diff for another chat's session while the first listing is still out.
+  h.owner.id = 'sess_other';
+  h.page.refresh();
+  await settle();
+  held[0].resolve(listing(FILES));
+  await settleAll();
+  assert.equal(held.length, 2, 'the new owner was listed after the superseded load returned');
+  assert.equal(held[1].request.session_id, 'sess_other');
+  held[1].resolve(listing(FILES));
+  await settleAll();
+  assert.notEqual(h.root.querySelector('[data-changes-wt-body]').getAttribute('data-changes-wt-status'), 'checking');
+});
+
+test('remounting after unmount requests a queued diff again instead of waiting forever', async () => {
+  const many = Array.from({ length: 6 }, (_, i) => ({ path: `src/f${i}.js`, orig_path: null, change: 'modified', binary: false, additions: 1, deletions: 0 }));
+  const h = harness({ holdDiffs: true, listChanges: () => listing(many) });
+  await flush();
+  h.click(h.root.querySelector('[data-changes-wt-expand-all]'));
+  assert.equal(h.calls.diff.length, MAX_PARALLEL_DIFFS, 'the rest wait in the queue');
+  h.page.unmount();
+  h.page.mount(h.root);
+  await flush();
+  for (const resolvers of h.pendingDiffs.values()) for (const resolve of resolvers) resolve({ ok: true, binary: false, diff: DIFF_A });
+  await settleAll();
+  const requested = new Set(h.calls.diff.map((request) => request.path));
+  assert.ok(requested.has('src/f5.js'), 'a diff that was still queued at unmount is requested after the remount');
 });

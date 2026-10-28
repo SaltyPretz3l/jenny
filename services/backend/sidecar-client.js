@@ -26,7 +26,9 @@ const {
 } = require('./sidecar-client-reverse-rpc');
 const { handleElectronToolRequest,
   handleRuntimeOperationRequest } = require('./sidecar-client-request-rpc');
-const { notificationRequestId, notifyEngineActivity, notifySessionRunModeUpdated } = require('./sidecar-client-notifications');
+const {
+  notificationRequestId, notifyEngineActivity, notifySessionMailArrived, notifySessionRunModeUpdated,
+} = require('./sidecar-client-notifications');
 const { armPendingTimeout, isChatTurnMethod, sendPendingChatCancel, suspendRequestTimeout } = require('./sidecar-client-request-timeout');
 const API_VERSION = '2026-10-15';
 const JSONRPC_VERSION = '2.0';
@@ -133,6 +135,17 @@ class SidecarClient extends EventEmitter {
 
   async modelsOllamaBlob(modelId) {
     return this.request('models.ollama_blob', { accept_version: API_VERSION, model_id: String(modelId || '') });
+  }
+
+  // Local dictation (desktop only). audio_b64 is recorded speech: never log these params.
+  async speechPrepare(params = {}, options = {}) {
+    return this.request('speech.prepare', { accept_version: API_VERSION, model_dir: String(params?.model_dir || '') }, options);
+  }
+
+  async speechTranscribe(params = {}, options = {}) {
+    const { model_dir: modelDir, audio_b64: audio, sample_rate: sampleRate, format } = params || {};
+    return this.request('speech.transcribe', { accept_version: API_VERSION, model_dir: String(modelDir || ''),
+      audio_b64: String(audio || ''), sample_rate: sampleRate, format: String(format || '') }, options);
   }
 
   async harnessInspect(params = {}) {
@@ -934,6 +947,10 @@ class SidecarClient extends EventEmitter {
   // hung. Throttled by the caller; routed by the sidecar multiplexer.
   notifyEngineActivity() {
     notifyEngineActivity(this);
+  }
+
+  notifySessionMailArrived(params = {}) {
+    return notifySessionMailArrived(this, params);
   }
 
   notifySessionRunModeUpdated(params = {}) {

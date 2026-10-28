@@ -170,10 +170,14 @@ function createHostedBackend(options = {}) {
     nativeImage: null,
   });
   let backend;
-  const toolPermissionStore = new ToolPermissionStore(path.join(userDataPath, 'tool-permissions.json'));
+  // The permission store reports a read-only (deny-all) fallback while it is
+  // constructed, before the backend exists: those WARNs go to the shell log.
+  const serviceLog = (level, event, fields) => (backend
+    ? backend._emitServiceLog(level, event, fields) : log(level, event, fields));
+  const toolPermissionStore = new ToolPermissionStore(path.join(userDataPath, 'tool-permissions.json'),
+    { logger: serviceLog });
   const toolExecutor = createConversationToolExecutor({ configService,
-    permissionStore: toolPermissionStore,
-    logger: (level, event, fields) => backend?._emitServiceLog(level, event, fields) });
+    permissionStore: toolPermissionStore, logger: serviceLog });
   backend = new BackendService({
     appVersion: String(options.appVersion || 'hosted').trim() || 'hosted',
     userDataPath,
@@ -218,6 +222,7 @@ function createHostedBackend(options = {}) {
   };
   const onDiagnosticDrop = (drop) => logStore.recordDrop(drop?.source, drop?.count);
   backend.on('service-log', onServiceLog);
+  backend.drainEarlyServiceLogs?.().forEach(onServiceLog);
   backend.on('diagnostic-entry', onDiagnosticEntry);
   backend.on('diagnostic-drop', onDiagnosticDrop);
 

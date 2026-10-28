@@ -123,6 +123,35 @@ test('ollamaTray.status returns the contract shape via the injected detectImpl',
   assert.equal(typeof result.supported, 'boolean');
 });
 
+test('ollamaTray.status awaits an async detector and fails soft when it rejects', async () => {
+  // Row 62: the default detector is async so the boot-time status call no
+  // longer blocks the main process on a synchronous PowerShell process list.
+  const backendService = {
+    ollamaManager: { stop: async () => {}, start: async () => ({ started: true }) },
+    featureFlags: { ollama_tray_remediation: true },
+  };
+  const ipcMain = fakeIpcMain();
+  registerOllamaTrayRemediationIpcHandlers(ipcMain, {
+    backendService,
+    log: makeLogSpy(),
+    enabled: true,
+    detectImpl: async () => ({ detected: true, trayProcesses: [{ pid: 7, name: 'ollama app.exe' }], startupShortcuts: [] }),
+  });
+  const result = await ipcMain.invoke('ollama-tray:status');
+  assert.equal(result.ok, true);
+  assert.equal(result.detected, true);
+  assert.deepEqual(result.trayProcesses, [{ pid: 7, name: 'ollama app.exe' }]);
+
+  const failing = fakeIpcMain();
+  registerOllamaTrayRemediationIpcHandlers(failing, {
+    backendService,
+    log: makeLogSpy(),
+    enabled: true,
+    detectImpl: async () => { throw new Error('wmi down'); },
+  });
+  assert.deepEqual(await failing.invoke('ollama-tray:status'), { ok: false, reason: 'wmi down' });
+});
+
 test('ollamaTray.quitTrayApp invokes the injected quitImpl and logs INFO on success', async () => {
   const ipcMain = fakeIpcMain();
   const log = makeLogSpy();

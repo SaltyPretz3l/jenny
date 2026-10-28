@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -23,6 +24,7 @@ from sidecar.ai.tools.manifest_validation import (
     MANAGED_SIDECAR_SURFACE,
     validate_manifest_aliases,
     validate_manifest_availability,
+    validate_manifest_safety,
     validate_manifest_surfaces,
     validate_manifest_tool_family,
 )
@@ -45,6 +47,9 @@ from sidecar.ai.tools.tool_actions import (  # noqa: F401
     parse_tool_actions,
 )
 
+logger = logging.getLogger(__name__)
+_UNSET = object()
+
 BUILTIN_MCP_SERVER_NAME = "jenny_local_tools"
 _ALLOWED_SOURCE_KINDS = frozenset({"builtin", "synthetic"})
 _SYNTHETIC_HANDLER_NAMES = frozenset(
@@ -60,7 +65,8 @@ _SYNTHETIC_HANDLER_NAMES = frozenset(
     }
 )
 _REQUIRED_MANIFEST_FIELDS = frozenset(
-    {"name", "description", "parameters", "category", "source_kind"}
+    {"name", "description", "parameters", "category", "source_kind", "side_effecting",
+     "availability"}
 )
 _DISPLAY_NAME_OVERRIDES = {
     "check_background_job": "Background Job Status",
@@ -79,6 +85,7 @@ _DISPLAY_NAME_OVERRIDES = {
     "monitor": "Monitor",
     "python_execute": "Python Runtime",
     "read_file": "Read File",
+    "report_findings": "Review Findings",
     "run_command": "Run Command",
     "run_temp_script": "Run Temporary Script",
     "stop_background_job": "Stop Background Job",
@@ -215,6 +222,7 @@ def _validate_manifest_entry(entry: dict[str, Any], *, index: int) -> tuple[Conf
     validate_manifest_tool_family(entry.get("tool_family"), label=label)
     validate_manifest_surfaces(entry.get("surfaces"), label=label)
     validate_manifest_availability(entry.get("availability"), label=label)
+    validate_manifest_safety(entry, label=label)
     availability = entry.get("availability")
     if (
         isinstance(availability, dict)
@@ -363,9 +371,31 @@ def infer_tool_family(tool_name: str) -> str:
     return "other"
 
 
-def _bool_config_value(config: Any | None, key: str, *, default: bool) -> bool:
-    value = config_value(config, key, default)
-    return value if isinstance(value, bool) else default
+def bool_config_flag(config: Any | None, key: str, *, default: bool) -> bool:
+    """The one bool tool-config gate for the catalog, assembly and registry.
+
+    An absent key takes *default*. Any present non-bool value (``None`` included)
+    fails closed to ``False`` and is logged: a malformed flag must never enable a
+    tool, nor silently fall back to a default-on value.
+    """
+    value = config_value(config, key, _UNSET)
+    if value is _UNSET:
+        return default
+    if isinstance(value, bool):
+        return value
+    # Lazy: the diagnostics module is not part of the catalog's import cost.
+    from sidecar.runtime.diagnostics import log_event
+
+    log_event(
+        logger,
+        logging.WARNING,
+        component="ai.tools",
+        event="ai.tools.config_gate_invalid",
+        message=f"Tool config gate '{key}' has non-bool value; failing closed.",
+        status="failure",
+        data={"key": key, "value_type": type(value).__name__},
+    )
+    return False
 
 
 def _default_surfaces(source_kind: str) -> tuple[str, ...]:
@@ -418,7 +448,8 @@ def _normalize_availability(value: Any) -> CanonicalToolAvailability:
     )
     return CanonicalToolAvailability(
         config_flag=normalized_config_flag,
-        workspace_required=payload.get("workspace_required") is True,
+        # Absent means required (fail closed), matching the JS descriptor readers.
+        workspace_required=payload.get("workspace_required", True) is True,
         platforms=platforms,
         defer_eligible=payload.get("defer_eligible") is True,
         always_available=payload.get("always_available") is True,
@@ -428,27 +459,34 @@ def _normalize_availability(value: Any) -> CanonicalToolAvailability:
     )
 
 
-def _schema_with_runtime_overrides(
-    tool_name: str,
-    input_schema: dict[str, Any],
+def _with_runtime_overrides(
+    descriptor: CanonicalToolDescriptor,
     *,
     config: Any | None,
-) -> dict[str, Any]:
-    schema = deepcopy(input_schema)
-    if tool_name == "read_file" and not _bool_config_value(
-        config,
-        "tools_image_read_enabled",
-        default=False,
+) -> CanonicalToolDescriptor:
+    """Apply the only two config-dependent descriptor fields to a cached descriptor."""
+    if descriptor.name == "read_file" and not bool_config_flag(
+        config, "tools_image_read_enabled", default=False
     ):
+        schema = deepcopy(descriptor.input_schema)
         properties = schema.get("properties")
         if isinstance(properties, dict):
             properties.pop("pages", None)
-    if tool_name == "run_command" and host_execution_worker_enabled(config):
-        return host_run_command_schema()
-    return schema
+        return replace(descriptor, input_schema=schema)
+    if descriptor.name == "run_command" and host_execution_worker_enabled(config):
+        return replace(
+            descriptor,
+            input_schema=host_run_command_schema(),
+            description=(
+                "Run a foreground POSIX shell command in an offline disposable workspace "
+                "copy. The copy is discarded after the command; maximum timeout is 120 "
+                "seconds."
+            ),
+        )
+    return descriptor
 
 
-def _manifest_descriptor(entry: dict[str, Any], *, config: Any | None) -> CanonicalToolDescriptor:
+def _manifest_descriptor(entry: dict[str, Any]) -> CanonicalToolDescriptor:
     name = str(entry.get("name") or "").strip()
     source_kind = str(entry.get("source_kind") or "builtin").strip() or "builtin"
     availability = _normalize_availability(entry.get("availability"))
@@ -458,16 +496,10 @@ def _manifest_descriptor(entry: dict[str, Any], *, config: Any | None) -> Canoni
     actions = parse_tool_actions(entry.get("actions"))
     side_effecting = coerce_scalar_side_effecting(bool(entry.get("side_effecting", False)), actions)
     read_only = bool(entry.get("read_only", not side_effecting)) and not side_effecting
-    description = str(entry.get("description") or "").strip()
-    if name == "run_command" and host_execution_worker_enabled(config):
-        description = (
-            "Run a foreground POSIX shell command in an offline disposable workspace copy. "
-            "The copy is discarded after the command; maximum timeout is 120 seconds."
-        )
     return CanonicalToolDescriptor(
         name=name,
-        description=description,
-        input_schema=_schema_with_runtime_overrides(name, input_schema, config=config),
+        description=str(entry.get("description") or "").strip(),
+        input_schema=deepcopy(input_schema),
         side_effecting=side_effecting,
         read_only=read_only,
         workflow_eligible=entry.get("workflow_eligible") is True,
@@ -489,11 +521,37 @@ def _manifest_descriptor(entry: dict[str, Any], *, config: Any | None) -> Canoni
     )
 
 
-def manifest_descriptors(*, config: Any | None = None) -> tuple[CanonicalToolDescriptor, ...]:
-    descriptors = [
-        _manifest_descriptor(entry, config=config) for entry in _manifest_entries_by_name().values()
-    ]
+@lru_cache(maxsize=1)
+def _config_free_manifest_descriptors() -> tuple[CanonicalToolDescriptor, ...]:
+    # Parsed, validated and deep-copied once per process: the descriptors are
+    # frozen and their schemas are never mutated in place (overrides copy).
+    descriptors = [_manifest_descriptor(entry) for entry in _manifest_entries_by_name().values()]
     return tuple(sorted(descriptors, key=lambda descriptor: descriptor.name))
+
+
+def clear_manifest_caches() -> None:
+    """Test hook: forget the parsed manifest and every descriptor derived from it."""
+    for cached in (
+        _manifest_payload, _manifest_entries_by_name, _config_free_manifest_descriptors,
+        builtin_tool_names, reserved_tool_names,
+    ):
+        cached.cache_clear()
+
+
+def manifest_descriptors(*, config: Any | None = None) -> tuple[CanonicalToolDescriptor, ...]:
+    return tuple(
+        _with_runtime_overrides(descriptor, config=config)
+        for descriptor in _config_free_manifest_descriptors()
+    )
+
+
+def manifest_platform_supported(name: str, platform: str | None = None) -> bool:
+    """Whether the manifest's ``availability.platforms`` admits *platform* (default: this one)."""
+    for descriptor in _config_free_manifest_descriptors():
+        if descriptor.name == name:
+            platforms = descriptor.availability.platforms
+            return not platforms or (platform or sys.platform) in platforms
+    return False
 
 
 def normalize_runtime_descriptor(descriptor: Any) -> CanonicalToolDescriptor:

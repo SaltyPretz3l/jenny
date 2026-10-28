@@ -18,6 +18,7 @@ const { canonicalJson, sha256Hex } = require('../services/chat-proposal-git-fact
 const { WorkspaceGitService } = require('../services/workspace-git-service');
 const { runWorkspaceGit } = require('../services/workspace-git-executor');
 const { cleanupTrackedResources, createTrackedTempDir } = require('./helpers/resource-cleanup');
+const { fileSymlinkSkip } = require('./helpers/platform-skips');
 
 const SESSION = 'sess_1';
 
@@ -226,14 +227,9 @@ describe('git binding capture', () => {
       { ok: false, reason: 'invalid_request', cause_code: 'path_outside_workspace' });
   });
 
-  test('hashes a leaf symlink by its target text without following it', async (t) => {
+  test('hashes a leaf symlink by its target text without following it', { skip: fileSymlinkSkip() }, async (t) => {
     const root = createRepo();
-    try {
-      fs.symlinkSync('README.md', path.join(root, 'ln'), 'file');
-    } catch (error) {
-      t.skip(`symlinks unavailable here (${error.code})`);
-      return;
-    }
+    fs.symlinkSync('README.md', path.join(root, 'ln'), 'file');
     const { backend } = createBackend(root);
     const result = await captureGit(backend, ['ln']);
     if (result.ok === false && result.cause_code === 'path_not_changed') {

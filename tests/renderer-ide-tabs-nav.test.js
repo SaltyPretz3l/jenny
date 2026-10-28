@@ -168,25 +168,33 @@ test('context menu path/OS utilities: copy path, copy name, OS reveal, default a
   assert.deepEqual(harness.bridge.calls.openInDefaultApp, [{ path: 'src/deep/x.js' }]);
 });
 
+// Drag a.js to before c.js -> open order becomes ['b.js','a.js','c.js'] and a
+// debounced persist is scheduled (timer pending until PERSIST_DEBOUNCE_MS).
+// jsdom has no DragEvent and lays nothing out: plain events with a stubbed
+// dataTransfer suffice, and each tab gets a 100 px box so the drop index
+// (midpoints before the pointer, the dragged tab not counted) is real.
+function dragReorderAToC(harness) {
+  const strip = harness.getDom().ideTabStrip;
+  const window = harness.dom.window;
+  [...strip.querySelectorAll('[data-ide-tab]')].forEach((tab, index) => {
+    tab.getBoundingClientRect = () => ({ left: index * 100, width: 100, right: index * 100 + 100, top: 0, bottom: 30, height: 30 });
+  });
+  const dragged = strip.querySelector('[data-ide-tab="a.js"]');
+  const target = strip.querySelector('[data-ide-tab="c.js"]');
+  const dragStart = new window.Event('dragstart', { bubbles: true });
+  dragStart.dataTransfer = { setData: () => {}, effectAllowed: '' };
+  dragged.dispatchEvent(dragStart);
+  assert.ok(dragged.classList.contains('ide-tab--dragging'), 'the dragged tab is marked');
+  const drop = new window.Event('drop', { bubbles: true, cancelable: true });
+  drop.clientX = 210; // past b.js's midpoint, before c.js's
+  target.dispatchEvent(drop);
+}
+
 test('drag-reorder moves a tab and persists the new order', async (t) => {
   const harness = createHarness({ bridgeOptions: { files: { ...FILES } } });
   t.after(() => harness.dispose());
   await openAll(harness);
-  const strip = harness.getDom().ideTabStrip;
-  const window = harness.dom.window;
-
-  const dragged = strip.querySelector('[data-ide-tab="a.js"]');
-  const target = strip.querySelector('[data-ide-tab="c.js"]');
-  // jsdom has no DragEvent; plain events with a stubbed dataTransfer suffice
-  // because the handlers only read target/clientX/dataTransfer.
-  const dragStart = new window.Event('dragstart', { bubbles: true });
-  dragStart.dataTransfer = { setData: () => {}, effectAllowed: '' };
-  dragged.dispatchEvent(dragStart);
-
-  const drop = new window.Event('drop', { bubbles: true, cancelable: true });
-  drop.clientX = 0; // getBoundingClientRect is all zeros in jsdom -> before
-  Object.defineProperty(drop, 'target', { value: target });
-  strip.dispatchEvent(drop);
+  dragReorderAToC(harness);
   await settle();
 
   assert.deepEqual(
@@ -199,22 +207,6 @@ test('drag-reorder moves a tab and persists the new order', async (t) => {
     ['b.js', 'a.js', 'c.js']
   );
 });
-
-// Drag a.js to before c.js -> open order becomes ['b.js','a.js','c.js'] and a
-// debounced persist is scheduled (timer pending until PERSIST_DEBOUNCE_MS).
-function dragReorderAToC(harness) {
-  const strip = harness.getDom().ideTabStrip;
-  const window = harness.dom.window;
-  const dragged = strip.querySelector('[data-ide-tab="a.js"]');
-  const target = strip.querySelector('[data-ide-tab="c.js"]');
-  const dragStart = new window.Event('dragstart', { bubbles: true });
-  dragStart.dataTransfer = { setData: () => {}, effectAllowed: '' };
-  dragged.dispatchEvent(dragStart);
-  const drop = new window.Event('drop', { bubbles: true, cancelable: true });
-  drop.clientX = 0; // jsdom getBoundingClientRect is all zeros -> insert before
-  Object.defineProperty(drop, 'target', { value: target });
-  strip.dispatchEvent(drop);
-}
 
 test('teardown flushes a pending debounced persist (no data loss on dispose)', async (t) => {
   const harness = createHarness({ bridgeOptions: { files: { ...FILES } } });

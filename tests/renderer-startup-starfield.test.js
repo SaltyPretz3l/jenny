@@ -267,3 +267,22 @@ test('measured (log only): one draw at 220 stars under the 2D stub (real-canvas 
   console.log(`startup starfield stub draw @220 stars: median ${median.toFixed(4)} ms, p95 ${samples[Math.floor(samples.length * 0.95)].toFixed(4)} ms`);
   assert.ok(Number.isFinite(median));
 });
+
+test('a requested collapse duration lands sooner than the default collapse', (t) => {
+  function framesToLand(durationMs) {
+    const { sky, flush, frames } = createSky(t);
+    sky.start();
+    flush();
+    let done = 0;
+    sky.collapse({ onDone() { done += 1; }, ...(durationMs ? { durationMs } : {}) });
+    let count = 0;
+    while (frames.size > 0 && count < 200) { flush(16); count += 1; }
+    assert.equal(done, 1);
+    return count;
+  }
+  const quick = framesToLand(starfieldUtils.QUICK_COLLAPSE_MS);
+  const full = framesToLand(0);
+  assert.equal(starfieldUtils.QUICK_COLLAPSE_MS, 250);
+  assert.ok(quick <= Math.ceil(250 / 16) + 1, `quick collapse lands in ~250 ms (${quick} frames)`);
+  assert.ok(full >= Math.floor(750 / 16), `default collapse keeps ~750 ms (${full} frames)`);
+});

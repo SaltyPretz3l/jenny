@@ -75,7 +75,6 @@ function createPendingBootstrapHarness(t) {
       chatInput: element(),
       composerAttachMenu: element(),
       composerAttachShortcut: element(),
-      composerTerminalShortcut: element(),
     },
     callbacks: {
       getDefaultAppearancePreferences: () => ({}),
@@ -149,7 +148,7 @@ test('window-visible startup mark records whether the reveal used the timeout ba
     return marks;
   }
 
-  assert.equal(runReveal(false)[0].details.trigger, 'renderer-ready');
+  assert.equal(runReveal(false)[0].details.trigger, 'ready-to-show');
   assert.equal(runReveal(true)[0].details.trigger, 'startup-timeout');
 });
 

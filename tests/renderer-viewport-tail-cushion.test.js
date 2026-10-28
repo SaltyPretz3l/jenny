@@ -24,6 +24,11 @@ const { createViewportSchedulingUtils } = require('../renderer/shell/renderer-vi
 function createScene(options = {}) {
   const chromePx = options.chromePx ?? 300;
   const scene = {
+    makeRow(spec) {
+      const row = { ...spec };
+      row.getBoundingClientRect = () => ({ top: 50 + scene.tailOffset + row.offset, height: row.height });
+      return row;
+    },
     timelineHeight: options.timelineHeight ?? 3000,
     tailOffset: options.tailOffset ?? 2000,
     cushion: 0,
@@ -58,11 +63,19 @@ function createScene(options = {}) {
   const answerRow = {
     getBoundingClientRect: () => ({ top: 50 + scene.tailOffset + scene.answerOffset, height: 120 }),
   };
+  // options.rows: the turn's rows as { offset, height } below the turn's top
+  // (height 0 = hidden); tests edit scene.rows to model a frame's changes.
+  scene.rows = (options.rows || []).map((row) => scene.makeRow(row));
   const tail = {
     classList: { contains: () => false },
     previousElementSibling: null,
     getBoundingClientRect: () => ({ top: 50 + scene.tailOffset }),
-    querySelectorAll: (selector) => (options.answerRow && selector === '.turn-row-list > .chat-row' ? [answerRow] : []),
+    querySelectorAll: (selector) => {
+      if (selector !== '.turn-row-list > .chat-row') return [];
+      if (options.rows) return scene.rows;
+      return options.answerRow ? [answerRow] : [];
+    },
+    contains: (node) => node === tail || scene.rows.includes(node) || node === answerRow,
   };
   scene.tail = tail;
   const chatTimeline = {
@@ -449,4 +462,46 @@ test('growth never leaves the room above the current limit', () => {
   scene.resizeTimeline(20);
 
   assert.ok(scene.cushion <= 500 - 200 - TAIL_CUSHION_MIN_VISIBLE_PX, `room ${scene.cushion}px`);
+});
+
+// A tool starting while the reply is followed swaps the tail row in one frame:
+// the Answers view folds the live reasoning line into the run, the Thinking
+// view replaces the activity row with the tool row. The swap is measured from
+// the newest row that survived it (2026-10-20 tail-snap fix).
+test('a tail row swapped in the shrink frame still becomes room, measured from a surviving row', () => {
+  const scene = createScene({ rows: [{ offset: 0, height: 1800 }, { offset: 1800, height: 34 }, { offset: 1834, height: 70 }] });
+  scene.resizeTimeline(0);
+  const before = scene.chatThreadScroll.scrollTop;
+  const [answer] = scene.rows;
+
+  scene.rows = [answer, scene.makeRow({ offset: 1800, height: 30 })];
+  scene.resizeTimeline(-74);
+
+  assert.equal(scene.chatThreadScroll.scrollTop, before, 'the content the reader sees does not move');
+  assert.equal(scene.cushion, 74);
+});
+
+test('a swap with a collapse above the surviving row lets the clamp absorb that part', () => {
+  const scene = createScene({ rows: [{ offset: 0, height: 600 }, { offset: 600, height: 1200 }, { offset: 1800, height: 70 }] });
+  scene.resizeTimeline(0);
+  const before = scene.chatThreadScroll.scrollTop;
+  const [panel, answer] = scene.rows;
+
+  panel.height = 500;
+  answer.offset = 500;
+  scene.rows = [panel, answer, scene.makeRow({ offset: 1700, height: 30 })];
+  scene.resizeTimeline(-140);
+
+  assert.equal(scene.cushion, 40, 'only the tail swap becomes room');
+  assert.equal(scene.chatThreadScroll.scrollTop, before - 100, 'the clamp keeps the tail still for the collapse above');
+});
+
+test('a swap that leaves no remembered row is skipped rather than guessed at', () => {
+  const scene = createScene({ rows: [{ offset: 0, height: 1800 }, { offset: 1800, height: 70 }] });
+  scene.resizeTimeline(0);
+
+  scene.rows = [scene.makeRow({ offset: 0, height: 1796 })];
+  scene.resizeTimeline(-74);
+
+  assert.equal(scene.cushion, 0);
 });

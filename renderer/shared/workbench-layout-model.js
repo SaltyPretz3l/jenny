@@ -61,6 +61,14 @@
     changes: Object.freeze({ home: 'right', minWidth: 280, minHeight: 160, placement: 'edge+group' }),
   });
 
+  // Optional views (row 82 O1: Outline): known to the model, so a persisted tree keeps one
+  // where the user put it, but never re-homed when absent. One joins the tree on first use
+  // (workbench-layout-ops addView), so the default tree and fromLegacy/toLegacy are unchanged.
+  var OPTIONAL_VIEWS = Object.freeze({
+    outline: Object.freeze({ home: 'left', minWidth: 200, minHeight: 120, placement: 'edge' }),
+  });
+  var OPTIONAL_VIEW_IDS = Object.freeze(Object.keys(OPTIONAL_VIEWS));
+
   var CATALOG_IDS = Object.keys(VIEW_CATALOG);
   var LEFT_VIEWS = ['explorer', 'search', 'source-control'];
   var BOTTOM_VIEWS = ['terminal', 'problems', 'run', 'test-runner', 'test-output', 'activity'];
@@ -72,7 +80,8 @@
   // `changes`. Same persistence rule as the terminals.
   var CHAT_INSTANCE_RE = /^(chat|changes)-2$/;
   var RIGHT_VIEWS = ['chat', 'changes'];
-  var FAMILY_OF_HOME = { left: LEFT_VIEWS, bottom: BOTTOM_VIEWS, right: RIGHT_VIEWS };
+  // The stacks a lost view is re-homed into, in order; a left view can land beside Outline.
+  var FAMILY_OF_HOME = { left: LEFT_VIEWS.concat(OPTIONAL_VIEW_IDS), bottom: BOTTOM_VIEWS, right: RIGHT_VIEWS };
 
   /* ------------------------------------------------------------------ small helpers */
 
@@ -83,6 +92,7 @@
   function catalogEntry(id) {
     if (typeof id !== 'string') return null;
     if (Object.prototype.hasOwnProperty.call(VIEW_CATALOG, id)) return VIEW_CATALOG[id];
+    if (Object.prototype.hasOwnProperty.call(OPTIONAL_VIEWS, id)) return OPTIONAL_VIEWS[id];
     if (TERMINAL_INSTANCE_RE.test(id)) return VIEW_CATALOG.terminal;
     var chat = CHAT_INSTANCE_RE.exec(id);
     return chat ? VIEW_CATALOG[chat[1]] : null;
@@ -592,6 +602,7 @@
 
   return {
     VIEW_CATALOG: VIEW_CATALOG,
+    OPTIONAL_VIEW_IDS: OPTIONAL_VIEW_IDS,
     STRIP_SIZE: STRIP_SIZE,
     HEADER_SIZE: HEADER_SIZE,
     EDITOR_MIN_WIDTH: EDITOR_MIN_WIDTH,

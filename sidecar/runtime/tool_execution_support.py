@@ -19,9 +19,11 @@ from sidecar.ai.tools.builtins.file_state import (
     read_snapshot_from_metadata,
 )
 from sidecar.ai.tools.builtins.shell_command_split import cmd_exe_multiline_refusal
+from sidecar.ai.tools.builtins.shell_path_scope import escalate_out_of_root
 from sidecar.ai.tools.builtins.shell_security import CommandVerdict, classify_command
 from sidecar.ai.tools.contracts import (
     ToolExecutionFailure,
+    strip_private_arguments,
     validate_descriptor_arguments,
     validate_tool_arguments,
 )
@@ -56,10 +58,12 @@ __all__ = [
     "handle_tool_search",
     "classify_command",
     "cmd_exe_multiline_refusal",
+    "escalate_out_of_root",
     "is_feature_flag_enabled",
     "read_snapshot_from_metadata",
     "sanitize_tool_output",
     "scan_tool_arguments",
+    "strip_private_arguments",
     "validate_descriptor_arguments",
     "validate_tool_arguments",
     "wrap_untrusted_tool_output",

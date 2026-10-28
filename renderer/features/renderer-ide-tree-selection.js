@@ -6,6 +6,15 @@
   }
   root.rendererIdeTreeSelection = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  // Unique paths with every descendant of another listed path removed, so a
+  // folder and its children are never acted on twice.
+  function filterAncestorPaths(paths) {
+    const unique = [...new Set((Array.isArray(paths) ? paths : []).map(String).filter(Boolean))];
+    return unique.filter((path) => !unique.some(
+      (candidate) => candidate !== path && path.startsWith(`${candidate}/`)
+    ));
+  }
+
   function createIdeTreeSelection() {
     const paths = new Set();
     let anchor = '';
@@ -98,5 +107,5 @@
     };
   }
 
-  return { createIdeTreeSelection };
+  return { createIdeTreeSelection, filterAncestorPaths };
 });

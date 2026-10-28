@@ -75,8 +75,9 @@
       entries: [
         { keys: ['Enter'], description: jt('help.chat.sendMessage', 'Send the message') },
         { keys: ['Shift', 'Enter'], description: jt('help.chat.newLine', 'Insert a new line') },
-        { keys: ['Shift', 'Tab'], description: jt('help.chat.cycleRunMode', 'Cycle run mode (Ask → Auto → Plan)') },
+        { keys: ['Shift', 'Tab'], description: jt('help.chat.cycleRunModeFour', 'Cycle run mode (Ask → Auto → Plan → Propose)') },
         { keys: ['Alt', 'P'], description: jt('help.chat.togglePlanMode', 'Toggle Plan mode') },
+        { keys: ['Ctrl', 'Space'], description: jt('help.chat.dictate', 'Hold to dictate; a quick press starts hands-free') },
         { keys: ['Ctrl', '+'], description: jt('help.chat.zoomIn', 'Zoom chat in') },
         { keys: ['Ctrl', '-'], description: jt('help.chat.zoomOut', 'Zoom chat out') },
         { keys: ['Ctrl', '0'], description: jt('help.chat.resetZoom', 'Reset chat zoom') },

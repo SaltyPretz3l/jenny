@@ -10,8 +10,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sidecar.ai.error_codes import CMP_TOOL_INVALID_PATH
-from sidecar.ai.tools.builtins.filesystem import failure_result
+from sidecar.ai.error_codes import CMP_TOOL_EXECUTION_FAILED, CMP_TOOL_INVALID_PATH
+from sidecar.ai.tools.builtins.file_state import is_reserved_internal_path
 from sidecar.ai.tools.builtins.trash_maintenance import apply_trash_retention_best_effort
 from sidecar.ai.tools.contracts import (
     ToolExecutionFailure,
@@ -21,7 +21,22 @@ from sidecar.ai.tools.contracts import (
 from sidecar.ai.tools.workspace import WorkspaceGuard
 from sidecar.ai.tools.workspace_path_identity import resolve_workspace_leaf
 
-_JENNY_DIR = ".jenny"
+
+# Keep this constructor local (as move_file does): importing
+# filesystem.failure_result as well as file_state would add a seventh
+# sidecar.ai edge past the import fan-out cap.
+def _failure_result(
+    *,
+    message: str,
+    error_code: str = CMP_TOOL_EXECUTION_FAILED,
+    metadata: dict[str, object] | None = None,
+) -> ToolHandlerResult:
+    return ToolHandlerResult(
+        output=message,
+        success=False,
+        error_code=error_code,
+        metadata=dict(metadata or {}),
+    )
 
 
 def delete_file_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> ToolHandlerResult:
@@ -42,14 +57,10 @@ def delete_file_tool(arguments: dict[str, object], workspace: WorkspaceGuard) ->
     leaf = resolve_workspace_leaf(root, raw_path)
     relative = leaf.relative_path
 
-    normalized_relative = relative.replace("\\", "/")
-    while normalized_relative.startswith("./"):
-        normalized_relative = normalized_relative[2:]
-    normalized_relative = normalized_relative.casefold()
-    if normalized_relative == _JENNY_DIR or normalized_relative.startswith(
-        f"{_JENNY_DIR}/"
-    ):
-        return failure_result(
+    # The shared check also folds trailing dots/spaces and ':' stream suffixes;
+    # resolve_workspace_leaf supplies the on-disk name (no 8.3 aliases).
+    if is_reserved_internal_path(relative):
+        return _failure_result(
             message=(
                 f"Refusing to delete {relative}: the .jenny directory holds Jenny's "
                 "backups and trash."
@@ -57,7 +68,7 @@ def delete_file_tool(arguments: dict[str, object], workspace: WorkspaceGuard) ->
             metadata={"path": relative},
         )
     if leaf.is_directory and not recursive:
-        return failure_result(
+        return _failure_result(
             message=(
                 f"{relative} is a directory. Pass recursive: true to delete it and its "
                 "contents."
@@ -69,7 +80,7 @@ def delete_file_tool(arguments: dict[str, object], workspace: WorkspaceGuard) ->
         if not leaf.is_link_object:
             workspace.ensure_safe_mutation_path(leaf.leaf_path)
     except ToolExecutionFailure as error:
-        return failure_result(
+        return _failure_result(
             message=f"Could not delete {relative}: {error.message}",
             error_code=error.code,
             metadata={"path": relative},
@@ -102,7 +113,7 @@ def delete_file_tool(arguments: dict[str, object], workspace: WorkspaceGuard) ->
             failure_metadata["workspace_change_set"] = journal.mark_failed_sequence(
                 prepared, prepared.sequences[0]
             )
-        return failure_result(
+        return _failure_result(
             message=f"Could not delete {relative}: {error.message}",
             error_code=error.code,
             metadata=failure_metadata,

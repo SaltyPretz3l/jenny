@@ -12,10 +12,17 @@ from sidecar.ai.config import parse_runtime_config
 from sidecar.ai.routing import delegate as delegate_module
 from sidecar.ai.routing import subagent_scheduler as scheduler_module
 from sidecar.ai.routing.delegate import execute_delegate_tool
-from sidecar.ai.routing.delegate_child_steps import build_child_steps
+from sidecar.ai.routing.delegate_child_steps import (
+    MAX_CHILD_ANSWER_CHARS,
+    build_child_steps,
+    child_answer,
+    scrub_failed_paths,
+)
 from sidecar.ai.routing.delegate_contracts import (
     DelegateTask,
+    build_compact_delegate_settlement,
     delegate_task_label,
+    delegate_task_prompt,
     validate_delegate_arguments,
 )
 from sidecar.ai.routing.loop_runtime import LoopRuntime
@@ -73,7 +80,13 @@ def test_step_shape_uses_display_name_and_relative_target() -> None:
     )
 
     assert steps == [
-        {"tool": "read_file", "display": "Read File", "ok": True, "target": "docs/plan.md"}
+        {
+            "tool": "read_file",
+            "display": "Read File",
+            "ok": True,
+            "target": "docs/plan.md",
+            "path": "docs/plan.md",
+        }
     ]
 
 
@@ -277,9 +290,12 @@ def test_pattern_and_page_render_into_target() -> None:
     assert steps[0]["target"] == '"needle" in src/core'
     assert steps[1]["target"] == '"needle"'
     assert steps[2]["target"].startswith('"' + "p" * 59 + '\u2026" in src')
-    assert steps[3]["target"] == "docs/manual.pdf \u00b7 p7"
-    assert steps[4]["target"] == "docs/manual.pdf \u00b7 p3"
+    assert steps[3]["target"] == "docs/manual.pdf"
+    assert steps[3]["range"] == "p7"
+    assert steps[4]["target"] == "docs/manual.pdf"
+    assert steps[4]["range"] == "p3"
     assert "target" not in steps[5]
+    assert "range" not in steps[5]
 
 
 def test_error_detail_redacts_secrets_and_is_bounded() -> None:
@@ -295,6 +311,103 @@ def test_error_detail_redacts_secrets_and_is_bounded() -> None:
 
     assert "step-secret-value" not in json.dumps(steps)
     assert len(steps[0]["detail"]) <= 160
+
+
+_EN = "\u2013"
+
+
+@pytest.mark.parametrize(
+    ("tool_input", "expected"),
+    [
+        ({"pages": "1-3"}, f"p1{_EN}3"),
+        ({"pages": "2,5"}, "p2,5"),
+        ({"pages": " 1 - 3 , 7 <b>x</b>"}, f"p1 {_EN} 3 , 7"),
+        ({"page": 3}, "p3"),
+        ({"offset": 0, "limit": 50}, f"lines 1{_EN}50"),
+        ({"offset": 99, "limit": 10}, f"lines 100{_EN}109"),
+        ({"offset": 10}, "from line 11"),
+        ({"limit": 25}, f"lines 1{_EN}25"),
+        ({"cursor": "opaque-token"}, "cont."),
+        ({"headings": ["Install steps", "Other"]}, "\u00a7 Install steps"),
+        # precedence: pages > page > offset/limit > cursor > headings
+        ({"pages": "4", "page": 9, "offset": 1, "limit": 2, "cursor": "c"}, "p4"),
+        ({"page": 9, "offset": 1, "limit": 2, "cursor": "c"}, "p9"),
+        ({"offset": 1, "limit": 2, "cursor": "c", "headings": ["H"]}, f"lines 2{_EN}3"),
+        ({"cursor": "c", "headings": ["H"]}, "cont."),
+        # bool is never an int; invalid values yield nothing
+        ({"page": True}, None),
+        ({"offset": True, "limit": True}, None),
+        ({"pages": "abc"}, None),
+        ({"page": 0, "offset": -1, "limit": 0}, None),
+        ({"cursor": "   "}, None),
+        ({"headings": [""]}, None),
+        ({"headings": []}, None),
+        ({"headings": [5]}, None),
+    ],
+)
+def test_step_range_forms_and_precedence(
+    tool_input: dict[str, object], expected: str | None
+) -> None:
+    steps = build_child_steps(_decision(_outcome("read_pdf", tool_input=tool_input)))
+
+    if expected is None:
+        assert "range" not in steps[0]
+    else:
+        assert steps[0]["range"] == expected
+        assert len(steps[0]["range"]) <= 40
+
+
+def test_step_range_page_falls_back_to_metadata_and_cursor_is_never_echoed() -> None:
+    steps = build_child_steps(
+        _decision(
+            _outcome("read_pdf", tool_input={"path": "a.pdf"}, metadata={"page": 4}),
+            _outcome("read_file", tool_input={"path": "a.md", "cursor": "SECRET-CURSOR-VALUE"}),
+        )
+    )
+
+    assert steps[0]["range"] == "p4"
+    assert steps[1]["range"] == "cont."
+    assert "SECRET-CURSOR-VALUE" not in json.dumps(steps)
+
+
+def test_step_range_heading_and_pages_are_bounded_and_failed_steps_have_no_range() -> None:
+    steps = build_child_steps(
+        _decision(
+            _outcome("read_file", tool_input={"headings": ["H" * 100]}),
+            _outcome("read_pdf", tool_input={"pages": "1-2," * 40}),
+            _outcome("read_pdf", success=False, tool_input={"pages": "1-3"}, output="Denied"),
+        )
+    )
+
+    assert steps[0]["range"] == "\u00a7 " + "H" * 29 + "\u2026"
+    assert len(steps[1]["range"]) == 40
+    assert steps[1]["range"].endswith("\u2026")
+    assert "range" not in steps[2]
+
+
+def test_step_path_only_for_ok_steps_with_a_safe_relative_path() -> None:
+    steps = build_child_steps(
+        _decision(
+            _outcome("read_file", tool_input={"path": "./src/app.py"}),
+            _outcome("read_file", success=False, tool_input={"path": "src/app.py"}, output="no"),
+            _outcome("read_file", tool_input={"path": "/home/me/repo/notes.md"}),
+            _outcome("read_file", tool_input={"path": "../outside.md"}),
+            _outcome("grep_search", tool_input={"pattern": "needle"}),
+            _outcome("grep_search", tool_input={"pattern": "needle", "path": "src"}),
+            _outcome("read_file", tool_input={"path": "~/notes.md"}),
+            _outcome("edit_file", tool_input={"path": "src/app.py"}),
+        )
+    )
+
+    assert steps[0]["path"] == "src/app.py"
+    assert "path" not in steps[1]
+    assert steps[2]["target"] == "notes.md"
+    assert "path" not in steps[2]
+    assert "path" not in steps[3]
+    assert "path" not in steps[4]
+    assert "path" not in steps[5], "a directory root is not a file link"
+    assert "path" not in steps[6], "a home-relative path is not a workspace file"
+    assert steps[7]["path"] == "src/app.py"
 
 
 def test_no_decision_yields_no_steps() -> None:
@@ -325,6 +438,72 @@ def test_label_redacts_secret_looking_prompt_text() -> None:
     label = delegate_task_label(DelegateTask(ordinal=1, prompt="Use api_key=label-secret-value"))
 
     assert "label-secret-value" not in label
+
+
+def test_label_cuts_at_the_first_sentence_end_without_an_ellipsis() -> None:
+    def label(prompt: str) -> str:
+        return delegate_task_label(DelegateTask(ordinal=1, prompt=prompt))
+
+    assert label("Find the test command. Then report it back.") == "Find the test command."
+    assert label("Is the build green? Check CI.") == "Is the build green?"
+    assert label("Stop the build now! Really.") == "Stop the build now!"
+    assert label("Stop now! Really.") == "Stop now! Really.", "too short to be a sentence"
+    assert label("Read these files: a.py and b.py") == "Read these files: a.py and b.py"
+    assert label("Read these files:") == "Read these files"
+    assert label("No terminal punctuation here") == "No terminal punctuation here"
+
+
+def test_label_cuts_long_text_at_a_word_boundary_with_an_ellipsis() -> None:
+    prompt = "Investigate how the scheduler hands queued work to the sidecar worker pool today"
+
+    result = delegate_task_label(DelegateTask(ordinal=1, prompt=prompt))
+
+    assert result == "Investigate how the scheduler hands queued work to the\u2026"
+    assert len(result) <= 60
+    exact = "a" * 29 + " " + "b" * 30
+    assert delegate_task_label(DelegateTask(ordinal=1, prompt=exact)) == exact
+    # A sentence cut that still exceeds the bound is then cut by length.
+    long_sentence = "Investigate how the scheduler hands queued work to the sidecar worker. Stop."
+    cut = delegate_task_label(DelegateTask(ordinal=1, prompt=long_sentence))
+    assert cut.endswith("\u2026")
+    assert len(cut) <= 60
+
+
+def test_label_hard_cuts_an_unbroken_token_to_sixty_chars() -> None:
+    result = delegate_task_label(DelegateTask(ordinal=1, prompt="w" * 200))
+
+    assert result == "w" * 59 + "\u2026"
+
+
+# ---- delegate_task_prompt --------------------------------------------------
+
+
+def test_prompt_keeps_lines_collapses_spaces_and_blank_runs_and_trims() -> None:
+    prompt = "  Read   the  file\t\tnow  \n\n\n\n\n  - item one\n\n\nSecond   para  \n"
+
+    result = delegate_task_prompt(DelegateTask(ordinal=1, prompt=prompt))
+
+    assert result == "Read the file now\n\n- item one\n\nSecond para"
+    assert delegate_task_prompt(DelegateTask(ordinal=2, prompt=None, error={"code": "x"})) == ""
+    assert delegate_task_prompt(DelegateTask(ordinal=3, prompt="  \n ")) == ""
+
+
+def test_prompt_is_bounded_to_two_thousand_chars_with_an_ellipsis() -> None:
+    result = delegate_task_prompt(DelegateTask(ordinal=1, prompt="word " * 1_000))
+
+    assert len(result) <= 2_000
+    assert result.endswith("\u2026")
+    short = "x" * 1_999
+    assert delegate_task_prompt(DelegateTask(ordinal=1, prompt=short)) == short
+
+
+def test_prompt_redacts_secrets_and_strips_format_controls() -> None:
+    result = delegate_task_prompt(
+        DelegateTask(ordinal=1, prompt="Use api_key=prompt-secret-value\u202e and report")
+    )
+
+    assert "prompt-secret-value" not in result
+    assert "\u202e" not in result
 
 
 # ---- delegate tool ---------------------------------------------------------
@@ -462,6 +641,9 @@ def test_delegate_rejected_task_has_empty_steps_and_falls_back_to_ordinal_label(
     assert tasks[1]["label"] == "Task 2"
     assert tasks[1]["steps"] == []
     assert "answer" not in tasks[1]
+    # No live activity reached the settled child; the rejected one has no transcript.
+    assert tasks[0]["transcript"] == []
+    assert "transcript" not in tasks[1] and "transcript_dropped" not in tasks[0]
     child_labels = {
         (item["child_ordinal"], item["child_label"]) for item in progress if item.get("child_label")
     }
@@ -504,3 +686,105 @@ def test_delegate_progress_labels_derive_from_prompt_for_every_emitter(
     assert by_status["queued"] == {"Map the sidecar seams", "Check the release notes"}
     assert by_status["running"] == by_status["queued"]
     assert by_status["completed"] == by_status["queued"]
+
+
+def test_delegate_report_carries_prompt_range_path_and_truncation_but_parent_output_does_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    text = "tail " * 1_200
+    decision = _decision(
+        _outcome("read_pdf", tool_input={"path": "docs/manual.pdf", "pages": "1-3"}),
+        text=text,
+    )
+    result = SubAgentInvocationResult(
+        status="completed", response_text=text, decision=decision, iterations_used=1
+    )
+    prompt = "Summarise the manual.\nInclude the install steps."
+
+    outcome, _progress = _run_delegate(monkeypatch, {"tasks": [prompt]}, {1: result})
+
+    task_report = outcome.metadata["subagent_batch_report"]["tasks"][0]
+    assert task_report["label"] == "Summarise the manual."
+    assert task_report["prompt"] == prompt
+    assert task_report["answer_truncated"] is True
+    assert len(task_report["answer"]) <= 4_000
+    assert task_report["steps"][0]["range"] == "p1\u20133"
+    assert task_report["steps"][0]["path"] == "docs/manual.pdf"
+    payload = json.loads(outcome.output)
+    assert set(payload["results"][0]) <= {"answer", "evidence", "ordinal", "status"}
+    for ui_only in (
+        "prompt",
+        "answer_truncated",
+        "range",
+        '"path"',
+        "Summarise the manual.",
+        "Include the install steps.",
+    ):
+        assert ui_only not in outcome.output
+
+
+def test_delegate_answer_truncated_is_false_for_short_answers_and_rejected_tasks_get_a_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = SubAgentInvocationResult(
+        status="completed", response_text="ok", decision=_decision(text="ok"), iterations_used=1
+    )
+    arguments = {"tasks": ["Inspect the schema", {"prompt": "  bad   task ", "task": "ambiguous"}]}
+
+    outcome, _progress = _run_delegate(monkeypatch, arguments, {1: result})
+
+    tasks = outcome.metadata["subagent_batch_report"]["tasks"]
+    assert tasks[0]["answer_truncated"] is False
+    assert tasks[0]["prompt"] == "Inspect the schema"
+    assert "prompt" in tasks[1]
+    assert "answer_truncated" not in tasks[1]
+
+
+def test_compact_parent_settlement_never_contains_the_label_or_prompt() -> None:
+    report = {
+        "ordinal": 1,
+        "status": "completed",
+        "answer": "done",
+        "evidence": [],
+        "label": "UNIQUE-LABEL-TEXT",
+        "prompt": "UNIQUE-PROMPT-TEXT",
+        "answer_truncated": True,
+        "steps": [{"tool": "read_file", "ok": True, "range": "p1", "path": "a.md"}],
+    }
+
+    settlement = build_compact_delegate_settlement(execution="single", task_reports=[report])
+
+    for needle in ("UNIQUE-LABEL-TEXT", "UNIQUE-PROMPT-TEXT", "answer_truncated", "range", "a.md"):
+        assert needle not in settlement.output
+
+
+def test_label_skips_list_markers_and_abbreviations() -> None:
+    def label(prompt: str) -> str:
+        return delegate_task_label(DelegateTask(ordinal=1, prompt=prompt))
+
+    assert label("1. Find the entry point of the app") == "1. Find the entry point of the app"
+    assert label("Check e.g. the config loader first") == "Check e.g. the config loader first"
+    assert label("Dr. Smith's notes need a summary") == "Dr. Smith's notes need a summary"
+    assert label("Investigate: why does the build fail") == "Investigate: why does the build fail"
+    assert label("Summarize the release notes. Then stop.") == "Summarize the release notes."
+
+
+def test_child_answer_flags_a_cut_even_when_the_overflow_is_whitespace() -> None:
+    _summary, answer, cut = child_answer("a" * MAX_CHILD_ANSWER_CHARS + "   ", summary_chars=1_000)
+
+    assert cut is True
+    assert answer.endswith("[truncated]")
+    assert child_answer("a" * MAX_CHILD_ANSWER_CHARS, summary_chars=1_000)[2] is False
+
+
+def test_scrub_failed_paths_scrubs_every_line_within_the_caller_cap() -> None:
+    text = (
+        "Denied 'C:\\Users\\me\\My Docs\\a.txt'\n"
+        "second line names /etc/shadow and secret.txt\n"
+        "tail beyond the cap /var/log/x"
+    )
+    scrubbed = scrub_failed_paths(text, {"path": "../secret.txt"}, max_chars=80)
+    assert "Users" not in scrubbed and "shadow" not in scrubbed and "secret.txt" not in scrubbed
+    assert scrubbed.count("<path>") == 3
+    assert "tail beyond" not in scrubbed
+    assert scrub_failed_paths("ok /etc/x", "not a dict", max_chars=100) == "ok <path>"

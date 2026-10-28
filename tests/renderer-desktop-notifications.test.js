@@ -191,6 +191,14 @@ test('new inbox rows become permissions / questions candidates with the agreed c
   ]);
 });
 
+test('a failed-delivery inbox row adds no desktop notification and never throws', () => {
+  const { controller, sent } = setup();
+  controller.onInboxRows([]);
+  const failed = { key: 'delivery_failed:s1', kind: 'delivery_failed', sessionId: 's1', sessionTitle: 'Budget review', failedCount: 1 };
+  assert.deepEqual(controller.onInboxRows([failed, approvalRow('c1')]).map((c) => c.key), ['inbox:approval:c1']);
+  assert.deepEqual(sent.map((c) => c.key), ['inbox:approval:c1']);
+});
+
 test('the same row on a later pass is never sent again; it re-fires only after leaving the live set', () => {
   const { controller, sent } = setup();
   controller.onInboxRows([]);

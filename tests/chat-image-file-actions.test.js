@@ -148,6 +148,14 @@ test('a tool ref resolves through the persisted session and copyImage writes the
   assert.deepEqual(calls, [['image', env.toolPath], ['clipboard', image]]);
 });
 
+test('copyImage awaits the async clipboard write and surfaces its rejection', async (t) => {
+  const env = makeEnv(t);
+  const { actions } = makeActions(env, {
+    clipboard: { writeImage: async () => { throw new Error('clipboard busy'); } },
+  });
+  await assert.rejects(actions.copyImage('session-a', { kind: 'tool', id: 'image_tool_chart' }), /clipboard busy/);
+});
+
 test('copyImage reports an unreadable image without touching the clipboard', async (t) => {
   const env = makeEnv(t);
   const { actions, calls } = makeActions(env, {

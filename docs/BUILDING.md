@@ -121,6 +121,36 @@ majors are intentionally rejected before dependency installation.
 See [Uninstall and Data Recovery](operations/UNINSTALL_AND_DATA_RECOVERY.md) for ownership
 and failure semantics.
 
+### Command-line tool packaging
+
+- Inputs: `build/cli/jenny.cmd` (CRLF) and `build/cli/jenny` (POSIX `sh`) are
+  copied by `extraResources` from `build/cli` to `resources/bin` on Windows,
+  macOS and Linux; `files` includes `cli/**/*` so the CLI ships inside
+  `app.asar`; `asarUnpack` lists `services/host/profile_lock.py` because the
+  POSIX profile lock hands it to an external Python; `build/afterPack.js` sets
+  mode 755 on `resources/bin/jenny` (Linux fails closed, macOS best effort).
+- Mechanism: the shim runs the installed Jenny executable with
+  `ELECTRON_RUN_AS_NODE=1 --no-deprecation` on `resources/app.asar/cli/main.js`,
+  so Electron's bundled Node runs the CLI and its exit code is forwarded. The
+  shim lives in `resources/bin` because Windows prefers `Jenny.EXE` over a
+  `.CMD` of the same name in one directory.
+- Windows console input: `Jenny.exe` is a GUI-subsystem executable, so the CLI
+  process gets no stdin handle; Electron attaches it to the parent console for
+  stdout and stderr only. `cli/console-input.js` opens `\\.\CONIN$` for a
+  prompt-less run on a terminal so the interactive loop works without a second
+  executable. The shim must never set `ELECTRON_NO_ATTACH_CONSOLE`. Decision
+  and probes: `docs/plans/CLI_WINDOWS_CONSOLE_LAUNCHER.md`.
+- Verification: `tests/release-compat/test_cli_packaging.js` in
+  `npm run test:dist` pins the builder inputs and shim texts;
+  `tests/electron-builder-cli-require-graph.test.js` proves every module the
+  CLI reaches is inside the `files` globs. The packaged check is owner-run:
+  `npm run pack:dir`, then `dist\win-unpacked\resources\bin\jenny.cmd -V` and
+  `... doctor --json`.
+- No fuse may disable `RunAsNode` (`ELECTRON_RUN_AS_NODE`): every installed CLI
+  depends on it.
+
+See [Jenny CLI](operations/JENNY_CLI.md) for the installed paths and limits.
+
 ### Manual Release Review
 
 After automated packaging smoke passes for a release candidate, run the manual
@@ -172,7 +202,7 @@ extracted tree about 194 MB.
 
 ### Sidecar media site
 
-The optional image and OCR dependencies ship as a platform-specific
+The optional image, OCR and dictation (onnx-asr) dependencies ship as a platform-specific
 `vendor/sidecar-media-site/` directory, packaged at
 `resources/sidecar-media-site/`. They stay outside the PyInstaller onefile
 sidecar because onefile would re-extract more than 200 MB of optional packages
@@ -182,6 +212,10 @@ the target platform with:
 - Windows: `python scripts/packaging/build_media_site.py --platform win_amd64`
 - Linux x64: `python scripts/packaging/build_media_site.py --platform manylinux_2_28_x86_64`
 - macOS arm64: `python scripts/packaging/build_media_site.py --platform macosx_11_0_arm64`
+
+onnx-asr is a pure-Python wheel over the site's onnxruntime; the dictation
+speech model is not packaged (Settings > Dictation downloads it into the user
+profile against pinned SHA-256 hashes, see `services/dictation-model-manifest.js`).
 
 `antlr4-python3-runtime` (needed by omegaconf) is published only as a source
 archive; the builder hash-verifies that archive against the lock, builds it into
@@ -765,9 +799,10 @@ Bundled model, runtime, and tool asset plan:
 - Current first-party packaged tool assets include `services/tools/tool-manifest.json`
   and `skills/**`.
 - Current app-resource bundles include `vendor/pretext-layout.umd.js`, which is
-  derived from the npm-locked `@chenglou/pretext` dependency. Record its source
-  package version, generation/update command if known, license, and SHA256 in
-  the release evidence until a dedicated vendor-asset manifest exists.
+  derived from the npm-locked `@chenglou/pretext` dependency and regenerated with
+  `node scripts/build-pretext-umd.js` after an `npm ci`. Record its source
+  package version, that command, license, and SHA256 in the release evidence
+  until a dedicated vendor-asset manifest exists.
 - Vendored UI asset record: `renderer/inventory/assets/search.svg` comes from
   Tabler Icons v3.46.0 release commit `8ac7d81` at
   `https://github.com/tabler/tabler-icons/blob/v3.46.0/icons/outline/search.svg`,

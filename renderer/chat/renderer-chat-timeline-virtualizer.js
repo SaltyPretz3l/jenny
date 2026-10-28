@@ -302,8 +302,10 @@
       try { captureReaderAnchor(); } catch (error) { logIgnoredError('capture_anchor', error); }
     }
 
-    function restoreIfDetached() {
-      try { noteProgrammaticWrite?.('virtualizer'); } catch (error) { logIgnoredError('note_write', error); }
+    // A resize the virtualizer did not cause passes attribute=false: the coordinator arms
+    // `anchor_restore` itself when a restore moves the viewport (2026-10-17 scroll report).
+    function restoreIfDetached(attribute) {
+      if (attribute !== false) try { noteProgrammaticWrite?.('virtualizer'); } catch (error) { logIgnoredError('note_write', error); }
       try { restoreReaderAnchor(); } catch (error) { logIgnoredError('restore_anchor', error); }
     }
 
@@ -878,7 +880,7 @@
       // Row/content height changes arrive after layout. The coordinator keeps
       // the last detached-reader logical anchor, so restoring it here repairs
       // Mermaid/tool/reasoning reflow without measuring the shell broadly.
-      restoreIfDetached();
+      restoreIfDetached(false);
     }
 
     function handleWindowResize() {
@@ -887,7 +889,7 @@
       if (nextWidth <= 0 || layoutWidth <= 0 || Math.abs(nextWidth - layoutWidth) > 1) {
         scheduleLayoutInvalidation();
       } else {
-        restoreIfDetached();
+        restoreIfDetached(false);
       }
     }
 

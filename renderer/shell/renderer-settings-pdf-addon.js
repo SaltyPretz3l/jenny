@@ -168,6 +168,7 @@
     let disposed = false;
     let unsubscribe = null;
     let generation = 0;
+    let paintedMarkup = null; // the row markup last written into the host
     const cleanups = [];
 
     function button(id, label, variant = 'secondary', size = 'md') {
@@ -280,10 +281,14 @@
         }
       }
       if (!host) return;
+      host.dataset.pdfAddonState = model.state;
+      // A progress or state event that changes nothing on screen keeps the nodes (and focus) as they are.
+      const markup = getMarkup();
+      if (markup === paintedMarkup) return;
       const active = documentRef?.activeElement;
       const activeAction = active && host.contains?.(active) ? active.getAttribute?.('data-action') : '';
-      host.dataset.pdfAddonState = model.state;
-      host.innerHTML = getMarkup();
+      host.innerHTML = markup;
+      paintedMarkup = markup;
       if (activeAction) host.querySelector?.(`[data-action="${activeAction}"]`)?.focus?.();
     }
 

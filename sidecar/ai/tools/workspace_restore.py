@@ -9,7 +9,8 @@ from os import path as os_path
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, cast
 
-from sidecar.ai.error_codes import CMP_TOOL_EXECUTION_FAILED
+from sidecar.ai.error_codes import CMP_TOOL_CAP_EXCEEDED, CMP_TOOL_EXECUTION_FAILED
+from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace_mutation_journal_contract import (
     EMPTY_SHA256,
     PathSignature,
@@ -17,7 +18,10 @@ from sidecar.ai.tools.workspace_mutation_journal_contract import (
     validate_relative_path,
     workspace_identity,
 )
-from sidecar.ai.tools.workspace_mutation_journal_store import WorkspaceMutationJournalStore
+from sidecar.ai.tools.workspace_mutation_journal_store import (
+    _CHANGE_SET_ID_RE,
+    WorkspaceMutationJournalStore,
+)
 from sidecar.ai.tools.workspace_restore_io import (
     RestorePathUnsafe,
     bound_workspace,
@@ -42,13 +46,7 @@ MAX_LISTED_CHANGE_SETS = 200
 RESTORE_ERROR_CODE = CMP_TOOL_EXECUTION_FAILED
 
 class WorkspaceRestoreError(RuntimeError):
-    def __init__(
-        self,
-        reason: str,
-        message: str,
-        *,
-        details: Mapping[str, object] | None = None,
-    ) -> None:
+    def __init__(self, reason: str, message: str, *, details: Mapping[str, object] | None = None) -> None:
         super().__init__(message)
         self.code = RESTORE_ERROR_CODE
         self.reason = reason
@@ -59,18 +57,9 @@ def list_change_sets(
     store: WorkspaceMutationJournalStore, workspace_root: str | Path
 ) -> dict[str, object]:
     identity = _identity(workspace_root)
-    workspace_dir = store.version_root / identity.workspace_id
     records: list[dict[str, object]] = []
-    try:
-        children = sorted(workspace_dir.iterdir(), key=lambda item: item.name, reverse=True)
-    except FileNotFoundError:
-        children = []
-    except OSError as error:
-        raise _failure("journal_list_failed", "Workspace recovery sets could not be listed.", error) from error
-    for child in children[:MAX_LISTED_CHANGE_SETS]:
-        if not child.is_dir() or child.is_symlink():
-            continue
-        loaded = store.load(identity.workspace_id, child.name)
+    for change_set_id in _newest_change_set_ids(store, identity.workspace_id):
+        loaded = store.load(identity.workspace_id, change_set_id)
         if not loaded.ok or loaded.record is None:
             continue
         records.append(_change_set_summary(loaded.record))
@@ -86,17 +75,41 @@ def preflight_undo(
 ) -> dict[str, object]:
     store.reconcile_workspace(workspace_root)
     root, record = _load_record(store, workspace_root, change_set_id)
-    busy_sets = cast(list[dict[str, object]], list_change_sets(store, root)["change_sets"])
-    if any(
-        item["change_set_id"] != change_set_id
-        and item["state"] in {"prepared", "in_progress"}
-        for item in busy_sets
-    ):
+    _assert_no_other_active_set(store, root, change_set_id)
+    return _preflight_loaded(store, root, record)
+
+def _assert_no_other_active_set(
+    store: WorkspaceMutationJournalStore, root: Path, change_set_id: str
+) -> None:
+    """One store scan: Undo and Redo wait while any other change set is open."""
+    try:
+        stored = store._scan_workspace(_identity(root).workspace_id)
+    except OSError as error:
+        raise _failure("journal_list_failed", "Workspace recovery sets could not be listed.", error) from error
+    if any(item.change_set_id != change_set_id and item.record["state"] in {"prepared", "in_progress"}
+           for item in stored):
         raise WorkspaceRestoreError(
             "restore_workspace_busy",
             "Workspace recovery is blocked while another change set is active.",
             details={"status": "busy"},
         )
+
+def _newest_change_set_ids(store: WorkspaceMutationJournalStore, workspace_id: str) -> list[str]:
+    """Change-set directory names newest first (UUIDv7), skipping ``.locks`` and strays."""
+    try:
+        names = sorted((child.name for child in (store.version_root / workspace_id).iterdir()
+                        if _CHANGE_SET_ID_RE.fullmatch(child.name)
+                        and child.is_dir() and not child.is_symlink()), reverse=True)
+    except FileNotFoundError:
+        return []
+    except OSError as error:
+        raise _failure("journal_list_failed", "Workspace recovery sets could not be listed.", error) from error
+    return names[:MAX_LISTED_CHANGE_SETS]
+
+def _preflight_loaded(
+    store: WorkspaceMutationJournalStore, root: Path, record: dict[str, Any]
+) -> dict[str, object]:
+    change_set_id = cast(str, record["change_set_id"])
     if record["state"] not in {"committed", "interrupted"}:
         raise WorkspaceRestoreError(
             "change_set_not_restorable",
@@ -145,17 +158,7 @@ def undo_change_set(
 ) -> dict[str, object]:
     store.reconcile_workspace(workspace_root)
     root, record = _load_record(store, workspace_root, change_set_id)
-    busy_sets = cast(list[dict[str, object]], list_change_sets(store, root)["change_sets"])
-    if any(
-        item["change_set_id"] != change_set_id
-        and item["state"] in {"prepared", "in_progress"}
-        for item in busy_sets
-    ):
-        raise WorkspaceRestoreError(
-            "restore_workspace_busy",
-            "Workspace recovery is blocked while another change set is active.",
-            details={"status": "busy"},
-        )
+    _assert_no_other_active_set(store, root, change_set_id)
     restore = cast(dict[str, Any], record["restore"])
     if restore["status"] == "interrupted":
         raise WorkspaceRestoreError("restore_needs_review", "Interrupted restore requires manual review.", details={"status": "needs_review"})
@@ -163,7 +166,7 @@ def undo_change_set(
         return _receipt(record)
     if restore["status"] != "in_progress":
         if restore["status"] != "preflight":
-            preflight_undo(store, root, change_set_id)
+            _preflight_loaded(store, root, record)  # reconciled and busy-checked above
             _root, record = _load_record(store, root, change_set_id)
             restore = cast(dict[str, Any], record["restore"])
         plan = _inverse_plan(record)
@@ -207,7 +210,6 @@ def _resumable_failure(record: Mapping[str, Any], reason: str, message: str, err
     return WorkspaceRestoreError(reason, message, details={
         "status": "in_progress", "error_type": type(error).__name__, "completed_count": len(completed), **getattr(error, "details", {}),
     })
-
 
 def abandon_restore(
     store: WorkspaceMutationJournalStore,
@@ -741,13 +743,15 @@ def _copy_recovery_object(
             pass  # A temp behind a changed parent is left in place, never chased.
         raise
 
-
 def _copy_exclusive(source: Path, destination: Path) -> None:
     try:
         copy_new(source, destination)
     except ValueError as error:
         raise WorkspaceRestoreError("recovery_object_unsupported", "Recovery object type is unsupported.") from error
-
+    except ToolExecutionFailure as error:  # MAX_RESTORE_FILE_BYTES, refused before reading
+        if error.code != CMP_TOOL_CAP_EXCEEDED:
+            raise
+        raise WorkspaceRestoreError("recovery_object_too_large", error.message) from error
 
 def _commit_restore(record: dict[str, Any]) -> None:
     restore = cast(dict[str, Any], record["restore"])
@@ -775,7 +779,6 @@ def _commit_restore(record: dict[str, Any]) -> None:
         "conflicts": len(cast(list[object], restore["decisions"])),
         "warning": str(record["coverage"]["warning"])[:512],
     }
-
 
 def _receipt(record: Mapping[str, Any], *, only: set[str] | None = None) -> dict[str, object]:
     restore = cast(Mapping[str, Any], record["restore"])
@@ -826,23 +829,18 @@ def _receipt(record: Mapping[str, Any], *, only: set[str] | None = None) -> dict
         "outside_undo_set": _outside_undo_set(record),
     }
 
-
 def _find_trash_recovery(
     store: WorkspaceMutationJournalStore, root: Path, name: str
 ) -> tuple[dict[str, Any], str] | None:
+    """The newest change set recording ``name`` in the trash decides; one load per set until then."""
     identity = _identity(root)
-    workspace_dir = store.version_root / identity.workspace_id
-    try:
-        children = list(workspace_dir.iterdir())[:MAX_LISTED_CHANGE_SETS]
-    except (FileNotFoundError, OSError):
-        return None
     prefix = f".jenny/trash/{name}/"
     exact = f".jenny/trash/{name}"
-    matches: list[tuple[dict[str, Any], str]] = []
-    for child in children:
-        loaded = store.load(identity.workspace_id, child.name)
+    for change_set_id in _newest_change_set_ids(store, identity.workspace_id):
+        loaded = store.load(identity.workspace_id, change_set_id)
         if not loaded.ok or loaded.record is None:
             continue
+        matches: list[tuple[dict[str, Any], str]] = []
         for operation in cast(list[dict[str, Any]], loaded.record["operations"]):
             for recovery in cast(list[dict[str, Any]], operation["recovery_objects"]):
                 path = cast(str, recovery["workspace_relative_path"])
@@ -851,10 +849,11 @@ def _find_trash_recovery(
                 for step in cast(list[dict[str, Any]], operation["inverse_steps"]):
                     if step["recovery_object_id"] == recovery["object_id"] and step["to_relative_path"]:
                         matches.append((recovery, cast(str, step["to_relative_path"])))
-    if len(matches) > 1:
-        raise WorkspaceRestoreError("trash_entry_ambiguous", "Trash entry maps to multiple original paths.")
-    return matches[0] if matches else None
-
+        if len(matches) > 1:
+            raise WorkspaceRestoreError("trash_entry_ambiguous", "Trash entry maps to multiple original paths.")
+        if matches:
+            return matches[0]
+    return None
 
 def _decision_map(record: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     return {
@@ -862,14 +861,12 @@ def _decision_map(record: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
         for item in cast(list[dict[str, Any]], record["restore"]["decisions"])
     }
 
-
 def _recovery_signature(record: Mapping[str, Any], object_id: str) -> Mapping[str, object]:
     for operation in cast(list[dict[str, Any]], record["operations"]):
         for recovery in cast(list[dict[str, Any]], operation["recovery_objects"]):
             if recovery["object_id"] == object_id:
                 return cast(Mapping[str, object], recovery["signature"])
     raise WorkspaceRestoreError("recovery_object_missing", "Restore recovery object is not declared.")
-
 
 def _alternate_relative_path(root: Path, relative: str, change_set_id: str) -> str:
     path = Path(relative)
@@ -880,7 +877,6 @@ def _alternate_relative_path(root: Path, relative: str, change_set_id: str) -> s
         if _signature(_safe_path(root, candidate)).kind == "missing":
             return candidate
     raise WorkspaceRestoreError("alternate_name_exhausted", "No available alternate restore name was found.")
-
 
 def _safe_path(root: Path, relative: str) -> Path:
     validation = validate_relative_path(relative)
@@ -899,18 +895,15 @@ def _safe_path(root: Path, relative: str) -> Path:
             raise WorkspaceRestoreError("journal_path_unsafe", "Recovery path contains an unsafe link.")
     return candidate
 
-
 def _signature(path: Path) -> PathSignature:
     result = signature_for_path(path)
     if not result.ok or result.signature is None:
         raise WorkspaceRestoreError("signature_failed", "Workspace signature could not be completed.")
     return result.signature
 
-
 def _assert_signature(path: Path, expected: Mapping[str, object], reason: str) -> None:
     if _signature(path) != PathSignature.from_mapping(expected):
         raise WorkspaceRestoreError(reason, "Recovery object signature verification failed.")
-
 
 def _virtual_signature(
     root: Path, virtual: dict[str, PathSignature], relative: str
@@ -918,7 +911,6 @@ def _virtual_signature(
     if relative not in virtual:
         virtual[relative] = _signature(_safe_path(root, relative))
     return virtual[relative]
-
 
 def _sync_retention(record: dict[str, Any]) -> None:
     objects: dict[str, dict[str, Any]] = {}
@@ -932,7 +924,6 @@ def _sync_retention(record: dict[str, Any]) -> None:
     retention["reserved_entries"] = len(objects)
     retention["reserved_bytes"] = sum(cast(int, item["signature"]["byte_size"]) for item in objects.values())
 
-
 def _write_required(
     store: WorkspaceMutationJournalStore, root: Path, record: Mapping[str, Any]
 ) -> None:
@@ -941,7 +932,6 @@ def _write_required(
         reason = result.failure.reason if result.failure else "journal_write_failed"
         message = result.failure.message if result.failure else "Workspace journal write failed."
         raise WorkspaceRestoreError(reason, message)
-
 
 def _partial_result(conflicts: int, record: Mapping[str, Any]) -> dict[str, object]:
     return {
@@ -952,7 +942,6 @@ def _partial_result(conflicts: int, record: Mapping[str, Any]) -> dict[str, obje
         "conflicts": conflicts,
         "warning": str(record["coverage"]["warning"])[:512],
     }
-
 
 def _outside_undo_set(record: Mapping[str, Any] | None) -> dict[str, object]:
     events = [] if record is None else list(record["coverage"]["known_unjournaled_events"])
@@ -968,7 +957,6 @@ def _outside_undo_set(record: Mapping[str, Any] | None) -> dict[str, object]:
         "warning": warning[:512],
     }
 
-
 def _change_set_summary(record: Mapping[str, Any]) -> dict[str, object]:
     return {
         "change_set_id": record["change_set_id"],
@@ -983,7 +971,6 @@ def _change_set_summary(record: Mapping[str, Any]) -> dict[str, object]:
         "warning": record["coverage"]["warning"],
     }
 
-
 def _public_step(item: Mapping[str, Any]) -> dict[str, object]:
     step = cast(Mapping[str, Any], item["step"])
     return {
@@ -995,10 +982,8 @@ def _public_step(item: Mapping[str, Any]) -> dict[str, object]:
         "expected_current_signature": copy.deepcopy(step["expected_current_signature"]),
     }
 
-
 def _relative(root: Path, path: Path) -> str:
     return path.relative_to(root).as_posix()
-
 
 def _is_junction(path: Path) -> bool:
     checker = getattr(os_path, "isjunction", None)
@@ -1006,7 +991,6 @@ def _is_junction(path: Path) -> bool:
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-
 
 def _failure(reason: str, message: str, error: BaseException) -> WorkspaceRestoreError:
     return WorkspaceRestoreError(reason, message, details={"error_type": type(error).__name__})

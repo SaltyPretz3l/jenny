@@ -3,48 +3,31 @@
 from __future__ import annotations
 
 import json
-import math
 from collections.abc import Sequence
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
-from sidecar.ai.error_codes import CMP_TOOL_RICH_FILES_UNSUPPORTED
 from sidecar.ai.tools.builtins import filesystem_content, pdf_text
-from sidecar.ai.tools.builtins.artifacts import BinaryArtifactSpec, create_binary_artifact
 from sidecar.ai.tools.builtins.rich_files.base import (
     MAX_RICH_INSPECT_OUTPUT_CHARS,
     MAX_RICH_INSPECT_STRING_CHARS,
     RichFileSource,
     RichInspectResult,
-    RichPreviewResult,
     build_unsupported_result,
-    preview_artifact_metadata,
-    read_bounded_file_bytes,
     rich_inspect_result_payload,
     rich_inspect_result_to_tool_result,
+    source_bytes,
     string_argument,
     validate_rich_file_source,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
 from sidecar.ai.tools.workspace import WorkspaceGuard
 
-PDF_PREVIEW_SCALE = 1.25
-MAX_PDF_PREVIEW_PIXELS = 4_000_000
 # The rich-inspect serializer clips every summary string at
 # MAX_RICH_INSPECT_STRING_CHARS, so the per-page excerpt cap is the smaller of
 # the two: anything above it would be marked complete and then cut anyway.
 PDF_INSPECT_PAGE_TEXT_CHARS = min(
     filesystem_content.MAX_PDF_PAGE_TEXT_CHARS, MAX_RICH_INSPECT_STRING_CHARS
 )
-
-
-@dataclass(frozen=True)
-class PdfPreviewContext:
-    workspace: WorkspaceGuard
-    session_id: str
-    source_path: Path
-    fitz: Any
 
 
 def pdf_inspect_tool(
@@ -90,19 +73,19 @@ def _inspect_pdf_with_fitz(
     source: RichFileSource,
     fitz: Any,
 ) -> ToolHandlerResult:
-    preview_requested = arguments.get("create_preview") is True
-    session_id = str(arguments.get("_jenny_session_id") or "").strip()
-    warnings_out: list[str] = []
-    previews: list[dict[str, object]] = []
-    generated_artifacts: list[dict[str, object]] = []
-
-    raw_pdf = read_bounded_file_bytes(
-        source.absolute_path,
+    raw_pdf = source_bytes(
+        source,
+        workspace=workspace,
         max_bytes=filesystem_content.MAX_MEDIA_FILE_BYTES,
-        authorized_root=workspace.require_root(),
         message="PDF source changed beyond rich-file size limit",
     )
-    digest = pdf_text.document_digest(raw_pdf)
+    # Validation already hashed exactly these bytes; the cursor digest is that
+    # SHA-256's prefix, so the document is not hashed twice.
+    digest = (
+        pdf_text.document_digest_from_sha256(source.sha256)
+        if source.raw is not None
+        else pdf_text.document_digest(raw_pdf)
+    )
     with fitz.open(stream=raw_pdf, filetype="pdf") as document:
         page_count = int(document.page_count)
         if page_count <= 0:
@@ -113,15 +96,6 @@ def _inspect_pdf_with_fitz(
             digest=digest,
             page_count=page_count,
         )
-        source_path = Path(source.workspace_path)
-        preview_context = PdfPreviewContext(
-            workspace=workspace,
-            session_id=session_id,
-            source_path=source_path,
-            fitz=fitz,
-        )
-        if preview_requested and not session_id:
-            warnings_out.append("preview skipped: session context unavailable")
 
         # Lazy: keeps pdf_ocr out of the sidecar.server import graph.
         from sidecar.ai.tools.builtins import pdf_ocr
@@ -138,6 +112,7 @@ def _inspect_pdf_with_fitz(
                 ocr_session=ocr_session,
                 text_less_pages=text_less_pages,
                 tool_name="pdf_inspect",
+                digest=digest,
             )
             if cursor is not None:
                 pdf_text.check_cursor_line(cursor, lines, page_number=page_number)
@@ -152,16 +127,6 @@ def _inspect_pdf_with_fitz(
                 ),
             }
             page_details.append(page_detail)
-
-            if preview_requested and session_id:
-                preview_result = _create_pdf_page_preview(
-                    context=preview_context,
-                    page=page,
-                    page_number=page_number,
-                )
-                previews.extend(preview_result.previews)
-                warnings_out.extend(preview_result.warnings)
-                generated_artifacts.extend(preview_result.generated_artifacts)
 
     ocr_note = ocr_session.note(text_less_pages=text_less_pages)
 
@@ -198,8 +163,6 @@ def _inspect_pdf_with_fitz(
             adapter="pdf",
             source=source,
             summary=summary,
-            previews=tuple(previews),
-            warnings=tuple(warnings_out),
         )
 
     # Pre-fit whole lines against the serializer's exact budget so base.py's
@@ -218,76 +181,4 @@ def _inspect_pdf_with_fitz(
         ),
     )
     result = build_result([text for text, _next in fitted_excerpts])
-    return rich_inspect_result_to_tool_result(
-        result,
-        generated_artifacts=tuple(generated_artifacts),
-    )
-
-
-def _create_pdf_page_preview(
-    *,
-    context: PdfPreviewContext,
-    page: Any,
-    page_number: int,
-) -> RichPreviewResult:
-    try:
-        preview_width, preview_height = _preview_dimensions(page)
-        if preview_width * preview_height > MAX_PDF_PREVIEW_PIXELS:
-            raise ToolExecutionFailure(
-                code=CMP_TOOL_RICH_FILES_UNSUPPORTED,
-                message="rendered PDF page preview exceeds pixel limit",
-                retryable=False,
-            )
-        pixmap = page.get_pixmap(
-            matrix=context.fitz.Matrix(PDF_PREVIEW_SCALE, PDF_PREVIEW_SCALE),
-            alpha=False,
-        )
-        png_bytes = pixmap.tobytes("png")
-        if len(png_bytes) > filesystem_content.MAX_MEDIA_FILE_BYTES:
-            raise ToolExecutionFailure(
-                code=CMP_TOOL_RICH_FILES_UNSUPPORTED,
-                message="rendered PDF page preview exceeds byte limit",
-                retryable=False,
-            )
-        preview = create_binary_artifact(
-            workspace=context.workspace,
-            session_id=context.session_id,
-            spec=BinaryArtifactSpec(
-                artifact_kind="image",
-                title=f"PDF page {page_number}: {context.source_path.name}",
-                content=png_bytes,
-                mime_type="image/png",
-                file_name=f"{context.source_path.stem}-page-{page_number}.png",
-                metadata_extra={
-                    "width": int(pixmap.width),
-                    "height": int(pixmap.height),
-                    "page": page_number,
-                },
-            ),
-        )
-    except Exception as error:  # noqa: BLE001
-        return RichPreviewResult(
-            warnings=(f"preview skipped for page {page_number}: {type(error).__name__}",)
-        )
-
-    metadata = dict(preview.generated_artifacts[0])
-    return RichPreviewResult(
-        previews=(
-            preview_artifact_metadata(
-                metadata,
-                extra={
-                    "width": metadata.get("width"),
-                    "height": metadata.get("height"),
-                    "page": page_number,
-                },
-            ),
-        ),
-        generated_artifacts=(metadata,),
-    )
-
-
-def _preview_dimensions(page: Any) -> tuple[int, int]:
-    rect = getattr(page, "rect", None)
-    width = max(1, math.ceil(float(getattr(rect, "width", 0) or 0) * PDF_PREVIEW_SCALE))
-    height = max(1, math.ceil(float(getattr(rect, "height", 0) or 0) * PDF_PREVIEW_SCALE))
-    return width, height
+    return rich_inspect_result_to_tool_result(result)

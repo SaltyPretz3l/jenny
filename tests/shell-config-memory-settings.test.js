@@ -77,3 +77,19 @@ test('takeNotesSince is stamped main-side when notes turn back on and only kept 
   assert.equal(service.getState().memory.takeNotesSince, '2026-10-15T10:00:00.000Z', 'untouched when notes turn off');
   assert.equal(new ShellConfigService({ userDataPath, env: {} }).getState().memory.takeNotesSince, '2026-10-15T10:00:00.000Z');
 });
+
+test('a non-boolean memory switch is rejected, not coerced, and nothing is written', () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-shell-config-memory-invalid-'));
+  trackDirectory(userDataPath);
+  const reasons = [];
+  const service = new ShellConfigService({ userDataPath, env: {} });
+  service.on('changed', (_state, context) => reasons.push(context.reason));
+  for (const bad of ['false', 0, null, {}, 'true']) {
+    assert.throws(() => service.updateFeatureSettings({ memory: { takeNotes: bad } }), /invalid/i, String(bad));
+    assert.throws(() => service.updateFeatureSettings({ memory: { pauseSaving: bad } }), /invalid/i, String(bad));
+  }
+  assert.deepEqual(reasons, []);
+  assert.deepEqual(service.getState().memory,
+    { takeNotes: true, askBeforeSaving: false, pauseSaving: false, useInChats: true });
+  assert.equal(service.updateFeatureSettings({ memory: { takeNotes: false } }).memory.takeNotes, false);
+});

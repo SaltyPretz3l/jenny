@@ -31,6 +31,13 @@
     const confirmClose = typeof options.confirmClose === 'function'
       ? options.confirmClose
       : () => Promise.resolve('discard');
+    // A close the user confirmed that still did not happen (the document changed
+    // under the save, or the force-close threw): the caller surfaces it.
+    const onCloseRefused = typeof options.onCloseRefused === 'function' ? options.onCloseRefused : noop;
+    // A window exit the user chose not to save: drop those buffers' hot-exit backups
+    // before the frame goes (else the next launch restores them). Bounded; never blocks.
+    const onExitDiscard = typeof options.onExitDiscard === 'function' ? options.onExitDiscard : noop;
+    const EXIT_DISCARD_WAIT_MS = 1500;
 
     // One preflight at a time. Keep the guard through Save, not just while the
     // modal is open: a second mutation must not race a deferred write.
@@ -100,7 +107,8 @@
       };
     }
 
-    // Preflight is intentionally non-destructive. Save is safe to perform now,
+    // Preflight is non-destructive for documents (it only drops the hot-exit backups of
+    // a window exit's discarded buffers, onExitDiscard). Save is safe to perform now,
     // but discard/close stays represented only by the returned single-use plan
     // until the caller explicitly commits after its owning mutation succeeds.
     async function preflight(paths, { allowPrompt = true, intent = '', surfaces = [] } = {}) {
@@ -133,6 +141,14 @@
               dirtyPaths,
             });
           }
+          if (decision === 'discard' && intent && dirtyPaths.length) {
+            let timer = null;
+            await Promise.race([
+              Promise.resolve().then(() => onExitDiscard(dirtyPaths)).catch(noop),
+              new Promise((resolve) => { timer = setTimeout(resolve, EXIT_DISCARD_WAIT_MS); }),
+            ]);
+            clearTimeout(timer);
+          }
           if (decision === 'save') {
             for (const path of dirtyPaths) {
               let saved = false;
@@ -149,6 +165,10 @@
                   failedPath: path,
                 });
               }
+              // Save hygiene / format-on-save edit the model during the save and
+              // bump its revision; a clean post-save model is the baseline commit
+              // compares. Typing during the save leaves it dirty, so commit refuses.
+              if (!isDirty(path)) revisions.set(path, getDocumentRevision(path));
             }
           }
         }
@@ -206,7 +226,9 @@
       if (!plan.ready) {
         return plan;
       }
-      return commit(plan);
+      const result = commit(plan);
+      if (!result.committed) onCloseRefused(result);
+      return result;
     }
 
     function requestClose(path) {
@@ -231,6 +253,16 @@
       return runCloseFlow(unpinnedPaths((tab) => inGroup(tab, groupId)));
     }
 
+    // Close to the Right: the unpinned tabs after `path` in its own group, one batched prompt.
+    function requestCloseToRight(path) {
+      const tabs = getIde().openTabs || [];
+      const at = tabs.findIndex((tab) => tab.path === String(path || ''));
+      if (at === -1) {
+        return Promise.resolve();
+      }
+      return runCloseFlow(unpinnedPaths((tab) => tabs.indexOf(tab) > at && inGroup(tab, tabs[at].group)));
+    }
+
     // Close clean, non-diff tabs without prompting because no unsaved content can be lost.
     function requestCloseSaved(groupId) {
       const paths = (getIde().openTabs || []).filter((tab) => inGroup(tab, groupId)).map((tab) => tab.path)
@@ -248,6 +280,7 @@
       requestCloseOthers,
       requestCloseAll,
       requestCloseSaved,
+      requestCloseToRight,
     };
   }
 

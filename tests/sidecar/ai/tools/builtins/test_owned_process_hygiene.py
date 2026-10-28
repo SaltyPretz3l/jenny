@@ -6,6 +6,7 @@ import io
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,10 +14,11 @@ import pytest
 
 from sidecar.ai.tools.builtins import owned_process as owned_process_module
 from sidecar.ai.tools.builtins.owned_process import (
+    OwnedProcess,
     OwnedProcessService,
     OwnedProcessShutdownError,
 )
-from sidecar.runtime import external_child_env
+from sidecar.runtime import external_child_env, owned_process_tracking
 
 
 @pytest.mark.parametrize("failing_stream", ["stdout", "stderr"])
@@ -271,3 +273,197 @@ def test_post_launch_failure_quarantines_when_kill_cannot_be_proven(
     assert observed[0].process_tree_terminated is False
     assert service.retry_quarantined_cleanup()[0].cleanup == "uncertain"
     assert observed == [observed[0]], "uncertain cleanup notification is idempotent"
+
+
+# --- review fixes 2026-10-19: spawn fault, abort, POSIX group, cancel -------
+
+
+def test_ledger_failure_after_launch_terminates_the_bootstrap_child(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    service = OwnedProcessService(max_active=1, max_queued=0)
+    started: list[subprocess.Popen[bytes]] = []
+    original_start = service._start_transport
+    observed = []
+
+    def _recording_start(job_object: object) -> tuple[subprocess.Popen[bytes], int | None]:
+        process, ready_fd = original_start(job_object)  # type: ignore[arg-type]
+        started.append(process)
+        return process, ready_fd
+
+    def _ledger_down(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("owned-process ledger unavailable")
+
+    monkeypatch.setattr(service, "_start_transport", _recording_start)
+    monkeypatch.setattr(owned_process_tracking, "record", _ledger_down)
+
+    with pytest.raises(RuntimeError, match="ledger unavailable"):
+        service.spawn(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            cwd=tmp_path,
+            allow_queue=False,
+            on_cleanup=observed.append,
+        )
+
+    assert len(started) == 1
+    assert started[0].poll() is not None, "the live bootstrap child must not be orphaned"
+    assert observed and observed[-1].reason != "no_child_started"
+    assert observed[-1].cleanup == "confirmed"
+    assert service.snapshot().active == 0
+
+
+def test_run_aborted_before_start_never_spawns(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    service = OwnedProcessService()
+    monkeypatch.setattr(
+        service,
+        "_start_transport",
+        lambda _job: pytest.fail("a cancelled call must not start a child"),
+    )
+    abort_event = threading.Event()
+    abort_event.set()
+
+    result = service.run(["fake"], cwd=tmp_path, timeout_seconds=5, abort_event=abort_event)
+
+    assert result.aborted is True
+    assert result.cleanup_verdict.cleanup == "confirmed"
+    assert result.cleanup_verdict.reason == "no_child_started"
+    assert service.snapshot().active == 0
+
+
+def test_run_aborted_while_queued_returns_early_without_spawning(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    service = OwnedProcessService(max_active=1, max_queued=1)
+    monkeypatch.setattr(service, "_preflight_posix_target", lambda *_args: None)
+    monkeypatch.setattr(
+        service,
+        "_start_transport",
+        lambda _job: pytest.fail("a call cancelled in the queue must not start a child"),
+    )
+    held = service._acquire_capacity(allow_queue=False, timeout_seconds=0)
+    abort_event = threading.Event()
+    results: list[object] = []
+
+    worker = threading.Thread(
+        target=lambda: results.append(
+            service.run(["fake"], cwd=tmp_path, timeout_seconds=30, abort_event=abort_event)
+        )
+    )
+    started_at = time.monotonic()
+    worker.start()
+    deadline = time.monotonic() + 2
+    while service.snapshot().queued == 0 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    abort_event.set()
+    worker.join(timeout=2)
+    held.release()
+
+    assert not worker.is_alive()
+    assert time.monotonic() - started_at < 2, "the queue wait must notice the abort"
+    assert len(results) == 1
+    assert results[0].aborted is True  # type: ignore[attr-defined]
+    assert service.snapshot().queued == 0
+    assert service.snapshot().active == 0
+
+
+@pytest.mark.parametrize(
+    ("probe_error", "expected_signals"),
+    [
+        (ProcessLookupError(), []),  # group empty: its id may be reused
+        (PermissionError(), []),  # group id now belongs to another user
+        (None, ["TERM", "KILL"]),  # survivors keep the group id reserved
+    ],
+)
+def test_exited_group_sweep_signals_only_a_populated_group(
+    monkeypatch: pytest.MonkeyPatch,
+    probe_error: BaseException | None,
+    expected_signals: list[str],
+) -> None:
+    sent: list[str] = []
+
+    def _killpg(process_group_id: int, sent_signal: object) -> None:
+        assert process_group_id == 4242
+        if sent_signal == 0:
+            if probe_error is not None:
+                raise probe_error
+            return
+        sent.append(str(sent_signal))
+
+    monkeypatch.setattr(owned_process_module, "os", SimpleNamespace(name="posix", killpg=_killpg))
+    monkeypatch.setattr(
+        owned_process_module, "signal", SimpleNamespace(SIGTERM="TERM", SIGKILL="KILL")
+    )
+
+    OwnedProcessService._terminate_exited_process_group(4242)
+
+    assert sent == expected_signals
+
+
+def _fake_owned(service: OwnedProcessService, process: object, **overrides: object) -> OwnedProcess:
+    from sidecar.ai.tools.builtins.owned_process import _CapacityLease
+
+    with service._condition:
+        service._active_count += 1
+    fields: dict[str, object] = {
+        "process": process,
+        "args": ("fake",),
+        "containment": "test",
+        "process_group_id": None,
+        "job_object": None,
+        "_service": service,
+        "_lease": _CapacityLease(service),
+    }
+    fields.update(overrides)
+    return OwnedProcess(**fields)  # type: ignore[arg-type]
+
+
+def test_terminate_never_signals_the_group_of_a_reaped_posix_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    group_calls: list[tuple[int, object]] = []
+    monkeypatch.setattr(
+        owned_process_module,
+        "os",
+        SimpleNamespace(name="posix", killpg=lambda *args: group_calls.append(args)),
+    )
+    service = OwnedProcessService()
+    process = SimpleNamespace(pid=4242, poll=lambda: 0, stdin=None, stdout=None, stderr=None)
+    owned = _fake_owned(service, process, process_group_id=4242)
+
+    service.terminate(owned)
+
+    assert group_calls == []
+
+
+def test_cancel_skips_the_second_terminate_once_the_root_exited(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = OwnedProcessService()
+    state = {"returncode": None}
+    process = SimpleNamespace(
+        pid=4242,
+        poll=lambda: state["returncode"],
+        stdin=None,
+        stdout=io.BytesIO(),
+        stderr=io.BytesIO(),
+    )
+    owned = _fake_owned(service, process)
+    terminations: list[int] = []
+
+    def _terminate(target: object, *, timeout_seconds: float = 0.5) -> None:
+        del timeout_seconds
+        terminations.append(id(target))
+        state["returncode"] = -9
+
+    monkeypatch.setattr(service, "terminate", _terminate)
+
+    verdict = service.cancel(owned)
+
+    assert terminations == [id(owned)], "one tree kill is enough once the root is gone"
+    assert verdict.cleanup == "confirmed"
+    assert service.snapshot().active == 0

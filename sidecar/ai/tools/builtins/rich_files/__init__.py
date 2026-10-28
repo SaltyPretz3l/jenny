@@ -1,17 +1,15 @@
-"""Rich-file inspection and rendering adapters.
+"""Rich-file inspection adapters.
 
-Preview artifacts go through ``create_artifact_tool``. Optional media
-dependencies load on demand and degrade to structured unavailable results.
+Optional parser dependencies load on demand and degrade to structured
+unavailable results.
 """
 
 from sidecar.ai.tools.builtins.rich_files.base import (
     RichFileSource,
     RichInspectFailure,
     RichInspectResult,
-    RichPreviewResult,
     RichSourceValidator,
     build_unsupported_result,
-    preview_artifact_metadata,
     read_bounded_file_bytes,
     rich_inspect_result_to_tool_result,
     string_argument,
@@ -25,12 +23,10 @@ __all__ = [
     "RichFileSource",
     "RichInspectFailure",
     "RichInspectResult",
-    "RichPreviewResult",
     "RichSourceValidator",
     "build_unsupported_result",
     "document_inspect_tool",
     "notebook_inspect_tool",
-    "preview_artifact_metadata",
     "presentation_inspect_tool",
     "read_bounded_file_bytes",
     "rich_inspect_result_to_tool_result",

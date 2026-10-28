@@ -13,6 +13,7 @@ from sidecar.runtime.continuation_context import (
 )
 
 if TYPE_CHECKING:
+    from sidecar.ai.context.context_count import ContextCalibration
     from sidecar.ai.engines.vision_input import VisionImage
     from sidecar.runtime.chat_continuation_resume import HydratedBeforeToolDispatchResume
     from sidecar.runtime.execution_context import ExecutionContext
@@ -77,6 +78,9 @@ class ChatRequestContext:
     handoff_preparation: Any | None = None
     # The initialize-latched ``session_messages`` grant: gates offering ``session_message``.
     session_messages_enabled: bool = False
+    # Row 69: ``"primary"`` for the profile's one Jenny chat (closed enum; the
+    # field is absent on every other chat.send). Renders ``## Primary Chat``.
+    session_role: str | None = None
     workspace_root_present: bool = False
     workspace_instruction_present: bool = False
     debug_options: dict[str, Any] | None = None
@@ -92,6 +96,9 @@ class ChatRequestContext:
     # Entries are ``{"kind": str, "content": str}``.
     context_blocks: tuple[dict[str, str], ...] = ()
     skill_invocation: dict[str, str] | None = None
+    # The previous turn's provider-vs-estimate reading, carried back by Electron
+    # (``chat.send params.context_calibration``); validated, fails closed to None.
+    context_calibration: ContextCalibration | None = None
     vision_images: tuple[VisionImage, ...] = ()
     vision_anchor_text: str = ""
     vision_token_surcharge: int = 0
@@ -106,6 +113,9 @@ class ChatRequestContext:
     # Internal child completion contract. Legacy hidden executors retain the
     # four-field JSON report; the public delegate facade requests plain text.
     sub_agent_report_mode: str = "structured"
+    # Child-only delegation contract body (empty on parent turns), rendered as a
+    # runtime overlay: a system row in ``messages`` is dropped by the semantic gate.
+    sub_agent_delegation_contract: str = ""
     inference_performance: dict[str, Any] | None = None
     # Capability gate (desktop only), independent of the live-counter opt-in.
     # False suppresses both provider options and all performance notifications.

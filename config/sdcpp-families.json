@@ -11,6 +11,7 @@
       "defaults": { "steps": 20, "cfg_scale": 2.5, "sampler": "euler", "flow_shift": 3 },
       "resolutions": ["1024x1024", "1344x1344", "1472x1120", "1120x1472", "1664x928", "928x1664", "1600x1056", "1056x1600"],
       "extra_args": ["--fa", "--offload-to-cpu"],
+      "preview": "proj",
       "min_total_vram_mb": 12000,
       "free_vram_headroom_mb": 5000,
       "unsupported_encoder_patterns": ["convrot", "fp8"]
@@ -24,6 +25,7 @@
       "defaults": { "steps": 20, "cfg_scale": 2.5, "sampler": "euler", "flow_shift": 3 },
       "resolutions": ["1024x1024", "1344x1344", "1472x1120", "1120x1472", "1664x928", "928x1664", "1600x1056", "1056x1600"],
       "extra_args": ["--fa", "--offload-to-cpu"],
+      "preview": "proj",
       "min_total_vram_mb": 12000,
       "free_vram_headroom_mb": 5000,
       "unsupported_encoder_patterns": ["convrot", "fp8"]

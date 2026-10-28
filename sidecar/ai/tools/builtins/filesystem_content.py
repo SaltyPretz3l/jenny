@@ -33,7 +33,6 @@ from sidecar.runtime.media_site import pdf_addon_configured
 
 MAX_MEDIA_FILE_BYTES = 25 * 1024 * 1024
 MAX_MEDIA_OUTPUT_CHARS = 12_000
-MAX_PDF_PAGES = pdf_text.MAX_PDF_PAGES
 # Kept under the private name for existing callers and tests.
 _parse_pages_argument = pdf_text.parse_pages_argument
 # Per-page whole-line text budget. Three pages must still fit under the
@@ -206,13 +205,16 @@ def _encode_complete_jpeg(
     structured reason instead of emitting corrupt media.
     """
     Image, _ = _load_pillow()
-    working = image.copy()
-    if getattr(working, "mode", "") not in {"RGB", "L"}:
-        working = working.convert("RGB")
+    # ``image`` is never mutated: one working copy (or the RGB conversion, already
+    # a new image) shrinks in place down the ladder instead of a full-raster copy
+    # per step.
+    if getattr(image, "mode", "") in {"RGB", "L"}:
+        candidate = image.copy()
+    else:
+        candidate = image.convert("RGB")
     dimensions = [768, 640, 512, 384, 256, 192, 128]
     qualities = [82, 72, 62, 52, 45]
     for dimension in dimensions:
-        candidate = working.copy()
         candidate.thumbnail((dimension, dimension), Image.Resampling.LANCZOS)
         for quality in qualities:
             buffer = io.BytesIO()
@@ -351,6 +353,7 @@ def _read_image_file(
 
 
 _PDF_RENDER_SCALE = 1.25
+_RGB_CHANNELS = 3
 
 
 def _render_pdf_page_image(page: Any, *, max_bytes: int) -> tuple[bytes | None, int, int]:
@@ -368,6 +371,11 @@ def _render_pdf_page_image(page: Any, *, max_bytes: int) -> tuple[bytes | None, 
     try:
         with warnings.catch_warnings():
             _apply_pillow_safety_warning_policy(Image)
+            if int(getattr(pixmap, "n", 0)) == _RGB_CHANNELS and not getattr(pixmap, "alpha", 0):
+                # Raw RGB samples: no PNG encode/decode round trip.
+                size = (int(pixmap.width), int(pixmap.height))
+                with Image.frombytes("RGB", size, pixmap.samples) as image:
+                    return _encode_complete_jpeg(image, max_bytes=max_bytes)
             with Image.open(io.BytesIO(pixmap.tobytes("png"))) as image:
                 image.load()
                 return _encode_complete_jpeg(image, max_bytes=max_bytes)
@@ -460,6 +468,7 @@ def _read_pdf_file(
 
             ocr_session = pdf_ocr.PdfOcrSession()
             text_less_pages: list[int] = []
+            cached_pages: list[int] = []
             for page_number in selected_pages:
                 page = document.load_page(page_number - 1)
                 lines, text_layer, ocr_info = pdf_text.page_lines(
@@ -468,6 +477,8 @@ def _read_pdf_file(
                     ocr_session=ocr_session,
                     text_less_pages=text_less_pages,
                     tool_name="read_file",
+                    digest=digest,
+                    cache_hits=cached_pages,
                 )
                 if cursor is not None:
                     pdf_text.check_cursor_line(cursor, lines, page_number=page_number)
@@ -563,6 +574,8 @@ def _read_pdf_file(
             "ocr_pages": list(ocr_session.used_pages or []),
             "ocr_engines": ocr_session.engines_used,
             "digest": digest,
+            "cache_hit": len(cached_pages) == len(selected_pages),
+            "cached_pages": cached_pages,
             "cursor": payload.get("cursor"),
             "line_counts": {
                 page_number: len(pages_lines[index])

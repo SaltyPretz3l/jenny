@@ -1,0 +1,10 @@
+data: {"id":"r1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"Let me "},"finish_reason":null}]}
+
+data: {"id":"r1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"reasoning_content":"think."},"finish_reason":null}]}
+
+data: {"id":"r1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Answer."},"finish_reason":null}]}
+
+data: {"id":"r1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+

@@ -3,6 +3,7 @@ from __future__ import annotations
 import errno
 import os
 import socket
+import sys
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,21 @@ def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool 
     if _path_was_explicitly_requested(collection_path, config):
         return None
     return True
+
+
+@pytest.fixture(autouse=True)
+def _fresh_pdf_page_cache() -> None:
+    # The PDF page-text cache lives for the process: byte-identical generated
+    # PDFs in different tests would otherwise replay another test's patched OCR.
+    # Looked up, never imported, so tests that never read a PDF stay untouched.
+    cache = sys.modules.get("sidecar.ai.tools.builtins.pdf_page_cache")
+    if cache is not None:
+        cache.PDF_PAGE_CACHE.clear()
+        cache.PDF_DOCUMENT_MEMO.clear()
+    # Likewise the shared RapidOCR engine (or its remembered load failure).
+    rapid = sys.modules.get("sidecar.ai.tools.builtins.pdf_ocr_rapid")
+    if rapid is not None:
+        rapid.reset_shared_engine()
 
 
 @pytest.fixture

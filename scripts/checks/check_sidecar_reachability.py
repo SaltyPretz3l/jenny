@@ -64,6 +64,7 @@ KNOWN_DYNAMIC_ENTRYPOINT_IMPORTS: Dict[str, Set[str]] = {
         "sidecar.ai.tools.builtins.grep_search",
         "sidecar.ai.tools.builtins.knowledge",
         "sidecar.ai.tools.builtins.lsp.tools",
+        "sidecar.ai.tools.builtins.review_findings",
         "sidecar.ai.tools.builtins.shell",
         "sidecar.ai.tools.builtins.temp_script",
         "sidecar.ai.tools.builtins.worktree_change_tracking",

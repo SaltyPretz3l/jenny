@@ -47,6 +47,16 @@
   --text-active: var(--accent-strong);
   --accent-cyan: #16e9ff;
   --accent-amber: #f3b537;
+  /* File-map language tints (dark-palette defaults; light palettes override).
+     Never --state-*: those belong to Health and git decorations. */
+  --atlas-lang-js: #d9c98a;
+  --atlas-lang-ts: #8fb6dd;
+  --atlas-lang-py: #8fc7c0;
+  --atlas-lang-css: #a396c9;
+  --atlas-lang-html: #c98fae;
+  --atlas-lang-md: #858d98;
+  --atlas-lang-data: #d9b98a;
+  --atlas-lang-other: #858d98;
   --holo-periwinkle: #95adff;
   --holo-lavender: #d3a2ff;
   --holo-pink: #ff79d7;
@@ -446,7 +456,7 @@
   --sidebar-icon-button-size: 28px;
   --sidebar-action-button-size: 28px;
   --sidebar-state-approval-color: var(--accent-amber);
-  --sidebar-state-streaming-color: var(--accent);
+  --sidebar-state-streaming-color: var(--text-muted);
 
   /* ── Titlebar / chrome dimensions ── */
   /* One 48px title-bar row holds the wordmark, the view nav, the drag gutter,
@@ -919,8 +929,6 @@ button {
   .xterm,
   .ide-terminal-xterm,
   .ide-terminal-scrollback,
-  .ide-terminal-input,
-  .ide-terminal-field,
   .diagnostics-activity-console .log-list,
   .artifact-detail-path,
   .artifact-file-preview-path,

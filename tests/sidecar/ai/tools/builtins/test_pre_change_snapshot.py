@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from sidecar.ai.tools.builtins import pre_change_snapshot, structured_diff
+from tests.sidecar._platform_skips import requires_file_symlinks
 
 
 def _snapshot_path(root: Path, hash_value: str) -> Path:
@@ -76,6 +77,7 @@ def test_capture_does_not_endorse_or_touch_directory_at_hash_path(
     assert snapshot_path.is_dir()
 
 
+@requires_file_symlinks()
 def test_capture_does_not_follow_symlink_at_hash_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -85,10 +87,7 @@ def test_capture_does_not_follow_symlink_at_hash_path(
     snapshot_path = _snapshot_path(tmp_path, hash_value)
     symlink_target = tmp_path / "outside.snap"
     symlink_target.write_bytes(b"wrong target bytes\n")
-    try:
-        snapshot_path.symlink_to(symlink_target)
-    except OSError as error:
-        pytest.skip(f"symlink creation unavailable: {error}")
+    snapshot_path.symlink_to(symlink_target)
     touched: list[object] = []
 
     def record_utime(path: object, *args: object, **kwargs: object) -> None:

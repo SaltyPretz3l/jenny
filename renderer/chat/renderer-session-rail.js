@@ -49,6 +49,7 @@
   }
 
   const configured = { openSession: null }; // Row 59 cp5a: a linked Background tasks row opens its chat (app-level port)
+  const mountedByPane = new WeakMap(); // pane -> dispose of its live rail; a remount retires it
   const configure = (options) => { if (typeof options?.openSession === 'function') configured.openSession = options.openSession; };
 
   function mountSessionRail(options) {
@@ -97,6 +98,7 @@
     }
 
     // ── Elements ─────────────────────────────────────────────────────────
+    mountedByPane.get(pane)?.(); // retire the previous controller (timer, listeners, nodes)
     cluster.querySelectorAll('[data-session-rail-toggle]').forEach((node) => node.remove());
     pane.querySelectorAll(':scope > [data-session-rail-root], :scope > [data-session-rail-sheet]').forEach((node) => node.remove());
     const title = jt('chat.sessionRail.title', 'Session');
@@ -261,7 +263,7 @@
       if (disposed || !sid || !bridgeOk) return;
       if (fetching) { refetchQueued = true; return; }
       fetching = true;
-      const requestGeneration = generation;
+      const requestGeneration = generation, requestedAt = Date.now();
       const response = await Promise.resolve()
         .then(() => bridge.getSummary({ schema_version: SCHEMA_VERSION, session_id: sid }))
         .catch(() => null);
@@ -270,12 +272,12 @@
       if (sid === sessionId && requestGeneration === generation) {
         if (response && response.ok === true && isObject(response.summary) && response.summary.session_id === sid) {
           const incoming = response.summary;
+          if (incoming.context?.state === 'available' && incoming.context.data?.scope === 'next_send') contextPreview.remember(sid, incoming.context.data, requestedAt);
           if (incoming.context && incoming.context.state !== 'available'
             && summary?.context?.data?.scope === 'next_send' && summary.context.data.breakdown) {
             incoming.context = { ...summary.context, state: 'stale' };
           }
-          summary = incoming;
-          status = 'ready';
+          summary = incoming; status = 'ready';
           const rev = Number.isSafeInteger(response.coordination_revision) ? response.coordination_revision : response.summary.revision;
           // A summary read before a later setView landed carries an older view: keep the newer one.
           if (Number.isSafeInteger(rev) && rev >= revision) {
@@ -331,9 +333,9 @@
 
     // ── Painting ─────────────────────────────────────────────────────────
     function summaryWithDraft() {
-      if (!summary?.context?.data?.breakdown) return summary;
-      const input = pane.querySelector('[data-chat-node="chatInput"], #chatInput');
-      const data = contextPreview.withDraft(summary.context.data, input?.value, o.getAttachments?.());
+      const own = summary?.context?.data, shared = summary?.context?.state === 'available' && own?.scope === 'next_send' && contextPreview.latest(sessionId)?.data;
+      if (!(shared || own)?.breakdown) return summary;
+      const data = contextPreview.withDraft(shared || own, pane.querySelector('[data-chat-node="chatInput"], #chatInput')?.value, o.getAttachments?.());
       return { ...summary, context: { ...summary.context, data } };
     }
 
@@ -524,7 +526,7 @@
     });
 
     listen(win, 'jenny:focused-chat-changed', () => { syncSession(); });
-    disposers.push(contextPreview.bindRefresh({ pane, win, listen, syncSession, scheduleFetch, paint, visible, options: o }));
+    disposers.push(contextPreview.bindRefresh({ pane, win, listen, syncSession, scheduleFetch, paint, visible, options: o, getSessionId: () => sessionId }));
     if (o.chatTimeline) listen(o.chatTimeline, 'transcript-view-rendered', () => { syncSession(); });
 
     if (typeof win.ResizeObserver === 'function' && stage) {
@@ -557,6 +559,7 @@
       if (disposed) return;
       closeSheet({ restoreFocus: false, silent: true });
       disposed = true;
+      if (mountedByPane.get(pane) === dispose) mountedByPane.delete(pane);
       if (perf) perf.dispose();
       if (fetchTimer) win.clearTimeout(fetchTimer);
       fetchTimer = 0;
@@ -567,9 +570,7 @@
       doc.removeEventListener('pointerdown', onOutsidePointer, true);
       if (stage && lastMode === 'docked') reflowEvent('before');
       delete pane.dataset.sessionRail;
-      rail.remove();
-      sheet.remove();
-      toggle.remove();
+      rail.remove(); sheet.remove(); toggle.remove();
       if (stage && lastMode === 'docked') {
         void stage.offsetWidth;
         reflowEvent('after');
@@ -580,8 +581,8 @@
       disposers.push(() => o.signal.removeEventListener('abort', dispose));
     }
 
-    evaluateDock();
-    applyMode();
+    mountedByPane.set(pane, dispose);
+    evaluateDock(); applyMode();
     if (sessionId && bridgeOk) void fetchSummary();
 
     return {

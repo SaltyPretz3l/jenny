@@ -25,7 +25,6 @@
       handleSidebarResizeStart,
       handleWorkspaceShortcut,
       isSendPreflightPending,
-      loadMoreChats,
       loadSessions,
       navigateToDiagnosticsTrace,
       openIdeHelpOverlay = noop,
@@ -56,15 +55,32 @@
       root.rendererChatMessagesReview?.getDefaultReview?.({ appendClientLog, openSession: (sessionId) => activateWorkspaceSession(sessionId, { mode: 'replace' }) });
       registerCleanup(root.rendererSessionUnread?.bindUnreadSync?.({
         bridge: chatMessagesBridge,
-        apply: (sessionId, unread) => {
-          const sessions = Array.isArray(state.sessions) ? state.sessions : [];
-          const current = sessions.find((session) => session?.id === sessionId);
-          if (!current || (current.unread_message_count || 0) === unread) return;
-          state.sessions = sessions.map((session) => (session === current ? { ...session, unread_message_count: unread } : session));
+        apply: (sessionId, unread, failed) => {
+          const next = root.rendererSessionUnread.patchMailCounts(state.sessions, sessionId, unread, failed);
+          if (!next) return;
+          state.sessions = next;
           renderSessions();
         },
       }) || noop);
     }
+
+    // Primary Jenny chat controls (row 76): the shared paused-state store behind the row tag, the row menu
+    // and the composer notice. The Activity / Reset / Forget dialogs arrive as late globals, so a missing one is a no-op.
+    const primaryChatStore = root.rendererPrimaryChatStore?.getDefaultPrimaryChatStore?.({ getBridge: () => windowRef.jennyShell?.primaryChat || null, state, onChanged: () => callbacks.renderSessions?.(), appendClientLog }) || null;
+    if (windowRef.jennyShell?.primaryChat) primaryChatStore?.start();
+    if (primaryChatStore) registerCleanup(() => primaryChatStore.dispose());
+    const primaryDialogDeps = () => ({ documentRef: windowRef.document, stepModal: root.inventoryStepModal, overlayManager: controllers.overlayManager || null, appendClientLog, state, getBridge: () => windowRef.jennyShell?.primaryChat || null });
+    // After a Reset: drop the pane's cached transcript, re-read the sessions list and repaint the (now empty) chat.
+    const afterPrimaryReset = (result) => {
+      const sessionId = String(result?.session_id || primaryChatStore?.getSnapshot?.().session_id || '');
+      if (sessionId) root.rendererChatMessageEditUtils?.purgeChatSessionCaches?.(state, sessionId, callbacks.clearProjectionContextCacheForSession);
+      Promise.resolve(loadSessions?.(state.currentSessionId, { skipOpenCurrent: true })).then(() => {
+        if (sessionId && state.currentSessionId === sessionId) activateWorkspaceSession(sessionId, { mode: 'replace' });
+        callbacks.renderAll?.();
+        showToastMessage?.(result?.forgotten ? jt('chat.primary.forget.done', 'The Jenny chat was reset and its memories removed.') : jt('chat.primary.reset.done', 'The Jenny chat was reset.'));
+      }).catch((error) => appendClientLog?.('WARN', 'primary_chat.reset_reload_failed', { reason: (error && (error.code || error.name)) || 'error' }));
+    };
+    const primaryResetDialog = () => root.rendererPrimaryResetDialog?.getDefaultPrimaryResetDialog?.({ ...primaryDialogDeps(), afterReset: afterPrimaryReset });
 
     // Session row actions (nav overhaul W7): context menu, inline rename,
     // pin/archive meta, and undo-windowed delete. Created before the event
@@ -87,7 +103,6 @@
         showSessionActionError,
         appendClientLog,
         registerCleanup,
-        toggleChatsScope,
         // Locking a streaming session stops it through the Stop path so the
         // outbox hold keeps a queued send from starting a replacement turn.
         stopSessionStream: (sessionId) => handleStopActiveStream(sessionId),
@@ -97,6 +112,10 @@
         // "Link sessions…" (row menu) opens the rail's linked-session popover
         // anchored on the row's ⋯, so linking works with a single open chat.
         openLinkedSessions: (sessionId, anchor) => handleLinkedSessionPopover(sessionId, anchor),
+        getPrimaryChatStore: () => primaryChatStore,
+        openPrimaryActivity: (request) => root.rendererPrimaryActivity?.getDefaultPrimaryActivity?.(primaryDialogDeps())?.open(request),
+        confirmPrimaryReset: (request) => primaryResetDialog()?.confirmReset(request),
+        confirmPrimaryForget: (request) => primaryResetDialog()?.confirmForget(request),
         openSendToChat: sendToChatReady
           ? (sessionId, trigger) => root.rendererChatSendModal.getDefaultModal({ showToast: showToastMessage, toastSource: constants.TOAST_SOURCE?.sessionAction, appendClientLog }).open({
             sourceSessionId: sessionId,
@@ -150,7 +169,6 @@
       callbacks: {
         renderSessions,
         resetSidebarWidth,
-        loadMoreChats,
         setRovingChatSession,
         handleSidebarResizeStart,
         handleSidebarResizeMove,
@@ -165,10 +183,7 @@
         getCurrentRuntimePreferences,
         openSessionRowMenu: (...a) => sessionActionsController?.openSessionRowMenu?.(...a) || false,
         openPanelOverflowMenu: (...a) => sessionActionsController?.openPanelOverflowMenu?.(...a) || false,
-        toggleArchivedView: () => {
-          if (typeof toggleChatsScope === 'function') return toggleChatsScope();
-          return sessionActionsController?.toggleArchivedView?.();
-        },
+        toggleArchivedView: () => toggleChatsScope(),
         openSession: (...a) => activateWorkspaceSession(...a),
         setActiveView,
         openSetupTile: (...args) => callbacks.openSetupTile?.(...args),
@@ -234,7 +249,7 @@
         // paths surface their own error toasts; swallow the rejections here.
         togglePinActiveSession: () => { Promise.resolve(sessionActionsController?.togglePinSession?.(state.currentSessionId)).catch(() => {}); },
         toggleArchiveActiveSession: () => { Promise.resolve(sessionActionsController?.toggleArchiveSession?.(state.currentSessionId)).catch(() => {}); },
-        toggleArchivedView: () => sessionActionsController?.toggleArchivedView?.(),
+        toggleArchivedView: () => toggleChatsScope(),
         sweepEmptyChats: () => { Promise.resolve(sessionActionsController?.sweepEmptyChats?.()).catch(() => {}); },
         // Workspace IDE palette commands (Tier 1.5). Gated on the active view so
         // the IDE controller is never force-created off-IDE (it already exists
@@ -345,13 +360,33 @@
       registerCleanup(() => textFieldContextMenuController.dispose?.());
     }
 
+    // Push-to-talk dictation (row 84): the mic beside Send and the Ctrl+Space hold.
+    const dictationController = (root.rendererDictationController || {}).createDictationController?.({
+      windowRef,
+      documentRef: ctx.documentRef,
+      state,
+      appendClientLog: (...a) => appendClientLog(...a),
+      getPrimaryComposerInput: () => dom.chatInput || null,
+      getPaneComposition: () => root.rendererAppPaneComposition?.getPaneComposition?.() || null,
+      isOverlayOpen: () => Boolean(ctx.documentRef?.getElementById?.('startupOverlay'))
+        || (controllers.overlayManager?.getDepth?.() || 0) > 0,
+      openSettingsSection: (...a) => openSettingsSection?.(...a),
+    }) || null;
+    if (dictationController) {
+      dictationController.bind();
+      root.rendererDictationLive = dictationController;
+      registerCleanup(() => {
+        dictationController.dispose();
+        if (root.rendererDictationLive === dictationController) root.rendererDictationLive = null;
+      });
+    }
+
   }
 
   function bindAttachments(ctx) {
     const { state, constants, dom, refs, callbacks } = ctx;
     const {
       appendClientLog,
-      closeCommandPopover,
       closeComposerPopover,
       openComposerPopover,
       escapeHtml,
@@ -378,8 +413,6 @@
       dom: {
         attachmentTray: dom.attachmentTray,
         composerAttachMenu: dom.composerAttachMenu,
-        composerCommandPopover: dom.composerCommandPopover,
-        composerTerminalShortcut: dom.composerTerminalShortcut,
         composerAttachShortcut: dom.composerAttachShortcut,
         chatInput: dom.chatInput,
         chatView: dom.chatView,
@@ -397,11 +430,9 @@
         beginAttachmentToken,
         cancelAttachmentToken,
         renderComposerPopover: (...args) => refs.getRenderComposerPopover()(...args),
-        renderCommandPopover: (...args) => refs.getRenderCommandPopover()(...args),
         updateComposerSafeOffset,
         closeComposerPopover: (...args) => closeComposerPopover(...args),
         openComposerPopover: (...args) => openComposerPopover(...args),
-        closeCommandPopover: (...args) => closeCommandPopover(...args),
         appendClientLog: (...a) => appendClientLog(...a),
         queueInlineImageAttachment,
         handleAttachmentPicker,
@@ -412,28 +443,6 @@
     if (attachmentEventBindings) {
       attachmentEventBindings.bind();
       registerCleanup(() => attachmentEventBindings.dispose?.());
-    }
-
-    if (!attachmentEventBindings && dom.composerTerminalShortcut) {
-      dom.composerTerminalShortcut.onclick = () => {
-        const renderCommandPopover = refs.getRenderCommandPopover();
-        if (state.ui.commandPopoverOpen) {
-          state.ui.commandPopoverOpen = false;
-          renderCommandPopover();
-          dom.composerTerminalShortcut.focus();
-          return;
-        }
-        if (state.ui.composerPopoverOpen) {
-          closeComposerPopover();
-        }
-        state.ui.commandPopoverOpen = true;
-        renderCommandPopover();
-      };
-      registerCleanup(() => {
-        if (dom.composerTerminalShortcut.onclick) {
-          dom.composerTerminalShortcut.onclick = null;
-        }
-      });
     }
 
   }

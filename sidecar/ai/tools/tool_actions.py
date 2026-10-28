@@ -13,7 +13,22 @@ class ToolActionSpec:
     side_effecting: bool
 
 
+def valid_tool_action_name(name: str) -> bool:
+    """The locked action grammar: 1-64 printable, whitespace-free, colon-free chars.
+
+    Composite permission keys ``tool:action`` are only injective while both
+    segments are colon-free.
+    """
+    return (
+        bool(name)
+        and len(name) <= _MAX_TOOL_ACTION_NAME_CHARS
+        and ":" not in name
+        and not any(char.isspace() or not char.isprintable() for char in name)
+    )
+
+
 def parse_tool_actions(raw: Any) -> dict[str, ToolActionSpec] | None:
+    """Lenient parse for runtime/MCP descriptors; manifest entries are validated strictly."""
     if not isinstance(raw, dict):
         return None
     actions: dict[str, ToolActionSpec] = {}
@@ -21,14 +36,7 @@ def parse_tool_actions(raw: Any) -> dict[str, ToolActionSpec] | None:
         if not isinstance(raw_name, str):
             continue
         name = raw_name.strip()
-        # Composite permission keys tool:action are only injective while both
-        # segments are colon-free.
-        if (
-            not name
-            or len(name) > _MAX_TOOL_ACTION_NAME_CHARS
-            or ":" in name
-            or any(char.isspace() or not char.isprintable() for char in name)
-        ):
+        if not valid_tool_action_name(name):
             continue
         side_effecting = raw_spec.get("side_effecting") if isinstance(raw_spec, dict) else None
         actions[name] = ToolActionSpec(

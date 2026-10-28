@@ -19,6 +19,12 @@ _NONINTERACTIVE_ENV = {
     "GCM_INTERACTIVE": "never",
 }
 _MIDDLE_MARKER = "\n...[middle truncated]\n"
+# cmd.exe (and CreateProcess through NeedCurrentDirectoryForExePath) resolves a
+# bare command name from the current directory before PATH unless this is set.
+# An opened repository that ships `git.cmd` or `ls.bat` would otherwise run in
+# place of the allowlisted tool the classifier admitted by name.
+_NO_CWD_EXE_LOOKUP = {"NoDefaultCurrentDirectoryInExePath": "1"}
+_NO_CWD_EXE_LOOKUP_UPPER = frozenset(key.upper() for key in _NO_CWD_EXE_LOOKUP)
 
 
 def noninteractive_env(base: Mapping[str, str]) -> dict[str, str]:
@@ -50,19 +56,24 @@ def shell_environment(directory: Path | None) -> dict[str, str] | None:
     """Keep the legacy Windows PATH repair and optionally disable interaction."""
     inherited = dict(os.environ)
     env = None
-    if os.name == "nt" and directory is not None:
-        entries = [entry for entry in (inherited.get("PATH") or "").split(os.pathsep) if entry]
-        if not any(os.path.normcase(os.path.normpath(entry)) ==
-                   os.path.normcase(os.path.normpath(str(directory))) for entry in entries):
-            env = {**inherited, "PATH": os.pathsep.join([*entries, str(directory)])}
+    if os.name == "nt":
+        # Windows names are case-insensitive: drop any inherited spelling first.
+        env = {key: value for key, value in inherited.items()
+               if key.upper() not in _NO_CWD_EXE_LOOKUP_UPPER}
+        env.update(_NO_CWD_EXE_LOOKUP)
+        if directory is not None:
+            entries = [entry for entry in (env.get("PATH") or "").split(os.pathsep) if entry]
+            if not any(os.path.normcase(os.path.normpath(entry)) ==
+                       os.path.normcase(os.path.normpath(str(directory))) for entry in entries):
+                env["PATH"] = os.pathsep.join([*entries, str(directory)])
     if default_on_feature_enabled("shell_noninteractive_env"):
         return noninteractive_env(env if env is not None else inherited)
     return env
 
 
 def background_spawn_environment() -> dict[str, str] | None:
-    """The background job's env; ``None`` (inherit, as before) when the flag is off."""
-    if not default_on_feature_enabled("shell_noninteractive_env"):
+    """The background job's env; ``None`` (inherit, as before) when the flag is off on POSIX."""
+    if os.name != "nt" and not default_on_feature_enabled("shell_noninteractive_env"):
         return None
     return shell_environment(powershell_directory())
 

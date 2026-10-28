@@ -84,16 +84,24 @@
       + '</figure>';
   }
 
+  /* An image being rendered: the finished figure's frame and caption, so nothing moves when the
+   * picture lands. The live progress module fills in the phase, the step line and the newest
+   * preview frame by data-inv-image-render (the call id). */
   function renderPendingFigure(opts) {
     const o = opts || {};
     const labels = o.labels || {};
-    const ratio = positiveInteger(o.width) && positiveInteger(o.height) ? `${Number(o.width)} / ${Number(o.height)}` : '1 / 1';
-    return '<div class="inv-artifact-figure inv-artifact-figure--pending" role="status">'
-      + `<div class="inv-artifact-figure-placeholder" style="aspect-ratio: ${ratio}">`
-      + `<span class="inv-artifact-figure-pending-title">${escapeHtml(labels.title)}</span>`
-      + `<span class="inv-artifact-figure-pending-note">${escapeHtml(labels.note)}</span>`
-      + `<button type="button" class="inv-artifact-figure-action" data-inv-image-cancel>${escapeHtml(labels.cancel)}</button>`
-      + '</div></div>';
+    const size = positiveInteger(o.width) && positiveInteger(o.height) ? `${Number(o.width)} × ${Number(o.height)} · ` : '';
+    return `<div class="inv-artifact-figures"><figure class="inv-artifact-figure inv-artifact-figure--pending" data-inv-image-render="${escapeHtml(o.callId)}" aria-busy="true">`
+      + `<div class="inv-artifact-figure-media"${ratioStyle(o.width, o.height)}><span class="inv-artifact-figure-developing">`
+      + '<img class="inv-artifact-figure-preview" alt="">'
+      + '<span class="inv-artifact-figure-progress" aria-hidden="true"><span class="inv-artifact-figure-progress-fill"></span></span>'
+      + '</span></div><figcaption class="inv-artifact-figure-caption">'
+      + (o.title ? `<span class="inv-artifact-figure-title" title="${escapeHtml(o.title)}">${escapeHtml(o.title)}</span>` : '')
+      + `<span class="inv-artifact-figure-meta">${escapeHtml(size)}<span class="inv-artifact-figure-phase" role="status">${escapeHtml(labels.phase)}</span>`
+      + '<span class="inv-artifact-figure-step" aria-hidden="true"></span></span>'
+      + `<button type="button" class="inv-artifact-figure-action inv-artifact-figure-stop" data-inv-image-cancel>${escapeHtml(labels.stop)}</button>`
+      + (o.prompt ? `<span class="inv-artifact-figure-prompt" title="${escapeHtml(o.prompt)}">${escapeHtml(o.prompt)}</span>` : '')
+      + '</figcaption></figure></div>';
   }
 
   /* The markdown "View image" reference to a generated image. */

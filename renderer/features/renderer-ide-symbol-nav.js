@@ -29,6 +29,9 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const RENDER_DEBOUNCE_MS = 90;
+  // While the model version keeps changing (typing) the navigation-tree request
+  // waits for a longer pause; cursor-only moves keep the short debounce.
+  const TYPING_RENDER_DEBOUNCE_MS = 400;
   const MAX_SYMBOL_RESULTS = 200;
   const MAX_NAV_TREE_CACHE_ENTRIES = 64;
   const MODEL_SCHEME = 'jenny-workspace';
@@ -222,6 +225,11 @@
 
     // --- Breadcrumb state ---
     let crumbEl = null;
+    // The segment markup last written, so an unchanged breadcrumb skips the DOM write.
+    let crumbMarkup = '';
+    // The active path + model version at the last scheduleRender (typing detection).
+    let scheduledPath = '';
+    let scheduledVersion = null;
     let boundCrumbHost = null;
     let renderTimer = null;
     let renderToken = 0;
@@ -231,6 +239,9 @@
     let symbols = null; // null = not indexed this open
     let indexing = false;
     const navTreeCache = new Map();
+    // uri -> { versionId, promise }: the Outline and the breadcrumbs asking for the same
+    // (model, version) at once share one worker call (row 82 O2).
+    const navTreeInFlight = new Map();
     let navTreeCacheHits = 0;
     let navTreeCacheMisses = 0;
 
@@ -285,7 +296,24 @@
         navTreeCacheHits += 1;
         return cached.tree;
       }
+      const pending = versionId !== null ? navTreeInFlight.get(uri) : null;
+      if (pending && pending.versionId === versionId) {
+        navTreeCacheHits += 1;
+        return pending.promise;
+      }
       navTreeCacheMisses += 1;
+      const promise = fetchNavTree(model, namespace, uri, versionId);
+      if (versionId === null) return promise;
+      const entry = { versionId, promise };
+      navTreeInFlight.set(uri, entry);
+      const settle = () => {
+        if (navTreeInFlight.get(uri) === entry) navTreeInFlight.delete(uri);
+      };
+      promise.then(settle, settle);
+      return promise;
+    }
+
+    async function fetchNavTree(model, namespace, uri, versionId) {
       const lang = model.getLanguageId ? model.getLanguageId() : '';
       const getWorker = lang === 'javascript'
         ? (namespace.getJavaScriptWorker && await namespace.getJavaScriptWorker())
@@ -324,6 +352,11 @@
       return lang === 'typescript' || lang === 'javascript';
     }
 
+    // The Outline view (row 82 O1) reads the same cached tree: null until Monaco is live.
+    async function getNavigationTree(path) {
+      return isMonacoLive() ? navTreeForModel(modelForPath(path)) : null;
+    }
+
     // === Breadcrumb ===
 
     function ensureCrumbContainer(host) {
@@ -336,6 +369,7 @@
       }
       crumbEl = documentRef.createElement('span');
       crumbEl.className = 'ide-crumb-symbols';
+      crumbMarkup = '';
       host.appendChild(crumbEl);
       return crumbEl;
     }
@@ -345,6 +379,7 @@
         crumbEl.parentNode.removeChild(crumbEl);
       }
       crumbEl = null;
+      crumbMarkup = '';
     }
 
     function applyCrumb(host, segments) {
@@ -373,7 +408,11 @@
           dataset: { 'ide-symbol-crumb': String(seg.offset) },
         }));
       }
-      el.innerHTML = parts.join('');
+      const markup = parts.join('');
+      if (markup !== crumbMarkup) {
+        el.innerHTML = markup;
+        crumbMarkup = markup;
+      }
     }
 
     async function renderNow() {
@@ -398,8 +437,7 @@
         clearCrumb();
         return;
       }
-      const reader = windowRef && windowRef.rendererIdeActiveEditorReader;
-      if (reader && typeof reader.isLargeFile === 'function' && reader.isLargeFile() === true) {
+      if (editorHost.isLargeFile?.(path) === true) {
         clearCrumb();
         return;
       }
@@ -439,10 +477,16 @@
       if (renderTimer && clearTimeoutFn) {
         clearTimeoutFn(renderTimer);
       }
+      const path = (editorHost?.getActivePath && editorHost.getActivePath()) || '';
+      const model = path ? (editorHost.getModel?.(path) || modelForPath(path)) : null;
+      const version = model && typeof model.getVersionId === 'function' ? model.getVersionId() : null;
+      const typing = path === scheduledPath && version !== null && scheduledVersion !== null && version !== scheduledVersion;
+      scheduledPath = path;
+      scheduledVersion = version;
       renderTimer = setTimeoutFn(() => {
         renderTimer = null;
         renderNow();
-      }, RENDER_DEBOUNCE_MS);
+      }, typing ? TYPING_RENDER_DEBOUNCE_MS : RENDER_DEBOUNCE_MS);
     }
 
     function handleActiveFileChanged() {
@@ -644,6 +688,7 @@
       indexGate.bump();
       symbols = null;
       navTreeCache.clear();
+      navTreeInFlight.clear();
       indexing = false;
       renderToken += 1;
       clearCrumb();
@@ -682,6 +727,7 @@
       picker?.dispose();
       symbols = null;
       navTreeCache.clear();
+      navTreeInFlight.clear();
       navTreeCacheHits = 0;
       navTreeCacheMisses = 0;
     }
@@ -689,6 +735,7 @@
     return {
       handleMonacoReady,
       render: scheduleRender,
+      getNavigationTree,
       openPicker,
       bindEvents,
       dispose,

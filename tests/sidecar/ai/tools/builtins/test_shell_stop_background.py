@@ -90,9 +90,11 @@ def test_stop_background_job_terminates_owned_tree_and_is_idempotent(tmp_path: P
     assert stopped_body["state"] == "failed"
     assert stopped_body["error"] == "background job was cancelled"
     assert stopped_body["stop_requested"] is True
+    assert "schema_version" not in stopped_body
     # Polling the stopped job reads its state; that is not a failed poll.
     polled = check_background_job_tool({"job_id": job_id}, _guard(tmp_path))
     assert polled.success is True
+    assert polled.error_code is None
     assert json.loads(polled.output)["error"] == "background job was cancelled"
     # The contract is that stopping the job kills the whole owned tree, so assert
     # the CHILD process is gone. Polling for that is both deterministic and fast --

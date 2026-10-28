@@ -53,37 +53,6 @@
     border-color var(--motion-duration-regular) var(--motion-ease-standard);
 }
 
-/*
- * Settings v2 surface-state contract:
- *   data-surface-state="busy"   → save/validation in flight
- *   data-surface-state="active" → success flash after save
- *   data-surface-state="error"  → save/validation failed
- *
- * Layered alongside the panel shadow because the generic rule in
- * styles/surface-states.css replaces box-shadow wholesale, which would
- * otherwise drop the panel's depth.
- */
-.settings-card[data-surface-state~="busy"] {
-  box-shadow:
-    var(--settings-shell-panel-shadow),
-    inset 0 0 0 1px color-mix(in srgb, var(--state-warning) 28%, transparent);
-  border-color: var(--state-warning-border);
-}
-
-.settings-card[data-surface-state~="active"] {
-  box-shadow:
-    var(--settings-shell-panel-shadow),
-    inset 0 0 0 1px color-mix(in srgb, var(--state-info) 24%, transparent);
-  border-color: var(--state-info-border);
-}
-
-.settings-card[data-surface-state~="error"] {
-  box-shadow:
-    var(--settings-shell-panel-shadow),
-    inset 0 0 0 1px color-mix(in srgb, var(--state-danger) 32%, transparent);
-  border-color: var(--state-danger-border);
-}
-
 @media (prefers-reduced-motion: reduce) {
   .settings-card { transition: none; }
 }

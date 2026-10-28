@@ -1,85 +1,9 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const {
-  createStreamToolHandlers,
-  markUserQuestionsStale,
-} = require('../renderer/chat/renderer-stream-handler-tools');
+const { markUserQuestionsStale } = require('../renderer/chat/renderer-stream-handler-tools');
 const { renderUserQuestionsReceipt } = require('../renderer/chat/renderer-user-questions-block');
-
-function createToolHandlerHarness(options = {}) {
-  const initialToolName = options.initialToolName || 'Read';
-  const messagesBySession = new Map([[
-    'session-1',
-    [{
-      id: 'tool_use_call-1',
-      role: 'assistant',
-      content: 'Reading',
-      kind: 'tool_use',
-      tool_call: {
-        call_id: 'call-1',
-        approval_id: '',
-        tool_name: initialToolName,
-        input: { path: 'README.md' },
-        input_json: '{"path":"README.md"}',
-        summary: 'Reading',
-        status: 'running',
-        parent_stream_id: 'stream-1',
-      },
-      status: 'complete',
-    }],
-  ]]);
-  const state = {
-    pendingStreams: options.pendingStreams || new Map(),
-    toolCallsByStream: new Map([[
-      'stream-1',
-      [{ callId: 'call-1', toolName: initialToolName, status: 'running', input: { path: 'README.md' }, summary: 'Reading' }],
-    ]]),
-    pendingToolApprovals: new Map(),
-    sessions: options.sessions || [],
-  };
-  const scheduledPatches = [];
-  const renderCalls = [];
-  const operationOrder = [];
-  const sessionPatches = [];
-  const handlers = createStreamToolHandlers({
-    state,
-    streamSegmentState: options.streamSegmentState || new Map(),
-    getSessionMessages(sessionId) {
-      return messagesBySession.get(sessionId) || [];
-    },
-    setSessionMessages(sessionId, messages) {
-      messagesBySession.set(sessionId, messages);
-    },
-    createNormalizedMessage(role, content, extra = {}) {
-      return { id: extra.id || `${role}_message`, role, content, ...extra };
-    },
-    releaseApprovalToastSessions() {},
-    clearSessionComposerNotice() {},
-    patchSessionSummary(sessionId, patch) { sessionPatches.push({ sessionId, patch }); },
-    queueSessionRender(sessionId, flags) {
-      operationOrder.push('render');
-      renderCalls.push({ sessionId, flags });
-    },
-    isCurrentSession() { return true; },
-    isRowModelEnabled() { return true; },
-    applyLiveTurnPayload() { return null; },
-    noteTimelineMessageCreated() {},
-    invalidateProjectionStateForSession(sessionId) {
-      operationOrder.push('invalidate');
-      return sessionId ? 1 : 0;
-    },
-    scheduleLiveToolPatch(payload, details) {
-      scheduledPatches.push({ payload, details });
-      if (options.patchThrows === true) {
-        throw new Error('patch scheduler unavailable');
-      }
-      return options.patchAccepted === true;
-    },
-    MESSAGE_STATUS: { COMPLETE: 'complete' },
-  });
-  return { handlers, messagesBySession, operationOrder, renderCalls, scheduledPatches, sessionPatches };
-}
+const { createToolHandlerHarness } = require('./helpers/stream-tool-handler-harness');
 
 test('exit plan approval mounts a live plan document and consumes the restored run mode', async (t) => {
   const writes = [];
@@ -103,6 +27,8 @@ test('exit plan approval mounts a live plan document and consumes the restored r
     .find((message) => message.kind === 'plan_document');
   assert.equal(pending.plan_document.state, 'pending');
   assert.deepEqual(writes, []);
+  // The approval, its tool row and the plan document land in one store write.
+  assert.deepEqual(harness.messageWrites, ['session-1']);
 
   await harness.handlers.handleToolResult({
     sessionId: 'session-1', streamId: 'stream-1', callId: 'call-1',
@@ -481,41 +407,6 @@ test('tool_result updates the matching stream when call ids are reused', async (
   assert.equal(currentResult.tool_result.parent_stream_id, 'stream-1');
 });
 
-test('tool_use rolls the segment slice base so the next segment excludes the preamble (W3.6)', async () => {
-  const segState = { segmentIndex: 0, aggregateOffset: 19, _lastAggregateLength: 19, segmentBaseOffset: 0 };
-  const pendingStreams = new Map([['stream-1', 'assistant_stream-1']]);
-  const harness = createToolHandlerHarness({
-    streamSegmentState: new Map([['stream-1', segState]]),
-    pendingStreams,
-  });
-  harness.messagesBySession.get('session-1').push({
-    id: 'assistant_stream-1',
-    role: 'assistant',
-    content: 'Let me check that. ',
-    status: 'streaming',
-    streamId: 'stream-1',
-  });
-
-  await harness.handlers.handleToolUse({
-    type: 'tool_use',
-    sessionId: 'session-1',
-    streamId: 'stream-1',
-    callId: 'call-2',
-    toolName: 'Read',
-    summary: 'Reading a.txt',
-    status: 'running',
-    input: { path: 'a.txt' },
-  });
-
-  assert.equal(segState.segmentIndex, 1);
-  assert.equal(segState.aggregateOffset, 19);
-  assert.equal(segState.segmentBaseOffset, 19);
-  assert.equal(pendingStreams.has('stream-1'), false);
-  const preamble = harness.messagesBySession.get('session-1').find((message) => message.id === 'assistant_stream-1');
-  assert.equal(preamble.content, 'Let me check that. ');
-  assert.equal(preamble.status, 'complete');
-});
-
 test('tool_result ignores legacy same-call rows without stream identity', async () => {
   const harness = createToolHandlerHarness({ patchAccepted: false });
   const messages = harness.messagesBySession.get('session-1');
@@ -551,4 +442,50 @@ test('tool_result ignores legacy same-call rows without stream identity', async 
 
   assert.equal(legacyUse.tool_call.status, 'running');
   assert.equal(currentUse.tool_call.status, 'completed');
+});
+
+test('failed, refused and timed-out classic results take the message render, not the field patch', async () => {
+  const cases = [
+    { name: 'isError', extra: { isError: true, errorCode: 'CMP-TOOL-0003', content: 'ENOENT: README.md' } },
+    { name: 'denied', extra: { approvalState: 'denied' } },
+    { name: 'approval timed_out', extra: { approvalState: 'timed_out' } },
+    { name: 'sidecar timed_out', extra: { metadata: { timed_out: true } } },
+  ];
+  for (const { name, extra } of cases) {
+    const harness = createToolHandlerHarness({ patchAccepted: true });
+    await harness.handlers.handleToolResult({
+      type: 'tool_result', sessionId: 'session-1', streamId: 'stream-1', callId: 'call-1',
+      toolName: 'read_file', content: 'x', summary: 'Read README', ...extra,
+    });
+    assert.equal(harness.scheduledPatches.length, 0, name);
+    assert.equal(harness.renderCalls[0].flags.messages, true, name);
+  }
+  // An approved, successful result still patches in place.
+  const harness = createToolHandlerHarness({ patchAccepted: true });
+  await harness.handlers.handleToolResult({
+    type: 'tool_result', sessionId: 'session-1', streamId: 'stream-1', callId: 'call-1',
+    toolName: 'read_file', content: 'x', summary: 'Read README', approvalState: 'approved',
+  });
+  assert.equal(harness.scheduledPatches.length, 1);
+  assert.equal(harness.renderCalls[0].flags.messages, false);
+});
+
+// Tool and approval events change no session summary the sidebar row renders
+// from (title, preview, time, unread, outbox): their only sidebar effect is a
+// runtime dot, which the runtime chrome pass queueSessionRender adds already
+// repaints. A sessions render per event would rebuild the panel several times
+// a second during an agentic turn.
+test('tool, approval and question events queue no structural sessions render', async () => {
+  const harness = createToolHandlerHarness({ initialToolName: 'ask_user' });
+  const base = { sessionId: 'session-1', streamId: 'stream-1' };
+  await harness.handlers.handleToolUse({ ...base, type: 'tool_use', callId: 'call-2', toolName: 'Read', input: { path: 'a.md' }, summary: 'Read a.md', status: 'running' });
+  await harness.handlers.handleApprovalNeeded({ ...base, type: 'tool_approval_needed', callId: 'call-2', approvalId: 'approval-2', toolName: 'Read', input: { path: 'a.md' } });
+  await harness.handlers.handleApprovalNeeded({ ...base, type: 'tool_approval_withdrawn', callId: 'call-2', approvalId: 'approval-2' });
+  const questionRef = 'question_session-1_stream-1_call-1_q1';
+  const questions = [{ id: 'editor', prompt: 'Which editor?', options: ['VS Code', 'Vim'] }];
+  await harness.handlers.handleUserQuestionsRequested({ ...base, type: 'user_questions_requested', callId: 'call-1', questionRef, toolName: 'ask_user', questions });
+  await harness.handlers.handleUserQuestionsRequested({ ...base, type: 'user_questions_withdrawn', callId: 'call-1', questionRef });
+  await harness.handlers.handleToolResult({ ...base, type: 'tool_result', callId: 'call-2', toolName: 'Read', content: 'a', summary: 'Read a.md' });
+  assert.equal(harness.renderCalls.length, 6);
+  assert.deepEqual(harness.renderCalls.filter((call) => call.flags.sessions === true).map((call) => call.flags), []);
 });

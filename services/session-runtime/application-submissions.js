@@ -22,6 +22,7 @@ const APPLICATION_REFUSAL_REASONS = new Set([
 ]);
 
 function applicationRefusalReason(error) {
+  if (error?.code === 'store_read_only') return 'runtime_store_read_only';
   for (const value of [error?.code, error?.message]) {
     if (typeof value === 'string' && APPLICATION_REFUSAL_REASONS.has(value)) return value;
   }

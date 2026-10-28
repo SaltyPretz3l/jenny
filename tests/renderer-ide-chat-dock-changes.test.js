@@ -37,12 +37,24 @@ function setup(t, opts = {}) {
     getChangesHost: () => doc.getElementById('host'),
     onCountChange() { this.countChanges += 1; },
   };
+  const renders = { count: 0 };
+  // Counts the mounted view's repaints (mount itself paints once).
+  const countingModule = {
+    ...changesViewModule,
+    createChangesView(viewDeps) {
+      const view = changesViewModule.createChangesView(viewDeps);
+      const render = view.render.bind(view);
+      view.render = () => { renders.count += 1; return render(); };
+      return view;
+    },
+  };
   const mod = changesDockModule.createChatDockChanges({
     workbench: wb,
-    loadChangesView: async () => changesViewModule,
+    loadChangesView: async () => countingModule,
     getSuggestedClient: () => null,
     focusChatInput: () => doc.getElementById('chatInput').focus(),
-    ...(opts.isChatOnScreen ? { isChatOnScreen: opts.isChatOnScreen } : {}),
+    isChatOnScreen: opts.isChatOnScreen || (() => wb.isVisible('chat')),
+    ...(opts.isActive ? { isActive: opts.isActive } : {}),
     ...(opts.onSync ? { onSync: opts.onSync } : {}),
     viewDeps: {
       getTurnViewModels: () => turns,
@@ -52,7 +64,7 @@ function setup(t, opts = {}) {
     },
   });
   t.after(() => { mod.dispose(); dom.window.close(); });
-  return { dom, doc, mod, wb, turns, changes, opened, sessionId };
+  return { dom, doc, mod, wb, turns, changes, opened, sessionId, renders };
 }
 
 test('the module exposes no tab markup builder any more', () => {
@@ -183,10 +195,40 @@ test('after dispose sync is inert and the view is gone', async (t) => {
   f.wb.visible.changes = true;
   f.mod.sync();
   await settle();
-  assert.ok(f.mod.getView());
+  assert.ok(f.doc.querySelector('#host .changes-view'));
   f.mod.dispose();
-  assert.equal(f.mod.getView(), null);
+  f.wb.visible.changes = false;
+  f.mod.sync();
+  assert.ok(f.doc.querySelector('#host .changes-view'), 'a disposed module no longer unmounts or renders');
   f.turns.push({ turnId: 't3', rootMessageIds: { assistant: 'a3' }, toolCalls: [] });
   f.mod.sync();
   assert.equal(f.mod.hasUnread(), false);
+});
+
+test('a mounted Changes view repaints only when the chat turns or session change, and not while the Workspace is hidden', async (t) => {
+  const active = { value: true };
+  const f = setup(t, { isActive: () => active.value });
+  f.wb.visible.changes = true;
+  f.mod.sync();
+  await settle();
+  const base = f.renders.count;
+  f.mod.sync();
+  f.mod.sync();
+  assert.equal(f.renders.count, base, 'an unrelated chat render does not rebuild the view');
+  f.turns.push({ turnId: 't2', rootMessageIds: { assistant: 'a2' }, toolCalls: [] });
+  f.mod.sync();
+  assert.equal(f.renders.count, base + 1, 'a new turn repaints');
+  f.turns[1] = { ...f.turns[1], toolCalls: [{ id: 'x' }] };
+  f.mod.sync();
+  assert.equal(f.renders.count, base + 2, 'a replaced turn view model repaints');
+  active.value = false;
+  f.turns.push({ turnId: 't3', rootMessageIds: { assistant: 'a3' }, toolCalls: [] });
+  f.mod.sync();
+  assert.equal(f.renders.count, base + 2, 'nothing repaints while the Workspace is hidden');
+  active.value = true;
+  f.mod.sync();
+  assert.equal(f.renders.count, base + 3, 'the first sync back in the Workspace catches up');
+  f.sessionId.value = 's2';
+  f.mod.sync();
+  assert.equal(f.renders.count, base + 4, 'a session switch repaints');
 });

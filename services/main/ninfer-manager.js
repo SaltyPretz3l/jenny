@@ -406,7 +406,7 @@ function createNinferManager({
       if (!reconcileCleanup()) {
         setState('stopped', { lastError: 'stop_unconfirmed' });
       } else if (state !== 'stopped' || status.lastError) {
-        setState('stopped', { lastError: '', stoppedBy: '' });
+        setState('stopped', { lastError: '', stoppedBy });
       }
       return getStatus();
     }
@@ -439,7 +439,7 @@ function createNinferManager({
     }
     setState('stopped', {
       contextSize: 0, mtp: false, identityReused: false,
-      identityRetained: Boolean(retainedIdentity), lastError: stopError, stoppedBy: '',
+      identityRetained: Boolean(retainedIdentity), lastError: stopError, stoppedBy: stopError ? '' : stoppedBy,
     });
     return getStatus();
   }
@@ -548,9 +548,11 @@ function createNinferManager({
     });
   }
 
-  function stop({ retainIdentity = false } = {}) {
+  // stoppedBy 'engine_switch': a model load stops NInfer and initializes the
+  // sidecar for the new engine itself, so the stop must not re-broker it.
+  function stop({ retainIdentity = false, stoppedBy = '' } = {}) {
     abortStartup();
-    return serialize(() => stopCurrent({ retainIdentity }));
+    return serialize(() => stopCurrent({ retainIdentity, stoppedBy }));
   }
 
   function settled() {

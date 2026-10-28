@@ -7,8 +7,10 @@ import threading
 import urllib.error
 import urllib.request
 from collections.abc import Iterator
+from typing import cast
 from unittest.mock import MagicMock, patch
 
+import html2text  # noqa: F401 - dev extra; fetch_url_tool markdown conversion needs it
 import pytest
 
 from sidecar.ai.tools.builtins import web_http
@@ -26,6 +28,7 @@ from sidecar.ai.tools.builtins.web import (
     web_search_tool,
 )
 from sidecar.ai.tools.builtins.web_http import (
+    HostResolutionError,
     UrlReadResult,
     ValidatedUrl,
     _SingleFetchResult,
@@ -972,7 +975,6 @@ class TestFetchUrlTool:
             redirect_chain=(),
         )
 
-        pytest.importorskip("html2text")
         result = fetch_url_tool({"url": "https://example.com"}, None)
         data = json.loads(result.output)
         assert "# Title" in data["content"]
@@ -1117,6 +1119,78 @@ class TestFetchUrlTool:
         assert len(data["content"]) == 15_000
 
 
+def _fetch_body(payload: bytes, content_type: str) -> dict[str, object]:
+    url = "https://example.com/doc"
+    with (
+        patch(
+            "sidecar.ai.tools.builtins.web.validate_public_url",
+            return_value=ValidatedUrl(url=url, pinned_ip="93.184.216.34"),
+        ),
+        patch(
+            "sidecar.ai.tools.builtins.web.read_url_response",
+            return_value=UrlReadResult(
+                payload=payload,
+                was_truncated=False,
+                content_type=content_type,
+                status_code=200,
+                requested_url=url,
+                final_url=url,
+                redirect_chain=(),
+            ),
+        ),
+    ):
+        return cast(dict[str, object], json.loads(fetch_url_tool({"url": url}, None).output))
+
+
+class TestFetchUrlResponseHandling:
+    def test_xhtml_goes_through_the_html_sanitizer(self) -> None:
+        xhtml = (
+            b'<?xml version="1.0" encoding="utf-8"?>'
+            b'<html xmlns="http://www.w3.org/1999/xhtml"><head>'
+            b"<script>stealCookies()</script><style>.x{color:red}</style></head>"
+            b"<body><p>Clean paragraph</p></body></html>"
+        )
+
+        data = _fetch_body(xhtml, "application/xhtml+xml; charset=utf-8")
+
+        assert "stealCookies" not in str(data["content"])
+        assert "color:red" not in str(data["content"])
+        assert "Clean paragraph" in str(data["content"])
+        assert data["content_format"] == "markdown"
+
+    def test_declared_charset_decodes_the_body(self) -> None:
+        data = _fetch_body("café naïve".encode("latin-1"), "text/plain; charset=iso-8859-1")
+
+        assert data["content"] == "café naïve"
+
+    def test_unknown_charset_falls_back_to_utf8(self) -> None:
+        data = _fetch_body("café".encode(), 'text/plain; charset="no-such-codec"')
+
+        assert data["content"] == "café"
+
+    def test_missing_content_type_html_is_sniffed_and_sanitized(self) -> None:
+        html = b"\n  <!DOCTYPE html><html><body><script>evil()</script><p>Body</p></body></html>"
+
+        data = _fetch_body(html, "")
+
+        assert "evil()" not in str(data["content"])
+        assert "Body" in str(data["content"])
+        assert data["content_format"] == "markdown"
+
+    def test_missing_content_type_plain_text_is_still_accepted(self) -> None:
+        data = _fetch_body(b"just some text", "")
+
+        assert data["content"] == "just some text"
+        assert data["content_format"] == "text"
+
+    def test_missing_content_type_binary_body_is_refused(self) -> None:
+        with pytest.raises(ToolExecutionFailure, match="looks binary") as excinfo:
+            _fetch_body(b"PK\x03\x04\x00\x00binary zip bytes", "")
+
+        assert excinfo.value.code == "CMP-WEB-0004"
+        assert excinfo.value.retryable is False
+
+
 class TestConfigGating:
     def test_web_tools_excluded_from_registry_by_default(self) -> None:
         from sidecar.ai.tools.registry import build_default_registry
@@ -1205,3 +1279,293 @@ def test_initial_dns_receives_fetch_deadline_and_remaining_budget(monkeypatch):
         fetch_url_tool({"url": "https://example.com", "timeout_s": 1}, None)
     assert deadlines == [101.0]
     assert budgets == [0.5]
+
+
+def _cached_entry(url: str, content: str = "cached body") -> _CachedFetchEntry:
+    return _CachedFetchEntry(
+        requested_url=url,
+        final_url=url,
+        redirect_chain=(),
+        status_code=200,
+        content_type="text/plain",
+        content_format="text",
+        content=content,
+        truncated=False,
+        size_bytes=len(content),
+    )
+
+
+class TestFetchBodySanitizingBound:
+    def test_sanitizer_input_is_bounded_before_the_cap(self, monkeypatch) -> None:
+        from sidecar.ai.tools.builtins import web
+
+        seen: list[int] = []
+        real = web.sanitize_tool_output
+
+        def spy(text, **kwargs):
+            seen.append(len(text))
+            return real(text, **kwargs)
+
+        monkeypatch.setattr(web, "sanitize_tool_output", spy)
+        body = ("lorem ipsum dolor sit amet " * 40_000).encode()  # ~1 MB
+        assert len(body) > 1_000_000
+        result = UrlReadResult(
+            payload=body,
+            was_truncated=False,
+            content_type="text/plain",
+            status_code=200,
+            requested_url="https://example.com",
+            final_url="https://example.com",
+            redirect_chain=(),
+        )
+
+        entry = web._build_cached_fetch_entry(ValidatedUrl(url="https://example.com"), result)
+
+        assert seen == [4 * web._MAX_FETCH_CONTENT_CHARS]
+        assert len(entry.content) == web._MAX_FETCH_CONTENT_CHARS
+        assert entry.content.endswith("[truncated]")
+
+    def test_control_characters_are_still_stripped(self) -> None:
+        data = _fetch_body(b"alpha\x00\x07beta\tgamma\ndelta", "text/plain")
+
+        assert data["content"] == "alphabeta\tgamma\ndelta"
+
+    def test_a_cache_hit_is_not_resanitized(self, monkeypatch) -> None:
+        from sidecar.ai.tools.builtins import web
+
+        _fetch_cache.set("https://example.com", _cached_entry("https://example.com"))
+        monkeypatch.setattr(
+            web,
+            "sanitize_tool_output",
+            lambda *_a, **_k: pytest.fail("a cached entry must not be sanitized again"),
+        )
+
+        data = json.loads(fetch_url_tool({"url": "https://example.com"}, None).output)
+
+        assert data["cache_hit"] is True
+        assert data["content"] == "cached body"
+
+    def test_a_smaller_max_chars_clips_the_cached_entry(self) -> None:
+        _fetch_cache.set("https://example.com", _cached_entry("https://example.com", "x" * 5000))
+
+        data = json.loads(
+            fetch_url_tool({"url": "https://example.com", "max_chars": 300}, None).output
+        )
+
+        assert data["cache_hit"] is True
+        assert data["truncated"] is True
+        assert len(data["content"]) == 300
+        assert data["content"].endswith("[truncated]")
+
+
+class TestFetchCacheBeforeValidation:
+    def test_cache_hit_pays_no_dns_round_trip(self, monkeypatch) -> None:
+        from sidecar.ai.tools.builtins import web
+
+        _fetch_cache.set("https://example.com/page", _cached_entry("https://example.com/page"))
+        monkeypatch.setattr(
+            web,
+            "validate_public_url",
+            lambda *_a, **_k: pytest.fail("a cache hit must not validate (DNS) again"),
+        )
+
+        data = json.loads(fetch_url_tool({"url": "  https://example.com/page "}, None).output)
+
+        assert data["cache_hit"] is True
+
+    @patch("sidecar.ai.tools.builtins.web.read_url_response")
+    @patch("sidecar.ai.tools.builtins.web.validate_public_url")
+    def test_allow_private_flag_flip_drops_cached_entries(
+        self, mock_validate: MagicMock, mock_read: MagicMock
+    ) -> None:
+        mock_validate.return_value = ValidatedUrl(url="http://intranet.test/")
+        mock_read.return_value = UrlReadResult(
+            payload=b"internal page",
+            was_truncated=False,
+            content_type="text/plain",
+            status_code=200,
+            requested_url="http://intranet.test/",
+            final_url="http://intranet.test/",
+            redirect_chain=(),
+        )
+        configure_web_tools({"tools_web_allow_private_addresses": True})
+        first = json.loads(fetch_url_tool({"url": "http://intranet.test/"}, None).output)
+        assert first["cache_hit"] is False
+
+        # Re-applying the same configuration keeps the entry.
+        configure_web_tools({"tools_web_allow_private_addresses": True})
+        assert _fetch_cache.get("http://intranet.test/") is not None
+
+        # Flipping the flag off must not serve the entry the flag had allowed.
+        configure_web_tools({"tools_web_allow_private_addresses": False})
+        assert _fetch_cache.get("http://intranet.test/") is None
+        mock_validate.side_effect = PermissionError("Private or local IP addresses are blocked.")
+        with pytest.raises(ToolExecutionFailure) as excinfo:
+            fetch_url_tool({"url": "http://intranet.test/"}, None)
+        assert excinfo.value.code == "CMP-WEB-0001"
+
+
+class TestFetchHostResolutionFailure:
+    @patch("sidecar.ai.tools.builtins.web.validate_public_url")
+    def test_dns_failure_is_a_retryable_fetch_failure(self, mock_validate: MagicMock) -> None:
+        mock_validate.side_effect = HostResolutionError("Hostname resolution failed: nope.test")
+
+        with pytest.raises(ToolExecutionFailure) as excinfo:
+            fetch_url_tool({"url": "https://nope.test/"}, None)
+
+        assert excinfo.value.code == "CMP-WEB-0004"
+        assert excinfo.value.retryable is True
+
+    @patch("sidecar.ai.tools.builtins.web.validate_public_url")
+    def test_malformed_url_stays_a_non_retryable_invalid_url(
+        self, mock_validate: MagicMock
+    ) -> None:
+        mock_validate.side_effect = ValueError("Only http and https URLs are allowed.")
+
+        with pytest.raises(ToolExecutionFailure) as excinfo:
+            fetch_url_tool({"url": "gopher://example.com/"}, None)
+
+        assert excinfo.value.code == "CMP-WEB-0007"
+        assert excinfo.value.retryable is False
+
+
+class TestWebSearchErrorCodes:
+    def test_missing_query_has_its_own_code(self) -> None:
+        with pytest.raises(ToolExecutionFailure) as excinfo:
+            web_search_tool({"query": ""}, None)
+        assert excinfo.value.code == "CMP-WEB-0008"
+
+    def test_overlong_query_has_its_own_code(self) -> None:
+        with pytest.raises(ToolExecutionFailure) as excinfo:
+            web_search_tool({"query": "x" * 3000}, None)
+        assert excinfo.value.code == "CMP-WEB-0008"
+
+    def test_unsupported_provider_result_carries_an_error_code(self) -> None:
+        configure_web_tools({"tools_web_search_provider": "bing"})
+        result = web_search_tool({"query": "test"}, None)
+        assert result.success is False
+        assert result.error_code == "CMP-TOOL-0008"
+
+    def test_unconfigured_provider_result_carries_an_error_code(self) -> None:
+        configure_web_tools({"tools_web_search_provider": "searxng"})
+        result = web_search_tool({"query": "test"}, None)
+        assert result.success is False
+        assert result.error_code == "CMP-TOOL-0008"
+
+    def test_provider_failure_carries_a_fetch_failed_code(self, monkeypatch) -> None:
+        from sidecar.ai.tools.builtins import web
+
+        class _Failing:
+            name = "duckduckgo"
+
+            def is_configured(self) -> bool:
+                return True
+
+            def search(self, query: str, **_kwargs: object) -> dict[str, object]:
+                return {"query": query, "provider": "duckduckgo", "error": "network error"}
+
+        monkeypatch.setitem(web._provider_dispatch, "duckduckgo", _Failing())
+        result = web_search_tool({"query": "test"}, None)
+        assert result.success is False
+        assert result.error_code == "CMP-WEB-0004"
+
+    def test_provider_exception_carries_a_fetch_failed_code(self, monkeypatch) -> None:
+        from sidecar.ai.tools.builtins import web
+
+        class _Raising:
+            name = "duckduckgo"
+
+            def is_configured(self) -> bool:
+                return True
+
+            def search(self, query: str, **_kwargs: object) -> dict[str, object]:
+                raise RuntimeError("boom")
+
+        monkeypatch.setitem(web._provider_dispatch, "duckduckgo", _Raising())
+        result = web_search_tool({"query": "test"}, None)
+        assert result.success is False
+        assert result.error_code == "CMP-WEB-0004"
+
+    def test_successful_search_has_no_error_code(self, monkeypatch) -> None:
+        from sidecar.ai.tools.builtins import web
+
+        class _Ok:
+            name = "duckduckgo"
+
+            def is_configured(self) -> bool:
+                return True
+
+            def search(self, query: str, **_kwargs: object) -> dict[str, object]:
+                return {"query": query, "provider": "duckduckgo", "error": ""}
+
+        monkeypatch.setitem(web._provider_dispatch, "duckduckgo", _Ok())
+        result = web_search_tool({"query": "test"}, None)
+        assert result.success is True
+        assert result.error_code is None
+
+
+class TestDdgHostFilterAndValidationMemo:
+    def test_hostname_starting_with_one_numeric_label_is_not_private(self) -> None:
+        assert _is_safe_metadata_url("https://10.example.com/page") is True
+        assert _is_safe_metadata_url("https://127.example.org/") is True
+        assert _is_safe_metadata_url("https://192.168.example.net/") is True
+        assert _is_safe_metadata_url("https://172.20.example.com/") is True
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://10.0.0.1/",
+            "http://10.0.0.1.nip.io/",
+            "http://127.0.0.1.nip.io:8080/",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://172.16.0.1/",
+        ],
+    )
+    def test_numeric_looking_private_hosts_stay_rejected(self, url: str) -> None:
+        assert _is_safe_metadata_url(url) is False
+
+    def test_fixed_ddg_host_validation_is_memoized(self, monkeypatch) -> None:
+        from sidecar.ai.tools.builtins import web_ddg
+
+        calls: list[str] = []
+
+        def fake_validate(raw_url: str, **_kwargs: object) -> ValidatedUrl:
+            calls.append(raw_url)
+            return ValidatedUrl(url=raw_url, pinned_ip="93.184.216.34")
+
+        monkeypatch.setattr(web_ddg, "validate_public_url", fake_validate)
+        monkeypatch.setattr(web_ddg, "_ddg_validation_cache", {})
+        now = [1000.0]
+        monkeypatch.setattr(web_ddg.time, "monotonic", lambda: now[0])
+        deadline = now[0] + 100
+
+        first = web_ddg._validate_ddg_url("https://html.duckduckgo.com/html/", deadline=deadline)
+        second = web_ddg._validate_ddg_url("https://html.duckduckgo.com/html/", deadline=deadline)
+        other = web_ddg._validate_ddg_url("https://lite.duckduckgo.com/lite/", deadline=deadline)
+
+        assert first == second
+        assert second.pinned_ip == "93.184.216.34"
+        assert calls == ["https://html.duckduckgo.com/html/", "https://lite.duckduckgo.com/lite/"]
+        assert other.url == "https://lite.duckduckgo.com/lite/"
+
+        now[0] += web_ddg._DDG_VALIDATION_TTL_S + 1
+        web_ddg._validate_ddg_url("https://html.duckduckgo.com/html/", deadline=now[0] + 100)
+        assert len(calls) == 3
+
+    def test_other_hosts_are_never_memoized(self, monkeypatch) -> None:
+        from sidecar.ai.tools.builtins import web_ddg
+
+        calls: list[str] = []
+
+        def fake_validate(raw_url: str, **_kwargs: object) -> ValidatedUrl:
+            calls.append(raw_url)
+            return ValidatedUrl(url=raw_url, pinned_ip="93.184.216.34")
+
+        monkeypatch.setattr(web_ddg, "validate_public_url", fake_validate)
+        monkeypatch.setattr(web_ddg, "_ddg_validation_cache", {})
+        deadline = web_ddg.time.monotonic() + 100
+
+        web_ddg._validate_ddg_url("https://example.com/a", deadline=deadline)
+        web_ddg._validate_ddg_url("https://example.com/a", deadline=deadline)
+
+        assert len(calls) == 2

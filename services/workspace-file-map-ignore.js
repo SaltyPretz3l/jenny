@@ -148,6 +148,7 @@ function buildBucketNodes(buckets) {
 }
 
 module.exports = {
+  extensionOf,
   partitionByKeepSet,
   fallbackPartition,
   buildBucketNodes,

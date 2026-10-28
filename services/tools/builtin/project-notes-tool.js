@@ -14,6 +14,7 @@ const { TOOL_ERROR_CODES } = require('../../backend/error-codes');
 const { normalizeString } = require('../../shared/normalize');
 const { normalizeProjectId } = require('../../projects/project-schema');
 const { MAX_NOTE_CHARS } = require('../../project-notes-store');
+const { manifestSchema, plural } = require('./tool-result');
 
 const PROJECT_NOTES_ACTIONS = Object.freeze(['read', 'append', 'replace']);
 const MAX_APPEND_TEXT_CHARS = 4000;
@@ -74,10 +75,6 @@ function invalid(reason, content) {
   return failure(reason, content, 'Project notes input rejected');
 }
 
-function plural(count, noun) {
-  return `${count} ${noun}${count === 1 ? '' : 's'}`;
-}
-
 // A present field must be a string within its bound. Returns { text } or { error }.
 function boundedString(value, field, limit) {
   if (value === undefined || value === null) return { text: '' };
@@ -123,6 +120,11 @@ function prepareReplace(input) {
   if (oldText.error) return oldText;
   const newText = boundedString(input.new_text, 'new_text', MAX_NOTE_CHARS);
   if (newText.error) return newText;
+  // A no-op replace would still journal an entry, and the journal is short:
+  // a loop of them could push the user's own edits out of undo.
+  if (oldText.text === newText.text) {
+    return { error: invalid('no_change', 'old_text and new_text are identical; nothing was changed.') };
+  }
   const summary = readSummary(input);
   if (summary.error) return summary;
   return {
@@ -189,15 +191,14 @@ async function writeNote(service, projectId, action, input, leaseWait) {
 
 module.exports = {
   name: 'project_notes',
-  description: "Read and edit Jenny's notes for the current chat's project: a single markdown page the user also edits in the Notes rail. read returns the note; append adds text at the end or under a `## Heading`; replace swaps one exact passage for another. Writes are attributed to Jenny and one-click undoable from the chat and the Notes rail. Keep notes short and factual: decisions, conventions, open questions, where things live.",
+  ...manifestSchema('project_notes'),
   category: 'builtin',
   readOnly: false,
   workspaceRequired: false,
-  parameters: { type: 'object', properties: {}, required: ['action'] },
 
   summarize(input) {
-    const action = normalizeString(input?.action);
-    return `Project notes: ${action || 'action'}`;
+    const action = typeof input?.action === 'string' ? input.action.trim().toLowerCase() : '';
+    return `Project notes: ${PROJECT_NOTES_ACTIONS.includes(action) ? action : 'action'}`;
   },
 
   async execute(input, context) {

@@ -82,4 +82,12 @@ test('task-session creation forwards linkedTaskId only when supplied', async (t)
   assert.equal(Object.hasOwn(creates[3], 'projectId'), false);
   assert.equal(Object.hasOwn(creates[4], 'projectId'), false);
   assert.equal(Object.hasOwn(creates[5], 'projectId'), false);
+
+  // /handoff (row 60 W4) links the new chat to its source; only a bounded string crosses.
+  await dom.window.rendererTaskSessionActions.start({ title: 'Handoff', initialPrompt: 'Note', handoffFromSessionId: 'sess_src' });
+  await dom.window.rendererTaskSessionActions.start({ title: 'Bad handoff', initialPrompt: 'Note', handoffFromSessionId: 7 });
+  await dom.window.rendererTaskSessionActions.start({ title: 'Long handoff', initialPrompt: 'Note', handoffFromSessionId: 'x'.repeat(257) });
+  assert.equal(creates[6].handoffFromSessionId, 'sess_src');
+  assert.equal(Object.hasOwn(creates[7], 'handoffFromSessionId'), false);
+  assert.equal(Object.hasOwn(creates[8], 'handoffFromSessionId'), false);
 });

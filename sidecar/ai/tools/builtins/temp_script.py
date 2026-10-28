@@ -13,17 +13,14 @@ from pathlib import Path
 
 from sidecar.ai.error_codes import (
     CMP_TOOL_COERCED_ARGS_REJECTED,
-    CMP_TOOL_COMMAND_BLOCKED,
     CMP_TOOL_INVALID_PATH,
     CMP_TOOL_IO_FAILED,
 )
 from sidecar.ai.tools.builtins import output_chunk_slot
 from sidecar.ai.tools.builtins.shell import (
     _parse_command,
-    _shell_security_enabled,
     run_command_tool,
 )
-from sidecar.ai.tools.builtins.shell_security import CommandVerdict, classify_command
 from sidecar.ai.tools.builtins.temp_script_interpreter import (
     SCRIPT_INTERPRETERS,
     add_probe_cleanup,
@@ -38,6 +35,8 @@ from sidecar.runtime.diagnostics import log_event
 logger = logging.getLogger(__name__)
 MAX_TEMP_SCRIPT_CHARS = 100_000
 SCRIPT_SNIFF_LINE_LIMIT = 20
+# Languages whose body is shell grammar (None = the platform's cmd/sh default).
+_SHELL_SCRIPT_LANGUAGES = frozenset({None, "cmd", "sh", "powershell"})
 _RAW_HEREDOC_PATTERN = re.compile(
     r"(?m)^[ \t]*(?:\S.*?[ \t])?<<-?[ \t]*['\"]?[A-Za-z_][A-Za-z0-9_]*['\"]?[ \t]*$"
 )
@@ -182,15 +181,11 @@ def _validated_inputs(
                 ),
                 retryable=False,
             )
-    _parse_command({"command": script})
-    if _shell_security_enabled():
-        verdict = classify_command(script)
-        if verdict.verdict is CommandVerdict.BLOCKED:
-            raise ToolExecutionFailure(
-                code=CMP_TOOL_COMMAND_BLOCKED,
-                message=f"temporary script blocked by security classifier: {verdict.reason}",
-                retryable=False,
-            )
+    if language in _SHELL_SCRIPT_LANGUAGES:
+        # The blocked-pattern literal guard reads shell grammar; a Python or
+        # JavaScript body (a comment, a string) is data to it, not commands.
+        # run_command_tool still parses the generated one-line launcher.
+        _parse_command({"command": script})
     raw_cwd = arguments.get("cwd")
     if raw_cwd is not None and not isinstance(raw_cwd, str):
         raise ToolExecutionFailure(
@@ -326,7 +321,8 @@ def _redact_temp_details(
         "language": language,
         "interpreter": interpreter,
         **interpreter_version_metadata(
-            interpreter, language, execution_completed="exit_code" in result.metadata,
+            interpreter, language,
+            execution_completed=result.metadata.get("exit_code") is not None,
         ),
     }
     metadata = {**result.metadata, "temporary_script": True, **details}

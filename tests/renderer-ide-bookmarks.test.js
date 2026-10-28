@@ -338,6 +338,6 @@ test('the factory exposes the documented surface', () => {
   const { bookmarks } = build();
   assert.deepEqual(
     Object.keys(bookmarks).sort(),
-    ['applyDecorations', 'dispose', 'listRows', 'next', 'openList', 'prev', 'pruneClosed', 'toggle']
+    ['applyDecorations', 'clear', 'dispose', 'listRows', 'next', 'openList', 'prev', 'pruneClosed', 'toggle']
   );
 });

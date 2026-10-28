@@ -8,10 +8,15 @@ runs commands it silently executes something the model did not compose -- a
 cut path, a shortened shell argument. This module decides, per call, which of
 those two cases a structurally healed batch member is in.
 
-Only ``closed_string`` / ``closed_brace`` count: they append structure and can
-change the payload's meaning. Every other repair tag (stripped fences, smart
-quotes, trailing commas, ...) changes spelling only and is left alone. The vLLM
-path never heals, so nothing here loosens its strict rejection.
+An allowlist, not a blacklist: only repairs that fix punctuation or quoting
+(``SAFE_ARGUMENT_REPAIRS``) leave a side-effecting call dispatchable. Every other
+tag is rejected for a tool that is not provably read-only: ``closed_string`` /
+``closed_brace`` append structure, and ``stripped_debris`` / ``stripped_fence``
+can drop text (``{"path":"a"} {"content":"x"}`` heals to the first object
+alone), so the call would run on arguments the model never composed. An unknown
+future tag fails closed the same way. The Codex CLI transport reads the same
+character-level set. The vLLM path never heals, so nothing here loosens its
+strict rejection.
 """
 
 from __future__ import annotations
@@ -22,11 +27,22 @@ from typing import Any
 from sidecar.ai.error_codes import CMP_LOOP_INVALID_TOOL_CALL
 from sidecar.ai.routing.tool_loop_recovery import record_failed_tool_calls
 from sidecar.ai.tools.tool_actions import effective_side_effecting
+from sidecar.ai.tools.tool_call_healing import CHARACTER_LEVEL_ARGUMENT_REPAIRS
 from sidecar.runtime.diagnostics import log_event
 
 logger = logging.getLogger("sidecar.ai.routing.tool_loop")
 
-STRUCTURAL_ARGUMENT_REPAIRS = frozenset({"closed_string", "closed_brace"})
+# CHARACTER_LEVEL_ARGUMENT_REPAIRS is the healer's own set (tool_call_healing),
+# shared with the Codex CLI transport, which accepts nothing else from it.
+# Provenance tags say where the arguments were found, not that they changed:
+# a JSON string that parsed as-is, or a complete bare object found in prose.
+_PROVENANCE_TAGS = frozenset({"parsed_string_arguments", "balanced_extraction"})
+SAFE_ARGUMENT_REPAIRS = CHARACTER_LEVEL_ARGUMENT_REPAIRS | _PROVENANCE_TAGS
+
+
+def unsafe_argument_repairs(call: Any) -> frozenset[str]:
+    """The call's repair tags outside the allowlist (empty: dispatchable as-is)."""
+    return frozenset(getattr(call, "argument_repairs", ())) - SAFE_ARGUMENT_REPAIRS
 
 
 def _provably_read_only(loop: Any, call: Any) -> bool:
@@ -46,7 +62,7 @@ def partition_structurally_repaired_calls(
     rejected = tuple(
         call
         for call in calls
-        if set(getattr(call, "argument_repairs", ())) & STRUCTURAL_ARGUMENT_REPAIRS
+        if unsafe_argument_repairs(call)
         and not _provably_read_only(loop, call)
     )
     if not rejected:
@@ -72,7 +88,7 @@ def reject_structurally_repaired_calls(
         logging.WARNING,
         component="ai.router",
         event="ai.router.tool_call_structural_repair_rejected",
-        message="Rejected tool calls whose truncated arguments were auto-closed.",
+        message="Rejected tool calls whose arguments were repaired beyond punctuation.",
         status="blocked",
         data={
             "blocked_count": len(calls),
@@ -89,10 +105,11 @@ def reject_structurally_repaired_calls(
             (call,),
             error_code=CMP_LOOP_INVALID_TOOL_CALL,
             output_for_call=lambda blocked_call: (
-                f"Tool '{blocked_call.tool_id}' was not executed: its arguments arrived "
-                "truncated (an unterminated string or unclosed object had to be auto-closed) "
-                "and this tool can change files or run commands, so the repaired version was "
-                "not run. Re-send the call with complete, valid JSON arguments."
+                f"Tool '{blocked_call.tool_id}' was not executed: its arguments were not "
+                "valid JSON and the repair needed more than a punctuation fix (a truncated "
+                "string or object was closed, or extra text around the object was dropped). "
+                "This tool can change files or run commands, so the repaired version was not "
+                "run. Re-send the call with one complete, valid JSON arguments object."
             ),
             metadata={
                 "malformed_arguments": True,

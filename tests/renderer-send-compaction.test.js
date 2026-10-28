@@ -19,7 +19,8 @@ test('startPromptSend blocks instead of queueing while that session is compactin
   assert.equal(harness.calls.startStream.length, 0);
   assert.equal(harness.calls.optimisticAppend.length, 0);
   assert.equal(harness.state.queuedSendBySession.has('session-1'), false);
-  assert.match(harness.calls.composerNotices.at(-1).message, /Compacting context/i);
+  // The inline compaction row already tells it (3d10b1382): no composer notice.
+  assert.equal(harness.calls.composerNotices.some((notice) => /Compacting/i.test(notice.message)), false);
   assert.equal(harness.calls.logs.some((entry) => entry.event === 'chat.send_blocked' && entry.details.reason === 'session_compacting'), true);
 });
 

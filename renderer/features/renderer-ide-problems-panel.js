@@ -11,6 +11,12 @@
  * editor (Monaco lints live models; there is no project-wide LSP) - the empty
  * state says so.
  *
+ * Toolbar (runtime-only filter state): a text filter, Errors / Warnings / Info
+ * chips, "Active file only", Collapse All. The filter input keeps its DOM node
+ * (focus, caret, IME) across re-renders - only the actions + list regions are
+ * patched, like the search panel. The summary chips and the badge counts stay
+ * unfiltered.
+ *
  * Mirrors the source-control panel's delegation pattern: markup strings + one
  * click listener on its own view host, selector-guarded on data-ide-prb-*
  * attributes, with a content-hash render guard so identical renders don't churn
@@ -25,18 +31,15 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
+  // Pure filter state, the row cap, the F8 walk order, the glyphs and the toolbar markup;
+  // loaded before this panel by the IDE script manifest (and required directly under Node).
+  const filterLib = globalRef.rendererIdeProblemsFilter || require('./renderer-ide-problems-filter');
+  const { GLYPHS, SEVERITY_ICON, fileNameOf, parentDirOf } = filterLib;
   function noop() {}
-  // Worst-first ordering for file groups + the statusbar/summary buckets.
-  const SEVERITY_ORDER = { error: 0, warning: 1, info: 2, hint: 3 };
-
-  // Inline SVG severity glyphs (CSP-safe, currentColor; colour is set per
-  // data-diag-severity in styles/ide-problems.css so they re-theme).
-  const SEVERITY_ICON = {
-    error: '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6"></circle><path d="M10 6 6 10M6 6l4 4"></path></svg>',
-    warning: '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5 14 13H2L8 2.5Z"></path><path d="M8 6.4v3"></path><path d="M8 11.2v.1"></path></svg>',
-    info: '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6"></circle><path d="M8 7.2v3.2"></path><path d="M8 5.2v.1"></path></svg>',
-    hint: '<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="2.6"></circle></svg>',
-  };
+  // Trailing window that folds a burst of marker events into one refresh.
+  const REFRESH_COALESCE_MS = 100;
+  // Trailing window for the text filter: a burst of keystrokes rebuilds the list once.
+  const FILTER_DEBOUNCE_MS = 150;
 
   // Spoken severity names for the summary chips (WIDE-056b): the chip markup is
   // an aria-hidden icon + a bare number, which exposes no severity to AT. Pair
@@ -44,31 +47,22 @@
   const SEVERITY_LABEL = { error: jt('ide.problems.error', 'error'), warning: jt('ide.problems.warning', 'warning'), info: jt('ide.problems.infoNotice', 'info notice'), hint: jt('ide.problems.hint', 'hint') };
   const SEVERITY_LABEL_PLURAL = { error: jt('ide.problems.errors', 'errors'), warning: jt('ide.problems.warnings', 'warnings'), info: jt('ide.problems.infoNotices', 'info notices'), hint: jt('ide.problems.hints', 'hints') };
 
-  function resolveActionButton(options) {
-    if (typeof options.actionButton === 'function') {
-      return options.actionButton;
+  // Inventory primitives: an injected option, the browser global, or require().
+  function resolvePrimitive(injected, globalName, requirePath) {
+    if (typeof injected === 'function') {
+      return injected;
     }
-    if (typeof globalRef.inventoryActionButton === 'function') {
-      return globalRef.inventoryActionButton;
+    if (typeof globalRef[globalName] === 'function') {
+      return globalRef[globalName];
     }
     if (typeof require === 'function') {
       try {
-        return require('../inventory/action-button');
+        return require(requirePath);
       } catch (_error) {
         /* unavailable */
       }
     }
     return null;
-  }
-
-  function fileNameOf(path) {
-    const normalized = String(path || '');
-    return normalized.split('/').pop() || normalized;
-  }
-
-  function parentDirOf(path) {
-    const index = String(path || '').lastIndexOf('/');
-    return index === -1 ? '' : String(path).slice(0, index);
   }
 
   function createIdeProblemsPanel(deps) {
@@ -78,10 +72,14 @@
     const escapeHtml = typeof options.escapeHtml === 'function'
       ? options.escapeHtml
       : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
-    const actionButton = resolveActionButton(options);
+    const actionButton = resolvePrimitive(options.actionButton, 'inventoryActionButton', '../inventory/action-button');
+    const textField = resolvePrimitive(options.textField, 'inventoryTextField', '../inventory/text-field');
     // The editor host owns monacoApi + the jenny-workspace model-URI mapping;
     // the panel reads diagnostics through its getMarkers/onMarkersChanged surface.
     const editorHost = options.editorHost || {};
+    // R2: the Tasks source, problems from Run output for files with no open model
+    // (open files carry them as Monaco `task` markers, already in getMarkers).
+    const getTaskProblems = typeof options.getTaskProblems === 'function' ? options.getTaskProblems : () => null;
     const requestRender = typeof options.requestRender === 'function' ? options.requestRender : noop;
     // The controller injects the view host (#wbView-problems) + an active-view check.
     const getMountEl = typeof options.getMountEl === 'function'
@@ -91,37 +89,38 @@
       ? options.isActivePanel
       : () => getIde().railPanel === 'problems';
     const onReveal = typeof options.onReveal === 'function' ? options.onReveal : noop;
+    const setTimeoutFn = typeof options.setTimeoutFn === 'function' ? options.setTimeoutFn : (fn, ms) => setTimeout(fn, ms);
+    const clearTimeoutFn = typeof options.clearTimeoutFn === 'function' ? options.clearTimeoutFn : (id) => clearTimeout(id);
 
     let markersDisposable = null;
+    let taskDisposable = null;
+    let refreshTimer = null;
+    let filterTimer = null;
     let boundPanel = null;
     // Computed marker view-model, cached between onDidChangeMarkers events so a
     // frequent statusbar re-render (cursor moves) doesn't re-scan + re-sort.
     let cachedModel = null;
+    // Runtime-only toolbar state (never persisted). hint markers follow `info`.
+    const filterApi = filterLib.createProblemsFilter();
+    const filter = filterApi.state;
+    const collapsed = new Set();
+    // The filter input mid-IME-composition, and what this instance last painted ({ root, summary, actions, list }).
+    let composingEl = null;
+    let painted = null;
 
-    // Groups markers by file (each group sorted by line/column), files sorted by
-    // worst severity then path, plus the severity counts the statusbar reads.
+    // Editor markers plus the Tasks source, grouped by file (renderer-ide-problems-filter.js
+    // groupMarkers); a file whose markers disappeared forgets its collapsed state. One
+    // getMarkers() snapshot per refresh, shared with the tree badges (getMarkerSnapshot).
     function buildModel() {
       const markers = typeof editorHost.getMarkers === 'function' ? editorHost.getMarkers() : [];
-      const byPath = new Map();
-      const counts = { error: 0, warning: 0, info: 0, hint: 0, total: 0 };
-      for (const marker of markers) {
-        counts[marker.severity] = (counts[marker.severity] || 0) + 1;
-        counts.total += 1;
-        if (!byPath.has(marker.path)) {
-          byPath.set(marker.path, []);
-        }
-        byPath.get(marker.path).push(marker);
+      const tasks = getTaskProblems()?.getMarkers?.() || [];
+      const all = tasks.length ? markers.concat(tasks) : markers;
+      const built = Object.assign(filterLib.groupMarkers(all), { markers: all });
+      const paths = new Set(built.groups.map((group) => group.path));
+      for (const path of [...collapsed]) {
+        if (!paths.has(path)) collapsed.delete(path);
       }
-      const groups = [...byPath.entries()].map(([path, items]) => {
-        items.sort((a, b) => (a.line - b.line) || (a.column - b.column));
-        const worst = items.reduce(
-          (acc, marker) => Math.min(acc, SEVERITY_ORDER[marker.severity] ?? 3),
-          3
-        );
-        return { path, items, worst };
-      });
-      groups.sort((a, b) => (a.worst - b.worst) || a.path.localeCompare(b.path));
-      return { groups, counts };
+      return built;
     }
 
     function model() {
@@ -129,6 +128,11 @@
         cachedModel = buildModel();
       }
       return cachedModel;
+    }
+
+    // Groups/rows that pass the toolbar filters (the model itself stays whole).
+    function visibleModel() {
+      return filterApi.apply(model().groups, getIde().activeTabPath, model().counts.total);
     }
 
     function severityChip(severity, count) {
@@ -174,39 +178,142 @@
       });
     }
 
+    // The header toggles its group (rows reveal individually).
     function buildGroupMarkup(group) {
       const path = String(group.path || '');
       const dirHint = parentDirOf(path);
-      const first = group.items[0] || { line: 1, column: 1 };
+      const isCollapsed = collapsed.has(path);
+      const total = group.total || group.items.length; // a group cut by the row cap counts all
       const head = actionButton
         ? actionButton({
           plain: true,
           className: 'ide-prb-file',
-          title: jtn('ide.problems.fileProblemCount', group.items.length, { path, count: group.items.length }, '{path} — {count} problem', '{path} — {count} problems'),
-          dataset: {
-            'ide-prb-path': path,
-            'ide-prb-line': String(first.line),
-            'ide-prb-col': String(first.column),
-          },
-          trustedHtml: `<span class="ide-prb-file-name">${escapeHtml(fileNameOf(path))}</span>`
+          ariaExpanded: !isCollapsed,
+          title: jtn('ide.problems.fileProblemCount', total, { path, count: total }, '{path} — {count} problem', '{path} — {count} problems'),
+          dataset: { 'ide-prb-group': path },
+          trustedHtml: `<span class="ide-prb-file-chevron" aria-hidden="true">${GLYPHS.chevron || ''}</span>`
+            + `<span class="ide-prb-file-name">${escapeHtml(fileNameOf(path))}</span>`
             + (dirHint ? `<span class="ide-prb-file-dir">${escapeHtml(dirHint)}</span>` : '')
-            + `<span class="ide-prb-file-count">${escapeHtml(String(group.items.length))}</span>`,
+            + `<span class="ide-prb-file-count">${escapeHtml(String(total))}</span>`,
         })
         : '';
-      const rows = group.items.map((marker) => buildRowMarkup(path, marker)).join('');
+      const rows = isCollapsed ? '' : group.items.map((marker) => buildRowMarkup(path, marker)).join('');
       return `<div class="ide-prb-group">${head}${rows}</div>`;
     }
 
-    function buildPanelMarkup() {
-      const { groups, counts } = model();
+    function buildFilterFieldMarkup() {
+      if (!textField) return '';
+      return textField({
+        className: 'ide-prb-filter',
+        value: filter.text,
+        placeholder: jt('ide.problems.filterPlaceholder', 'Filter (e.g. text, path)'),
+        ariaLabel: jt('ide.problems.filter', 'Filter problems'),
+        maxLength: 256,
+        dataset: { 'ide-prb-filter': '1' },
+      });
+    }
+
+    // Severity toggles + Active file only + Collapse/Expand All (a patched region);
+    // the markup lives in renderer-ide-problems-filter.js beside its glyphs.
+    function buildActionsMarkup(counts, visibleGroups) {
+      if (!actionButton) return '<div class="ide-prb-toolbar-actions"></div>';
+      const allCollapsed = visibleGroups.length > 0 && visibleGroups.every((group) => collapsed.has(group.path));
+      return filterLib.buildToolbarActionsMarkup({
+        actionButton, escapeHtml, filter, counts, severityIcons: SEVERITY_ICON, allCollapsed, hasGroups: visibleGroups.length > 0,
+      });
+    }
+
+    // Status line (only while filters hide something) + the file groups.
+    function buildListMarkup(counts, visible) {
       if (!counts.total) {
-        return '<div class="ide-prb">'
-          + '<div class="ide-prb-empty">' + escapeHtml(jt('ide.problems.empty', 'No problems detected in open files.')) + '</div>'
-          + '<p class="ide-prb-empty-hint">' + escapeHtml(jt('ide.problems.emptyHint', 'Diagnostics from open TypeScript, JavaScript, JSON and CSS files appear here.')) + '</p>'
-          + '</div>';
+        return '<div class="ide-prb-empty">' + escapeHtml(jt('ide.problems.empty', 'No problems detected in open files.')) + '</div>'
+          + '<p class="ide-prb-empty-hint">' + escapeHtml(jt('ide.problems.emptyHintWithRun', 'Diagnostics from open TypeScript, JavaScript, JSON and CSS files, and problems found in Run output, appear here.')) + '</p>';
       }
-      const body = groups.map((group) => buildGroupMarkup(group)).join('');
-      return `<div class="ide-prb">${buildSummaryMarkup(counts)}${body}</div>`;
+      const listed = filterLib.capRows(visible.groups, (path) => collapsed.has(path));
+      let status = '';
+      if (listed.capped) {
+        status = '<div class="ide-prb-filter-status">' + escapeHtml(jt('ide.problems.showingFirstOf', 'Showing the first {shown} of {total}',
+          { shown: filterLib.MAX_ROWS.toLocaleString(), total: visible.shown.toLocaleString() })) + '</div>';
+      } else if (visible.shown === 0) {
+        const clear = actionButton
+          ? actionButton({ plain: true, className: 'ide-prb-clear-filters', dataset: { 'ide-prb-action': 'clear-filters' }, label: jt('ide.problems.clearFilters', 'Clear filters') })
+          : '';
+        status = '<div class="ide-prb-filter-status">' + escapeHtml(jt('ide.problems.noMatches', 'No problems match the current filters.')) + clear + '</div>';
+      } else if (visible.shown < counts.total) {
+        status = '<div class="ide-prb-filter-status">' + escapeHtml(jt('ide.problems.showingOf', 'Showing {shown} of {total}', { shown: visible.shown, total: counts.total })) + '</div>';
+      }
+      return status + listed.groups.map((group) => buildGroupMarkup(group)).join('');
+    }
+
+    // The panel's regions: summary (unfiltered), toolbar (filter field + actions), list.
+    function buildParts() {
+      const { counts } = model();
+      const visible = visibleModel();
+      const hasToolbar = counts.total > 0 || filterApi.isActive();
+      return {
+        hasToolbar,
+        summary: counts.total ? buildSummaryMarkup(counts) : '',
+        field: hasToolbar ? buildFilterFieldMarkup() : '',
+        actions: hasToolbar ? buildActionsMarkup(counts, visible.groups) : '',
+        list: buildListMarkup(counts, visible),
+      };
+    }
+
+    function panelMarkupOf(parts) {
+      const toolbar = parts.hasToolbar ? `<div class="ide-prb-toolbar">${parts.field}${parts.actions}</div>` : '';
+      return `<div class="ide-prb">${parts.summary}${toolbar}<div class="ide-prb-list">${parts.list}</div></div>`;
+    }
+
+    // Still our panel in this host: the filter input stays the same node (value
+    // written only on a programmatic change, e.g. Clear filters, and never
+    // mid-composition, so focus/caret/IME survive); the summary, actions and
+    // list regions swap alone.
+    function patchPainted(panel, parts) {
+      const root = painted?.root?.parentNode === panel && panel.childElementCount === 1 ? painted.root : null;
+      const inputEl = root?.querySelector(':scope > .ide-prb-toolbar input[data-ide-prb-filter]');
+      const actionsEl = root?.querySelector(':scope > .ide-prb-toolbar > .ide-prb-toolbar-actions');
+      const listEl = root?.querySelector(':scope > .ide-prb-list');
+      if (!parts.hasToolbar || !inputEl || !actionsEl || !listEl) return false;
+      if (inputEl !== composingEl && inputEl.value !== filter.text) inputEl.value = filter.text;
+      if (painted.summary !== parts.summary) {
+        root.querySelector(':scope > .ide-prb-summary')?.remove();
+        if (parts.summary) root.insertAdjacentHTML('afterbegin', parts.summary);
+      }
+      if (painted.actions !== parts.actions) actionsEl.outerHTML = parts.actions;
+      if (painted.list !== parts.list) listEl.innerHTML = parts.list;
+      return true;
+    }
+
+    // Identity of the focused control inside the panel, so a re-render that
+    // replaces it can hand focus back (keyboard users toggling chips / groups).
+    const FOCUS_ATTRS = ['data-ide-prb-severity', 'data-ide-prb-active-only', 'data-ide-prb-action', 'data-ide-prb-group', 'data-ide-prb-filter', 'data-ide-prb-path'];
+    function focusKeyOf(panel) {
+      const el = panel.ownerDocument?.activeElement;
+      if (!el || !panel.contains(el) || typeof el.getAttribute !== 'function') return null;
+      const attr = FOCUS_ATTRS.find((name) => el.hasAttribute(name));
+      if (!attr) return null;
+      return {
+        attr,
+        value: el.getAttribute(attr),
+        line: attr === 'data-ide-prb-path' ? el.getAttribute('data-ide-prb-line') : null,
+        col: attr === 'data-ide-prb-path' ? el.getAttribute('data-ide-prb-col') : null,
+        selection: attr === 'data-ide-prb-filter' ? [el.selectionStart, el.selectionEnd] : null,
+      };
+    }
+
+    function restoreFocus(panel, key) {
+      if (!key) return;
+      const target = [...panel.querySelectorAll(`[${key.attr}]`)].find((el) => el.getAttribute(key.attr) === key.value
+        && (key.line === null || (el.getAttribute('data-ide-prb-line') === key.line && el.getAttribute('data-ide-prb-col') === key.col)));
+      if (!target || panel.ownerDocument.activeElement === target) return;
+      target.focus();
+      if (key.selection) {
+        try {
+          target.setSelectionRange(key.selection[0], key.selection[1]);
+        } catch (_error) {
+          /* selection restore is best-effort */
+        }
+      }
     }
 
     function renderPanel() {
@@ -214,16 +321,25 @@
       if (!panel || !isActivePanel()) {
         return;
       }
-      const markup = buildPanelMarkup();
+      const parts = buildParts();
+      const markup = panelMarkupOf(parts);
       if (panel.__jennyIdeRailMarkup === markup) {
         return;
       }
-      panel.innerHTML = markup;
+      const focusKey = focusKeyOf(panel);
+      if (!patchPainted(panel, parts)) {
+        panel.innerHTML = markup;
+        painted = { root: panel.firstElementChild };
+        // The composing input (if any) was just replaced; its compositionend never arrives.
+        composingEl = null;
+      }
+      Object.assign(painted, { summary: parts.summary, actions: parts.actions, list: parts.list });
+      restoreFocus(panel, focusKey);
       panel.__jennyIdeRailMarkup = markup;
     }
 
     // Severity counts for the statusbar badge. Reads the cached model so the
-    // frequent statusbar re-render stays cheap.
+    // frequent statusbar re-render stays cheap. Never filtered.
     function getCounts() {
       return model().counts;
     }
@@ -240,40 +356,173 @@
       return (Number(c.error) || 0) + (Number(c.warning) || 0);
     }
 
+    // F8 / Shift+F8: every marker in open files, regardless of the panel's filters
+    // (VS Code's marker navigation), walked in path, line, column order
+    // (renderer-ide-problems-filter.js) from the cursor in the active file,
+    // wrapping at either end. Reveals through onReveal (the controller's
+    // group-aware open-at-line path).
+    // The path and cursor come from one editor: the focused group's when the host reports
+    // it (a secondary group can hold focus), else the primary's.
+    function cursorSpot() {
+      const focused = String(editorHost.getFocusedPath?.() || '');
+      const path = focused || String(editorHost.getActivePath?.() || getIde().activeTabPath || '');
+      const info = (focused ? editorHost.getFocusedCursorInfo?.() : editorHost.getCursorInfo?.()) || null;
+      return { path, line: Number(info?.lineNumber) || 1, column: Number(info?.column) || 1 };
+    }
+
+    function walkProblems(direction) {
+      const target = filterLib.findAdjacentProblem(model().groups, cursorSpot(), direction);
+      if (target) onReveal(target.path, target.line, target.column);
+      return target;
+    }
+
+    function nextProblem() {
+      return walkProblems(1);
+    }
+
+    function previousProblem() {
+      return walkProblems(-1);
+    }
+
     // Marker change (worker finished, file opened/closed): drop the cache and
     // ask the controller to re-render. renderIde refreshes the active panel
-    // (us, if showing) AND the statusbar badge in one pass. A full renderIde
-    // (rather than a targeted panel+statusbar update) is deliberate: every IDE
-    // render is content-hash guarded so unchanged surfaces never touch the DOM,
-    // and marker events are infrequent (worker-debounced, only on edit settle /
-    // open / close) - so the extra markup recompute is noise.
+    // (us, if showing) AND the statusbar badge in one pass; every IDE render is
+    // content-hash guarded so unchanged surfaces never touch the DOM. Monaco
+    // fires one event per model/owner, so a worker settling many files arrives
+    // as a burst: a short trailing window folds it into one rescan + render.
+    // The cached model drops at once, so a reader inside the window (the tree badges)
+    // never takes a stale snapshot; the render still waits for the window to close.
     function refresh() {
       cachedModel = null;
+      if (refreshTimer !== null) return;
+      refreshTimer = setTimeoutFn(flushRefresh, REFRESH_COALESCE_MS);
+    }
+
+    function flushRefresh() {
+      refreshTimer = null;
       requestRender();
     }
 
-    function disposeSubscription() {
-      if (markersDisposable && typeof markersDisposable.dispose === 'function') {
-        markersDisposable.dispose();
-      }
-      markersDisposable = null;
+    function cancelFilterRender() {
+      if (filterTimer !== null) clearTimeoutFn(filterTimer);
+      filterTimer = null;
     }
 
-    function handleClick(event) {
-      const target = event.target;
-      if (!target || typeof target.closest !== 'function') {
+    function disposeSubscription() {
+      markersDisposable?.dispose?.();
+      markersDisposable = null;
+      taskDisposable?.dispose?.();
+      taskDisposable = null;
+    }
+
+    function toggleGroup(path) {
+      if (collapsed.has(path)) collapsed.delete(path);
+      else collapsed.add(path);
+    }
+
+    // Collapses every file group; when the visible ones are already all
+    // collapsed it expands everything instead.
+    function collapseAll() {
+      const visible = visibleModel().groups;
+      if (visible.length && visible.every((group) => collapsed.has(group.path))) {
+        collapsed.clear();
         return;
+      }
+      model().groups.forEach((group) => collapsed.add(group.path));
+    }
+
+    // One activation path for a click and for Enter on a focused row/header.
+    function activate(target) {
+      if (!target || typeof target.closest !== 'function') {
+        return false;
+      }
+      const severityEl = target.closest('[data-ide-prb-severity]');
+      if (severityEl) {
+        filterApi.toggle(String(severityEl.dataset.idePrbSeverity || ''));
+        renderPanel();
+        return true;
+      }
+      if (target.closest('[data-ide-prb-active-only]')) {
+        filterApi.toggle('activeOnly');
+        renderPanel();
+        return true;
+      }
+      const actionEl = target.closest('[data-ide-prb-action]');
+      if (actionEl) {
+        const action = actionEl.dataset.idePrbAction;
+        if (action === 'collapse-all') collapseAll();
+        else if (action === 'clear-filters') { cancelFilterRender(); filterApi.clear(); } else return false;
+        renderPanel();
+        return true;
+      }
+      const groupEl = target.closest('[data-ide-prb-group]');
+      if (groupEl) {
+        toggleGroup(String(groupEl.dataset.idePrbGroup || ''));
+        renderPanel();
+        return true;
       }
       // Selector-guarded on the row attribute.
       const row = target.closest('[data-ide-prb-path]');
-      if (!row) {
-        return;
-      }
-      const path = String(row.dataset.idePrbPath || '');
+      const path = row ? String(row.dataset.idePrbPath || '') : '';
       if (!path) {
-        return;
+        return false;
       }
       onReveal(path, Number(row.dataset.idePrbLine) || 1, Number(row.dataset.idePrbCol) || 1);
+      return true;
+    }
+
+    const handleClick = (event) => { activate(event.target); };
+
+    function isFilterInput(target) {
+      return Boolean(target?.closest?.('[data-ide-prb-filter]'));
+    }
+
+    function handleInput(event) {
+      // Mid-composition keystrokes wait for compositionend.
+      if (!isFilterInput(event.target) || event.isComposing === true || (composingEl && event.target === composingEl)) {
+        return;
+      }
+      filter.text = String(event.target.value || '');
+      cancelFilterRender();
+      filterTimer = setTimeoutFn(() => { filterTimer = null; renderPanel(); }, FILTER_DEBOUNCE_MS);
+    }
+
+    const handleCompositionStart = (event) => { if (isFilterInput(event.target)) composingEl = event.target; };
+
+    function handleCompositionEnd(event) {
+      if (!isFilterInput(event.target)) return;
+      composingEl = null;
+      handleInput({ target: event.target });
+    }
+
+    function moveFocus(from, step) {
+      const items = [...boundPanel.querySelectorAll('.ide-prb-file, .ide-prb-row')];
+      const next = items[items.indexOf(from) + step];
+      if (next) next.focus();
+    }
+
+    function handleKeydown(event) {
+      const target = event.target;
+      if (isFilterInput(target)) {
+        // The IME owns Enter/Escape while composing.
+        if (event.isComposing || event.keyCode === 229 || composingEl) return;
+        if (event.key === 'Escape' && filter.text) {
+          event.preventDefault();
+          cancelFilterRender();
+          filter.text = '';
+          renderPanel();
+        }
+        return;
+      }
+      const isItem = typeof target?.matches === 'function' && target.matches('.ide-prb-row, .ide-prb-file');
+      if (!isItem) return;
+      if (event.key === 'Enter') {
+        // Handled here (and the native click suppressed), so Enter activates exactly once.
+        if (activate(target)) event.preventDefault();
+      } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        moveFocus(target, event.key === 'ArrowDown' ? 1 : -1);
+      }
     }
 
     function bindEvents() {
@@ -283,19 +532,40 @@
       }
       boundPanel = panel;
       panel.addEventListener('click', handleClick);
+      panel.addEventListener('input', handleInput);
+      panel.addEventListener('keydown', handleKeydown);
+      panel.addEventListener('compositionstart', handleCompositionStart);
+      panel.addEventListener('compositionend', handleCompositionEnd);
       // Live diagnostics: refresh on every marker change. The host wires the
       // underlying onDidChangeMarkers once Monaco boots and fans out to us.
       if (!markersDisposable && typeof editorHost.onMarkersChanged === 'function') {
         markersDisposable = editorHost.onMarkersChanged(() => refresh());
       }
+      bindTaskSource();
+    }
+
+    function bindTaskSource() {
+      const tasks = getTaskProblems();
+      if (!taskDisposable && typeof tasks?.onChange === 'function') taskDisposable = tasks.onChange(() => refresh());
     }
 
     function dispose() {
       disposeSubscription();
+      cancelFilterRender();
+      if (refreshTimer !== null) {
+        clearTimeoutFn(refreshTimer);
+        refreshTimer = null;
+      }
       if (boundPanel) {
         boundPanel.removeEventListener('click', handleClick);
+        boundPanel.removeEventListener('input', handleInput);
+        boundPanel.removeEventListener('keydown', handleKeydown);
+        boundPanel.removeEventListener('compositionstart', handleCompositionStart);
+        boundPanel.removeEventListener('compositionend', handleCompositionEnd);
         boundPanel = null;
       }
+      painted = null;
+      composingEl = null;
     }
 
     return {
@@ -303,7 +573,11 @@
       dispose,
       getCounts,
       getBadgeCount,
+      // Every marker of the current refresh (editor + Tasks), for the tree badges.
+      getMarkerSnapshot: () => model().markers,
       hasMarkers,
+      nextProblem,
+      previousProblem,
       renderPanel,
     };
   }

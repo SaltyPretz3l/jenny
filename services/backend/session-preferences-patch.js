@@ -5,6 +5,7 @@
 // electron-session-store.js (`_preferencesPatch`) to keep the store under the
 // file-size ceiling; the store delegates here and remains the only caller.
 
+const { isPlainObject } = require('../value-utils');
 const {
   normalizeContextPreferences,
 } = require('./context-preferences');
@@ -44,27 +45,24 @@ function normalizeRunMode(value, { planModeFallback = false } = {}) {
 }
 
 function buildSessionPreferencesPatch(preferences = {}, currentRecord = {}) {
-  const source = preferences && typeof preferences === 'object' && !Array.isArray(preferences)
-    ? preferences
-    : {};
-  const record = currentRecord && typeof currentRecord === 'object' && !Array.isArray(currentRecord)
-    ? currentRecord
-    : {};
+  const source = isPlainObject(preferences) ? preferences : {};
+  const record = isPlainObject(currentRecord) ? currentRecord : {};
+  const has = (key) => Object.hasOwn(source, key);
   const patch = {};
   for (const key of PASSTHROUGH_PREFERENCE_KEYS) {
-    if (Object.prototype.hasOwnProperty.call(source, key)) {
+    if (has(key)) {
       patch[key] = source[key];
     }
   }
   for (const key of BOOLEAN_PREFERENCE_KEYS) {
-    if (Object.prototype.hasOwnProperty.call(source, key)) {
+    if (has(key)) {
       patch[key] = source[key] === true;
     }
   }
   const currentMode = normalizeRunMode(record.run_mode, {
     planModeFallback: record.plan_mode === true,
   });
-  if (Object.prototype.hasOwnProperty.call(source, 'run_mode')) {
+  if (has('run_mode')) {
     patch.run_mode = normalizeRunMode(source.run_mode);
     patch.plan_mode = patch.run_mode === 'plan';
     if (patch.plan_mode && currentMode !== 'plan') {
@@ -72,7 +70,7 @@ function buildSessionPreferencesPatch(preferences = {}, currentRecord = {}) {
     } else if (!patch.plan_mode && currentMode === 'plan') {
       patch.pre_plan_run_mode = '';
     }
-  } else if (Object.prototype.hasOwnProperty.call(source, 'plan_mode')) {
+  } else if (has('plan_mode')) {
     patch.plan_mode = source.plan_mode === true;
     if (patch.plan_mode) {
       patch.run_mode = 'plan';
@@ -86,22 +84,22 @@ function buildSessionPreferencesPatch(preferences = {}, currentRecord = {}) {
       patch.pre_plan_run_mode = '';
     }
   }
-  if (Object.prototype.hasOwnProperty.call(source, 'pending_plan_proposal')) {
+  if (has('pending_plan_proposal')) {
     patch.pending_plan_proposal = normalizePendingPlanProposal(source.pending_plan_proposal);
   }
-  if (Object.prototype.hasOwnProperty.call(source, 'context_preferences')) {
+  if (has('context_preferences')) {
     patch.context_preferences = normalizeContextPreferences(source.context_preferences);
   }
-  if (Object.prototype.hasOwnProperty.call(source, 'linked_session_ids')) {
+  if (has('linked_session_ids')) {
     patch.linked_session_ids = normalizeLinkedSessionIds(source.linked_session_ids);
   }
-  if (Object.prototype.hasOwnProperty.call(source, 'session_start_date')) {
+  if (has('session_start_date')) {
     patch.session_start_date = normalizeSessionStartDate(source.session_start_date);
   }
-  if (Object.prototype.hasOwnProperty.call(source, 'tool_category_overrides')) {
+  if (has('tool_category_overrides')) {
     patch.tool_category_overrides = normalizeToolCategoryOverrides(source.tool_category_overrides);
   }
-  if (Object.prototype.hasOwnProperty.call(source, 'tool_connection_overrides')) {
+  if (has('tool_connection_overrides')) {
     const overrides = normalizeToolConnectionOverrides(source.tool_connection_overrides);
     if (Object.keys(overrides).length > TOOL_CONNECTION_OVERRIDES_MAX) {
       throw new RangeError('tool_connection_overrides_limit');

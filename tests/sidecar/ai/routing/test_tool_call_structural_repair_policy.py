@@ -7,6 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import pytest
 from test_tool_loop import (  # shared loop harness.
     _build_router,
     _StubMCPClient,
@@ -18,11 +19,14 @@ from test_tool_loop_recovery import (  # shared recovery fixtures.
     _tool_plan,
 )
 
+from sidecar.ai.engines import codex_cli_transport
 from sidecar.ai.error_codes import CMP_LOOP_INVALID_TOOL_CALL
 from sidecar.ai.mcp.models import MCPToolDescriptor
+from sidecar.ai.routing import tool_call_repair_policy
 from sidecar.ai.routing.loop_events import ToolResultEvent
 from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.ai.tools.models import GenerationResult, ToolCallRequest
+from sidecar.ai.tools.tool_call_healing import coerce_arguments
 
 
 def _write_file_descriptor() -> MCPToolDescriptor:
@@ -138,7 +142,7 @@ def test_structural_repair_dispatches_provably_read_only_tool() -> None:
     assert [name for name, _arguments in mcp_client.executions] == ["read_file"]
 
 
-def test_nonstructural_repair_dispatches_side_effecting_tool() -> None:
+def test_character_level_repair_dispatches_side_effecting_tool() -> None:
     mcp_client = _StubMCPClient((_write_file_descriptor(),))
     _decision, _events = _run_turn(
         _tool_plan(
@@ -146,13 +150,66 @@ def test_nonstructural_repair_dispatches_side_effecting_tool() -> None:
                 tool_id="write_file",
                 arguments={"path": "output.txt", "content": "complete"},
                 call_id="call_spelling_repaired_write",
-                argument_repairs=("parsed_string_arguments", "stripped_fence"),
+                argument_repairs=("parsed_string_arguments", "single_quotes", "trailing_comma"),
             )
         ),
         mcp_client,
     )
 
     assert [name for name, _arguments in mcp_client.executions] == ["write_file"]
+
+
+def _healed_partial_call(tool_id: str) -> ToolCallRequest:
+    # Two objects where one was meant: the heal keeps the first and drops the rest.
+    coerced = coerce_arguments('{"path":"a"} {"content":"x"}')
+    assert coerced == ({"path": "a"}, ("parsed_string_arguments", "stripped_debris"))
+    arguments, tags = coerced
+    return ToolCallRequest(
+        tool_id=tool_id, arguments=arguments, call_id=f"call_{tool_id}", argument_repairs=tags
+    )
+
+
+def test_dropped_text_repair_rejects_side_effecting_tool() -> None:
+    mcp_client = _StubMCPClient((_write_file_descriptor(),))
+    _decision, events = _run_turn(_tool_plan(_healed_partial_call("write_file")), mcp_client)
+
+    (blocked,) = [event for event in _result_events(events) if event.call_id == "call_write_file"]
+    assert blocked.error_code == CMP_LOOP_INVALID_TOOL_CALL
+    assert blocked.metadata is not None
+    assert blocked.metadata["argument_repairs"] == ["parsed_string_arguments", "stripped_debris"]
+    assert mcp_client.executions == []
+
+
+def test_dropped_text_repair_dispatches_read_only_tool() -> None:
+    mcp_client = _StubMCPClient((_read_file_descriptor(),))
+    _decision, _events = _run_turn(_tool_plan(_healed_partial_call("read_file")), mcp_client)
+
+    assert [name for name, _arguments in mcp_client.executions] == ["read_file"]
+
+
+@pytest.mark.parametrize(
+    ("tags", "unsafe"),
+    [
+        (("parsed_string_arguments", "balanced_extraction", "ascii_quotes"), set()),
+        (("python_literals", "single_quotes", "trailing_comma"), set()),
+        (("stripped_fence",), {"stripped_fence"}),
+        (("stripped_debris", "trailing_comma"), {"stripped_debris"}),
+        (("closed_string", "closed_brace"), {"closed_string", "closed_brace"}),
+        (("healed",), {"healed"}),
+        (("a_future_tag",), {"a_future_tag"}),
+    ],
+)
+def test_only_allowlisted_repairs_are_safe(tags: tuple[str, ...], unsafe: set[str]) -> None:
+    call = ToolCallRequest(tool_id="write_file", arguments={}, argument_repairs=tags)
+
+    assert tool_call_repair_policy.unsafe_argument_repairs(call) == unsafe
+
+
+def test_codex_transport_reads_the_shared_character_level_set() -> None:
+    shared = tool_call_repair_policy.CHARACTER_LEVEL_ARGUMENT_REPAIRS
+
+    assert codex_cli_transport.CHARACTER_LEVEL_ARGUMENT_REPAIRS is shared
+    assert shared == {"ascii_quotes", "python_literals", "single_quotes", "trailing_comma"}
 
 
 def test_structural_repair_without_descriptor_fails_closed() -> None:

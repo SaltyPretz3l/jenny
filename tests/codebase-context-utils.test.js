@@ -14,6 +14,7 @@ const {
   getCodebaseContext,
   extractKeywords,
 } = require('../services/backend/codebase-context-utils');
+const { linkDirectory } = require('./helpers/platform-skips');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -371,19 +372,14 @@ describe('getCodebaseContext — bounds and skips', () => {
     }
   });
 
-  test('does not follow symlinked directories (best-effort; skipped if unsupported)', async (t) => {
+  test('does not follow symlinked or junctioned directories', async () => {
     const dir = makeTempDir('symlink');
     try {
       writeFile(dir, 'inside/real.js', 'const authToken = 1;\n');
       const outsideDir = makeTempDir('symlink-target');
       try {
         writeFile(outsideDir, 'secret.js', 'const authToken = 2;\n');
-        try {
-          fs.symlinkSync(outsideDir, path.join(dir, 'linked'), 'dir');
-        } catch (error) {
-          t.skip(`symlink creation unsupported in this environment: ${error.code || error.message}`);
-          return;
-        }
+        linkDirectory(outsideDir, path.join(dir, 'linked'));
         const out = await getCodebaseContext(dir, 'authToken');
         assert.ok(out.includes('inside/real.js'), `real file missing:\n${out}`);
         assert.ok(!out.includes('secret.js'), `symlink target was followed:\n${out}`);

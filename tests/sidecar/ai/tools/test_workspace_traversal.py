@@ -15,7 +15,6 @@ the already-correct guard in :mod:`sidecar.ai.tools.workspace`.
 from __future__ import annotations
 
 import os
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -27,6 +26,11 @@ from sidecar.ai.error_codes import (
 from sidecar.ai.tools import workspace as workspace_module
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
+from tests.sidecar._platform_skips import (
+    make_dir_link,
+    requires_file_symlinks,
+    windows_only,
+)
 
 _PATH_VIOLATION_CODES = {CMP_TOOL_INVALID_PATH, CMP_TOOL_OUTSIDE_WORKSPACE}
 
@@ -158,7 +162,7 @@ def test_absolute_posix_path_rejected(guard: WorkspaceGuard, outside_file: Path)
     assert excinfo.value.code in _PATH_VIOLATION_CODES
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows-only absolute paths")
+@windows_only("absolute drive and device paths")
 @pytest.mark.parametrize(
     "payload",
     [
@@ -174,7 +178,7 @@ def test_windows_absolute_paths_rejected(guard: WorkspaceGuard, payload: str) ->
     assert excinfo.value.code in _PATH_VIOLATION_CODES
 
 
-@pytest.mark.skipif(os.name != "nt", reason="UNC paths are Windows-only")
+@windows_only("UNC paths")
 def test_unc_path_rejected(guard: WorkspaceGuard) -> None:
     with pytest.raises(ToolExecutionFailure) as excinfo:
         guard.resolve_read_path(r"\\server\share\file.txt")
@@ -211,29 +215,8 @@ def test_empty_or_whitespace_paths_rejected(guard: WorkspaceGuard, payload: str)
 # ── Symlink escape ───────────────────────────────────────────────────
 
 
-def _can_create_symlink(tmp_path: Path) -> bool:
-    src = tmp_path / "_probe_src"
-    dst = tmp_path / "_probe_dst"
-    src.write_text("x", encoding="utf-8")
-    try:
-        os.symlink(src, dst)
-    except (OSError, NotImplementedError):
-        return False
-    finally:
-        if dst.exists() or dst.is_symlink():
-            try:
-                dst.unlink()
-            except OSError:
-                pass
-        if src.exists():
-            src.unlink()
-    return True
-
-
+@requires_file_symlinks()
 def test_symlink_escape_rejected(tmp_path: Path, outside_file: Path) -> None:
-    if not _can_create_symlink(tmp_path):
-        pytest.skip("symlink creation not permitted in this environment")
-
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     link = workspace / "escape"
@@ -245,19 +228,12 @@ def test_symlink_escape_rejected(tmp_path: Path, outside_file: Path) -> None:
     assert excinfo.value.code in _PATH_VIOLATION_CODES
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows junctions only")
+@windows_only("junctions")
 def test_windows_junction_escape_rejected(tmp_path: Path, outside_file: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     link = workspace / "escape"
-    result = subprocess.run(
-        ["cmd", "/c", "mklink", "/J", str(link), str(outside_file.parent)],
-        capture_output=True,
-        check=False,
-        text=True,
-    )
-    if result.returncode != 0:
-        pytest.skip(f"mklink /J not permitted: {result.stderr.strip()}")
+    make_dir_link(link, outside_file.parent)
 
     guard = WorkspaceGuard(str(workspace))
     with pytest.raises(ToolExecutionFailure) as excinfo:

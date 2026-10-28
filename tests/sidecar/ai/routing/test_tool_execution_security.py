@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -809,6 +810,54 @@ def test_python_approval_is_mandatory_during_one_send_auto_run() -> None:
     assert "always requires approval" in approval.reason.lower()
 
 
+def test_python_is_the_only_temp_script_language_that_launches_python() -> None:
+    # tool_execution._runs_python keys the mandatory gate on language == "python".
+    from sidecar.ai.tools.builtins.temp_script_interpreter import SCRIPT_INTERPRETERS
+
+    assert [
+        language for language, (names, _extension) in SCRIPT_INTERPRETERS.items()
+        if any("python" in name for name in names)
+    ] == ["python"]
+
+
+@pytest.mark.parametrize(("language", "gated"), [("python", True), ("javascript", False)])
+def test_python_temp_script_approval_is_mandatory_during_one_send_auto_run(
+    language: str, gated: bool,
+) -> None:
+    descriptor = SimpleNamespace(
+        name="run_temp_script",
+        side_effecting=True,
+        input_schema={"type": "object", "properties": {"script": {"type": "string"}}},
+        source_kind="builtin",
+        tool_family="shell",
+    )
+    kernel = SimpleNamespace(
+        _config=RuntimeConfig(safety_mode="normal", tools_shell_enabled=True),
+        _is_direct_deferred_tool_call=lambda call, context: False,
+        _mcp_client=SimpleNamespace(tool_descriptor=lambda name: descriptor),
+    )
+    approval = approval_if_needed(
+        kernel,
+        (ToolCallRequest(
+            tool_id="run_temp_script",
+            arguments={"script": "print(1)", "language": language},
+            call_id="temp-script",
+        ),),
+        mode="assist",
+        mode_allows_side_effecting=True,
+        require_approval=True,
+        approvals_pre_granted=False,
+        resolution_context=None,
+        tool_contract=_Contract(descriptor),
+        approval_mode="auto_run",
+    )
+    if not gated:
+        assert approval is None
+        return
+    assert approval is not None
+    assert "always requires approval" in approval.reason.lower()
+
+
 def test_policy_ask_forces_approval_without_provider_call_id() -> None:
     descriptor = SimpleNamespace(
         name="read_file",
@@ -1061,3 +1110,59 @@ def test_explicit_policy_deny_disables_automatic_plan_artifact_write() -> None:
     assert policy_filter.allowed == ()
     assert policy_filter.denied[0].error_code == CMP_TOOL_POLICY_DENIED
     assert policy_filter.decisions_by_call["call-plan-artifact"].decision == "deny"
+
+
+def _prompt_shell_approval(command: str, *, workspace_root: str | None) -> object | None:
+    # The request's execution context carries the root; a context without one binds none.
+    descriptor = SimpleNamespace(
+        name="run_command",
+        side_effecting=True,
+        input_schema={"type": "object", "properties": {}},
+        source_kind="mcp",
+        tool_family="shell",
+        server_name="tools",
+    )
+    kernel = SimpleNamespace(
+        _config=RuntimeConfig(
+            tools_shell_enabled=True,
+            tools_confirm_side_effects=True,
+            feature_flags={"shell_security": True},
+            safety_mode="normal",
+            # A global root must not stand in for a request context that binds none.
+            tools_workspace_root=str(Path(__file__).parent),
+        ),
+        _is_direct_deferred_tool_call=lambda call, context: False,
+        _mcp_client=SimpleNamespace(tool_descriptor=lambda name: descriptor),
+    )
+    return approval_if_needed(
+        kernel,
+        (ToolCallRequest(tool_id="run_command", arguments={"command": command}, call_id="shell-scope"),),
+        mode="assist",
+        mode_allows_side_effecting=True,
+        require_approval=True,
+        approvals_pre_granted=False,
+        resolution_context=None,
+        tool_contract=_Contract(descriptor),
+        execution_context=SimpleNamespace(root_path=workspace_root),
+    )
+
+
+def test_allowed_shell_read_outside_the_root_asks_first(tmp_path) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (tmp_path / "secret.txt").write_text("secret", encoding="utf-8")
+
+    assert _prompt_shell_approval("cat notes.txt", workspace_root=str(root)) is None
+    approval = _prompt_shell_approval("cat ../secret.txt", workspace_root=str(root))
+    assert approval is not None
+    assert "argument outside the workspace: ../secret.txt" in approval.reason
+    secret = str(tmp_path / "secret.txt")
+    approval = _prompt_shell_approval(f'cat "{secret}"', workspace_root=str(root))
+    assert approval is not None and "outside the workspace" in approval.reason
+
+
+def test_allowed_shell_read_without_a_bound_root_asks_for_any_path(tmp_path) -> None:
+    assert _prompt_shell_approval("git status", workspace_root=None) is None
+    assert _prompt_shell_approval("cat ../secret.txt", workspace_root=None) is not None
+    # Inside the kernel's global root, but this request binds no root: still asks.
+    assert _prompt_shell_approval(f'cat "{Path(__file__)}"', workspace_root=None) is not None

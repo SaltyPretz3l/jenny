@@ -24,6 +24,25 @@
     return {};
   }
 
+  function isExistsError(error) {
+    const code = String(error?.code || '').toUpperCase();
+    return code === 'CMP-WORKSPACEFS-0030' || code === 'EXISTS';
+  }
+
+  function mutationContextError() {
+    const error = new Error('The workspace root changed or is unavailable; refresh and retry.');
+    error.code = 'workspace_root_context_stale';
+    return error;
+  }
+
+  function isReadyMutationContext(context) {
+    return Boolean(context
+      && context.phase === 'ready'
+      && typeof context.rootId === 'string'
+      && context.rootId
+      && Number.isSafeInteger(context.generation));
+  }
+
   function createIdeTreeMutations(deps) {
     const getApi = deps.getApi;
     const preflightMutation = typeof deps?.preflightMutation === 'function'
@@ -61,22 +80,20 @@
         .replace(/^Error invoking remote method '[^']+':\s*(?:(?:Error|[A-Z]\w*Error): )?/, '');
     }
 
-    function mutationContextError() {
-      const error = new Error('The workspace root changed or is unavailable; refresh and retry.');
-      error.code = 'workspace_root_context_stale';
-      return error;
-    }
-
     async function captureMutationContext() {
       const context = await getMutationContext();
-      if (!context
-        || context.phase !== 'ready'
-        || typeof context.rootId !== 'string'
-        || !context.rootId
-        || !Number.isSafeInteger(context.generation)) {
-        throw mutationContextError();
-      }
+      if (!isReadyMutationContext(context)) throw mutationContextError();
       return { rootId: context.rootId, generation: context.generation };
+    }
+
+    // Copies are fenced like every other mutation: no ready root context, no copy.
+    async function copyEntry(from, to) {
+      const api = getApi();
+      if (typeof api?.copyEntry !== 'function') {
+        throw new Error('Workspace file access is unavailable; nothing was copied.');
+      }
+      const context = await captureMutationContext();
+      return api.copyEntry({ from, to, onCollision: 'auto-rename', expectedGeneration: context.generation });
     }
 
     async function assertMutationContext(expected) {
@@ -148,8 +165,8 @@
         }
         await assertMutationContext(context);
         await operation.call(api, edit.mode === 'rename'
-          ? { from: edit.targetPath, to: targetPath, ...(Number.isSafeInteger(context?.generation) ? { expectedGeneration: context.generation } : {}) }
-          : { path: targetPath, ...(Number.isSafeInteger(context?.generation) ? { expectedGeneration: context.generation } : {}) });
+          ? { from: edit.targetPath, to: targetPath, expectedGeneration: context.generation }
+          : { path: targetPath, expectedGeneration: context.generation });
         if (editEpoch !== getRootEpoch()) { if (preflight) cancelMutationPreflight(preflight); return; }
         const editIsCurrent = getPendingEdit() === edit;
         if (editIsCurrent) setPendingEdit(null);
@@ -209,7 +226,7 @@
       if (deleteEpoch !== getRootEpoch()) { cancelMutationPreflight(preflight); return false; }
       try {
         await assertMutationContext(context);
-        await api.delete({ path, ...(Number.isSafeInteger(context?.generation) ? { expectedGeneration: context.generation } : {}) });
+        await api.delete({ path, expectedGeneration: context.generation });
         if (deleteEpoch !== getRootEpoch()) { cancelMutationPreflight(preflight); return false; }
       } catch (error) {
         cancelMutationPreflight(preflight);
@@ -249,12 +266,7 @@
           cancelMutationPreflight(preflight);
           return false;
         }
-        await api.rename({
-          from: fromPath,
-          to: toPath,
-          ...(Number.isSafeInteger(context?.generation)
-            ? { expectedGeneration: context.generation } : {}),
-        });
+        await api.rename({ from: fromPath, to: toPath, expectedGeneration: context.generation });
         await assertMutationContext(context);
         if (moveEpoch !== getRootEpoch()) {
           cancelMutationPreflight(preflight);
@@ -281,6 +293,7 @@
 
     return {
       commitEdit,
+      copyEntry,
       deleteEntry,
       moveEntry,
       toMessage,
@@ -289,5 +302,8 @@
 
   return {
     createIdeTreeMutations,
+    isExistsError,
+    isReadyMutationContext,
+    mutationContextError,
   };
 });

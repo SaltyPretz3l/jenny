@@ -5,8 +5,8 @@ in-process (one interpreter, one `_locked()` implementation talking to itself).
 The W5 adversarial review flagged that as insufficient substantiation for a
 cross-process-safe store. These tests spawn REAL child interpreters against a
 shared ledger root: concurrent writers contending the advisory lock, a live
-foreign holder that must be honored, a dead holder whose stale lock must be
-stolen, and a process that dies between create_pending and settle — the exact
+foreign holder that must be honored, a dead holder whose lock the OS must
+release at once (no staleness wait, no takeover), and a process that dies between create_pending and settle — the exact
 interruption the overlay/status story exists to disclose.
 """
 
@@ -85,26 +85,25 @@ def test_concurrent_writers_lose_no_receipts(tmp_path: Path) -> None:
         receipt = json.loads(path.read_text(encoding="utf-8"))
         assert receipt["status"] == "committed", f"torn/incoherent receipt: {path.name}"
         assert receipt["operation_id"] == path.name[: -len(".json")]
-    assert not (_operations_dir(root) / ".lock").exists()
+    leftovers = sorted(p.name for p in _operations_dir(root).iterdir() if p.suffix != ".json")
+    assert leftovers == [".lock"], f"stray temp files under contention: {leftovers}"
 
 
 _HOLDER_SCRIPT = """
 import os, sys, time
+from pathlib import Path
+from sidecar.runtime.advisory_file_lock import advisory_file_lock
 
-lock_path, release_path, mode = sys.argv[1], sys.argv[2], sys.argv[3]
-fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
-os.write(fd, b"foreign-child-token")
-os.fsync(fd)
-os.close(fd)
-print("HELD", flush=True)
-if mode == "die":
-    os._exit(0)  # crash while holding: the lock file stays behind
-deadline = time.monotonic() + 30
-while time.monotonic() < deadline:
-    if os.path.exists(release_path):
-        os.unlink(lock_path)
-        sys.exit(0)
-    time.sleep(0.02)
+lock_path, release_path, mode = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+with advisory_file_lock(lock_path, time.monotonic() + 10):
+    print("HELD", flush=True)
+    if mode == "die":
+        os._exit(0)  # crash while holding: the OS must drop the lock
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        if os.path.exists(release_path):
+            sys.exit(0)
+        time.sleep(0.02)
 sys.exit(2)
 """
 
@@ -145,9 +144,17 @@ def test_live_foreign_lock_is_honored_not_stolen(tmp_path: Path, monkeypatch) ->
         )
         assert refused.get("ok") is not True, "a live foreign lock must block writes"
         assert "operation_ledger_unavailable" in json.dumps(refused)
-        # The foreign lock must survive our timed-out attempt untouched.
+        # Age never grants the lock: a holder past the old 30 s rule still excludes.
         lock_path = _operations_dir(root) / ".lock"
-        assert lock_path.read_text(encoding="ascii") == "foreign-child-token"
+        stale = time.time() - 120
+        os.utime(lock_path, (stale, stale))
+        refused_again = OperationLedger(root).create_pending(
+            operation_id="idem_aaaaaaaaaaaaaaaaaaaaaaaa",
+            request_fingerprint="fp_live",
+            generation_id="gen_parent",
+            now_iso=NOW,
+        )
+        assert refused_again.get("ok") is not True, "an old lock file of a live holder is not stale"
     finally:
         release_path.write_text("go", encoding="utf-8")
         holder.wait(timeout=30)
@@ -162,15 +169,13 @@ def test_live_foreign_lock_is_honored_not_stolen(tmp_path: Path, monkeypatch) ->
     assert created["ok"] is True and created["outcome"] == "created"
 
 
-def test_stale_lock_of_dead_process_is_stolen(tmp_path: Path) -> None:
+def test_lock_of_dead_process_is_released_by_the_os(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / "shared-root"
     holder = _spawn_holder(root, tmp_path / "unused-release", "die")
     holder.wait(timeout=30)
-    lock_path = _operations_dir(root) / ".lock"
-    assert lock_path.exists(), "the dead child must leave its lock behind"
-    # A real steal waits _STALE_LOCK_SECONDS (30s); backdate the orphan instead.
-    stale = time.time() - 120
-    os.utime(lock_path, (stale, stale))
+    assert (_operations_dir(root) / ".lock").exists(), "the dead child leaves its lock file"
+    # No backdating and a short wait: the kernel released the dead holder's lock.
+    monkeypatch.setattr(ledger_module, "_LOCK_TIMEOUT_SECONDS", 1.0)
     created = OperationLedger(root).create_pending(
         operation_id="idem_bbbbbbbbbbbbbbbbbbbbbbbb",
         request_fingerprint="fp_steal",
@@ -178,7 +183,6 @@ def test_stale_lock_of_dead_process_is_stolen(tmp_path: Path) -> None:
         now_iso=NOW,
     )
     assert created["ok"] is True and created["outcome"] == "created"
-    assert not lock_path.exists()
 
 
 _DIER_SCRIPT = """

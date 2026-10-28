@@ -418,6 +418,29 @@ test('the retry/edit and resume paths re-use rows instead of re-admitting (rows 
   assert.deepEqual(states(env.mail()), ['included']);
 });
 
+// 2026-10-27: a failure retry keeps its failed attempt after the anchor, so its mail goes after that
+// superseded tail at fresh seqs; once the retried turn has rows of its own, nothing is placed.
+test('a failure retry places mail after the superseded attempt, in seq order, and never inside its own turn', (t) => {
+  const env = setup(t, { inbox: [F.makeInbox(1)] });
+  env.store.appendMessage(env.id, { id: 'a1', role: 'assistant', content: '', turn_id: 'turn_1', error_code: 'CMP-AI-0002' });
+  env.store.truncateAfterMessage(env.id, 'u1', {
+    replaceMessageContent: 'the prompt', replaceMessageTurnId: 'turn_1b', preserveActiveTurn: true, preserveSupersededTurn: true,
+  });
+  assert.equal(env.admit({ turnId: 'turn_1b' }).published, true);
+  const messages = env.store.getSession(env.id).messages;
+  assert.deepEqual(messages.map((m) => m.id), ['a0', 'u1', 'a1', `ctx_${F.uuid(1)}`]);
+  assert.equal(messages.at(-1).turn_id, 'turn_1b');
+  const seqs = messages.map((m) => m.event_seq);
+  assert.deepEqual([...seqs].sort((a, b) => a - b), seqs, 'array order and seq order agree');
+  assert.deepEqual(states(env.mail()), ['included']);
+
+  env.store.appendMessage(env.id, { id: 'a1b', role: 'assistant', content: 'retry answer', turn_id: 'turn_1b' });
+  env.seed([F.makeInbox(2)]);
+  assert.equal(env.admit({ turnId: 'turn_1b' }).published, false);
+  assert.deepEqual(states(env.mail()), ['included', 'queued'], 'the retried turn already answered: the mail waits');
+  assert.ok(env.logs.some((l) => l.event === 'chat.session_mail_admission_failed' && l.details.code === 'insert_refused'));
+});
+
 test('admission never throws for a hostile service or session', () => {
   const service = { _emitServiceLog() { throw new Error('logger down'); } };
   assert.doesNotThrow(() => selectAndPublishSessionMail({ service, sessionId: 's', turnId: 't', userMessageId: 'u', supportsMail: () => { throw new Error('boom'); } }));

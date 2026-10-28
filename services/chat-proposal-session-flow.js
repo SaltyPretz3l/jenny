@@ -43,6 +43,10 @@ function buildPorts(options = {}) {
     getTurnCompletionReason: pick('getTurnCompletionReason', () => null),
     supportsSessionHandoff: pick('supportsSessionHandoff', unsupportedHandoff),
     supportsProducerTool: pick('supportsProducerTool', unsupportedHandoff),
+    allowsProjectChoice: pick('allowsProjectChoice', () => false),
+    projectExists: pick('projectExists', () => false),
+    matchLaunchPermission: pick('matchLaunchPermission', () => null),
+    isWakeTurn: pick('isWakeTurn', () => false),
     createLinkedChildSession: pick('createLinkedChildSession', () => ({ ok: false, code: 'unsupported' })),
     sessionExists: pick('sessionExists', () => false),
     readSpawnedFrom: pick('readSpawnedFrom', () => null),
@@ -284,25 +288,32 @@ function onDeadline(svc, sessionId, proposalId, attemptId) {
   if (!record || record.attempt_id !== attemptId || record.handoff !== null) return;
   if (record.decision_state !== 'accepted' || !['queued', 'preparing'].includes(record.action_state)) return;
   if (record.preparation_work_id) {
-    safely(() => svc._getRuntime()?.cancel?.(record.preparation_work_id, { reason: 'deadline' }));
+    // Its own cancel reason, so the stopped turn reads as a timeout, not as the user's Stop.
+    safely(() => svc._getRuntime()?.cancel?.(record.preparation_work_id, { reason: 'handoff_deadline' }));
   }
   svc._untrack(record.preparation_turn_id);
   failPreparation(svc, sessionId, record, 'deadline');
 }
 
-function startDeadline(svc, record) {
+function startDeadline(svc, record, stage) {
   const mod = svc._handoff();
   if (typeof mod?.startPreparationDeadline !== 'function') return;
   safely(() => mod.startPreparationDeadline(handoffPorts(svc), {
     sessionId: record.source_session_id,
     proposalId: record.proposal_id,
     attemptId: record.attempt_id,
+    stage,
     onExpire: () => onDeadline(svc, record.source_session_id, record.proposal_id, record.attempt_id),
   }));
 }
 
-// chat-stream events of the preparation turn: the first live event starts the 60 s deadline and
-// marks the record preparing; a terminal without an accepted handoff fails the preparation.
+// Events that carry the model's own output (reasoning or text deltas, a tool call), as opposed to
+// the start and status events the app sends while the provider is still reading the prompt.
+const PREP_OUTPUT_EVENT_TYPES = new Set(['delta', 'tool_input_delta', 'tool_use']);
+
+// chat-stream events of the preparation turn: the first live event marks the record preparing and
+// arms the first-output limit, the first output starts the 60 s deadline, and a terminal without an
+// accepted handoff fails the preparation.
 function onPrepEvent(svc, tracked, event) {
   const turnId = event.turnId;
   const next = continuation.classifyStreamEvent(event);
@@ -310,11 +321,20 @@ function onPrepEvent(svc, tracked, event) {
   const { sessionId, proposalId } = tracked;
   try {
     if (next === 'admitted') {
-      if (tracked.state === 'started') return;
-      tracked.state = 'started';
-      const marked = apply(svc, sessionId, proposalId, S.markPreparing);
-      const record = marked.record || svc._latest(sessionId, proposalId);
-      if (record && record.action_state === 'preparing') startDeadline(svc, record);
+      const output = PREP_OUTPUT_EVENT_TYPES.has(event.type);
+      if (tracked.state === 'started' && (!output || tracked.output)) return;
+      let record;
+      if (tracked.state !== 'started') {
+        tracked.state = 'started';
+        record = apply(svc, sessionId, proposalId, S.markPreparing).record;
+      }
+      record = record || svc._latest(sessionId, proposalId);
+      if (!record || record.action_state !== 'preparing') return;
+      startDeadline(svc, record, 'admitted');
+      if (output) {
+        tracked.output = true;
+        startDeadline(svc, record, 'output');
+      }
       return;
     }
     svc._untrack(turnId);

@@ -34,6 +34,26 @@ test('next-send breakdown renders inline, counts the local draft, and retains st
   assert.equal(f.head('context').getAttribute('aria-expanded'), 'true');
 });
 
+test('the rail paints a newer shared estimate and never republishes a stale reading', async (t) => {
+  const contextPreview = require('../renderer/chat/renderer-context-preview.js');
+  let failed = false;
+  const estimate = (used) => ({ scope: 'next_send', measurement: 'estimated', used_tokens: used, capacity_tokens: 1000,
+    available_tokens: 1000 - used, reserve_tokens: 0, breakdown: { messages: 0, system_prompt: used, tools: 0, instructions: 0, skills: 0, other: 0 } });
+  const bridge = createBridge({ respond: ({ session_id }) => ({ ok: true,
+    summary: summaryFor(session_id, { context: { state: failed ? 'checking' : 'available', data: failed ? null : estimate(100) } }) }) });
+  const f = await docked({ bridge });
+  t.after(() => { f.api.dispose(); f.window.close(); contextPreview.resetForTests(); });
+  assert.equal(f.value('context'), '10%');
+  contextPreview.remember('sess_a', estimate(300)); // the ring's popover fetched a newer estimate
+  await sleep(50);
+  assert.equal(f.value('context'), '30%');
+  failed = true;
+  f.api.refresh();
+  await flush();
+  assert.match(f.value('context'), /10%.*stale/);
+  assert.equal(contextPreview.latest('sess_a').data.used_tokens, 300, 'the carried-forward reading is not republished');
+});
+
 test('an invalidation during a summary read rejects the obsolete response', async (t) => {
   const pending = deferred();
   let requests = 0;

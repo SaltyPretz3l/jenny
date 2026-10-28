@@ -32,12 +32,12 @@ from sidecar.ai.routing.tool_call_retry import (
     evaluate_reflexive_retry,
 )
 from sidecar.ai.routing.tool_execution import (
-    _coerce_tool_failure_code,
     _tool_timeout_for_runtime,
     assert_valid_tool_call,
     execute_tool,
     execute_tool_search,
 )
+from sidecar.ai.routing.tool_execution_results import coerce_tool_failure_code
 from sidecar.ai.routing.tool_execution_tool_handlers import SYNTHETIC_TOOL_HANDLERS
 from sidecar.ai.routing.tool_observation import (
     KIND_TOOL_EXECUTION_FAILED,
@@ -526,7 +526,7 @@ def test_execute_tool_generic_exception_carries_tool_subcode() -> None:
     ],
 )
 def test_coerce_tool_failure_code(raw_code: object, expected: str) -> None:
-    assert _coerce_tool_failure_code(raw_code) == expected
+    assert coerce_tool_failure_code(raw_code) == expected
 
 
 def test_execute_tool_generic_exception_is_wrapped_and_marked_retryable() -> None:
@@ -915,6 +915,110 @@ def test_execute_tool_search_raises_when_cancel_handle_cancelled() -> None:
             resolution_context=None,
             runtime=runtime,
         )
+
+
+def _search_context(*names: str, retired: frozenset[str] = frozenset()) -> Any:
+    from sidecar.ai.tools.tool_search import ToolResolutionContext, ToolSearchIndex, _IndexEntry
+
+    return ToolResolutionContext(
+        deferred_names=frozenset(names),
+        search_index=ToolSearchIndex([
+            _IndexEntry(name=name, description=f"{name} helper", search_hint="", is_mcp=True)
+            for name in names
+        ]),
+        retired_names=retired,
+    )
+
+
+class _SchemaKernel:
+    def __init__(self, *names: str) -> None:
+        self.builds = 0
+        self._names = names
+
+    def _build_full_tool_schema_map(self) -> dict[str, dict[str, Any]]:
+        self.builds += 1
+        return {name: {"name": name, "description": f"{name} schema"} for name in self._names}
+
+
+def test_execute_tool_search_builds_the_schema_map_once_and_only_on_a_match() -> None:
+    names = ("mcp__git__commit", "mcp__git__push")
+    kernel = _SchemaKernel(*names)
+    context = _search_context(*names)
+
+    miss = execute_tool_search(
+        kernel,
+        ToolCallRequest(tool_id="tool_search", arguments={"query": "zzzz"}, call_id="c1"),
+        resolution_context=context,
+    )
+    assert kernel.builds == 0
+    assert miss.metadata["match_count"] == 0
+
+    hit = execute_tool_search(
+        kernel,
+        ToolCallRequest(tool_id="tool_search", arguments={"query": "git"}, call_id="c2"),
+        resolution_context=context,
+    )
+    assert kernel.builds == 1
+    assert hit.metadata["match_count"] == 2
+    assert context.un_deferred_names == set(names)
+
+
+def test_execute_tool_search_never_rediscovers_a_retired_tool() -> None:
+    names = ("mcp__git__commit", "mcp__git__push")
+    context = _search_context(*names, retired=frozenset({"mcp__git__push"}))
+
+    outcome = execute_tool_search(
+        _SchemaKernel(*names),
+        ToolCallRequest(
+            tool_id="tool_search",
+            arguments={"query": "select:mcp__git__commit,mcp__git__push"},
+            call_id="c1",
+        ),
+        resolution_context=context,
+    )
+
+    assert outcome.metadata["discovered_tools"] == ["mcp__git__commit"]
+    assert "mcp__git__push" not in outcome.output
+    assert context.un_deferred_names == {"mcp__git__commit"}
+
+
+def test_check_monitor_asserts_read_only_effects() -> None:
+    digest = {"state": "running", "monitor_id": "mon_1", "new_events": []}
+    kernel = SimpleNamespace(
+        _monitor_manager=SimpleNamespace(poll_monitor=lambda *_args, **_kwargs: digest)
+    )
+
+    outcome = SYNTHETIC_TOOL_HANDLERS["check_monitor"](
+        kernel=kernel,
+        call=ToolCallRequest(tool_id="check_monitor", arguments={}, call_id="c1"),
+        tool_arguments={"monitor_id": "mon_1"},
+        visible_tool_arguments={"monitor_id": "mon_1"},
+        audit_metadata={"audit_key": "audit_val"},
+        runtime=None,
+        outcome_type=ToolExecutionOutcome,
+    )
+
+    assert outcome.metadata["effects"] == "none"
+    assert outcome.metadata["monitor"] is digest
+    assert outcome.metadata["audit_key"] == "audit_val"
+
+
+def test_monitor_handlers_require_a_monitor_runtime() -> None:
+    for tool_name, arguments in (("monitor", {"command": "x"}), ("check_monitor", {})):
+        with pytest.raises(ToolExecutionFailure) as excinfo:
+            SYNTHETIC_TOOL_HANDLERS[tool_name](
+                kernel=SimpleNamespace(),
+                call=ToolCallRequest(tool_id=tool_name, arguments=arguments, call_id="c1"),
+                tool_arguments=arguments,
+                visible_tool_arguments=arguments,
+                request_id=REQUEST_ID,
+                session_id=None,
+                audit_metadata=None,
+                runtime=None,
+                outcome_type=ToolExecutionOutcome,
+            )
+        assert excinfo.value.message == "monitor runtime is unavailable"
+        assert excinfo.value.retryable is True
 
 
 def test_assert_valid_tool_call_rejects_blank_tool_id() -> None:

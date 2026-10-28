@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 
+const { preserveCorruptFile } = require('./corrupt-file-preserve');
 const { FileJsonStore } = require('./file-json-store');
 const { JournaledJsonStore } = require('./journaled-json-store');
 const { EPOCH_KEY, isPlainObject, journalPathOf, listJournalEpochs } = require('./journaled-json-files');
@@ -245,6 +246,15 @@ function preserveDamagedIndexJournals(backend) {
   stashJournals(backend, '_index', Date.now(), false, backend._indexPath);
 }
 
+// The index base does not parse or is not an index, and is about to be rebuilt
+// from the chat files: its bytes move to _index.json.corrupt-<ms> first, so the
+// rebuild never writes over them (a failed move logs and the rebuild goes on:
+// every summary it holds is derived from the chat files).
+function preserveDamagedIndexFile(backend) {
+  preserveCorruptFile(backend._indexPath, { logger: backend._logger });
+  installIndexStore(backend);
+}
+
 // Chat files that could not be read while the index was rebuilt have a blank
 // entry in it, or none (a hashed file name does not give the chat's id). They
 // are read again after each delay and their real summary takes the entry.
@@ -305,6 +315,7 @@ module.exports = {
   installIndexStore,
   noteJournalStatus,
   normalizeJournalOption,
+  preserveDamagedIndexFile,
   preserveDamagedIndexJournals,
   quarantineSessionJournals,
   readIndexStatus,

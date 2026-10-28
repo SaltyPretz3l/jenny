@@ -179,7 +179,7 @@ test('S7: Stop, Pause and Send share the primary size, every chip, icon button a
     await frames(idle);
     assert.equal(await idle.evaluate(isCompact), false, 'measured expanded');
     const seenIdle = assertControlSizes(await measureControlSizes(idle), { primary: 36, secondary: 32 }, 'default density');
-    for (const name of ['send', 'attach', 'commands', 'chat', 'runMode', 'model', 'ring']) assert.ok(seenIdle.includes(name), `${name} was measured`);
+    for (const name of ['send', 'attach', 'chat', 'runMode', 'model', 'ring']) assert.ok(seenIdle.includes(name), `${name} was measured`);
     await idle.close();
     const streaming = await mountComposer(browser, { paneWidth: 1200, streaming: true, waitCompact: false });
     await frames(streaming);

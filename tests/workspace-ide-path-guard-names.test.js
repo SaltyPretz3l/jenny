@@ -10,6 +10,7 @@ const {
   cleanupTrackedResources,
   createTrackedTempDir,
 } = require('./helpers/resource-cleanup');
+const { posixOnly } = require('./helpers/platform-skips');
 const { WorkspaceIdeService } = require('../services/workspace-ide-service');
 const { WORKSPACE_FS_ERROR_CODES } = require('../services/workspace-ide-errors');
 const { WorkspaceRootCoordinator } = require('../services/workspace-root-coordinator');
@@ -98,7 +99,7 @@ test('rename validates only the destination leaf', async () => {
 // and alias a different entry). This guarantee covers lenient names like
 // `what?.txt` / `a:b`.
 test('POSIX-existing lenient names remain readable, listable, movable, and deletable', {
-  skip: process.platform === 'win32' ? 'Windows cannot create the lenient-only fixture name' : false,
+  skip: posixOnly('Windows cannot create the lenient-only fixture name'),
 }, async () => {
   const root = createTrackedTempDir('jenny-ide-name-');
   const lenientName = 'what?.txt';

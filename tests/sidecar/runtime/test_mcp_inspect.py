@@ -80,7 +80,9 @@ def test_probe_returns_bounded_surface_and_closes_owned_resources(monkeypatch: A
     assert result["identity"] == {"name": "weather"}
     assert result["transport"] == "stdio"
     assert result["tool_count"] == 1
-    assert result["malformed_tool_count"] == 0
+    # Tools fail closed (a malformed tool rejects the surface), so there is no
+    # malformed-tool count to report; prompts are skipped and counted.
+    assert "malformed_tool_count" not in result
     assert result["tools"][0]["name"] == "weather"
     assert len(result["tools"][0]["schema_digest"]) == SHA256_HEX_LENGTH
     assert len(result["tools_digest"]) == SHA256_HEX_LENGTH

@@ -1,7 +1,8 @@
 /* renderer/features/renderer-ide-chip-picker.js
  *
  * Inventory-backed pickers used by the IDE: quick-picks behind the interactive
- * statusbar chips, plus the Workspace Chat Dock's session switcher.
+ * statusbar chips (tab size, EOL, language, indentation, encoding). The Workspace
+ * Chat Dock's session switcher lives in renderer-ide-chat-session-picker.
  *
  * The popover is appended to the IDE shell (NOT the cursor-driven statusbar
  * markup, which re-renders on every cursor move and would otherwise destroy an
@@ -20,10 +21,14 @@
   function noop() {}
 
   const TAB_SIZES = [2, 4, 8];
+  const INDENT_SIZES = [1, 2, 3, 4, 6, 8];
+  // Thunks so each note keeps a literal key the i18n scanner can read.
+  const INDENT_SOURCE_NOTES = {
+    file: () => jt('ide.chipPicker.indentSourceFile', 'Indentation set for this file'),
+    editorconfig: () => jt('ide.chipPicker.indentSourceEditorconfig', 'Indentation from .editorconfig'),
+    default: () => jt('ide.chipPicker.indentSourceDefault', 'Indentation from the editor default'),
+  };
   const EOL_OPTIONS = [['lf', 'LF'], ['crlf', 'CRLF']];
-  const RECENT_SESSION_LIMIT = 12;
-  const SEARCH_RESULT_LIMIT = 50;
-  const CHEVRON_DOWN_GLYPH = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6l6-6"></path></svg>';
 
   function resolveInventoryPrimitive(globalName, requirePath) {
     if (typeof globalRef[globalName] === 'function') {
@@ -39,10 +44,6 @@
     return null;
   }
 
-  function sessionTitle(session) {
-    return String(session?.title || '').trim() || jt('ide.chipPicker.newChat', 'New Chat');
-  }
-
   const defaultEscape = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
   function createIdeChipPicker(deps) {
@@ -54,6 +55,11 @@
     const actionButton = typeof options.actionButton === 'function' ? options.actionButton : null;
     const popover = typeof options.popover === 'function' ? options.popover : null;
     const onAfterChange = typeof options.onAfterChange === 'function' ? options.onAfterChange : noop;
+    const textField = typeof options.textField === 'function' ? options.textField : resolveInventoryPrimitive('inventoryTextField', '../inventory/text-field');
+    // Re-renders the status bar after a per-tab (session-only) language / indentation change.
+    const requestStatusRender = typeof options.requestStatusRender === 'function' ? options.requestStatusRender : noop;
+    // { insertSpaces, tabSize }: the preference defaults "Detect Indentation" falls back to.
+    const getIndentDefaults = typeof options.getIndentDefaults === 'function' ? options.getIndentDefaults : () => ({});
 
     let sessionTabSize = null; // null -> follow the file/editor default
     let sessionEol = null;
@@ -84,6 +90,8 @@
       shell.appendChild(host);
       if (typeof host.addEventListener === 'function') {
         host.addEventListener('click', handleHostClick);
+        host.addEventListener('input', handleHostInput);
+        host.addEventListener('keydown', handleHostKeydown);
       }
       return host;
     }
@@ -112,9 +120,30 @@
           plain: true,
           className: `ide-chip-option${size === current ? ' ide-chip-option--active' : ''}`,
           role: 'menuitemradio',
-          trustedHtml: escapeHtml(jt('ide.chipPicker.spaces', 'Spaces: {size}', { size })),
+          trustedHtml: escapeHtml(jt('ide.statusbar.spaces', 'Spaces: {size}', { size })),
           dataset: { 'ide-chip-kind': 'tab-size', 'ide-chip-value': String(size) },
         })).join('');
+      }
+      if (kind === 'language') {
+        return buildLanguageMenu();
+      }
+      if (kind === 'indent') {
+        return buildIndentMenu();
+      }
+      if (kind === 'indent-size') {
+        return INDENT_SIZES.map((size) => actionButton({
+          plain: true,
+          className: `ide-chip-option${size === Number(pending.tabSize) ? ' ide-chip-option--active' : ''}`,
+          role: 'menuitemradio',
+          trustedHtml: escapeHtml(String(size)),
+          title: jt('ide.chipPicker.tabDisplaySizeOption', 'Tab size {size}', { size }),
+          dataset: { 'ide-chip-kind': 'indent-size', 'ide-chip-value': String(size) },
+        })).join('');
+      }
+      if (kind === 'encoding') {
+        const name = pending.bom === true ? jt('ide.statusbar.encodingUtf8Bom', 'UTF-8 with BOM') : jt('ide.statusbar.encodingUtf8', 'UTF-8');
+        return `<div class="ide-chip-note ide-chip-note--value" role="note">${escapeHtml(name)}</div>`
+          + `<div class="ide-chip-note" role="note">${escapeHtml(jt('ide.chipPicker.encodingReadOnly', 'Jenny reads and saves files as UTF-8; re-encoding is not available.'))}</div>`;
       }
       const currentEol = editorHost?.getEol?.(getActivePath()) === 'crlf' ? 'crlf' : 'lf';
       return EOL_OPTIONS.map(([value, label]) => actionButton({
@@ -126,7 +155,102 @@
       })).join('');
     }
 
-    function openPicker(kind, anchor) {
+    // The opener config of the picker that is open now (onPick callbacks, current values).
+    let pending = {};
+
+    function languageEntries(languages) {
+      return (Array.isArray(languages) ? languages : [])
+        .filter((entry) => entry && entry.id && Array.isArray(entry.aliases) && entry.aliases.length > 0)
+        .map((entry) => ({ id: String(entry.id), label: String(entry.aliases[0]), aliases: entry.aliases.map(String) }))
+        .sort((left, right) => left.label.localeCompare(right.label));
+    }
+
+    function languageRows(query) {
+      const needle = String(query || '').trim().toLowerCase();
+      const auto = jt('ide.chipPicker.autoDetect', 'Auto Detect');
+      const rows = [];
+      if (!needle || auto.toLowerCase().includes(needle)) {
+        rows.push({ id: '', label: auto, description: '' });
+      }
+      for (const entry of pending.entries || []) {
+        if (!needle || entry.label.toLowerCase().includes(needle) || entry.id.toLowerCase().includes(needle)
+          || entry.aliases.some((alias) => alias.toLowerCase().includes(needle))) {
+          rows.push({ id: entry.id, label: entry.label, description: entry.id });
+        }
+      }
+      return rows;
+    }
+
+    function languageListMarkup(query) {
+      const rows = languageRows(query);
+      if (!rows.length) {
+        return `<div class="ide-chip-note" role="note">${escapeHtml(jt('ide.chipPicker.noLanguagesFound', 'No languages found'))}</div>`;
+      }
+      return rows.map((row) => {
+        const selected = Boolean(row.id) && row.id === pending.current;
+        return actionButton({
+          plain: true,
+          className: `ide-chip-option${selected ? ' ide-chip-option--active' : ''}`,
+          role: 'option',
+          ariaSelected: selected,
+          dataset: { 'ide-chip-kind': 'language', 'ide-chip-value': row.id },
+          title: row.description ? `${row.label} (${row.description})` : row.label,
+          trustedHtml: `<span class="ide-chip-option-label">${escapeHtml(row.label)}</span>`
+            + (row.description ? `<span class="ide-chip-option-desc">${escapeHtml(row.description)}</span>` : ''),
+        });
+      }).join('');
+    }
+
+    function buildLanguageMenu() {
+      if (typeof textField !== 'function') {
+        return '';
+      }
+      const search = textField({
+        id: 'ideChipLanguageSearch',
+        placeholder: jt('ide.statusbar.selectLanguageMode', 'Select Language Mode'),
+        ariaLabel: jt('ide.chipPicker.searchLanguages', 'Search languages'),
+        className: 'ide-chip-search',
+        dataset: { 'ide-chip-search': '1' },
+      });
+      return search
+        + `<div class="ide-chip-list" role="listbox" aria-label="${escapeHtml(jt('ide.chipPicker.languages', 'Languages'))}" data-ide-chip-list>${languageListMarkup('')}</div>`;
+    }
+
+    function buildIndentMenu() {
+      const note = (INDENT_SOURCE_NOTES[pending.source] || INDENT_SOURCE_NOTES.default)();
+      const spaces = pending.insertSpaces !== false;
+      const row = (value, label, radio, active) => actionButton({
+        plain: true,
+        className: `ide-chip-option${active ? ' ide-chip-option--active' : ''}`,
+        role: radio ? 'menuitemradio' : 'menuitem',
+        trustedHtml: escapeHtml(label),
+        title: label,
+        dataset: { 'ide-chip-kind': 'indent', 'ide-chip-value': value },
+      });
+      return `<div class="ide-chip-note" role="note">${escapeHtml(note)}</div>`
+        + row('spaces', jt('ide.chipPicker.indentUsingSpaces', 'Indent Using Spaces'), true, spaces)
+        + row('tabs', jt('ide.chipPicker.indentUsingTabs', 'Indent Using Tabs'), true, !spaces)
+        + row('size', jt('ide.chipPicker.changeTabDisplaySize', 'Change Tab Display Size'), false, false)
+        + row('detect', jt('ide.chipPicker.detectIndentation', 'Detect Indentation from Content'), false, false)
+        + row('convert-spaces', jt('ide.chipPicker.convertToSpaces', 'Convert Indentation to Spaces'), false, false)
+        + row('convert-tabs', jt('ide.chipPicker.convertToTabs', 'Convert Indentation to Tabs'), false, false);
+    }
+
+    // Shows `kind` in the popover (open already, or about to open).
+    function renderKind(popEl, kind) {
+      popEl.__chipKind = kind;
+      popEl.setAttribute('role', kind === 'language' ? 'dialog' : 'menu');
+      popEl.innerHTML = buildMenu(kind);
+      // aria-checked tracks the active option (the primitive can't emit it).
+      popEl.querySelectorAll('[role="menuitemradio"]').forEach((btn) => {
+        btn.setAttribute(
+          'aria-checked',
+          btn.classList.contains('ide-chip-option--active') ? 'true' : 'false'
+        );
+      });
+    }
+
+    function openPicker(kind, anchor, config = {}) {
       const popEl = ensureHost();
       if (!popEl) {
         return;
@@ -137,17 +261,73 @@
         popover.close(popEl, { restoreFocus: true });
         return;
       }
-      popEl.__chipKind = kind;
-      popEl.innerHTML = buildMenu(kind);
-      // aria-checked tracks the active option (the primitive can't emit it).
-      popEl.querySelectorAll('[data-ide-chip-value]').forEach((btn) => {
-        btn.setAttribute(
-          'aria-checked',
-          btn.classList.contains('ide-chip-option--active') ? 'true' : 'false'
-        );
-      });
+      pending = config;
+      renderKind(popEl, kind);
       position(anchor);
-      popover.open(popEl, { trigger: anchor });
+      popover.open(popEl, { trigger: anchor, focus: kind !== 'language' });
+      if (kind === 'language') {
+        popEl.querySelector('[data-ide-chip-search]')?.focus?.();
+      }
+    }
+
+    function indentInfo() {
+      const info = editorHost?.getIndentInfo?.(getActivePath());
+      return info || { insertSpaces: true, tabSize: Number(editorHost?.getTabSize?.()) || 2, source: 'default' };
+    }
+
+    // Default onPick handlers: apply to the active tab, then refresh the status bar.
+    function pickLanguage(id) {
+      editorHost?.setLanguage?.(getActivePath(), id || null);
+      requestStatusRender();
+    }
+
+    function pickIndent(pick) {
+      const info = indentInfo();
+      const path = getActivePath();
+      if (pick?.kind === 'spaces' || pick?.kind === 'tabs') {
+        editorHost?.setIndent?.(path, { insertSpaces: pick.kind === 'spaces', tabSize: info.tabSize, source: 'file' });
+      } else if (pick?.kind === 'size' && Number(pick.value) > 0) {
+        editorHost?.setIndent?.(path, { insertSpaces: info.insertSpaces, tabSize: Number(pick.value), source: 'file' });
+      } else if (pick?.kind === 'detect') {
+        editorHost?.detectIndentation?.(path, getIndentDefaults());
+      } else if (pick?.kind === 'convert') {
+        Promise.resolve(editorHost?.convertIndentation?.(path, pick.to === 'tabs' ? 'tabs' : 'spaces'))
+          .then(requestStatusRender, noop);
+      }
+      requestStatusRender();
+    }
+
+    function openLanguagePicker(anchor, opts = {}) {
+      const languages = Array.isArray(opts.languages) ? opts.languages : (editorHost?.getMonaco?.()?.languages?.getLanguages?.() || []);
+      const current = opts.current !== undefined ? opts.current : (editorHost?.getFocusedLanguageId?.() || editorHost?.getActiveLanguageId?.() || '');
+      openPicker('language', anchor, {
+        entries: languageEntries(languages),
+        current: String(current || ''),
+        onPick: typeof opts.onPick === 'function' ? opts.onPick : pickLanguage,
+      });
+    }
+
+    function openIndentationPicker(anchor, opts = {}) {
+      const info = indentInfo();
+      openPicker('indent', anchor, {
+        insertSpaces: opts.insertSpaces !== undefined ? opts.insertSpaces : info.insertSpaces,
+        tabSize: Number(opts.tabSize) > 0 ? Number(opts.tabSize) : info.tabSize,
+        source: opts.source || info.source,
+        onPick: typeof opts.onPick === 'function' ? opts.onPick : pickIndent,
+      });
+    }
+
+    // The "Change Tab Display Size" list on its own (palette entry point).
+    function openTabDisplaySizePicker(anchor, opts = {}) {
+      openPicker('indent-size', anchor, {
+        tabSize: Number(opts.tabSize) > 0 ? Number(opts.tabSize) : indentInfo().tabSize,
+        onPick: typeof opts.onPick === 'function' ? opts.onPick : pickIndent,
+      });
+    }
+
+    function openEncodingInfo(anchor, opts = {}) {
+      const info = opts.encoding !== undefined ? opts : (editorHost?.getEncodingInfo?.(getActivePath()) || {});
+      openPicker('encoding', anchor, { encoding: info.encoding || 'utf-8', bom: info.bom === true });
     }
 
     function apply(kind, value) {
@@ -166,6 +346,22 @@
       onAfterChange({ kind, value: kind === 'tab-size' ? sessionTabSize : sessionEol });
     }
 
+    // Picks from the per-tab pickers (language / indentation) go to the opener's onPick.
+    function dispatchPick(kind, value) {
+      const onPick = pending.onPick;
+      if (kind === 'language') {
+        onPick?.(value === '' ? null : value);
+      } else if (kind === 'indent-size') {
+        onPick?.({ kind: 'size', value: Number(value) });
+      } else if (value === 'spaces' || value === 'tabs') {
+        onPick?.({ kind: value });
+      } else if (value === 'detect') {
+        onPick?.({ kind: 'detect' });
+      } else if (value === 'convert-spaces' || value === 'convert-tabs') {
+        onPick?.({ kind: 'convert', to: value === 'convert-tabs' ? 'tabs' : 'spaces' });
+      }
+    }
+
     function handleHostClick(event) {
       const target = event.target;
       const btn = target && typeof target.closest === 'function'
@@ -174,10 +370,104 @@
       if (!btn) {
         return;
       }
-      apply(btn.getAttribute('data-ide-chip-kind'), btn.getAttribute('data-ide-chip-value'));
+      const kind = btn.getAttribute('data-ide-chip-kind');
+      const value = btn.getAttribute('data-ide-chip-value');
+      if (kind === 'indent' && value === 'size') {
+        // Second list inside the same popover; picking a size closes it.
+        renderKind(host, 'indent-size');
+        host.querySelector('[data-ide-chip-value]')?.focus?.();
+        return;
+      }
+      if (kind === 'tab-size' || kind === 'eol') {
+        apply(kind, value);
+      } else {
+        dispatchPick(kind, value);
+      }
       if (host) {
         popover.close(host, { restoreFocus: true });
       }
+    }
+
+    function languageOptions() {
+      return host ? [...host.querySelectorAll('[data-ide-chip-kind="language"]')] : [];
+    }
+
+    function handleHostInput(event) {
+      if (!event.target?.matches?.('[data-ide-chip-search]') || host?.__chipKind !== 'language') {
+        return;
+      }
+      const list = host.querySelector('[data-ide-chip-list]');
+      if (list) {
+        list.innerHTML = languageListMarkup(event.target.value);
+      }
+    }
+
+    function handleHostKeydown(event) {
+      if (host?.__chipKind !== 'language') {
+        return;
+      }
+      const search = event.target?.matches?.('[data-ide-chip-search]');
+      const option = event.target?.closest?.('[data-ide-chip-kind="language"]');
+      if (!search && !option) {
+        return;
+      }
+      // Enter that commits an IME composition belongs to the IME.
+      if (event.key === 'Enter' && (event.isComposing || event.keyCode === 229)) {
+        return;
+      }
+      const options = languageOptions();
+      if (event.key === 'Enter') {
+        (search ? options[0] : option)?.click?.();
+        event.preventDefault();
+        return;
+      }
+      if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) || !options.length) {
+        return;
+      }
+      let next = 0;
+      if (search) {
+        next = event.key === 'ArrowUp' || event.key === 'End' ? options.length - 1 : 0;
+      } else if (event.key === 'ArrowDown') {
+        next = (options.indexOf(option) + 1) % options.length;
+      } else if (event.key === 'ArrowUp') {
+        next = (options.indexOf(option) - 1 + options.length) % options.length;
+      } else if (event.key === 'End') {
+        next = options.length - 1;
+      }
+      options[next]?.focus?.();
+      event.preventDefault();
+    }
+
+    // Palette rows for the status-bar pickers (row 82); pickers anchor on the matching chip.
+    function chipAnchor(action) {
+      const bar = getDom().ideStatusBar || null;
+      return bar?.querySelector?.(`[data-ide-status-action="${action}"]`) || bar || null;
+    }
+
+    function registerCommands(registry) {
+      if (!registry || typeof registry.register !== 'function') {
+        return noop;
+      }
+      const when = (ctx) => ctx.activeView === 'ide' && ctx.hasActiveFile === true;
+      const rows = [
+        ['ide:change-language-mode', jt('ide.statusCommands.changeLanguageMode', 'Change Language Mode'), () => openLanguagePicker(chipAnchor('language')), ['ctrl+k m']],
+        ['ide:change-eol', jt('ide.statusCommands.changeEol', 'Change End of Line Sequence'), () => openPicker('eol', chipAnchor('eol'))],
+        ['ide:indent-using-spaces', jt('ide.chipPicker.indentUsingSpaces', 'Indent Using Spaces'), () => pickIndent({ kind: 'spaces' })],
+        ['ide:indent-using-tabs', jt('ide.chipPicker.indentUsingTabs', 'Indent Using Tabs'), () => pickIndent({ kind: 'tabs' })],
+        ['ide:change-tab-display-size', jt('ide.chipPicker.changeTabDisplaySize', 'Change Tab Display Size'), () => openTabDisplaySizePicker(chipAnchor('indentation'))],
+        ['ide:detect-indentation', jt('ide.chipPicker.detectIndentation', 'Detect Indentation from Content'), () => pickIndent({ kind: 'detect' })],
+        ['ide:convert-indentation-to-spaces', jt('ide.chipPicker.convertToSpaces', 'Convert Indentation to Spaces'), () => pickIndent({ kind: 'convert', to: 'spaces' })],
+        ['ide:convert-indentation-to-tabs', jt('ide.chipPicker.convertToTabs', 'Convert Indentation to Tabs'), () => pickIndent({ kind: 'convert', to: 'tabs' })],
+      ];
+      const disposers = rows.map(([id, label, run, keys]) => registry.register({
+        id,
+        label,
+        group: 'Workspace',
+        ...(keys ? { keys } : {}),
+        when,
+        run,
+      }));
+      return () => disposers.forEach((dispose) => { if (typeof dispose === 'function') dispose(); });
     }
 
     function initHandlers() {
@@ -219,6 +509,8 @@
     function dispose() {
       if (host && typeof host.removeEventListener === 'function') {
         host.removeEventListener('click', handleHostClick);
+        host.removeEventListener('input', handleHostInput);
+        host.removeEventListener('keydown', handleHostKeydown);
       }
       if (host && host.parentNode) {
         host.parentNode.removeChild(host);
@@ -231,311 +523,16 @@
       initHandlers,
       openTabSizePicker: (anchor) => openPicker('tab-size', anchor),
       openEolPicker: (anchor) => openPicker('eol', anchor),
+      openLanguagePicker,
+      openIndentationPicker,
+      openTabDisplaySizePicker,
+      openEncodingInfo,
+      registerCommands,
       applyDefaults,
       seedDefaults,
       dispose,
     };
   }
 
-  function createIdeChatSessionPicker(deps) {
-    const state = deps?.state || {};
-    const getHeader = typeof deps?.getHeader === 'function' ? deps.getHeader : () => null;
-    const onSelectSession = typeof deps?.onSelectSession === 'function' ? deps.onSelectSession : noop;
-    const showShellErrorToast = typeof deps?.showShellErrorToast === 'function' ? deps.showShellErrorToast : noop;
-    const appendClientLog = typeof deps?.appendClientLog === 'function' ? deps.appendClientLog : noop;
-    const actionButton = resolveInventoryPrimitive('inventoryActionButton', '../inventory/action-button');
-    const textField = resolveInventoryPrimitive('inventoryTextField', '../inventory/text-field');
-    const popover = resolveInventoryPrimitive('inventoryPopover', '../inventory/popover');
-
-    let boundHeader = null;
-    let pickerQuery = '';
-    let pickerListSignature = '';
-    let switchingSessionId = '';
-    let disposed = false;
-
-    function activeSession() {
-      const currentId = String(state.currentSessionId || '').trim();
-      return (Array.isArray(state.sessions) ? state.sessions : [])
-        .find((session) => String(session?.id || '').trim() === currentId) || null;
-    }
-
-    function eligibleSessions() {
-      const pendingDeletes = new Set(
-        (Array.isArray(state.ui?.pendingSessionDeletes) ? state.ui.pendingSessionDeletes : [])
-          .map((id) => String(id || '').trim()).filter(Boolean)
-      );
-      return (Array.isArray(state.sessions) ? state.sessions : [])
-        .filter((session) => {
-          const id = String(session?.id || '').trim();
-          const type = String(session?.session_type || 'chat').trim().toLowerCase();
-          return Boolean(id) && type === 'chat' && !session?.archived_at && !pendingDeletes.has(id);
-        })
-        .slice()
-        .sort((left, right) => String(right?.updated_at || right?.created_at || '')
-          .localeCompare(String(left?.updated_at || left?.created_at || '')));
-    }
-
-    function visibleSessions() {
-      const sessions = eligibleSessions();
-      const query = pickerQuery.trim().toLowerCase();
-      if (query) {
-        const matches = sessions.filter((session) => sessionTitle(session).toLowerCase().includes(query));
-        return { sessions: matches.slice(0, SEARCH_RESULT_LIMIT), total: matches.length, searching: true };
-      }
-      const currentId = String(state.currentSessionId || '').trim();
-      const current = sessions.find((session) => String(session.id || '').trim() === currentId);
-      const recent = sessions.filter((session) => String(session.id || '').trim() !== currentId)
-        .slice(0, current ? RECENT_SESSION_LIMIT - 1 : RECENT_SESSION_LIMIT);
-      return { sessions: current ? [current, ...recent] : recent, total: sessions.length, searching: false };
-    }
-
-    function buildMarkup() {
-      if (typeof actionButton !== 'function' || typeof textField !== 'function' || typeof popover !== 'function') {
-        return '';
-      }
-      const trigger = actionButton({
-        plain: true,
-        className: 'ide-chat-dock-session-trigger',
-        ariaLabel: jt('ide.chipPicker.switchChatSession', 'Switch chat session'),
-        title: jt('ide.chipPicker.switchChatSession', 'Switch chat session'),
-        ariaHaspopup: 'dialog',
-        ariaExpanded: false,
-        ariaControls: 'ideChatDockSessionPicker',
-        dataset: { 'ide-chatdock-session-trigger': '1' },
-        trustedHtml: '<span class="ide-chat-dock-label" data-ide-chatdock-session-title></span>' + CHEVRON_DOWN_GLYPH,
-      });
-      const search = textField({
-        id: 'ide-chat-dock-session-search',
-        placeholder: jt('ide.chipPicker.searchSessionsPlaceholder', 'Search sessions...'),
-        ariaLabel: jt('ide.chipPicker.searchChatSessions', 'Search chat sessions'),
-        className: 'ide-chat-dock-session-search',
-        dataset: { 'ide-chatdock-session-search': '1' },
-      });
-      const picker = popover({
-        id: 'ide-chatdock-sessions',
-        domId: 'ideChatDockSessionPicker',
-        className: 'ide-chat-dock-session-picker',
-        ariaLabel: jt('ide.chipPicker.switchChatSession', 'Switch chat session'),
-        trustedHtml: search
-      + '<div class="ide-chat-dock-session-list" id="ideChatDockSessionList" role="listbox" aria-label="' + (actionButton.escapeHtml || String)(jt('ide.chipPicker.chatSessions', 'Chat sessions')) + '"></div>'
-          + '<div class="ide-chat-dock-session-status" role="status" aria-live="polite"></div>',
-      });
-      return `<div class="ide-chat-dock-session-control">${trigger}${picker}</div>`;
-    }
-
-    function renderPickerList() {
-      const header = getHeader();
-      const list = header?.querySelector?.('.ide-chat-dock-session-list');
-      const status = header?.querySelector?.('.ide-chat-dock-session-status');
-      if (!list || !status || typeof actionButton !== 'function') return;
-      const result = visibleSessions();
-      const currentId = String(state.currentSessionId || '').trim();
-      const signature = [pickerQuery, currentId, switchingSessionId, result.total]
-        .concat(result.sessions.map((session) => `${session.id}|${sessionTitle(session)}|${session.updated_at || ''}`))
-        .join('\n');
-      if (signature !== pickerListSignature) {
-        pickerListSignature = signature;
-        list.innerHTML = result.sessions.length
-          ? result.sessions.map((session) => {
-            const id = String(session.id || '').trim();
-            const selected = id === currentId;
-            return actionButton({
-              plain: true,
-              className: `ide-chat-dock-session-option${selected ? ' is-active' : ''}`,
-              disabled: Boolean(switchingSessionId),
-              role: 'option',
-              ariaSelected: selected,
-              title: jt('ide.chipPicker.switchChatSession', 'Switch chat session'),
-              dataset: { 'ide-chatdock-session-id': id },
-              trustedHtml: `<span class="ide-chat-dock-session-option-title">${actionButton.escapeHtml(sessionTitle(session))}</span>`
-                + `<span class="ide-chat-dock-session-check" aria-hidden="true">${selected ? '&#10003;' : ''}</span>`,
-            });
-          }).join('')
-          : '<div class="ide-chat-dock-session-empty" role="note">' + actionButton.escapeHtml(jt('ide.chipPicker.noChatsFound', 'No chats found')) + '</div>';
-      }
-      let nextStatus = '';
-      if (result.searching && result.total > SEARCH_RESULT_LIMIT) {
-      nextStatus = jt('ide.chipPicker.showingMatches', 'Showing first {limit} of {total} matches', { limit: SEARCH_RESULT_LIMIT, total: result.total });
-      } else if (result.searching) {
-        nextStatus = `${result.total} ${result.total === 1 ? 'match' : 'matches'}`;
-      } else if (result.total > RECENT_SESSION_LIMIT) {
-        nextStatus = jt('ide.chipPicker.recentChats', '{count} recent chats', { count: RECENT_SESSION_LIMIT });
-      }
-      if (status.textContent !== nextStatus) status.textContent = nextStatus;
-      status.hidden = !nextStatus;
-    }
-
-    function resetQuery() {
-      pickerQuery = '';
-      const input = getHeader()?.querySelector?.('[data-ide-chatdock-session-search]');
-      if (input && input.value !== '') input.value = '';
-      pickerListSignature = '';
-    }
-
-    function close(restoreFocus = false) {
-      const picker = getHeader()?.querySelector?.('#ideChatDockSessionPicker');
-      if (picker && typeof popover?.close === 'function') popover.close(picker, { restoreFocus });
-    }
-
-    function open() {
-      const header = getHeader();
-      const trigger = header?.querySelector?.('[data-ide-chatdock-session-trigger]');
-      const picker = header?.querySelector?.('#ideChatDockSessionPicker');
-      if (!trigger || !picker || typeof popover?.open !== 'function') return;
-      resetQuery();
-      renderPickerList();
-      popover.open(picker, { trigger, focus: false });
-      header.querySelector('[data-ide-chatdock-session-search]')?.focus?.();
-    }
-
-    function toggle() {
-      const picker = getHeader()?.querySelector?.('#ideChatDockSessionPicker');
-      if (!picker || typeof popover?.isOpen !== 'function') return;
-      if (popover.isOpen(picker)) close(true);
-      else open();
-    }
-
-    async function selectSession(sessionId) {
-      const id = String(sessionId || '').trim();
-      if (!id || switchingSessionId) return;
-      if (id === String(state.currentSessionId || '').trim()) {
-        close(true);
-        return;
-      }
-      switchingSessionId = id;
-      renderPickerList();
-      close(true);
-      try {
-        await onSelectSession(id);
-        if (disposed) return;
-        const applied = String(state.currentSessionId || '').trim() === id;
-        try {
-          appendClientLog('INFO', applied ? 'ide_chat_dock.session_switched' : 'ide_chat_dock.session_switch_not_applied', { sessionId: id });
-        } catch (_logError) { /* diagnostics are best-effort */ }
-      } catch (error) {
-        if (disposed) return;
-        try {
-          appendClientLog('WARN', 'ide_chat_dock.session_switch_failed', {
-            sessionId: id,
-            message: String(error?.message || error || '').slice(0, 200),
-          });
-        } catch (_logError) { /* diagnostics are best-effort */ }
-        try {
-          showShellErrorToast(jt('ide.chipPicker.switchFailedMessage', 'Could not switch chat sessions. The current session remains open.'), {
-            title: jt('ide.chipPicker.switchFailedTitle', 'Session Switch Failed'),
-            dedupeKey: 'ide-chat-dock:session-switch-failed',
-          });
-        } catch (_toastError) { /* feedback must not escape the click handler */ }
-      } finally {
-        if (!disposed) {
-          switchingSessionId = '';
-          pickerListSignature = '';
-          render();
-        }
-      }
-    }
-
-    function render() {
-      const header = getHeader();
-      const title = sessionTitle(activeSession());
-      const titleEl = header?.querySelector?.('[data-ide-chatdock-session-title]');
-      const trigger = header?.querySelector?.('[data-ide-chatdock-session-trigger]');
-      if (titleEl) { const dockTitle = jt('ide.chipPicker.dockTitle', 'Jenny · {title}', { title }); if (titleEl.textContent !== dockTitle) titleEl.textContent = dockTitle; }
-      const triggerLabel = jt('ide.chipPicker.currentSessionLabel', 'Switch chat session. Current: {title}', { title });
-      if (trigger?.getAttribute?.('aria-label') !== triggerLabel
-        || trigger?.getAttribute?.('title') !== triggerLabel) {
-        trigger?.setAttribute?.('aria-label', triggerLabel);
-        trigger?.setAttribute?.('title', triggerLabel);
-      }
-      const search = header?.querySelector?.('[data-ide-chatdock-session-search]');
-      if (search?.getAttribute?.('aria-controls') !== 'ideChatDockSessionList') {
-        search?.setAttribute?.('aria-controls', 'ideChatDockSessionList');
-      }
-      const picker = header?.querySelector?.('#ideChatDockSessionPicker');
-      if (typeof popover?.isOpen === 'function' && popover.isOpen(picker)) renderPickerList();
-    }
-
-    function pickerOptions() {
-      const list = getHeader()?.querySelector?.('.ide-chat-dock-session-list');
-      return list ? [...list.querySelectorAll('[data-ide-chatdock-session-id]:not(:disabled)')] : [];
-    }
-
-    function handleClick(event) {
-      const target = event.target;
-      if (!target || typeof target.closest !== 'function') return;
-      if (target.closest('[data-ide-chatdock-session-trigger]')) {
-        toggle();
-        return;
-      }
-      const option = target.closest('[data-ide-chatdock-session-id]');
-      if (option) void selectSession(option.dataset.ideChatdockSessionId);
-    }
-
-    function handleInput(event) {
-      if (!event.target?.matches?.('[data-ide-chatdock-session-search]')) return;
-      pickerQuery = String(event.target.value || '');
-      pickerListSignature = '';
-      renderPickerList();
-    }
-
-    function handleKeydown(event) {
-      const search = event.target?.matches?.('[data-ide-chatdock-session-search]');
-      const option = event.target?.closest?.('[data-ide-chatdock-session-id]');
-      if (!search && !option) return;
-      const options = pickerOptions();
-      if (event.key === 'Escape') {
-        close(true);
-        event.preventDefault();
-        return;
-      }
-      if (search && event.key === 'Enter') {
-        options[0]?.click?.();
-        event.preventDefault();
-        return;
-      }
-      if (option && (event.key === 'Enter' || event.key === ' ')) {
-        option.click?.();
-        event.preventDefault();
-        return;
-      }
-      if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) || !options.length) return;
-      let nextIndex = search ? (event.key === 'ArrowUp' || event.key === 'End' ? options.length - 1 : 0) : options.indexOf(option);
-      if (!search) {
-        if (event.key === 'ArrowDown') nextIndex = (nextIndex + 1) % options.length;
-        else if (event.key === 'ArrowUp') nextIndex = (nextIndex - 1 + options.length) % options.length;
-        else if (event.key === 'Home') nextIndex = 0;
-        else nextIndex = options.length - 1;
-      }
-      options[nextIndex]?.focus?.();
-      event.preventDefault();
-    }
-
-    function handlePopoverToggle(event) {
-      if (event.detail?.id === 'ide-chatdock-sessions' && event.detail.open === false) resetQuery();
-    }
-
-    function bindEvents(header = getHeader()) {
-      if (!header || boundHeader) return;
-      boundHeader = header;
-      boundHeader.addEventListener('click', handleClick);
-      boundHeader.addEventListener('input', handleInput);
-      boundHeader.addEventListener('keydown', handleKeydown);
-      boundHeader.addEventListener('inv-popover-toggle', handlePopoverToggle);
-    }
-
-    function dispose() {
-      disposed = true;
-      close(false);
-      if (!boundHeader) return;
-      boundHeader.removeEventListener('click', handleClick);
-      boundHeader.removeEventListener('input', handleInput);
-      boundHeader.removeEventListener('keydown', handleKeydown);
-      boundHeader.removeEventListener('inv-popover-toggle', handlePopoverToggle);
-      boundHeader = null;
-    }
-
-    return { bindEvents, buildMarkup, close, dispose, render };
-  }
-
-  return { createIdeChipPicker, createIdeChatSessionPicker };
+  return { createIdeChipPicker };
 });

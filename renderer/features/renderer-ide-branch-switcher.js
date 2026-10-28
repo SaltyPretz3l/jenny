@@ -164,6 +164,9 @@
     const {
       getCurrentBranch = () => '',
       getDirtyCount = () => 0,
+      // Unsaved editor buffers count toward the guard too: a checkout would
+      // otherwise leave them describing the previous branch's files.
+      getUnsavedCount = () => 0,
       getAheadBehind = () => ({ ahead: 0, behind: 0 }),
       isRepo = () => false,
       isAvailable = () => false,
@@ -593,7 +596,7 @@
       if (!target || target === (current || String(getCurrentBranch() || ''))) {
         return;
       }
-      const dirty = Number(getDirtyCount()) || 0;
+      const dirty = (Number(getDirtyCount()) || 0) + (Number(getUnsavedCount()) || 0);
       if (!needsDirtyGuard(dirty)) {
         await doSwitch(target);
         return;

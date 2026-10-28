@@ -67,6 +67,7 @@
     'CMP-GIT-0011': function () { return jt('error.git.lineRangeInvalid', 'Invalid line range for blame.'); },
     'CMP-GIT-0020': function () { return jt('error.git.commitMessageEmpty', 'Commit message cannot be empty.'); },
     'CMP-GIT-0040': function () { return jt('error.git.commandFailed', 'Git command failed.'); },
+    'CMP-GIT-0410': function () { return jt('error.git.patchInvalid', 'Only a single-file text change can be staged here.'); },
     'CMP-HARN-0001': function () { return jt('error.harness.turnNotFound', 'Turn not found.'); },
     'CMP-HOST-0001': function () { return jt('error.host.invalid', 'Invalid hosted request.'); },
     'CMP-HOST-0002': function () { return jt('error.host.unauthorized', 'Sign in again.'); },
@@ -184,6 +185,7 @@
     'CMP-TERMINAL-0002': function () { return jt('error.terminal.workspaceRootMissing', 'No workspace root is configured; choose a workspace folder first.'); },
     'CMP-TERMINAL-0003': function () { return jt('error.terminal.noSession', 'No terminal session is running.'); },
     'CMP-TERMINAL-0004': function () { return jt('error.terminal.moduleLoadFailed', 'The terminal engine could not be loaded.'); },
+    'CMP-TERMINAL-0005': function () { return jt('error.terminal.cwdOutsideRoot', 'The terminal can only start in a folder inside the workspace.'); },
     'CMP-TESTRUNNER-0001': function () { return jt('error.testRunner.workspaceRootMissing', 'No workspace root is configured; choose a workspace folder first.'); },
     'CMP-TESTRUNNER-0002': function () { return jt('error.testRunner.configNotFound', 'That test configuration no longer exists.'); },
     'CMP-TESTRUNNER-0003': function () { return jt('error.testRunner.cwdOutsideRoot', 'The test working directory must stay inside the workspace.'); },
@@ -230,6 +232,7 @@
     'CMP-WEB-0005': function () { return jt('error.web.redirectBlocked', 'Redirect blocked.'); },
     'CMP-WEB-0006': function () { return jt('error.web.responseTooLarge', 'Response too large.'); },
     'CMP-WEB-0007': function () { return jt('error.web.invalidUrl', 'Invalid URL: {url}.'); },
+    'CMP-WEB-0008': function () { return jt('error.web.invalidQuery', 'Missing or oversize search query.'); },
     'CMP-WORKSPACEFS-0001': function () { return jt('error.workspaceFs.rootMissing', 'No workspace root is configured; choose a workspace folder first.'); },
     'CMP-WORKSPACEFS-0002': function () { return jt('error.workspaceFs.pathInvalid', 'Path must be a workspace-relative path.'); },
     'CMP-WORKSPACEFS-0003': function () { return jt('error.workspaceFs.pathOutsideRoot', 'Path resolves outside the workspace root.'); },
@@ -266,6 +269,7 @@
     'Jenny content': function () { return jt('approval.scope.jennyContent', 'Jenny content'); },
     'Local computer': function () { return jt('approval.scope.localComputer', 'Local computer'); },
     'Requested tool': function () { return jt('approval.scope.requestedTool', 'Requested tool'); },
+    'Another chat': function () { return jt('approval.scope.anotherChat', 'Another chat'); },
   });
 
   var APPROVAL_CONSEQUENCE_BY_TEXT = Object.freeze({

@@ -44,8 +44,9 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
   getOllamaTags = async () => [],
   getOllamaBlob = async () => null,
   nowMs = Date.now,
-  // {authorize, unauthorizedResult} for llamaServer.chooseRuntime, the one
-  // handler that hands main an executable path. Missing trusts no sender.
+  // {authorize, unauthorizedResult} checked on every llamaServer.* channel.
+  // llamaServer.chooseRuntime hands main an executable path, so a missing
+  // authorizer trusts no sender there.
   authorization = null,
   platform = process.platform,
   validateRuntimeExecutableImpl = validateRuntimeExecutable,
@@ -505,7 +506,7 @@ function registerLlamaServerIpcHandlers(ipcMainLike, {
         return finish('choose_library_folder', { ok: false, reason: reasonFor(error) });
       }
     },
-  });
+  }, authorization || {});
   return Object.assign(channels.concat(registerIpcInvokeHandlers(ipcMainLike, {
     'llamaServer.chooseRuntime': chooseRuntime,
   }, typeof authorization?.authorize === 'function' ? authorization : { authorize: () => false })), { listLocalDiffusionGgufs });

@@ -21,10 +21,10 @@
  *                                       BFS backward over kind:'import' edges only
  *                                       (edge from→to = "from imports to"),
  *                                       self excluded, sorted.
- *   queryNeighborsLocal(graph, id)      1-hop { dependencies, dependents } for
- *                                       the atlas selection rays.
+ *   createNeighborIndex(edges)          id => 1-hop { dependencies, dependents }
+ *                                       for the atlas selection rays.
  *   rankSearchMatches(nodes, query)     Search ids ranked basename-prefix
- *                                       first (Enter-cycling order).
+ *                                       first (Enter-cycling order), capped.
  *   computeGraphRenderSignature(graph)  Structural JSON key for one applied
  *                                       scan graph; '' when unkeyable (never
  *                                       matches) — backs the controller's
@@ -43,31 +43,15 @@
   'use strict';
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
-  const globalRefForOwnership = typeof globalThis !== 'undefined' ? globalThis : {};
+  // Map shortcuts fire only for a map node, district or bare-canvas target,
+  // never a control bubbled up to the viewport (manifest loads it first).
+  const { ownsMapKeyboardEvent } = globalThis.rendererIdeMapEventOwnership
+    || require('./renderer-ide-map-event-ownership');
 
-  function resolveEventOwnership() {
-    if (globalRefForOwnership.rendererIdeMapEventOwnership) {
-      return globalRefForOwnership.rendererIdeMapEventOwnership;
-    }
-    if (typeof require === 'function') {
-      try {
-        return require('./renderer-ide-map-event-ownership');
-      } catch (_error) {
-        /* unavailable */
-      }
-    }
-    return {};
-  }
-
-  // Same resolution + permissive-default pattern as renderer-ide-map-a11y.js
-  // (global-first, require fallback, always-true default): map keyboard
-  // shortcuts fire only when the ACTUAL event target is a map node, a
-  // district, or the bare canvas — never a control/contenteditable/panel
-  // surface bubbled up to the same viewport listener.
-  const eventOwnership = resolveEventOwnership();
-  const ownsMapKeyboardEvent = typeof eventOwnership.ownsMapKeyboardEvent === 'function'
-    ? eventOwnership.ownsMapKeyboardEvent
-    : () => true;
+  // One shared collator (localeCompare builds a fresh one per call).
+  const compareText = new Intl.Collator().compare;
+  // Ranked search results kept for Enter-cycling.
+  const SEARCH_RESULT_CAP = 500;
 
   const defaultEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
@@ -126,19 +110,21 @@
   // 1-hop neighborhood for the selection RAYS (atlas view): what `id`
   // imports (dependencies) and what imports `id` (dependents), direct edges
   // only — the transitive walk stays the blast radius's job. kind:'import'
-  // only; cochange never draws a ray.
-  function queryNeighborsLocal(graph, id) {
-    const dependencies = new Set();
-    const dependents = new Set();
-    for (const edge of (graph && graph.edges) || []) {
-      if (!edge || edge.kind !== 'import') continue;
-      if (edge.from === id && edge.to !== id) dependencies.add(edge.to);
-      if (edge.to === id && edge.from !== id) dependents.add(edge.from);
+  // only; cochange never draws a ray. Indexed once per applied graph so a
+  // hover costs O(degree), not O(edges).
+  function createNeighborIndex(edges) {
+    const out = new Map();
+    const into = new Map();
+    const link = (map, key, value) => (map.get(key) || map.set(key, new Set()).get(key)).add(value);
+    for (const edge of edges || []) {
+      if (!edge || edge.kind !== 'import' || edge.from === edge.to) continue;
+      link(out, edge.from, edge.to);
+      link(into, edge.to, edge.from);
     }
-    return {
-      dependencies: Array.from(dependencies).sort(),
-      dependents: Array.from(dependents).sort(),
-    };
+    return (id) => ({
+      dependencies: Array.from(out.get(id) || []).sort(),
+      dependents: Array.from(into.get(id) || []).sort(),
+    });
   }
 
   // Bridge call pattern mirrors renderer-workspace-git-client.js: guard bridge
@@ -165,40 +151,40 @@
     };
   }
 
-  // UIUX-013: unmountMap() must reset hideTests/searchText/layers to these
-  // defaults BEFORE the next root's ensureMounted() conditionally restores
-  // its own persisted prefs — otherwise a root with no persisted prefs of
-  // its own silently renders through the PREVIOUS root's leftovers
-  // (searchText is never persisted at all, so it is pure carry-over risk on
-  // every root switch).
+  // UIUX-013: unmountMap() resets to these BEFORE the next root's mount
+  // restores its own persisted prefs, so a root without prefs never renders
+  // through the PREVIOUS root's leftovers (searchText is never persisted).
   function defaultFilterState() {
     return {
       hideTests: false,
       searchText: '',
       layers: { activity: true, health: false, deps: true },
+      lens: 'atlas',
     };
   }
 
   // Search ranking: basename-prefix matches first, then basename substring,
   // then full-path substring; ties break by id. Case-insensitive. Pure so it
-  // unit-tests without a DOM; returns ids in flight order for Enter-cycling.
+  // unit-tests without a DOM; returns ids in Enter-cycling order, capped.
   function rankSearchMatches(nodes, query, isVisible) {
     const q = String(query || '').trim().toLowerCase();
     if (!q) return [];
-    const ranked = [];
+    const tiers = [[], [], []];
     for (const node of nodes || []) {
       if (!node || !node.id || node.bucket === true) continue;
       if (typeof isVisible === 'function' && !isVisible(node.id)) continue;
       const id = String(node.id).toLowerCase();
       const base = id.slice(id.lastIndexOf('/') + 1);
-      let rank = -1;
-      if (base.startsWith(q)) rank = 0;
-      else if (base.includes(q)) rank = 1;
-      else if (id.includes(q)) rank = 2;
-      if (rank >= 0) ranked.push({ id: node.id, rank });
+      const rank = base.startsWith(q) ? 0 : base.includes(q) ? 1 : id.includes(q) ? 2 : -1;
+      if (rank >= 0) tiers[rank].push(String(node.id));
     }
-    ranked.sort((a, b) => (a.rank - b.rank) || a.id.localeCompare(b.id));
-    return ranked.map((r) => r.id);
+    const ranked = [];
+    for (const tier of tiers) {
+      if (ranked.length >= SEARCH_RESULT_CAP) break;
+      tier.sort(compareText);
+      ranked.push(...tier.slice(0, SEARCH_RESULT_CAP - ranked.length));
+    }
+    return ranked;
   }
 
   function formatCount(value) {
@@ -265,13 +251,17 @@
   // rebuilds every district/dot/tile + the spatial index, so a watcher rescan
   // that changed nothing must not pay for it. Keyed on the WHOLE scan graph
   // (not just the nodes renderAtlas reads) because the same apply also drives
-  // findings chips, the a11y summary, the bucket strip and the status line —
-  // identical graph in, identical surfaces out.
+  // findings chips, the a11y summary, the map footer and the status line —
+  // identical graph in, identical surfaces out. Scan timing (durationMs,
+  // enumeration.elapsedMs) changes every scan and is never shown: excluded.
   // Returns '' when no key can be formed; '' must never match.
+  const VOLATILE_META_KEYS = new Set(['durationMs', 'elapsedMs']);
+  const stripVolatileMeta = (key, value) => (VOLATILE_META_KEYS.has(key) ? undefined : value);
   function computeGraphRenderSignature(graph) {
     if (!graph || !Array.isArray(graph.nodes)) return '';
     try {
-      return JSON.stringify([graph.nodes, graph.edges || [], graph.findings || {}, graph.meta || {}]);
+      return JSON.stringify([graph.nodes, graph.edges || [], graph.findings || {}])
+        + JSON.stringify(graph.meta || {}, stripVolatileMeta);
     } catch (_error) { return ''; }
   }
 
@@ -367,6 +357,7 @@
       hasSelection, clearSelection, clearBlast, exitToEditor,
     } = deps;
     let pointerDownAt = null;
+    let releaseClearId = null;
     let pendingHoverPoint = null;
     let hoverThrottleId = null;
 
@@ -389,16 +380,35 @@
       return view.hitTest?.(pt.x, pt.y) || null;
     }
 
+    function cancelReleaseClear() {
+      if (releaseClearId != null) timers.clearTimeout(releaseClearId);
+      releaseClearId = null;
+    }
+
     function handlePointerDown(event) {
+      cancelReleaseClear();
       pointerDownAt = { x: event.clientX, y: event.clientY };
     }
 
-    function handlePointerRelease() {
+    // pointerup fires BEFORE its click, so the press origin survives it for
+    // clickWasDrag; a release with no click (let go off the canvas) is
+    // forgotten next task so it cannot poison a later keyboard click.
+    function handlePointerUp() {
+      cancelReleaseClear();
+      releaseClearId = timers.setTimeout(() => {
+        releaseClearId = null;
+        pointerDownAt = null;
+      }, 0);
+    }
+
+    function handlePointerCancel() {
+      cancelReleaseClear();
       pointerDownAt = null;
     }
 
     function handleClick(event) {
       const wasDrag = clickWasDrag(event);
+      cancelReleaseClear();
       pointerDownAt = null;
       if (wasDrag) return;
       const headerEl = event.target && typeof event.target.closest === 'function'
@@ -441,10 +451,11 @@
       transform?.fitToContent?.(lastBounds);
     }
 
+    // A shown blast radius owns the spotlight; hover never swaps it out.
     function handleHoverIn(event) {
       const relPath = nodeIdFromTarget(event.target);
       const previousPath = nodeIdFromTarget(event.relatedTarget);
-      if (relPath && relPath !== previousPath) {
+      if (relPath && relPath !== previousPath && !isBlastActive()) {
         selectNode(relPath);
       }
     }
@@ -460,7 +471,6 @@
     // Dot hover: pointermove hit-tests the spatial index; skipped mid-pan.
     function handlePointerMove(event) {
       if (!isActive() || !view) return;
-      if (viewportEl?.classList?.contains?.('is-panning')) return;
       if (nodeIdFromTarget(event.target)) return; // tile hover owns it
       pendingHoverPoint = { clientX: event.clientX, clientY: event.clientY };
       if (hoverThrottleId != null) return;
@@ -490,15 +500,13 @@
       if (!isBlastActive()) selectNode(null);
     }
 
-    function transformRef() { return transform; }
-
     // Esc ladder on the map canvas. Gated by ownsMapKeyboardEvent so an Esc in
     // the controls bar's filter input (which lives INSIDE viewportEl and does
     // not stopPropagation) no longer reaches the canvas at all — it
     // previously cleared the map selection as a side effect.
     function handleKeyDown(event) {
       if (!event || !ownsMapKeyboardEvent(event.target)) return;
-      if (event.key === '0' && getLastBounds()) { transformRef()?.fitToContent?.(getLastBounds()); return; }
+      if (event.key === '0' && getLastBounds()) { transform?.fitToContent?.(getLastBounds()); return; }
       if (event.key !== 'Escape') return;
       if (isBlastActive()) { clearBlast(); return; }
       if (hasSelection()) { clearSelection(); return; }
@@ -511,6 +519,7 @@
         timers.clearTimeout(hoverThrottleId);
         hoverThrottleId = null;
       }
+      cancelReleaseClear();
       pointerDownAt = null;
       pendingHoverPoint = null;
     }
@@ -521,7 +530,8 @@
       handleHoverIn,
       handleHoverOut,
       handlePointerDown,
-      handlePointerRelease,
+      handlePointerUp,
+      handlePointerCancel,
       handlePointerMove,
       handlePointerLeave,
       handleKeyDown,
@@ -572,7 +582,7 @@
     callFailed,
     resolveTimers,
     queryDependentsLocal,
-    queryNeighborsLocal,
+    createNeighborIndex,
     createFileMapBridge,
     defaultFilterState,
     rankSearchMatches,

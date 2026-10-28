@@ -42,8 +42,8 @@ test('only a running image generation without artifacts renders the pending figu
   for (const materialize of [false, true]) {
     const doc = new JSDOM(renderImageTool({ status: 'running', materialize })).window.document;
     assert.equal(doc.querySelectorAll('.inv-artifact-figure--pending').length, 1);
-    assert.equal(doc.querySelector('.inv-artifact-figure-placeholder').style.aspectRatio, '1024 / 768');
-    assert.equal(doc.querySelector('[data-inv-image-cancel]').textContent, 'Cancel');
+    assert.equal(doc.querySelector('.inv-artifact-figure--pending .inv-artifact-figure-media').getAttribute('style'), '--inv-image-ratio: 1024 / 768');
+    assert.equal(doc.querySelector('[data-inv-image-cancel]').textContent, 'Stop');
     assert.equal(doc.querySelector('.inv-artifact-figure--pending').closest('.tool-call-disclosure'), null);
     assert.doesNotMatch(renderImageTool({ status: 'running', materialize, tool: 'read_file' }), /inv-artifact-figure--pending/);
   }
@@ -163,14 +163,14 @@ test('a settled image row on the minimal row path renders the figure beside its 
 });
 
 // F30: a running image_generate row also takes the minimal row path. The sized
-// pending placeholder (with Cancel) renders beside its header, outside the
-// inert body, and the settled render replaces it with the real figure.
+// pending figure (with Stop) renders beside its header, outside the inert
+// body, and the settled render replaces it with the real figure.
 function buildImageCallRow(state, input) {
   return { kind: 'tool_call', row_id: 'row-call', turn_id: 'turn-1', tool_call_id: 'image-call',
     payload: { tool_call_id: 'image-call', tool_name: 'image_generate', state, ...(input ? { input } : {}) } };
 }
 
-test('a running image row on the minimal row path renders the sized pending figure with Cancel outside the body', () => {
+test('a running image row on the minimal row path renders the sized pending figure with Stop outside the body', () => {
   const { createTurnRowRenderUtils } = require('../renderer/chat/renderer-turn-row-render-utils');
   const rowRenderer = createTurnRowRenderUtils({ escapeHtml });
   const doc = new JSDOM(rowRenderer.buildToolCallRowMarkup(buildImageCallRow('running', { prompt: 'fox', width: 512, height: 768 }),
@@ -180,12 +180,20 @@ test('a running image row on the minimal row path renders the sized pending figu
   const pending = doc.querySelector('.inv-artifact-figure--pending');
   assert.equal(pending.closest('.tool-call-row--minimal'), row);
   assert.equal(pending.closest('.tool-call-row-body'), null);
-  assert.equal(pending.querySelector('.inv-artifact-figure-placeholder').style.aspectRatio, '512 / 768');
-  assert.equal(pending.querySelector('[data-inv-image-cancel]').textContent, 'Cancel');
+  assert.equal(pending.querySelector('.inv-artifact-figure-media').getAttribute('style'), '--inv-image-ratio: 512 / 768');
+  assert.equal(pending.getAttribute('data-inv-image-render'), 'image-call');
+  // The caption the finished figure will have: title (the prompt by default), size, prompt.
+  assert.equal(pending.querySelector('.inv-artifact-figure-title').textContent, 'fox');
+  assert.equal(pending.querySelector('.inv-artifact-figure-meta').textContent, '512 × 768 · Starting…');
+  assert.equal(pending.querySelector('.inv-artifact-figure-prompt').textContent, 'fox');
+  assert.equal(pending.querySelector('[data-inv-image-cancel]').textContent, 'Stop');
   assert.equal(row.getAttribute('data-run-foldable'), 'false');
+  // The header names the tool once: a summary equal to the name is not repeated beside it.
+  assert.equal(row.querySelector('.tool-call-name').textContent, 'Image Generate');
+  assert.equal(row.querySelector('.tool-call-row-summary'), null);
 
   const defaultSized = new JSDOM(rowRenderer.buildToolCallRowMarkup(buildImageCallRow('executing', null), [], {})).window.document;
-  assert.equal(defaultSized.querySelector('.inv-artifact-figure-placeholder').style.aspectRatio, '1024 / 1024');
+  assert.equal(defaultSized.querySelector('.inv-artifact-figure-media').getAttribute('style'), '--inv-image-ratio: 1024 / 1024');
   for (const state of ['requested', 'awaiting_approval', 'completed']) {
     assert.doesNotMatch(rowRenderer.buildToolCallRowMarkup(buildImageCallRow(state, { prompt: 'fox' }), [], {}), /inv-artifact-figure--pending/);
   }

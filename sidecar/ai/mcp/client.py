@@ -304,7 +304,7 @@ class MCPClient(client_prompts.ClientPromptsMixin):
             # forwarded without a digest, and its raw catalog exceeds the
             # review caps by design.
             if expected_digest:
-                tools_payload, _ = summarize_tools(raw_tools)
+                tools_payload = summarize_tools(raw_tools)
                 live_digest = tools_digest(
                     tools_payload,
                     read_only_claims=getattr(config, "read_only_auto_allow", False) is True,

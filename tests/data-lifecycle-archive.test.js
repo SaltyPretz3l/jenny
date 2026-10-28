@@ -20,6 +20,7 @@ const {
   validateLogicalPath,
   validateManifest,
 } = require('../services/data-lifecycle/archive-format');
+const { linkDirectory } = require('./helpers/platform-skips');
 
 const roots = [];
 
@@ -256,12 +257,7 @@ function denyPartialDirectoryRemoval(t) {
 function plantJunctionWithTransientUnlinkLock(t, linkPath, outside) {
   fs.mkdirSync(outside, { recursive: true });
   fs.writeFileSync(path.join(outside, 'keep'), 'keep', 'utf8');
-  try {
-    fs.symlinkSync(outside, linkPath, 'junction');
-  } catch (error) {
-    t.skip(`junction creation unavailable: ${error.code || 'unknown'}`);
-    return null;
-  }
+  linkDirectory(outside, linkPath);
   const originalUnlink = fs.promises.unlink;
   const denied = new Set();
   t.mock.method(fs.promises, 'unlink', async function unlinkLockedOnce(target, ...args) {
@@ -398,7 +394,6 @@ test('a stale partial sweep never enters a junction, even when unlinking it fail
   fs.mkdirSync(path.join(stale, 'data'), { recursive: true });
   fs.writeFileSync(path.join(stale, 'data', 'old.json'), 'old', 'utf8');
   const probe = plantJunctionWithTransientUnlinkLock(t, link, outside);
-  if (!probe) return;
   const when = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
   fs.utimesSync(stale, when, when);
 

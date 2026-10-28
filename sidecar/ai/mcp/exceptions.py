@@ -14,6 +14,9 @@ from sidecar.ai.error_codes import (  # noqa: F401
     CMP_MCP_SSE_DISABLED,
     CMP_MCP_TOOL_NOT_FOUND,
 )
+from sidecar.ai.tools.failure_taxonomy import (
+    failure_log_level,  # noqa: F401 - transports' error replies.
+)
 
 # Row 34: user-only change evidence a failed builtin call still produced. It is
 # a typed field, never ``detail``, ``to_metadata()`` or a log line.

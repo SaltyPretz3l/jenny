@@ -73,6 +73,7 @@ function evaluateRegexTask(task) {
         useRegex: true,
         caseSensitive: input.caseSensitive === true,
         eol: input.eol,
+        expectedPreview: input.expectedPreview && typeof input.expectedPreview === 'object' ? input.expectedPreview : null,
       });
     default:
       throw taskError('Unknown regex worker operation.', 'REGEX_INVALID_TASK');
@@ -106,9 +107,5 @@ if (nodeParentPort) {
 }
 
 if (typeof module === 'object' && module.exports) {
-  module.exports = {
-    evaluateRegexTask,
-    MAX_TASK_TEXT_CHARS,
-    MAX_FIND_RESULTS,
-  };
+  module.exports = { evaluateRegexTask };
 }

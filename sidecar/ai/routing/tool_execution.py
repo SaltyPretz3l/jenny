@@ -12,6 +12,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Callable
 
 from sidecar.ai.error_codes import (
+    CMP_LOOP_TOOL_INTERRUPTED,
     CMP_TOOL_EXECUTION_FAILED,
     CMP_TOOL_POLICY_DENIED,
 )
@@ -32,6 +33,7 @@ from sidecar.ai.routing import tool_execution_tool_handlers as _handlers
 from sidecar.ai.routing import tool_observation as _tool_observation
 from sidecar.ai.routing import tool_resource_deferral as _tool_resource_deferral
 from sidecar.ai.routing import tool_restored_inputs as _tool_restored_inputs
+from sidecar.ai.routing.tool_resolution import contract_entry_for_call
 from sidecar.ai.tools import assembly as _tools_assembly
 from sidecar.ai.tools import plan_artifact_policy as _plan_artifact_policy
 from sidecar.ai.tools import sanitization as _sanitization
@@ -72,6 +74,7 @@ from sidecar.runtime.tool_execution_support import (
     ToolCallRequest,
     ToolExecutionFailure,
     classify_command,
+    escalate_out_of_root,
     is_feature_flag_enabled,
     scan_tool_arguments,
     validate_descriptor_arguments,
@@ -83,41 +86,40 @@ if TYPE_CHECKING:
 
 MAX_RESPONSE_CHARS = _harness_helpers.MAX_RESPONSE_CHARS
 _ALWAYS_ASK_DESTRUCTIVE_TOOLS = frozenset({"delete_file", "move_file", "worktree_delete"})
+
+
+def _runs_python(tool_name: str, arguments: dict[str, Any]) -> bool:
+    """python_execute, or a run_temp_script that launches a Python interpreter."""
+    # temp_script._validated_language accepts only exact SCRIPT_INTERPRETERS keys
+    # (omitted = cmd/sh), and "python" is the only key mapped to a Python
+    # interpreter; test_tool_execution_security pins that. Not imported here:
+    # this module is at its import fan-out cap.
+    return tool_name == "python_execute" or (
+        tool_name == "run_temp_script" and arguments.get("language") == "python"
+    )
+
+
+# Hub attributes below have consumers outside this module (router.py, tool_recall.py,
+# tool_execution_tool_handlers.py) or are monkeypatch seams in tests; keep each one live.
 assistant_tool_call_message = _results.assistant_tool_call_message
 bounded_tool_output = _results.bounded_tool_output
 tool_result_message = _results.tool_result_message
-_bounded_tool_output = _results.bounded_tool_output
-_coerce_tool_failure_code = _results.coerce_tool_failure_code
 _merge_result_metadata = _results.merge_result_metadata
 derive_idempotency_key = _operation_ledger.derive_idempotency_key
 inject_idempotency_key = _operation_ledger.inject_idempotency_key
-__all__ = (
-    "assistant_tool_call_message",
-    "tool_result_message",
-)
 increment_counter_for_kernel = _route_policy_runtime.increment_counter_for_kernel
 KIND_TOOL_EXECUTION_FAILED = _tool_observation.KIND_TOOL_EXECUTION_FAILED
 KIND_TOOL_EXECUTION_OBSERVED = _tool_observation.KIND_TOOL_EXECUTION_OBSERVED
 KIND_TOOL_EXECUTION_STARTED = _tool_observation.KIND_TOOL_EXECUTION_STARTED
-schema_placeholder_value = _tools_schema_examples.schema_placeholder_value
-tool_schema_hint_text = _tools_schema_examples.tool_schema_hint_text
-tool_schema_repair_hints = _tools_schema_examples.tool_schema_repair_hints
 blocked_tool_error_code = _tools_assembly.blocked_tool_error_code
 blocked_tool_message = _tools_assembly.blocked_tool_message
 blocked_tool_metadata = _tools_assembly.blocked_tool_metadata
-# Kept as a hub attribute so tests can patch the synthetic executor.
 execute_delegate_tool = _delegate.execute_delegate_tool
 apply_tool_pressure_backoff = _resource_pressure.apply_tool_pressure_backoff
 build_tool_pressure_backoff_decision = _resource_pressure.build_tool_pressure_backoff_decision
-
-# Re-export sibling implementations used by the hub and compatibility imports.
-normalize_snapshot_lookup_path = _snap.normalize_snapshot_lookup_path
 update_read_snapshot_cache = _snap.update_read_snapshot_cache
 rebuild_read_snapshot_cache = _snap.rebuild_read_snapshot_cache
-effective_mutation_path_arg = _snap.effective_mutation_path_arg
-inject_expected_read_snapshot = _snap.inject_expected_read_snapshot
 freeze_effective_execution_inputs = _snap.freeze_effective_execution_inputs
-_execute_delegate_synthetic_tool = _handlers._execute_delegate_synthetic_tool
 tool_outcome_from_handler_result = _handlers.tool_outcome_from_handler_result
 execute_tool_search = _handlers.execute_tool_search
 
@@ -136,6 +138,24 @@ def _router() -> Any:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _audit_tool_event(
+    runtime: Any | None,
+    kind: str,
+    call: ToolCallRequest,
+    *,
+    tool_name: str | None = None,
+    error_code: str | None = None,
+) -> None:
+    """Record one KIND_TOOL_EXECUTION_* audit event for *call* (no-op without a runtime)."""
+    if runtime is None:
+        return
+    name = str(tool_name or call.tool_id or "")
+    runtime.audit(
+        kind, tool_call_id=str(call.call_id or ""), tool_name=name,
+        error_code=error_code, summary=f"{kind} {name}",
+    )
 
 
 # W2-1 live tool-output tail: host-side re-bounding of transport chunk
@@ -228,6 +248,16 @@ def _dispatch_tool_call(
     )
 
 
+def _blocked_outcome(
+    outcome_type: Any, call: ToolCallRequest, reason: str | None, tool_input: dict[str, object]
+) -> ToolExecutionOutcome:
+    return outcome_type(
+        tool_name=call.tool_id, output=blocked_tool_message(call.tool_id, reason),
+        success=False, tool_input=tool_input, error_code=blocked_tool_error_code(reason),
+        metadata=blocked_tool_metadata(reason), call_id=call.call_id,
+    )
+
+
 def _tool_timeout_for_runtime(
     kernel: Any,
     runtime: Any | None,
@@ -254,7 +284,7 @@ def _descriptor_validation_outcome(
     try:
         validate_descriptor_arguments(call.tool_id, visible_tool_arguments, descriptor)
     except ToolExecutionFailure as error:
-        repair_hints = tool_schema_repair_hints(descriptor.input_schema)
+        repair_hints = _tools_schema_examples.tool_schema_repair_hints(descriptor.input_schema)
         message = error.message.strip()
         sentence = message if not message or message.endswith((".", "!", "?")) else f"{message}."
         log_event(
@@ -276,7 +306,7 @@ def _descriptor_validation_outcome(
             tool_name=call.tool_id,
             output=(
                 f"Tool '{call.tool_id}' rejected malformed arguments: "
-                f"{sentence}{tool_schema_hint_text(repair_hints)}"
+                f"{sentence}{_tools_schema_examples.tool_schema_hint_text(repair_hints)}"
             ),
             success=False,
             tool_input=visible_tool_arguments,
@@ -289,11 +319,6 @@ def _descriptor_validation_outcome(
             call_id=call.call_id,
         )
     return None
-
-
-# ---------------------------------------------------------------------------
-# approval_if_needed
-# ---------------------------------------------------------------------------
 
 
 def approval_if_needed(
@@ -311,6 +336,7 @@ def approval_if_needed(
     request_disabled_tools: frozenset[str] = frozenset(),
     policy_decisions_by_call: dict[str, ToolPolicyDecision] | None = None,
     approval_mode: str = "prompt",
+    execution_context: Any | None = None,
 ) -> ApprovalRequest | None:
     # Keep every check per-call for tool_loop_recovery.approval_with_recovery.
     mod = _router()
@@ -328,14 +354,9 @@ def approval_if_needed(
         if call.tool_id in request_disabled_tools:
             continue
         scan_tool_arguments(call.arguments, tool_name=call.tool_id)
-        entry = tool_contract.entry(call.tool_id) if tool_contract is not None else None
+        entry, descriptor = contract_entry_for_call(kernel, tool_contract, call.tool_id)
         if entry is not None and not entry.available:
             continue
-        descriptor = (
-            entry.descriptor
-            if entry is not None
-            else kernel._mcp_client.tool_descriptor(call.tool_id)
-        )
         if descriptor is None:
             if call.tool_id == "run_command" and not kernel._config.tools_shell_enabled:
                 raise ToolExecutionFailure(
@@ -390,6 +411,7 @@ def approval_if_needed(
             kernel,
             call,
             descriptor_name=descriptor.name,
+            execution_context=execution_context,
         )
         request_safety = _route_policy_runtime.current_request_safety()
         paranoid_mode = (
@@ -417,7 +439,7 @@ def approval_if_needed(
         # Python is resource-contained but deliberately not a filesystem or
         # network sandbox. Every initial Python execution remains approval-
         # gated, even for a one-send auto-run grant or an AUTO policy rule.
-        if descriptor.name == "python_execute" and not approvals_pre_granted:
+        if _runs_python(descriptor.name, call.arguments) and not approvals_pre_granted:
             return _route_policy_runtime.build_approval_request(
                 ApprovalRequest_, call, descriptor,
                 mode=mode,
@@ -584,34 +606,33 @@ def filter_tool_calls_by_policy(
     )
 
 
-# ---------------------------------------------------------------------------
-# classify_run_command_for_approval
-# ---------------------------------------------------------------------------
-
-
 def classify_run_command_for_approval(
     kernel: Any,
     call: ToolCallRequest,
     *,
     descriptor_name: str,
+    execution_context: Any | None = None,
 ) -> Any | None:
     if not is_feature_flag_enabled(kernel._config.feature_flags or {}, FEATURE_SHELL_SECURITY):
         return None
     raw_command = _shell_security.shell_command_for_tool(descriptor_name, call.arguments)
     if raw_command is None:
         return None
-    return classify_command(
-        raw_command,
-        powershell=_shell_security.shell_command_uses_powershell(
-            descriptor_name,
-            call.arguments,
-        ),
+    powershell = _shell_security.shell_command_uses_powershell(descriptor_name, call.arguments)
+    cwd = call.arguments.get("cwd")
+    # An ALLOWED read must not reach outside the request's root (security review item 1);
+    # a request context without a root binds none, so every path-like argument asks.
+    root = (
+        getattr(execution_context, "root_path", None)
+        if execution_context is not None
+        else getattr(kernel._config, "tools_workspace_root", None)
     )
-
-
-# ---------------------------------------------------------------------------
-# assert_valid_tool_call  (formerly @staticmethod)
-# ---------------------------------------------------------------------------
+    return escalate_out_of_root(
+        classify_command(raw_command, powershell=powershell),
+        root=root,
+        cwd=cwd if isinstance(cwd, str) else None,
+        powershell=powershell,
+    )
 
 
 def assert_valid_tool_call(call: ToolCallRequest) -> None:
@@ -667,22 +688,32 @@ def execute_tool(
     cancel_handle = getattr(runtime, "cancel_handle", None)
     if runtime is not None:
         runtime.raise_if_interrupted()
-    dispatch_started = False
+    dispatch_started = failure_audited = False
+
+    def _audit_started_failure(error: BaseException) -> None:
+        # A STARTED event must always be paired: cancellation, a deadline or a
+        # dispatch-side ToolExecutionFailure after dispatch-ready audits FAILED once.
+        nonlocal failure_audited
+        if dispatch_started and not failure_audited:
+            failure_audited = True
+            code = str(getattr(error, "code", "") or "") or CMP_LOOP_TOOL_INTERRUPTED
+            _audit_tool_event(runtime, KIND_TOOL_EXECUTION_FAILED, call, error_code=code)
+
     def _mark_dispatch_ready() -> None:
         nonlocal dispatch_started
         if dispatch_started:
             return
         if callable(on_dispatch_ready):
             on_dispatch_ready()
-        if runtime is not None:
-            runtime.audit(
-                KIND_TOOL_EXECUTION_STARTED,
-                tool_call_id=str(call.call_id or ""),
-                tool_name=str(call.tool_id or ""),
-                summary=f"tool_execution_started {call.tool_id}",
-            )
-            runtime.raise_if_interrupted()
+        # Set before the interrupt check so a second call can never re-audit STARTED.
         dispatch_started = True
+        if runtime is not None:
+            _audit_tool_event(runtime, KIND_TOOL_EXECUTION_STARTED, call)
+            try:
+                runtime.raise_if_interrupted()
+            except TerminalChatStateError as error:
+                _audit_started_failure(error)
+                raise
     mod = _router()
     ToolExecutionOutcome_ = mod.ToolExecutionOutcome
     request_context = getattr(runtime, "request_context", None)
@@ -691,14 +722,8 @@ def execute_tool(
     if preparation_reason is not None:
         # Before any descriptor lookup: a preparation turn resolves no other tool, MCP included.
         _mark_dispatch_ready()
-        return ToolExecutionOutcome_(
-            tool_name=call.tool_id,
-            output=blocked_tool_message(call.tool_id, preparation_reason),
-            success=False,
-            tool_input=dict(call.arguments or {}),
-            error_code=blocked_tool_error_code(preparation_reason),
-            metadata=blocked_tool_metadata(preparation_reason),
-            call_id=call.call_id,
+        return _blocked_outcome(
+            ToolExecutionOutcome_, call, preparation_reason, dict(call.arguments or {})
         )
     execution_context = getattr(request_context, "execution_context", None)
     logical_turn_id = str(getattr(runtime, "logical_turn_id", "") or request_id)
@@ -706,6 +731,12 @@ def execute_tool(
         frozen_inputs = restored_inputs.bind_for_attempt(
             call=call, session_id=session_id, logical_turn_id=logical_turn_id,
             execution_context=execution_context,
+        )
+        _tool_restored_inputs.refuse_restored_mode_drift(
+            frozen_inputs,
+            read_only=bool(getattr(request_context, "read_only", False)),
+            approved_plan=getattr(request_context, "approved_plan", None),
+            trusted_plan_artifact_write=bool(trusted_plan_artifact_write),
         )
     else:
         frozen_inputs = freeze_effective_execution_inputs(
@@ -734,21 +765,10 @@ def execute_tool(
             ),
         ),
     )
-    entry = tool_contract.entry(call.tool_id) if tool_contract is not None else None
+    entry, descriptor = contract_entry_for_call(kernel, tool_contract, call.tool_id)
     if entry is not None and not entry.available:
         _mark_dispatch_ready()
-        return ToolExecutionOutcome_(
-            tool_name=call.tool_id,
-            output=blocked_tool_message(call.tool_id, entry.reason),
-            success=False,
-            tool_input=visible_tool_arguments,
-            error_code=blocked_tool_error_code(entry.reason),
-            metadata=blocked_tool_metadata(entry.reason),
-            call_id=call.call_id,
-        )
-    descriptor = (
-        entry.descriptor if entry is not None else kernel._mcp_client.tool_descriptor(call.tool_id)
-    )
+        return _blocked_outcome(ToolExecutionOutcome_, call, entry.reason, visible_tool_arguments)
     host_allowed, host_reason = _route_policy_runtime.hosted_tool_dispatch_decision(
         descriptor if descriptor is not None else call.tool_id,
         getattr(kernel, "_config", None),
@@ -763,31 +783,19 @@ def execute_tool(
         descriptor if descriptor is not None else call.tool_id, getattr(kernel, "_config", None)
     )
     # Delegate validation normalizes aliases and isolates malformed array items.
-    if call.tool_id == "delegate":
-        validation_outcome = _delegate.delegate_validation_outcome(
-            kernel=kernel,
-            call=call,
-            descriptor=descriptor,
-            visible_tool_arguments=visible_tool_arguments,
-            request_id=request_id,
-            outcome_type=ToolExecutionOutcome_,
-            increment_counter=increment_counter_for_kernel,
-        )
-        if validation_outcome is not None:
-            _mark_dispatch_ready()
-            return validation_outcome
-    else:
-        validation_outcome = _descriptor_validation_outcome(
-            kernel=kernel,
-            call=call,
-            descriptor=descriptor,
-            visible_tool_arguments=visible_tool_arguments,
-            request_id=request_id,
-            outcome_type=ToolExecutionOutcome_,
-        )
-        if validation_outcome is not None:
-            _mark_dispatch_ready()
-            return validation_outcome
+    is_delegate = call.tool_id == "delegate"
+    validate = (
+        _delegate.delegate_validation_outcome if is_delegate else _descriptor_validation_outcome
+    )
+    validation_outcome = validate(
+        kernel=kernel, call=call, descriptor=descriptor,
+        visible_tool_arguments=visible_tool_arguments, request_id=request_id,
+        outcome_type=ToolExecutionOutcome_,
+        **({"increment_counter": increment_counter_for_kernel} if is_delegate else {}),
+    )
+    if validation_outcome is not None:
+        _mark_dispatch_ready()
+        return validation_outcome
     tool_arguments = dict(frozen_inputs.effective_tool_arguments)
     plan_artifact_write = (
         tool_arguments.pop(_plan_artifact_policy.PLAN_ARTIFACT_WRITE_ARG, None) is True
@@ -817,18 +825,10 @@ def execute_tool(
         # Electron-bridge tools already carry trace_id as a first-class request
         # field; a stray _jenny_* argument key would cross the IPC wire contract.
         if getattr(descriptor, "server_name", "") != "electron_tool_bridge":
-            tool_arguments = inject_dispatch_trace_id(
-                tool_arguments,
-                descriptor=descriptor,
-                runtime=runtime,
-                call=call,
-            )
-            tool_arguments = inject_idempotency_key(
-                tool_arguments,
-                descriptor=descriptor,
-                runtime=runtime,
-                call=call,
-            )
+            for inject in (inject_dispatch_trace_id, inject_idempotency_key):
+                tool_arguments = inject(
+                    tool_arguments, descriptor=descriptor, runtime=runtime, call=call
+                )
         # See tool_execution_ask_user_wait for the approval-parity rationale:
         # a human answer or exact-content consent must not burn working time.
         decision_snapshot = on_frozen_input(frozen_inputs) if callable(on_frozen_input) else None
@@ -873,7 +873,7 @@ def execute_tool(
         failure_code = _results.coerce_tool_failure_code(error.code)
         log_event(
             logger,
-            logging.WARNING,
+            _sanitization.failure_log_level(failure_code, retryable=error.retryable),
             component="ai.router",
             event="ai.router.tool_call_failed",
             message=f"MCP tool call failed: {call.tool_id}",
@@ -888,14 +888,7 @@ def execute_tool(
                 **error.to_metadata(),
             },
         )
-        if runtime is not None:
-            runtime.audit(
-                KIND_TOOL_EXECUTION_FAILED,
-                tool_call_id=str(call.call_id or ""),
-                tool_name=str(call.tool_id or ""),
-                error_code=failure_code,
-                summary=f"tool_execution_failed {call.tool_id}",
-            )
+        _audit_tool_event(runtime, KIND_TOOL_EXECUTION_FAILED, call, error_code=failure_code)
         failure = ToolExecutionFailure(
             code=failure_code, message=error.message, retryable=error.retryable,
             error_details=error.to_metadata(),
@@ -905,7 +898,8 @@ def execute_tool(
         if error.observed_changes and builtin:
             failure.result_metadata = dict(error.observed_changes)
         raise failure from error
-    except (TerminalChatStateError, ToolExecutionFailure):
+    except (TerminalChatStateError, ToolExecutionFailure) as error:
+        _audit_started_failure(error)
         raise
     except Exception as error:
         log_event(
@@ -923,14 +917,9 @@ def execute_tool(
                 "request_id": request_id,
             },
         )
-        if runtime is not None:
-            runtime.audit(
-                KIND_TOOL_EXECUTION_FAILED,
-                tool_call_id=str(call.call_id or ""),
-                tool_name=str(call.tool_id or ""),
-                error_code=CMP_TOOL_EXECUTION_FAILED,
-                summary=f"tool_execution_failed {call.tool_id}",
-            )
+        _audit_tool_event(
+            runtime, KIND_TOOL_EXECUTION_FAILED, call, error_code=CMP_TOOL_EXECUTION_FAILED
+        )
         raise ToolExecutionFailure(
             code=CMP_TOOL_EXECUTION_FAILED,
             message=f"tool '{call.tool_id}' execution failed: {error}",
@@ -974,17 +963,13 @@ def execute_tool(
         tool_id=str(call.tool_id or ""),
         source_kind=str(getattr(descriptor, "source_kind", "") or "") if descriptor else "",
     )
-    if runtime is not None:
-        outcome_kind = (
-            KIND_TOOL_EXECUTION_OBSERVED if result.success else KIND_TOOL_EXECUTION_FAILED
-        )
-        runtime.audit(
-            outcome_kind,
-            tool_call_id=str(call.call_id or ""),
-            tool_name=str(result.tool_name or call.tool_id or ""),
-            error_code=None if result.success else (str(result.error_code or "") or None),
-            summary=f"{outcome_kind} {result.tool_name}",
-        )
+    _audit_tool_event(
+        runtime,
+        KIND_TOOL_EXECUTION_OBSERVED if result.success else KIND_TOOL_EXECUTION_FAILED,
+        call,
+        tool_name=result_tool_name,
+        error_code=None if result.success else (str(result.error_code or "") or None),
+    )
     return ToolExecutionOutcome_(
         tool_name=result.tool_name,
         output=sanitized_output,

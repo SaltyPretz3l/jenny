@@ -36,19 +36,16 @@ import logging
 import time
 import urllib.error
 import urllib.parse
-import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 from sidecar.ai.tools.builtins.web_http import (
-    _BROWSER_USER_AGENT,
     RedirectBlockedError,
     RedirectPolicyBlockedError,
     RedirectTargetInvalidError,
-    _NoRedirectHandler,
+    ValidatedUrl,
     _remaining_seconds,
-    _set_response_timeout,
     read_url_response,
     validate_public_url,
 )
@@ -83,8 +80,6 @@ _SERPER_API_URL = "https://google.serper.dev/search"
 _GOOGLE_PSE_API_URL = "https://www.googleapis.com/customsearch/v1"
 
 _HTTP_SUCCESS = 200
-_HTTP_REDIRECT_MIN = 300
-_HTTP_CLIENT_ERROR_MIN = 400
 
 
 @dataclass(frozen=True)
@@ -255,58 +250,10 @@ class _ProviderRequestError(Exception):
     """Bounded, key-free description of an upstream provider failure."""
 
 
-# Vendor requests carry API keys (auth headers or, for Google PSE, the query
-# string), and urllib's default redirect handler re-issues the request —
-# credentials included — to whatever host a 3xx points at. The vendor opener
-# therefore never follows redirects: a 3xx surfaces as an HTTPError and the
-# search fails closed, mirroring the pinned SearXNG fetch.
-_VENDOR_OPENER = urllib.request.build_opener(_NoRedirectHandler())
-
-
-def _vendor_urlopen(request: urllib.request.Request, *, timeout_s: float) -> Any:
-    return _VENDOR_OPENER.open(request, timeout=timeout_s)
-
-
-def _request_json(
-    request_spec: str | _ProviderHttpRequest,
-    *,
-    timeout_s: float,
-    provider: str,
-    deadline: float | None = None,
-) -> dict[str, Any]:
-    """Issue one blocking HTTP request and parse a JSON object response.
-
-    Error messages never include the request URL or headers — vendor URLs and
-    headers can carry API keys, and these messages flow into tool output/logs.
-    """
-    if deadline is None:
-        deadline = time.monotonic() + timeout_s
-    spec = (
-        request_spec
-        if isinstance(request_spec, _ProviderHttpRequest)
-        else _ProviderHttpRequest(url=request_spec)
-    )
-    request = urllib.request.Request(spec.url, data=spec.body, method=spec.method)
-    request.add_header("User-Agent", _BROWSER_USER_AGENT)
-    request.add_header("Accept", "application/json")
-    for header, value in (spec.headers or {}).items():
-        request.add_header(header, value)
+def _parse_json_object(payload: bytes, *, provider: str) -> dict[str, Any]:
+    """Decode a provider response body as a JSON object (key-free errors)."""
     try:
-        with _vendor_urlopen(request, timeout_s=_remaining_seconds(deadline)) as response:
-            _set_response_timeout(response, _remaining_seconds(deadline))
-            raw = response.read(_MAX_PROVIDER_RESPONSE_BYTES + 1)
-            _remaining_seconds(deadline)
-    except urllib.error.HTTPError as exc:
-        status = int(getattr(exc, "code", 0) or 0)
-        if _HTTP_REDIRECT_MIN <= status < _HTTP_CLIENT_ERROR_MIN:
-            raise _ProviderRequestError(f"{provider} search failed: redirect blocked") from exc
-        raise _ProviderRequestError(f"{provider} search failed: HTTP {status}") from exc
-    except Exception as exc:
-        raise _ProviderRequestError(f"{provider} search failed: network error") from exc
-    if len(raw) > _MAX_PROVIDER_RESPONSE_BYTES:
-        raise _ProviderRequestError(f"{provider} search failed: response too large")
-    try:
-        data = json.loads(raw.decode("utf-8", errors="replace"))
+        data = json.loads(payload.decode("utf-8", errors="replace"))
     except ValueError as exc:
         raise _ProviderRequestError(f"{provider} search failed: malformed JSON response") from exc
     if not isinstance(data, dict):
@@ -446,13 +393,22 @@ class _JsonApiProvider:
     """Template for the JSON-over-HTTP providers.
 
     Subclasses supply ``name``, ``is_configured``, ``_validation_url`` (the
-    request target checked through ``validate_public_url`` BEFORE any network
-    call), and ``_build_request``/``_extract`` hooks. ``search`` implements
-    the shared validate -> request -> parse -> shape pipeline and converts
-    every failure into the canonical error payload.
+    target checked through ``validate_public_url`` BEFORE any network call),
+    and ``_build_request``/``_extract`` hooks. ``search`` implements the shared
+    validate -> request -> parse -> shape pipeline and converts every failure
+    into the canonical error payload.
+
+    Every request goes through ``web_http.read_url_response`` on the address
+    ``validate_public_url`` pinned (one DNS resolution, a total-deadline read
+    loop, a response-size bound). Vendor requests carry API keys (auth headers
+    or, for Google PSE, the query string), so they never follow redirects: a
+    3xx fails closed rather than forwarding the credential to its target. The
+    user-supplied-host provider (SearXNG) opts in to the revalidating redirect
+    follow instead.
     """
 
     name = "provider"
+    _follow_redirects = False
 
     def __init__(
         self,
@@ -466,18 +422,14 @@ class _JsonApiProvider:
     def is_configured(self) -> bool:
         return False
 
-    def _validation_url(self) -> str:
-        raise NotImplementedError
-
-    def _validation_target(self, request_url: str) -> str:
+    def _validation_url(self, request_url: str) -> str:
         """The URL that must pass ``validate_public_url`` before any request.
 
-        Vendors validate their fixed, credential-free base endpoint;
-        user-supplied-host providers (SearXNG) override this to validate the
-        full request URL so the pinned fetch targets exactly what was checked.
+        Vendors validate their fixed, credential-free base endpoint (the key
+        query string is appended only after validation); the user-supplied-host
+        provider (SearXNG) validates the full request URL.
         """
-        _ = request_url
-        return self._validation_url()
+        raise NotImplementedError
 
     def _build_request(
         self, query: str
@@ -487,7 +439,7 @@ class _JsonApiProvider:
 
     def _fetch_json(
         self,
-        validated: Any,
+        validated: ValidatedUrl,
         request: _ProviderHttpRequest,
         *,
         timeout_s: float,
@@ -495,17 +447,47 @@ class _JsonApiProvider:
     ) -> dict[str, Any]:
         """Issue the search request and parse the JSON object response.
 
-        Default path (fixed public vendor endpoints): one plain request, same
-        posture as the DDG path uses for its hardcoded hosts. Providers with a
-        user-supplied host override this with the pinned/no-redirect fetch.
+        Error messages never include the request URL or headers: vendor URLs
+        and headers can carry API keys, and these messages flow into tool
+        output and logs.
         """
-        _ = validated
-        return _request_json(
-            request,
-            timeout_s=timeout_s,
-            provider=self.name,
-            deadline=deadline,
-        )
+        # Reuse the pinned address from the validation of the (credential-free)
+        # target; the request host is the same host.
+        target = ValidatedUrl(url=request.url, pinned_ip=validated.pinned_ip)
+        redirect_args: dict[str, Any] = {} if self._follow_redirects else {"max_redirects": 0}
+        try:
+            result = read_url_response(
+                target,
+                timeout_s=timeout_s,
+                max_bytes=_MAX_PROVIDER_RESPONSE_BYTES,
+                allow_private=self._allow_private_addresses,
+                method=request.method,
+                data=request.body,
+                headers=dict(request.headers or {}),
+                deadline=deadline,
+                **redirect_args,
+            )
+        # A redirect hop the safety policy rejects is a settled policy block, not
+        # the retryable "network error"/"redirect blocked" (loop, hop cap, missing
+        # Location, or any redirect at all for a vendor) arms. Must stay ahead of
+        # the RedirectBlockedError arm it subclasses.
+        except (RedirectPolicyBlockedError, RedirectTargetInvalidError) as exc:
+            raise _ProviderRequestError(
+                f"{self.name} search failed: redirect destination was rejected "
+                "by the URL safety policy."
+            ) from exc
+        except RedirectBlockedError as exc:
+            raise _ProviderRequestError(f"{self.name} search failed: redirect blocked") from exc
+        except urllib.error.HTTPError as exc:
+            status = int(getattr(exc, "code", 0) or 0)
+            raise _ProviderRequestError(f"{self.name} search failed: HTTP {status}") from exc
+        except Exception as exc:
+            raise _ProviderRequestError(f"{self.name} search failed: network error") from exc
+        if result.status_code != _HTTP_SUCCESS:
+            raise _ProviderRequestError(f"{self.name} search failed: HTTP {result.status_code}")
+        if result.was_truncated:
+            raise _ProviderRequestError(f"{self.name} search failed: response too large")
+        return _parse_json_object(result.payload, provider=self.name)
 
     def _extract(self, data: dict[str, Any]) -> tuple[str, list[tuple[str, str, str]]]:
         """Return ``(answer, [(url, title, snippet), ...])`` from a response."""
@@ -531,7 +513,7 @@ class _JsonApiProvider:
             )
         try:
             validated = validate_public_url(
-                self._validation_target(request.url),
+                self._validation_url(request.url),
                 allow_private=self._allow_private_addresses,
                 deadline=deadline,
             )
@@ -593,6 +575,9 @@ class SearXNGProvider(_JsonApiProvider):
     """Client for a user-run SearXNG instance's ``format=json`` search API."""
 
     name = _SEARXNG_PROVIDER
+    # A user-run instance may legitimately redirect (http -> https, trailing
+    # slash); every hop is revalidated by `read_url_response`.
+    _follow_redirects = True
 
     def __init__(self, *, base_url: str | None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -601,67 +586,14 @@ class SearXNGProvider(_JsonApiProvider):
     def is_configured(self) -> bool:
         return bool(self._base_url)
 
-    def _validation_url(self) -> str:
-        return self._base_url
-
-    def _validation_target(self, request_url: str) -> str:
-        # Validate the FULL request URL: the pinned fetch below targets the
-        # exact ValidatedUrl, so validation and fetch can never diverge.
+    def _validation_url(self, request_url: str) -> str:
+        # Validate the FULL request URL: the pinned fetch targets exactly what
+        # was checked, so validation and fetch can never diverge.
         return request_url
 
     def _build_request(self, query: str) -> _ProviderHttpRequest:
         encoded = urllib.parse.quote_plus(query)
         return _ProviderHttpRequest(f"{self._base_url}/search?q={encoded}&format=json")
-
-    def _fetch_json(
-        self,
-        validated: Any,
-        request: _ProviderHttpRequest,
-        *,
-        timeout_s: float,
-        deadline: float,
-    ) -> dict[str, Any]:
-        # SearXNG is the one user-supplied-host provider, so it uses the same
-        # DNS-pinned, redirect-revalidating, size-bounded fetch as fetch_url
-        # (web_http.read_url_response) instead of a plain urlopen.
-        _ = request
-        try:
-            result = read_url_response(
-                validated,
-                timeout_s=timeout_s,
-                max_bytes=_MAX_PROVIDER_RESPONSE_BYTES,
-                allow_private=self._allow_private_addresses,
-                deadline=deadline,
-            )
-        # A redirect hop the safety policy rejects gets the same wording as the
-        # first-hop rejection above — a settled policy block, not the retryable
-        # "network error"/"redirect blocked" (loop, hop cap, missing Location)
-        # arms. Must stay ahead of the RedirectBlockedError arm it subclasses.
-        except (RedirectPolicyBlockedError, RedirectTargetInvalidError) as exc:
-            raise _ProviderRequestError(
-                f"{self.name} search failed: redirect destination was rejected "
-                "by the URL safety policy."
-            ) from exc
-        except RedirectBlockedError as exc:
-            raise _ProviderRequestError(f"{self.name} search failed: redirect blocked") from exc
-        except urllib.error.HTTPError as exc:
-            status = int(getattr(exc, "code", 0) or 0)
-            raise _ProviderRequestError(f"{self.name} search failed: HTTP {status}") from exc
-        except Exception as exc:
-            raise _ProviderRequestError(f"{self.name} search failed: network error") from exc
-        if result.status_code != _HTTP_SUCCESS:
-            raise _ProviderRequestError(
-                f"{self.name} search failed: HTTP {result.status_code}"
-            )
-        try:
-            data = json.loads(result.payload.decode("utf-8", errors="replace"))
-        except ValueError as exc:
-            raise _ProviderRequestError(
-                f"{self.name} search failed: malformed JSON response"
-            ) from exc
-        if not isinstance(data, dict):
-            raise _ProviderRequestError(f"{self.name} search failed: unexpected response shape")
-        return data
 
     def _extract(self, data: dict[str, Any]) -> tuple[str, list[tuple[str, str, str]]]:
         answer = ""
@@ -704,7 +636,8 @@ class BraveProvider(_JsonApiProvider):
     def is_configured(self) -> bool:
         return bool(self._api_key)
 
-    def _validation_url(self) -> str:
+    def _validation_url(self, request_url: str) -> str:
+        _ = request_url
         return _BRAVE_API_URL
 
     def _build_request(self, query: str) -> _ProviderHttpRequest:
@@ -745,7 +678,8 @@ class TavilyProvider(_JsonApiProvider):
     def is_configured(self) -> bool:
         return bool(self._api_key)
 
-    def _validation_url(self) -> str:
+    def _validation_url(self, request_url: str) -> str:
+        _ = request_url
         return _TAVILY_API_URL
 
     def _build_request(self, query: str) -> _ProviderHttpRequest:
@@ -794,7 +728,8 @@ class SerperProvider(_JsonApiProvider):
     def is_configured(self) -> bool:
         return bool(self._api_key)
 
-    def _validation_url(self) -> str:
+    def _validation_url(self, request_url: str) -> str:
+        _ = request_url
         return _SERPER_API_URL
 
     def _build_request(self, query: str) -> _ProviderHttpRequest:
@@ -847,9 +782,10 @@ class GooglePSEProvider(_JsonApiProvider):
     def is_configured(self) -> bool:
         return bool(self._api_key and self._cx)
 
-    def _validation_url(self) -> str:
+    def _validation_url(self, request_url: str) -> str:
         # Validate the credential-free base endpoint; the key/cx query string
         # is appended only after validation and never appears in any error.
+        _ = request_url
         return _GOOGLE_PSE_API_URL
 
     def _build_request(self, query: str) -> _ProviderHttpRequest:

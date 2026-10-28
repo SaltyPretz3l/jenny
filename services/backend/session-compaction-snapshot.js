@@ -147,8 +147,9 @@ function normalizeCompactionSnapshot(value) {
 }
 
 // Renderer-safe projection used by SessionSummary. It deliberately omits the
-// replacement messages and boundary id: the composer meter needs only bounded
-// token/boundary metadata to estimate compacted history after a reload.
+// replacement messages: the composer meter needs only bounded token/boundary
+// metadata to estimate compacted history after a reload, and the timeline
+// anchors a manual compaction's divider on the boundary message id.
 function summarizeCompactionSnapshot(value) {
   const snapshot = normalizeCompactionSnapshot(value);
   if (!snapshot) return null;
@@ -160,6 +161,7 @@ function summarizeCompactionSnapshot(value) {
     tokens_before: snapshot.tokens_before,
     tokens_after: snapshot.tokens_after,
     replacement_tokens: snapshot.replacement_tokens,
+    boundary_message_id: snapshot.boundary_message_id,
     boundary_message_count: snapshot.boundary_message_count,
   };
 }

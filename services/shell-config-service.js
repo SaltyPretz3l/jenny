@@ -4,15 +4,13 @@ const { EventEmitter } = require('events');
 const { preserveCorruptFile, readWithRetry } = require('./backend/corrupt-file-preserve');
 const { FileJsonStore } = require('./backend/file-json-store');
 const { normalizeString } = require('./backend/path-utils');
-const {
-  logNewerSchemaDetected,
-  logWriteFailed,
-  safeEmitLog,
-} = require('./backend/session-store-logging');
+const { logNewerSchemaDetected, logWriteFailed, safeEmitLog } = require('./backend/session-store-logging');
 const { FEATURE_OVERRIDE_KEYS, TOOL_SETTING_KEYS } = require('./feature-flags');
 const { normalizeLastChatgptModel, normalizeLocalEngines } = require('./shell-config-engines');
 const { applySessionRuntimePatch } = require('./shell-config-session-runtime');
 const { applyPerformanceTelemetryPatch } = require('./shell-config-performance');
+const { applyPrimaryChatPatch } = require('./shell-config-primary-chat');
+const { normalizeApiProvidersConfig } = require('./backend/api-provider-config');
 const { applySubagentRoutingPatch } = require('./subagent-routing-settings');
 const { applyMemorySettingsPatch, mergeWorkspacePatch, workspaceStateView } = require('./shell-config-normalizers');
 const {
@@ -74,6 +72,7 @@ const {
   workspaceRootMethods,
 } = require('./shell-config-workspace-root');
 const { workspaceIdeMethods } = require('./shell-config-workspace-ide');
+const { agentQuietLaunchMethods } = require('./agent-quiet-launch');
 const { modelTuningMethods } = require('./shell-config-model-tuning');
 const { engineTuningMethods } = require('./shell-config-engine-tuning');
 const { collectWorkspaceIdeDropCounts } = require('./shell-config-workspace-ide-migration');
@@ -112,6 +111,11 @@ function cloneAssistantIdentity(identity) {
 function normalizeConfigVersion(value) {
   const version = Number(value ?? 1);
   return Number.isSafeInteger(version) && version >= 1 ? version : 1;
+}
+
+function commitBlock(service, key, next, reason, failure) {
+  if (JSON.stringify(next) !== JSON.stringify(service.state[key]) && !service._commitState({ ...service.state, [key]: next }, reason).persisted) throw Object.assign(new Error(failure), { reason: failure });
+  return service.getState()[key];
 }
 
 class ShellConfigService extends EventEmitter {
@@ -185,6 +189,7 @@ class ShellConfigService extends EventEmitter {
       this._logNewerConfigVersion('shell_config.newer_schema_detected');
     }
     this._seedWorkspaceRootFromEnvOnce();
+    this._seedAgentQuietSetupOnce();
   }
 
   // A missing file is a fresh install. A file that cannot be parsed, or is not
@@ -720,19 +725,14 @@ class ShellConfigService extends EventEmitter {
   updateSessionRuntime(patch) {
     const sessionRuntime = applySessionRuntimePatch(this.state.sessionRuntime, patch);
     const result = this._commitState({ ...this.state, sessionRuntime }, 'session_runtime_updated');
-    if (!result.persisted) throw Object.assign(new Error('session_runtime_config_write_failed'),
-      { reason: 'session_runtime_config_write_failed' });
+    if (!result.persisted) throw Object.assign(new Error('session_runtime_config_write_failed'), { reason: 'session_runtime_config_write_failed' });
     return result.snapshot.sessionRuntime;
   }
 
-  updatePerformanceTelemetry(patch) { // non-feature reason: never a managed-config refresh
-    const next = applyPerformanceTelemetryPatch(this.state.performanceTelemetry, patch);
-    const unchanged = JSON.stringify(next) === JSON.stringify(this.state.performanceTelemetry);
-    if (!unchanged && !this._commitState({ ...this.state, performanceTelemetry: next }, 'performance_telemetry_updated').persisted) {
-      throw Object.assign(new Error('performance_config_write_failed'), { reason: 'performance_config_write_failed' });
-    }
-    return this.getState().performanceTelemetry;
-  }
+  // Non-feature blocks (performance telemetry, row 76 primaryChat, row 78 apiProviders): a changed block commits under a reason the managed-config refresh and feature broadcast ignore.
+  updatePerformanceTelemetry(patch) { return commitBlock(this, 'performanceTelemetry', applyPerformanceTelemetryPatch(this.state.performanceTelemetry, patch), 'performance_telemetry_updated', 'performance_config_write_failed'); }
+  updateApiProviders(next) { return commitBlock(this, 'apiProviders', normalizeApiProvidersConfig(next), 'api_providers_updated', 'api_providers_config_write_failed'); }
+  updatePrimaryChat(patch) { return commitBlock(this, 'primaryChat', applyPrimaryChatPatch(this.state.primaryChat, patch), 'primary_chat_updated', 'primary_chat_config_write_failed'); }
 
   updateFeatureSettings(patch = {}) {
     const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
@@ -970,7 +970,7 @@ function installPrototypeMethods(target, methods) {
 }
 
 for (const methods of [followUpActionMethods, proactiveActionMethods, workspaceRootMethods,
-  workspaceIdeMethods, modelTuningMethods, engineTuningMethods]) {
+  workspaceIdeMethods, modelTuningMethods, engineTuningMethods, agentQuietLaunchMethods]) {
   installPrototypeMethods(ShellConfigService.prototype, methods);
 }
 

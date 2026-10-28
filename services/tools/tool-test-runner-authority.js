@@ -63,9 +63,9 @@ function createToolTestRunnerService({ service, executionAuthority, binding, cal
     },
   }));
   return Object.freeze({
-    listConfigs() {
+    listConfigs(options) {
       executionPorts.get(port).assertCurrent();
-      return service.listConfigs();
+      return service.listConfigs(options);
     },
     run(payload) {
       executionPorts.get(port).assertCurrent();

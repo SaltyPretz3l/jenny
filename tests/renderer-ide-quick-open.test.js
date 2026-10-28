@@ -157,7 +157,7 @@ function filePaths(ctx) {
     .map((row) => row.dataset.ideQuickOpenPath);
 }
 
-test('WIDE-026: a complete watcher batch (create/rename/delete) updates the cached list, no re-fetch', async (t) => {
+test('WIDE-026: a complete watcher batch patches deletes in place and re-lists for unknown paths', async (t) => {
   const files = ['a.js', 'b.js'];
   const ctx = buildQuickOpenWithFsControl(files);
   t.after(() => ctx.quickOpen.dispose());
@@ -167,31 +167,43 @@ test('WIDE-026: a complete watcher batch (create/rename/delete) updates the cach
   assert.deepEqual(filePaths(ctx).sort(), ['a.js', 'b.js']);
   ctx.quickOpen.toggle();
 
-  // c.js created; a.js deleted; b.js "renamed" to d.js (a delete + a changed in
-  // the same batch, mirroring how the watcher reports a rename).
+  // a.js deleted, b.js edited: both known, so the live cache is patched.
+  files.splice(0, files.length, 'b.js');
   ctx.quickOpen.handleExternalChanges([
-    { relPath: 'c.js', kind: 'changed' },
     { relPath: 'a.js', kind: 'deleted' },
-    { relPath: 'b.js', kind: 'deleted' },
-    { relPath: 'd.js', kind: 'changed' },
+    { relPath: 'b.js', kind: 'changed' },
   ], { truncated: false });
-
   ctx.quickOpen.toggle();
   await settle();
   assert.equal(ctx.calls.listAllFiles, 1, 'the batch patched the live cache in place - no re-fetch needed');
+  assert.deepEqual(filePaths(ctx).sort(), ['b.js']);
+  ctx.quickOpen.toggle();
+
+  // c.js created; b.js "renamed" to d.js (a delete + a changed in the same
+  // batch, mirroring how the watcher reports a rename). A changed path the
+  // list does not know may be a folder, so the next open re-lists.
+  files.splice(0, files.length, 'c.js', 'd.js');
+  ctx.quickOpen.handleExternalChanges([
+    { relPath: 'c.js', kind: 'changed' },
+    { relPath: 'b.js', kind: 'deleted' },
+    { relPath: 'd.js', kind: 'changed' },
+  ], { truncated: false });
+  ctx.quickOpen.toggle();
+  await settle();
+  assert.equal(ctx.calls.listAllFiles, 2);
   assert.deepEqual(filePaths(ctx).sort(), ['c.js', 'd.js']);
 });
 
 test('WIDE-026: a complete batch arriving while a fetch is in flight is applied once it resolves', async (t) => {
-  const files = ['a.js'];
+  const files = ['a.js', 'b.js'];
   const ctx = buildQuickOpenWithFsControl(files);
   t.after(() => ctx.quickOpen.dispose());
   ctx.quickOpen.toggle(); // kicks off the first fetch (unresolved microtask so far)
   // A batch lands before the in-flight fetch's promise has settled.
-  ctx.quickOpen.handleExternalChanges([{ relPath: 'b.js', kind: 'changed' }], { truncated: false });
+  ctx.quickOpen.handleExternalChanges([{ relPath: 'b.js', kind: 'deleted' }], { truncated: false });
   await settle();
   assert.equal(ctx.calls.listAllFiles, 1);
-  assert.deepEqual(filePaths(ctx).sort(), ['a.js', 'b.js'], 'the in-flight fetch merged the queued change on resolve');
+  assert.deepEqual(filePaths(ctx).sort(), ['a.js'], 'the in-flight fetch merged the queued change on resolve');
 });
 
 test('WIDE-026: a truncated watcher batch fully invalidates the cache (next open re-fetches)', async (t) => {

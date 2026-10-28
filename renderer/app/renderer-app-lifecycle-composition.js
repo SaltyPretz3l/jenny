@@ -13,7 +13,7 @@
   const lifecycleController = lifecycleUtils.createLifecycleController?.({
     state, controllers: { thinkingController },
     constants: { APPEARANCE_STORAGE_KEY, TOAST_SOURCE },
-    dom: { chatInput, composerAttachMenu, composerAttachShortcut, composerTerminalShortcut },
+    dom: { chatInput, composerAttachMenu, composerAttachShortcut },
     callbacks: {
       normalizeReasoningEffort, loadStoredAppearancePreferences,
       getDefaultAppearancePreferences, normalizeAppearancePreferences, applyAppearanceToDocument,
@@ -21,7 +21,7 @@
       normalizeChatZoomPercent,
       applyChatZoomToDocument,
       saveStoredAppearancePreferences, getLatestUserMessageId,
-      renderComposerPopover: (...a) => renderComposerPopover(...a), renderCommandPopover: (...a) => renderCommandPopover(...a), renderAttachmentTray: (...a) => renderAttachmentTray(...a),
+      renderComposerPopover: (...a) => renderComposerPopover(...a), renderAttachmentTray: (...a) => renderAttachmentTray(...a),
       clearAttachmentNotice: (...a) => clearAttachmentNotice(...a), buildAttachmentToastMessage: (...a) => buildAttachmentToastMessage(...a),
       showToastMessage: (...a) => showToastMessage(...a), renderAll: (...a) => renderAll(...a),
       /* EH-W9: flag-gated intake route (null when error_intake_routing is off). */
@@ -77,53 +77,12 @@
     },
   }) || null;
   const {
-    escapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml,
-    getSessionMonogram = () => 'J',
-    normalizeModelToken = (v) => String(v || '').trim(),
-    getActiveSession = noopNull,
-    getRuntimePreferencesFromSession = () => ({
-      preferredModel: '',
-      reasoningEffort: 'default',
-      planMode: false,
-      contextPreferences: {
-        historyScope: 'session',
-        includePersonality: true,
-        includeMemory: true,
-        memoryOptOut: false,
-      },
-    }),
-    getCurrentRuntimePreferences = () => ({
-      preferredModel: '',
-      reasoningEffort: 'default',
-      planMode: false,
-      contextPreferences: {
-        historyScope: 'session',
-        includePersonality: true,
-        includeMemory: true,
-        memoryOptOut: false,
-      },
-    }),
-    patchSessionSummary = noop,
-    syncRuntimeDraftFromActiveSession = noop,
-    buildModelOptionMarkup = noopStr,
-    loadAppearancePreferences = () => getDefaultAppearancePreferences(),
-    adjustChatZoomPercent = async (direction) => stepChatZoomPercent(state.ui?.chatZoomPercent, direction),
-    applyChatZoomPercent = async (value) => normalizeChatZoomPercent(value),
-    resetChatZoomPercent = async () => DEFAULT_CHAT_ZOOM_PERCENT,
-    appendClientLog = noop,
-    getRendererElapsedMs = () => 0,
-    noteFirstRenderComplete = noop,
-    runDeferredVisualStartup = noop,
-    scheduleDeferredVisualStartup = noop,
-    pushIncomingLog = noop,
-    resetLogsViewState = noop,
-    setActiveView = noop,
-    saveAppearancePreferences = noop,
-    applyAppearancePreferences = (p) => normalizeAppearancePreferences(p),
-    isDefaultAppearancePreferences = () => true,
-    buildSelectOptionMarkup = noopStr,
-    attachGlobalErrorBoundary = noop,
-    detachGlobalErrorBoundary = noop,
+    escapeHtml, getSessionMonogram, getActiveSession, getRuntimePreferencesFromSession,
+    getCurrentRuntimePreferences, patchSessionSummary, syncRuntimeDraftFromActiveSession, buildModelOptionMarkup,
+    loadAppearancePreferences, adjustChatZoomPercent, applyChatZoomPercent, resetChatZoomPercent, appendClientLog,
+    getRendererElapsedMs, runDeferredVisualStartup,
+    pushIncomingLog, resetLogsViewState, setActiveView, applyAppearancePreferences,
+    isDefaultAppearancePreferences, buildSelectOptionMarkup, attachGlobalErrorBoundary, detachGlobalErrorBoundary,
   } = lifecycleController || {};
   const chatTimelinePreferenceController = appLifecyclePreferenceUtils.createChatTimelinePreferenceController({
     state,
@@ -145,16 +104,26 @@
     rollbackChatTimelineRowModel,
     setChatTimelineRowModelEnabled,
   } = chatTimelinePreferenceController;
-  let clearProjectionContextCacheForSession = noopFalse;
-  let rekeyProjectionContextCache = noopStr;
   // Both are best-effort preload-backed preferences with no dependency on each
   // other, so issue the IPC round-trips concurrently rather than serially on
   // boot. Overall app zoom is applied natively by the main process
   // (webContents.setZoomFactor); the renderer only needs the value to seed the
   // Settings select.
-  const [persistedChatZoomState, persistedWindowUiState] = await Promise.all([
+  // Feature flags ride the same round trip (row 62), so the first render, the
+  // controller binds and math rendering see real flags instead of placeholders.
+  // Bounded: a slow features call must never hold boot; the post-bootstrap
+  // refresh still applies the flags when it lands.
+  const [persistedChatZoomState, persistedWindowUiState, prefetchedFeatureState] = await Promise.all([
     (async () => { try { return await window.jennyShell?.chatUi?.getState?.(); } catch (_error) { return null; } })(),
     (async () => { try { return await window.jennyShell?.windowUi?.getState?.(); } catch (_error) { return null; } })(),
+    (async () => {
+      try {
+        return await Promise.race([
+          window.jennyShell?.features?.getState?.(),
+          new Promise((resolve) => { setTimeout(() => resolve(null), 250); }),
+        ]);
+      } catch (_error) { return null; }
+    })(),
   ]);
   if (ctx.isDisposed?.() === true) return {};
   const savedAppearancePreferences = loadAppearancePreferences(); // Restore saved preferences.
@@ -176,6 +145,8 @@
   ) || 110;
   // Desktop notification preferences (windowUi.notifications), defaults filled when absent.
   state.ui.notifications = window.rendererDesktopNotifications?.normalizeNotificationSettings?.(persistedWindowUiState?.notifications) || null;
+  // Dictation microphone (windowUi.dictation, row 84); '' is the system default.
+  state.ui.dictation = { deviceId: typeof persistedWindowUiState?.dictation?.deviceId === 'string' ? persistedWindowUiState.dictation.deviceId : '' };
   state.ui.chatTimelineBatch4FastPathEnabled = loadChatTimelineBatch4Preference();
   setChatTimelineRowModelEnabled(state.currentSessionId, getChatTimelineRowModelEnabled(state.currentSessionId), {
     source: 'bootstrap',
@@ -238,11 +209,8 @@
       setActiveView: (...a) => setActiveView(...a),
       openSettingsSection: (...a) => openSettingsSection(...a),
       getSettingsShellController: () => settingsShellController,
-      applyWorkspaceSnapshot: (...a) => applyWorkspaceSnapshot(...a),
-      renderWorkspaceChrome: (...a) => renderWorkspaceChrome(...a),
-      syncWorkspaceFromStore: (...a) => syncWorkspaceFromStore(...a),
       activateWorkspaceSession: (...a) => activateWorkspaceSession(...a),
-      handleCreateSessionWithWorkspace: (...a) => handleCreateSessionWithWorkspace(...a), getCurrentRuntimePreferences: (...a) => getCurrentRuntimePreferences(...a),
+      handleCreateSessionWithWorkspace: (...a) => handleCreateSessionWithWorkspace(...a),
       setSessionOrigin: (...a) => setSessionOrigin(...a),
       setPendingOrigin: (...a) => setPendingOrigin(...a),
       clearPendingOrigin: (...a) => clearPendingOrigin(...a),
@@ -267,65 +235,25 @@
     },
   }) || {};
   const {
-    initializeEagerServices = noop,
-    applyFeatureStatePayload = noop,
-    refreshFeatureState = noopAsync,
-    refreshWorkspaceRootState = noopAsync,
-    refreshPhasePercentiles = noopAsync,
-    resetPhasePercentiles = noopAsync,
-    hydrateCachedLazyShellState = noop,
-    queueStartupLazyHydration = noop,
-    handleWorkspaceRootChoose = noopAsync, clearWorkspaceRoot = noopAsync, getProjectSwitcher = noopAsync,
-    getPersonalityActiveFileSafe = noopNull,
-    setPersonalityDraftSafe = noop,
-    refreshPersonalityWorkspaceSafe = noopAsync,
-    renderPersonalityEditorSafe = noop,
-    handlePersonalityTabChangeSafe = noopAsync,
-    handlePersonalitySaveSafe = noopAsync,
-    handlePersonalityResetSafe = noopAsync,
-    handlePersonalityOpenFolderSafe = noopAsync,
-    hasPersonalityUnsavedChangesSafe = noopFalse,
-    refreshProactiveStateSafe = noopAsync,
-    handleUseProactiveSuggestionMessageSafe = noopAsync,
-    refreshSkillsStateSafe = noopAsync,
-    renderSkillsManagerSafe = noop,
-    updateSkillsSettingsSafe = noopAsync,
-    openSkillsScopeFolderSafe = noopAsync,
-    bindSkillsShellEventsSafe = noop,
-    refreshOfflineStateSafe = noopAsync,
-    renderOfflineManagerSafe = noop,
-    bindOfflineShellEventsSafe = noop,
-    handleOfflineModeChangeSafe = noopAsync,
-    refreshApprovedMemoriesSafe = noopAsync,
-    refreshPendingMemoriesSafe = noopAsync,
-    refreshMemoryStatusSafe = noopAsync,
-    renderApprovedMemoryManagerSafe = noop,
-    handleApprovedMemorySaveSafe = noopAsync,
-    handleApprovedMemoryDeleteSafe = noopAsync,
-    upsertApprovedMemoryDraftSafe = noop,
-    ensureIdeLoaded = noopAsync, renderIdeSafe = noop,
-    activateIdeSafe = noop,
-    layoutIdeEditorSafe = noop,
-    reconcileChatDockHostSafe = noopFalse, prepareChatDockSessionTransitionSafe = noopFalse, getIdeCommandItemsSafe = () => [], openIdeChangeDiffSafe = noopFalse, openIdeFileAtLineSafe = noopFalse, openIdeTestOutputSafe = noopAsync, openIdeGitViewSafe = noopFalse, revealIdeChangesSafe = noopFalse,
-    openIdeHelpOverlaySafe = noop,
-    clearApprovedMemoryDraftSafe = noop,
-    getApprovedMemoryByIdSafe = noopNull,
-    hasApprovedMemoryDraftChangesSafe = noopFalse,
-    refreshCompanionStateSafe = noopAsync,
-    shouldRenderHomePanelSafe = noopFalse,
-    renderHomePanelSafe = noop,
-    applyCompanionPayload = noop,
-    getAvailableCompanionDeferPresets = noopArr,
-    renderDashboardSafe = noop, refreshAwayDigestSafe = (...a) => Promise.resolve(state.awayDigestReader?.refresh?.(...a) ?? false),
-    initSetupControllerSafe = noopAsync,
-    refreshSetupStateSafe = noopAsync,
-    applySetupBackendStatusSafe = noop,
-    openSetupTileSafe = noop,
-    showSetupFromSettingsSafe = noop,
-    showSetupHelpSafe = noop,
-    showFactoryResetSafe = noop,
-    handleRunSetupAgain = noopAsync,
+    initializeEagerServices, applyFeatureStatePayload, refreshFeatureState, refreshWorkspaceRootState,
+    refreshPhasePercentiles, resetPhasePercentiles, hydrateCachedLazyShellState, queueStartupLazyHydration,
+    handleWorkspaceRootChoose, clearWorkspaceRoot, getProjectSwitcher, getPersonalityActiveFileSafe,
+    setPersonalityDraftSafe, refreshPersonalityWorkspaceSafe, renderPersonalityEditorSafe,
+    handlePersonalityTabChangeSafe, handlePersonalitySaveSafe, handlePersonalityResetSafe,
+    handlePersonalityOpenFolderSafe, hasPersonalityUnsavedChangesSafe, refreshProactiveStateSafe,
+    handleUseProactiveSuggestionMessageSafe, refreshSkillsStateSafe, renderSkillsManagerSafe,
+    updateSkillsSettingsSafe, openSkillsScopeFolderSafe, bindSkillsShellEventsSafe, refreshOfflineStateSafe,
+    renderOfflineManagerSafe, bindOfflineShellEventsSafe, handleOfflineModeChangeSafe, refreshApprovedMemoriesSafe,
+    refreshPendingMemoriesSafe, refreshMemoryStatusSafe, renderApprovedMemoryManagerSafe, ensureIdeLoaded,
+    renderIdeSafe, activateIdeSafe, layoutIdeEditorSafe, reconcileChatDockHostSafe,
+    prepareChatDockSessionTransitionSafe, getIdeCommandItemsSafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe,
+    openIdeTestOutputSafe, openIdeGitViewSafe, revealIdeChangesSafe, openIdeHelpOverlaySafe,
+    refreshCompanionStateSafe, shouldRenderHomePanelSafe, renderHomePanelSafe, applyCompanionPayload,
+    getAvailableCompanionDeferPresets,
+    renderDashboardSafe, refreshAwayDigestSafe = (...a) => Promise.resolve(state.awayDigestReader?.refresh?.(...a) ?? false),
+    initSetupControllerSafe, applySetupBackendStatusSafe, openSetupTileSafe, showSetupHelpSafe, showFactoryResetSafe, handleRunSetupAgain,
   } = shellServiceRegistry;
+  if (prefetchedFeatureState) applyFeatureStatePayload(prefetchedFeatureState);
   if (window.jennyShell?.features?.onChanged) {
     registerRendererCleanup(window.jennyShell.features.onChanged((payload) => {
       applyFeatureStatePayload(payload);
@@ -348,7 +276,6 @@
   }) || null;
   const {
     buildAttachmentBudget = () => ({ accepted: [], skipped: [] }),
-    summarizeAttachmentPreparation = noopStr,
     buildAttachmentToastMessage = noopStr,
     // escapeSelectorValue is forwarded to the viewport runtime (syncThinkingBlockNode
     // builds a `[data-...]` selector from it). It is NOT in this composition's ctx and
@@ -356,8 +283,7 @@
     // binding the with(ctx) wrappers below (escapeSelectorValue: (...a) => ...) throw
     // ReferenceError the moment a reasoning block is synced. Mirror the controller
     // composition's default.
-    escapeSelectorValue = (v) => String(v || ''),
-    setAttachmentNotice = noop, clearAttachmentNotice = noop,
+    escapeSelectorValue = (v) => String(v || ''), clearAttachmentNotice = noop,
     setComposerStatusNotice = noop, clearComposerStatusNotice = noop,
     getActiveSendPreflight = noopNull, isSendPreflightPending = noopFalse,
     getActiveStreamSessionId = noopStr, isAnySendBusy = noopFalse,
@@ -370,7 +296,6 @@
     constants: { TOAST_SOURCE }, dom: { toastViewport },
   }) || null;
   const {
-    enqueueToast = noopStr, registerToastActions = noop,
     dismissToast = noop, renderToastViewport = noop,
     showToastMessage = noopStr, showShellErrorToast: rawShowShellErrorToast = noopStr,
     toErrorMessage = (e, f) => String(e?.message || e || f || ''),
@@ -488,26 +413,7 @@
     MESSAGE_STATUS, buildMessageActionModel, escapeHtml,
     getApprovalCardState: (ref) => globalThis.rendererApprovalBlock?.resolveApprovalCardState?.(state, ref) || null,
     getReasoningEntries: (...a) => getReasoningEntries(...a),
-    groupReasoningByPhase: typeof groupReasoningByPhase === 'function'
-      ? (...a) => groupReasoningByPhase(...a)
-      : (entries) => {
-        const sourceEntries = Array.isArray(entries) ? entries : [];
-        if (!sourceEntries.length) {
-          return [];
-        }
-        const groups = [];
-        let currentGroup = null;
-        for (let index = 0; index < sourceEntries.length; index += 1) {
-          const entry = sourceEntries[index];
-          const thinkingId = String(entry?.thinkingId || '');
-          if (!currentGroup || currentGroup.thinkingId !== thinkingId) {
-            currentGroup = { thinkingId, entries: [] };
-            groups.push(currentGroup);
-          }
-          currentGroup.entries.push(entry);
-        }
-        return groups;
-      },
+    groupReasoningByPhase,
     isInteractiveRecapExpanded: (recapId, sessionId) => {
       const resolvedSessionId = String(sessionId || state.currentSessionId || '').trim();
       const resolvedRecapId = String(recapId || '').trim();
@@ -558,7 +464,7 @@
     callbacks: { getInteractiveQuestionOptions, isInteractiveQuestionAnswered, areInteractiveQuestionsAnswered, isInteractiveOtherTrigger, isSendBusy, escapeHtml, getPendingQuestionBatch: (...a) => getPendingQuestionBatch(...a), hasStalePendingQuestionBatch: (...a) => hasStalePendingQuestionBatch(...a), getInteractiveDraft: (...a) => getInteractiveDraft(...a), escapeSelectorValue: (...a) => escapeSelectorValue(...a) },
   }) || null;
   const {
-    queueInteractiveComposerFocus = noop, flushInteractiveComposerFocus = noop,
+    queueInteractiveComposerFocus = noop,
     renderComposerInteractivePanel = noop, clearStalledTimer = noop,
   } = interactivePanelController || {};
   registerRendererCleanup(() => clearStalledTimer?.());
@@ -767,11 +673,10 @@
     hasStalePendingQuestionBatch = noopFalse,
     clearStalePendingQuestionBatch = async () => false,
     clearInteractiveDraft = noop, ensureInteractiveDraft = noopNull,
-    getInteractiveDraft = noopNull, buildInteractiveQuestionBatchSummary = noopStr,
+    getInteractiveDraft = noopNull,
     buildInteractiveQuestionBatchVisibleText = noopStr, shouldForceInteractiveGuardrail = noopFalse,
     buildInteractiveSelectedAnswers = noopArr, buildInteractiveAnswerPrompt = noopStr,
-    getCurrentSessionMessages = noopArr, getCurrentVisibleMessages = noopArr,
-    getTokenCountedMessages = noopArr, estimateTokens = () => 0,
+    getCurrentSessionMessages = noopArr, getCurrentVisibleMessages = noopArr, estimateTokens = () => 0,
     upsertSessionSummary = noopNull, removeSessionState = noop, rekeySessionState = noopStr,
   } = sessionManager || {};
   /* sidebarController */
@@ -795,7 +700,15 @@
       escapeHtml,
       appendClientLog: (...a) => appendClientLog(...a),
       updateComposerSafeOffset: (...a) => updateComposerSafeOffset(...a),
-      onLayoutChanged: () => syncArtifactReviewLayout({ refreshChatChrome: true }),
+      // A live sidebar drag re-fits an open artifact panel every frame (its
+      // overlay switch lands mid-drag) without the full chat re-render.
+      onLayoutChanged: (change) => {
+        if (change?.live) {
+          if (isArtifactReviewVisible()) syncArtifactReviewLayout();
+          return;
+        }
+        syncArtifactReviewLayout({ refreshChatChrome: true });
+      },
       // Chats-strip plumbing (W11): open rides the workspace activation path
       // (late-bound below); New Chat reuses the panel button's full pipeline.
       getSessionMonogram,
@@ -821,11 +734,12 @@
       scopeSlot: document.getElementById('chatsScopeSlot'), projectRow: document.getElementById('chatsProjectRow'),
       status: document.getElementById('chatsPanelStatus') },
     inventory: { actionButton: window.inventoryActionButton, segmentedControl: window.inventorySegmentedControl },
-    callbacks: { escapeHtml, newChat: () => document.getElementById('newChatButton')?.click?.(),
+    callbacks: { newChat: () => document.getElementById('newChatButton')?.click?.(),
       appendClientLog: (...a) => appendClientLog(...a), getProjectSwitcher: (...a) => getProjectSwitcher(...a),
+      showToastMessage: (...a) => showToastMessage(...a),
       afterRenderSessions: (...a) => { renderWorkspaceSidebarBadges(...a); topNavShellController?.syncChatsStrip?.(); } },
   }) || null;
-  const { renderSessions = noop, loadMore: loadMoreChats = noop,
+  const { renderSessions = noop,
     setRovingSession: setRovingChatSession = noop, toggleScope: toggleChatsScope = noop } = chatsPanelController || {};
   registerRendererCleanup(() => chatsPanelController?.dispose?.());
   function resetSidebarWidth() { topNavShellController?.resetActivePanelWidth?.(); }
@@ -899,9 +813,6 @@
     },
   }) || {};
   const {
-    normalizeSessionId = (v) => String(v || '').trim(),
-    getApprovalSessionIds = () => [],
-    getStreamingSessionIds = () => [],
     isWorkspaceSessionBusy = () => false,
     getSessionSummary = () => null,
     applyWorkspaceSnapshot = (s) => s,
@@ -940,45 +851,45 @@
     onOpenBeside: (sessionId) => ctx.paneLayoutController?.openBeside?.(sessionId), isSessionInPane: (sessionId) => ctx.paneLayoutController?.isSessionInPane?.(sessionId) === true,
   }) || null;
     result = {
-      lifecycleController, escapeHtml, getSessionMonogram, normalizeModelToken, getActiveSession, getRuntimePreferencesFromSession, getCurrentRuntimePreferences,
-      patchSessionSummary, syncRuntimeDraftFromActiveSession, buildModelOptionMarkup, loadAppearancePreferences, adjustChatZoomPercent, applyChatZoomPercent, resetChatZoomPercent,
-      appendClientLog, getRendererElapsedMs, noteFirstRenderComplete, runDeferredVisualStartup, scheduleDeferredVisualStartup, pushIncomingLog, resetLogsViewState, setActiveView,
-      saveAppearancePreferences, applyAppearancePreferences, isDefaultAppearancePreferences, buildSelectOptionMarkup, attachGlobalErrorBoundary,
-      detachGlobalErrorBoundary, getChatTimelineRowModelEnabled, recordChatTimelineRolloutSignal, refreshDefaultChatTimelineBatch4Preference, rollbackChatTimelineRowModel,
-      clearProjectionContextCacheForSession, rekeyProjectionContextCache, initializeEagerServices, applyFeatureStatePayload, refreshFeatureState,
+      lifecycleController, escapeHtml, getActiveSession, getRuntimePreferencesFromSession, getCurrentRuntimePreferences,
+      patchSessionSummary, buildModelOptionMarkup, adjustChatZoomPercent, applyChatZoomPercent, resetChatZoomPercent,
+      appendClientLog, getRendererElapsedMs, pushIncomingLog, resetLogsViewState, setActiveView,
+      applyAppearancePreferences, isDefaultAppearancePreferences, buildSelectOptionMarkup,
+      getChatTimelineRowModelEnabled, recordChatTimelineRolloutSignal, refreshDefaultChatTimelineBatch4Preference, rollbackChatTimelineRowModel,
+      refreshFeatureState,
       refreshWorkspaceRootState, refreshPhasePercentiles, resetPhasePercentiles, hydrateCachedLazyShellState, queueStartupLazyHydration, handleWorkspaceRootChoose, clearWorkspaceRoot, getProjectSwitcher,
       getPersonalityActiveFileSafe, setPersonalityDraftSafe, refreshPersonalityWorkspaceSafe, renderPersonalityEditorSafe, handlePersonalityTabChangeSafe, handlePersonalitySaveSafe, handlePersonalityResetSafe,
       handlePersonalityOpenFolderSafe, hasPersonalityUnsavedChangesSafe,
       refreshProactiveStateSafe, handleUseProactiveSuggestionMessageSafe, refreshSkillsStateSafe, renderSkillsManagerSafe, updateSkillsSettingsSafe,
       openSkillsScopeFolderSafe, bindSkillsShellEventsSafe, refreshOfflineStateSafe, renderOfflineManagerSafe,
       bindOfflineShellEventsSafe, handleOfflineModeChangeSafe, refreshApprovedMemoriesSafe, refreshPendingMemoriesSafe, refreshMemoryStatusSafe, renderApprovedMemoryManagerSafe,
-      handleApprovedMemorySaveSafe, handleApprovedMemoryDeleteSafe, upsertApprovedMemoryDraftSafe, clearApprovedMemoryDraftSafe, renderIdeSafe, activateIdeSafe, layoutIdeEditorSafe,
+      renderIdeSafe, activateIdeSafe, layoutIdeEditorSafe,
       reconcileChatDockHostSafe, getIdeCommandItemsSafe, openIdeHelpOverlaySafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe,
-      getApprovedMemoryByIdSafe, hasApprovedMemoryDraftChangesSafe, refreshCompanionStateSafe, shouldRenderHomePanelSafe, renderHomePanelSafe,
-      applyCompanionPayload, getAvailableCompanionDeferPresets, initSetupControllerSafe, refreshSetupStateSafe, applySetupBackendStatusSafe, openSetupTileSafe, showSetupFromSettingsSafe,
-      showSetupHelpSafe, showFactoryResetSafe, handleRunSetupAgain, buildAttachmentBudget, summarizeAttachmentPreparation, buildAttachmentToastMessage, setAttachmentNotice,
-      clearAttachmentNotice, setComposerStatusNotice, clearComposerStatusNotice, getActiveSendPreflight, isSendPreflightPending, getActiveStreamSessionId, isAnySendBusy, isSessionStreaming,
-      hasPendingToolApprovalForSession, isSendBusy, enqueueToast, registerToastActions,
+      refreshCompanionStateSafe, shouldRenderHomePanelSafe, renderHomePanelSafe,
+      applyCompanionPayload, getAvailableCompanionDeferPresets, initSetupControllerSafe, applySetupBackendStatusSafe, openSetupTileSafe,
+      showSetupHelpSafe, showFactoryResetSafe, handleRunSetupAgain, buildAttachmentBudget,
+      setComposerStatusNotice, clearComposerStatusNotice, getActiveSendPreflight, isSendPreflightPending, getActiveStreamSessionId, isAnySendBusy, isSessionStreaming,
+      hasPendingToolApprovalForSession, isSendBusy,
       dismissToast, renderToastViewport, showToastMessage, showShellErrorToast, toErrorMessage, showSessionActionError, showComposerActionError, reportError, reportErrorWhenActive, errorCenterStore, shellStatusController,
       getRuntimePreferenceSnapshot, renderComposerStatusNotice, handleActivityChange, runRuntimePreferenceActivity, persistRuntimePreferences, syncBackendNotice, retryBackendStart, _handleLifecycleProgress, _handleLifecycleBackendStatus,
       beginModelSwitch, updateModelSwitch, failModelSwitch,
       renderMessageAttachments, buildInteractiveRecapViewModel, renderInteractiveRoundRecap, renderMessageHoverRow, renderAgentStatusWidget, renderAssistantFailureNotice, renderContextCompactedNotice, renderThinkingWidget,
-      renderToolCallBlock, setToolCallExpansion, renderProactiveSuggestionBlock, renderSlashCommandOutput, interactivePanelController, queueInteractiveComposerFocus, flushInteractiveComposerFocus, renderComposerInteractivePanel, clearStalledTimer,
-      viewportController, chatScrollCoordinator, composerLayoutRuntime, getReasoningEntries, mergeMessageReasoning, getScrollMetrics, getScrollBehavior, setFollowLatest, syncThreadScrollState,
-      getComposerSafeOffset, measureComposerSafeOffset, updateComposerSafeOffset, initializeComposerLayoutObserver, scrollThreadToTop, scrollThreadToBottom, scrollMessageIntoView, viewportReveal, getCurrentMessageById,
-      isInteractiveRoundRecapExpanded, pruneInteractiveRoundRecapExpansionState, toggleInteractiveRoundRecap, isContextCompactionExpanded, toggleContextCompactionDetails, clearCopyFeedback, showCopyFeedback, syncRenderedThinkingPanels, syncThinkingBlockNode, scheduleMessageViewportSync,
-      disposeViewportController, chatWayfinderController, pinToTopController, buildArtifactsFromMessages, shellArtifactBridge, getArtifactsForSession, selectArtifact,
+      renderToolCallBlock, setToolCallExpansion, renderProactiveSuggestionBlock, renderSlashCommandOutput, queueInteractiveComposerFocus, renderComposerInteractivePanel,
+      chatScrollCoordinator, composerLayoutRuntime, mergeMessageReasoning, getScrollMetrics, setFollowLatest, syncThreadScrollState,
+      updateComposerSafeOffset, scrollThreadToTop, scrollThreadToBottom, scrollMessageIntoView, viewportReveal, getCurrentMessageById,
+      isInteractiveRoundRecapExpanded, pruneInteractiveRoundRecapExpansionState, toggleInteractiveRoundRecap, isContextCompactionExpanded, toggleContextCompactionDetails, showCopyFeedback, syncThinkingBlockNode, scheduleMessageViewportSync,
+      disposeViewportController, chatWayfinderController, pinToTopController, shellArtifactBridge, getArtifactsForSession, selectArtifact,
       invalidateSessionArtifacts, pruneSessionArtifacts, resetArtifactsState, isArtifactReviewVisible, renderArtifactReviewPanelSafe,
-      openArtifactTarget, syncArtifactReviewLayout, openCodeReviewTarget, openFilePreviewTarget, contextPanelController, sessionManager, getSessionMessages, setSessionMessages, getSessionTurnEventState,
+      openArtifactTarget, openCodeReviewTarget, openFilePreviewTarget, contextPanelController, getSessionMessages, setSessionMessages, getSessionTurnEventState,
       setSessionTurnEventState, getCurrentSessionMessages, getVisibleSessionMessages, getCurrentVisibleMessages, createNormalizedMessage, resolveSessionId,
       normalizePendingQuestionBatch, getPendingQuestionBatch, getInteractiveSequenceState, hasStalePendingQuestionBatch,
-      clearStalePendingQuestionBatch, clearInteractiveDraft, ensureInteractiveDraft, getInteractiveDraft, buildInteractiveQuestionBatchSummary,
+      clearInteractiveDraft, ensureInteractiveDraft, getInteractiveDraft,
       buildInteractiveQuestionBatchVisibleText, shouldForceInteractiveGuardrail, buildInteractiveSelectedAnswers, buildInteractiveAnswerPrompt,
-      getTokenCountedMessages, estimateTokens, getLatestUserMessageId,
+      estimateTokens, getLatestUserMessageId,
       upsertSessionSummary, removeSessionState, rekeySessionState,
-      sidebarController, chatsPanelController, updateTokenDisplay, renderAttachmentTray, renderSessions, setSidebarCollapsed, resetSidebarWidth, loadMoreChats, setRovingChatSession, toggleChatsScope, handleSidebarResizeStart, handleSidebarResizeMove,
-      finishSidebarResize, handleSidebarResizeKeydown, multiStreamController, workspaceSessionCoordinator, syncWorkspaceFromStore, applyWorkspaceSnapshot, activateWorkspaceSession, closeWorkspaceSession,
-      reorderWorkspaceSession, closeOtherWorkspaceSessions, closeWorkspaceSessionsToRight, closeAllWorkspaceSessions, renderWorkspaceSidebarBadges, handleLinkedSessionPopover, renderWorkspaceChrome, handleWorkspaceShortcut,
+      updateTokenDisplay, renderAttachmentTray, renderSessions, setSidebarCollapsed, resetSidebarWidth, setRovingChatSession, toggleChatsScope, handleSidebarResizeStart, handleSidebarResizeMove,
+      finishSidebarResize, handleSidebarResizeKeydown, multiStreamController, syncWorkspaceFromStore, applyWorkspaceSnapshot, activateWorkspaceSession,
+      handleLinkedSessionPopover, renderWorkspaceChrome, handleWorkspaceShortcut,
       workspaceStateController, workspaceChromeController, buildPaneSurface,
     };
     }

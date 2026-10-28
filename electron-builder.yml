@@ -1,7 +1,8 @@
 appId: com.jenny.shell
 productName: Jenny
-# Make the PyInstaller sidecar executable on macOS and Linux after packing (a
-# copied --onefile binary can lose its +x bit). No-op on Windows.
+# Make the PyInstaller sidecar and the resources/bin/jenny CLI shim executable
+# on macOS and Linux after packing (a copied file can lose its +x bit). No-op
+# on Windows.
 afterPack: build/afterPack.js
 publish:
   - provider: github
@@ -49,6 +50,11 @@ win:
       to: sidecar
       filter:
         - "**/*"
+    # The `jenny` command-line shim lands in resources/bin (jenny.cmd only; the sh shim is POSIX).
+    - from: build/cli
+      to: bin
+      filter:
+        - jenny.cmd
     - from: vendor/python-embed
       to: python-embed
       filter:
@@ -108,6 +114,11 @@ mac:
       to: sidecar
       filter:
         - "**/*"
+    # The `jenny` command-line shim lands in resources/bin (the sh shim only).
+    - from: build/cli
+      to: bin
+      filter:
+        - jenny
     - from: vendor/sidecar-media-site
       to: sidecar-media-site
       filter:
@@ -153,6 +164,11 @@ linux:
       to: sidecar
       filter:
         - "**/*"
+    # The `jenny` command-line shim lands in resources/bin (the sh shim only).
+    - from: build/cli
+      to: bin
+      filter:
+        - jenny
     - from: vendor/python-embed
       to: python-embed
       filter:
@@ -210,6 +226,8 @@ files:
   - "*.html"
   - "*.css"
   - services/**/*
+  # The `jenny` command-line tool, run by resources/bin/jenny(.cmd) with ELECTRON_RUN_AS_NODE=1.
+  - cli/**/*
   - scripts/packaging/build-command-worker-context.js
   - renderer/**/*
   - styles/**/*
@@ -229,6 +247,39 @@ files:
   - "!node_modules/monaco-editor/esm/**"
   - "!node_modules/monaco-editor/dev/**"
   - "!node_modules/monaco-editor/min-maps/**"
+  # Startup trim (row 62 Wave C): nothing loads a source map at runtime (no
+  # --enable-source-maps / setSourceMapsEnabled), so all 617 maps (~115MB) go.
+  - "!**/*.map"
+  # Mermaid: only the self-contained IIFE dist/mermaid.min.js is loaded
+  # (renderer-mermaid-runtime-loader.js, mermaid-frame.html); it has no import()
+  # or chunk references, so the ESM builds, chunks and the packages reachable
+  # only through mermaid stay out (~45MB, ~5,000 files).
+  - "!node_modules/mermaid/dist/chunks/**"
+  - "!node_modules/mermaid/dist/mermaid.js"
+  - "!node_modules/mermaid/dist/*.mjs"
+  - "!node_modules/@mermaid-js/**"
+  - "!node_modules/cytoscape/**"
+  - "!node_modules/cytoscape-*/**"
+  - "!node_modules/elkjs/**"
+  - "!node_modules/es-toolkit/**"
+  - "!node_modules/chevrotain/**"
+  - "!node_modules/@chevrotain/**"
+  - "!node_modules/lodash-es/**"
+  - "!node_modules/dayjs/**"
+  - "!node_modules/d3/**"
+  - "!node_modules/d3-*/**"
+  - "!node_modules/dagre-d3-es/**"
+  # pdf.js: the IDE PDF pane loads build/pdf.mjs, build/pdf.worker.mjs and
+  # web/pdf_viewer.{mjs,css} plus cmaps/standard_fonts/wasm; the Node-only
+  # legacy tree, image decoders, minified twins and the Node canvas
+  # (@napi-rs, used only when pdf.js runs outside an Electron renderer) never load.
+  - "!node_modules/pdfjs-dist/legacy/**"
+  - "!node_modules/pdfjs-dist/image_decoders/**"
+  - "!node_modules/pdfjs-dist/build/*.min.mjs"
+  - "!node_modules/@napi-rs/**"
+  # Both locale forms stay: services/i18n-main.js reads <tag>.json and
+  # renderer/shared/i18n-bootstrap.js loads <tag>.catalog.js.
+  # tests/electron-builder-asar-trim.test.js guards every exclusion above.
 asarUnpack:
   - services/artifact-open-with-win32.ps1
   - services/performance/gpu-memory-win32.ps1
@@ -237,3 +288,6 @@ asarUnpack:
   # anyway (proven in PTY_SPIKE_REPORT.md section 4); explicit is deterministic
   # across electron-builder upgrades. Verify with pack:dir + asar list.
   - "node_modules/@lydell/**"
+  # The CLI's POSIX profile lock hands this file to an external Python, which
+  # cannot read inside app.asar.
+  - services/host/profile_lock.py

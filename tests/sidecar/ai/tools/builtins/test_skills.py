@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -16,9 +14,11 @@ from sidecar.ai.tools.builtins.skills import (
     _reset_skill_tool_state,
     configure_skill_tool,
     load_skill_tool,
+    scoped_skill_tool,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
 from sidecar.ai.tools.workspace import WorkspaceGuard
+from tests.sidecar._platform_skips import make_dir_link, requires_file_symlinks, windows_only
 
 
 @pytest.fixture(autouse=True)
@@ -189,10 +189,7 @@ def test_traversal_cannot_escape_scope_root_via_symlink(tmp_path: Path) -> None:
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "SKILL.md").write_text("---\nname: outside\n---\nsecret\n", encoding="utf-8")
-    try:
-        (bundled_root / "escape").symlink_to(outside, target_is_directory=True)
-    except (OSError, NotImplementedError):
-        pytest.skip("symlink creation not permitted in this environment")
+    make_dir_link(bundled_root / "escape", outside)
     configure_skill_tool({"skills_bundled_root": str(bundled_root)})
 
     with pytest.raises(ToolExecutionFailure) as excinfo:
@@ -423,10 +420,7 @@ def test_symlinked_references_dir_outside_skill_is_refused(tmp_path: Path) -> No
     bundled_root = tmp_path / "bundled"
     skill_path = _write_skill(bundled_root, "rea")
     outside = _outside_references(tmp_path)
-    try:
-        (skill_path.parent / "references").symlink_to(outside, target_is_directory=True)
-    except (OSError, NotImplementedError):
-        pytest.skip("symlink creation not permitted in this environment")
+    make_dir_link(skill_path.parent / "references", outside)
     configure_skill_tool({"skills_bundled_root": str(bundled_root)})
 
     with pytest.raises(ToolExecutionFailure) as excinfo:
@@ -436,15 +430,13 @@ def test_symlinked_references_dir_outside_skill_is_refused(tmp_path: Path) -> No
     assert "outside secret" not in excinfo.value.message
 
 
+@requires_file_symlinks()
 def test_symlinked_reference_file_outside_skill_is_refused(tmp_path: Path) -> None:
     bundled_root = tmp_path / "bundled"
     skill_path = _write_skill(bundled_root, "rea")
     outside = _outside_references(tmp_path)
     (skill_path.parent / "references").mkdir()
-    try:
-        (skill_path.parent / "references" / "x.md").symlink_to(outside / "x.md")
-    except (OSError, NotImplementedError):
-        pytest.skip("symlink creation not permitted in this environment")
+    (skill_path.parent / "references" / "x.md").symlink_to(outside / "x.md")
     configure_skill_tool({"skills_bundled_root": str(bundled_root)})
 
     with pytest.raises(ToolExecutionFailure) as excinfo:
@@ -453,19 +445,13 @@ def test_symlinked_reference_file_outside_skill_is_refused(tmp_path: Path) -> No
     assert excinfo.value.code == CMP_TOOL_INVALID_PATH
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="directory junctions are Windows-only")
+@windows_only("directory junction reference refusal")
 def test_junction_references_dir_outside_skill_is_refused(tmp_path: Path) -> None:
     bundled_root = tmp_path / "bundled"
     skill_path = _write_skill(bundled_root, "rea")
     outside = _outside_references(tmp_path)
     junction = skill_path.parent / "references"
-    created = subprocess.run(
-        ["cmd", "/c", "mklink", "/J", str(junction), str(outside)],
-        capture_output=True,
-        check=False,
-    )
-    if created.returncode != 0 or not junction.exists():
-        pytest.skip("directory junction could not be created")
+    make_dir_link(junction, outside)
     configure_skill_tool({"skills_bundled_root": str(bundled_root)})
 
     with pytest.raises(ToolExecutionFailure) as excinfo:
@@ -529,3 +515,40 @@ def test_oversized_reference_hits_the_skill_size_bound(tmp_path: Path) -> None:
     assert result.metadata["reference"] == "references/big.md"
     assert result.output.startswith("y" * MAX_SKILL_FILE_BYTES)
     assert result.output.endswith(f"[skill content truncated at {MAX_SKILL_FILE_BYTES} bytes]")
+
+
+# -- A scope is enabled only on a literal True, on both configuration paths ---
+
+
+@pytest.mark.parametrize(
+    ("enabled", "expected"),
+    [(True, True), (False, False), (None, False), ("false", False), (1, False)],
+)
+def test_scope_enabled_only_on_literal_true(
+    tmp_path: Path, enabled: object, expected: bool
+) -> None:
+    # Same reading as context.builder_skills.resolve_skill_scopes: whatever the
+    # prompt side treats as disabled must not leave the tool able to read it.
+    bundled_root = tmp_path / "bundled"
+    _write_skill(bundled_root, "gated_skill")
+    config = {"skills_bundled_root": str(bundled_root), "skills_bundled_enabled": enabled}
+
+    configure_skill_tool(config)
+    assert [root.enabled for root in skills_module._scope_roots] == [expected]
+
+    _reset_skill_tool_state()
+    with scoped_skill_tool(config):
+        scoped_roots, _disabled = skills_module._active_skill_state()
+        assert [root.enabled for root in scoped_roots] == [expected]
+        if expected:
+            assert "Do the thing." in load_skill_tool({"name": "gated_skill"}, _guard()).output
+        else:
+            with pytest.raises(ToolExecutionFailure) as excinfo:
+                load_skill_tool({"name": "gated_skill"}, _guard())
+            assert excinfo.value.code == CMP_TOOL_SKILL_NOT_FOUND
+
+
+def test_scope_with_no_enabled_key_defaults_to_enabled(tmp_path: Path) -> None:
+    bundled_root = tmp_path / "bundled"
+    configure_skill_tool({"skills_bundled_root": str(bundled_root)})
+    assert [root.enabled for root in skills_module._scope_roots] == [True]

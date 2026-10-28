@@ -9,6 +9,7 @@ const {
   loadRendererApp,
   waitForUi,
 } = require('./helpers/renderer-shell-harness');
+const { withExactApproval } = require('./helpers/exact-approval-fixtures');
 
 function buildSession(sessionId, overrides = {}) {
   return {
@@ -38,7 +39,10 @@ async function loadRendererTestApp(t, options) {
   return app;
 }
 
-async function runApprovalScenario(t, { sessionId, streamId, rowModelEnabled, omitToolUseEvent }) {
+async function runApprovalScenario(t, { sessionId, streamId, rowModelEnabled, omitToolUseEvent, rehydratedShape }) {
+  // A live approval carries the backend's exact presentation; `rehydratedShape` drops it, the
+  // shape a reopened approval has, and the card must then fail closed.
+  const live = (event) => (rehydratedShape ? event : withExactApproval(event));
   const reason = 'This command can delete or overwrite files (rm). Approve to continue.';
   const { window, shell } = await loadRendererTestApp(t, {
     shell: {
@@ -101,7 +105,7 @@ async function runApprovalScenario(t, { sessionId, streamId, rowModelEnabled, om
     aggregate: 'Let me write that file. Starting now.',
   });
   if (omitToolUseEvent !== true) {
-    await shell.__emitChat({
+    await shell.__emitChat(live({
       type: 'tool_use',
       sessionId,
       streamId,
@@ -111,9 +115,9 @@ async function runApprovalScenario(t, { sessionId, streamId, rowModelEnabled, om
       input: { path: 'notes.md' },
       reason,
       status: 'pending_approval',
-    });
+    }));
   }
-  await shell.__emitChat({
+  await shell.__emitChat(live({
     type: 'tool_approval_needed',
     sessionId,
     streamId,
@@ -124,7 +128,7 @@ async function runApprovalScenario(t, { sessionId, streamId, rowModelEnabled, om
     policyScope: 'Workspace files',
     policyConsequence: 'May change data in this scope.',
     reason,
-  });
+  }));
   await waitForUi(window, 80);
 
   assert.equal(rendererState.pendingToolApprovals.size, 1, 'approval should be pending in state');
@@ -134,6 +138,12 @@ async function runApprovalScenario(t, { sessionId, streamId, rowModelEnabled, om
   assert.equal(toolUseMessage.tool_call.reason, reason);
 
   const timeline = doc.getElementById('chatTimeline') || doc.body;
+  if (rehydratedShape) {
+    assert.equal(timeline.querySelector('.tool-approve-btn'), null, 'no Allow without the exact presentation');
+    assert.ok(timeline.querySelector('[data-approval-exact-unavailable="missing"]'));
+    assert.ok(timeline.querySelector('.tool-deny-btn'), 'Deny stays available');
+    return { window, shell, timeline };
+  }
   const approveBtn = timeline.querySelector('.tool-approve-btn');
   const denyBtn = timeline.querySelector('.tool-deny-btn');
   assert.ok(
@@ -190,5 +200,14 @@ test('approval event that beats the tool_use commit still surfaces Allow/Deny', 
     streamId: 'stream-approval-race',
     rowModelEnabled: true,
     omitToolUseEvent: true,
+  });
+});
+
+test('a write approval without its exact presentation renders Deny but no Allow', async (t) => {
+  await runApprovalScenario(t, {
+    sessionId: 'session-approval-noexact',
+    streamId: 'stream-approval-noexact',
+    rowModelEnabled: true,
+    rehydratedShape: true,
   });
 });

@@ -16,7 +16,10 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Final, Iterable
 
-from sidecar.ai.tools.builtins.git_process import git_environment
+from sidecar.ai.tools.builtins.git_process import (
+    git_environment,
+    neutralizing_config_arguments,
+)
 from sidecar.ai.tools.builtins.owned_process import (
     OwnedProcessCapacityError,
     OwnedProcessError,
@@ -411,6 +414,9 @@ def _run_git_inventory_command(
         owned = service.spawn(
             [
                 "git",
+                # Repo config is untrusted (core.fsmonitor ran here; C7 #1).
+                *neutralizing_config_arguments(()),
+                "--no-optional-locks",
                 "-C",
                 str(root),
                 "ls-files",

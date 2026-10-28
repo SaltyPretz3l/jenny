@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
+from typing import Any
 
 import pytest
 
-from sidecar.ai.config import parse_runtime_config
+from sidecar.ai.config import RuntimeConfig, parse_runtime_config
+from sidecar.ai.context.builder import ContextBuilder
+from sidecar.ai.context.messages import compact_semantic_messages_with_report
+from sidecar.ai.context.runtime_message_markers import DELEGATION_CONTRACT_HEADING
 from sidecar.ai.error_codes import CMP_CTX_BUDGET_EXHAUSTED
 from sidecar.ai.routing.delegate import execute_delegate_tool
+from sidecar.ai.routing.delegate_contracts import MAX_DELEGATE_ANSWER_CHARS
 from sidecar.ai.routing.delegation_contract import (
     DELEGATION_CONTRACT_FIELDS,
     MAX_CONTRACT_LIST_ITEM_LENGTH,
@@ -15,19 +21,24 @@ from sidecar.ai.routing.delegation_contract import (
     MAX_CONTRACT_TEXT_LENGTH,
 )
 from sidecar.ai.routing.loop_runtime import LoopRuntime
-from sidecar.ai.routing.router import ChatDecision, ToolExecutionOutcome
+from sidecar.ai.routing.router import ChatDecision, ChatRouter, ToolExecutionOutcome
 from sidecar.ai.routing.sub_agent_invocation import (
     COMPLETION_REASON_CAPACITY_UNAVAILABLE,
     INVOCATION_KIND_RESEARCH,
     SUBAGENT_BATCH_OPERATION,
     _child_request_context,
+    _delegation_contract_for_research,
     build_delegation_contract_payload,
     build_parent_invocation_hash,
     build_sub_agent_identity,
     invoke_sub_agent,
     merge_sub_agent_tool_preferences,
 )
-from sidecar.ai.routing.subagent_finalization import SUB_AGENT_REPORT_MODE_PLAIN_TEXT
+from sidecar.ai.routing.subagent_finalization import (
+    SUB_AGENT_REPORT_MODE_PLAIN_TEXT,
+    SUB_AGENT_REPORT_MODE_STRUCTURED,
+)
+from sidecar.ai.tools.models import GenerationResult
 from sidecar.ai.tools.tool_families import KNOWN_TOOL_FAMILIES
 from sidecar.runtime.chat_models import ChatRequestContext
 from sidecar.runtime.multiplexer import SubAgentSlotAllocator, TurnCancellationHandle
@@ -144,7 +155,9 @@ def test_delegate_plain_text_mode_completes_with_nonblank_answer() -> None:
 
     assert result.status == "completed"
     assert router.calls[0]["request_context"].sub_agent_report_mode == "plain_text"
-    contract_text = str(router.calls[0]["messages"][0]["content"])
+    child_context = router.calls[0]["request_context"]
+    assert isinstance(child_context, ChatRequestContext)
+    contract_text = child_context.sub_agent_delegation_contract
     assert "plain-text answer" in contract_text
     assert "one JSON object" not in contract_text
 
@@ -292,11 +305,11 @@ def test_research_invocation_keeps_user_directives_out_of_system_contract() -> N
         slot_allocator=SubAgentSlotAllocator(),
     )
 
-    child_messages = router.calls[0]["messages"]
-    assert isinstance(child_messages, list)
-    contract_message = child_messages[0]
-    assert isinstance(contract_message, dict)
-    content = str(contract_message["content"])
+    child_context = router.calls[0]["request_context"]
+    assert isinstance(child_context, ChatRequestContext)
+    content = child_context.sub_agent_delegation_contract
+    assert content.startswith("Goal:")
+    assert router.calls[0]["messages"] == []
     assert latest_user_content not in content
     assert "ignore the parent" not in content
     assert router.calls[0]["latest_user_content"] == latest_user_content
@@ -312,9 +325,9 @@ def test_research_delegation_contract_uses_uncertainties_vocabulary() -> None:
         slot_allocator=SubAgentSlotAllocator(),
     )
 
-    child_messages = router.calls[0]["messages"]
-    assert isinstance(child_messages, list)
-    contract_text = str(child_messages[0]["content"]).lower()
+    child_context = router.calls[0]["request_context"]
+    assert isinstance(child_context, ChatRequestContext)
+    contract_text = child_context.sub_agent_delegation_contract.lower()
     assert "uncertainties" in contract_text
     assert "risks" not in contract_text
 
@@ -538,3 +551,98 @@ def test_delegate_propagates_child_terminal_error() -> None:
     assert len(error["message"]) == 300
     assert error["message"].startswith("x")
     assert error["message"].endswith(" [truncated]")
+
+
+class _CapturingEngine:
+    capabilities: dict[str, object] = {}
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def generate_with_tools(self, **kwargs: Any) -> GenerationResult:
+        self.calls.append(kwargs)
+        return GenerationResult(content="research result", finish_reason="stop")
+
+    def get_model_max_output_tokens(self) -> int | None:
+        return None
+
+    def get_model_context_length(self) -> int | None:
+        return None
+
+
+class _NoTools:
+    available_tools: list[Any] = []
+
+    def tool_descriptor(self, _tool_name: str) -> Any | None:
+        return None
+
+    def execute_tool(self, *_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("no tool calls are expected")
+
+
+class _SpyChatRouter(ChatRouter):
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.received_messages: list[list[dict[str, object]]] = []
+
+    def build_chat_decision(self, **kwargs: Any) -> ChatDecision:  # type: ignore[override]
+        self.received_messages.append(list(kwargs["messages"]))
+        return super().build_chat_decision(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "report_mode", [SUB_AGENT_REPORT_MODE_PLAIN_TEXT, SUB_AGENT_REPORT_MODE_STRUCTURED]
+)
+def test_delegation_contract_survives_real_semantic_admission(
+    report_mode: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    engine = _CapturingEngine()
+    router = _SpyChatRouter(
+        config=RuntimeConfig(engine_type="mock", model="mock-v1", tools_enabled=False),
+        engine=engine,
+        mcp_client=_NoTools(),
+        context_builder=ContextBuilder(None),
+    )
+    caplog.set_level(logging.WARNING)
+
+    result = invoke_sub_agent(
+        router=router,
+        parent_context=_context(),
+        messages=[{"role": "user", "content": "inspect the tests"}],
+        latest_user_content="inspect the tests",
+        slot_allocator=SubAgentSlotAllocator(),
+        report_mode=report_mode,
+    )
+
+    assert result.status == "completed"
+    admission = compact_semantic_messages_with_report(router.received_messages[0])
+    assert admission.input_complete is True
+    assert admission.dropped_messages == 0
+    assert "ai.router.semantic_history_narrowed" not in caplog.text
+    assert engine.calls, "the stub engine was never asked to generate"
+    model_text = "\n".join(
+        str(message.get("content") or "") for message in engine.calls[0]["messages"]
+    )
+    assert DELEGATION_CONTRACT_HEADING in model_text
+    assert "Goal: Read-only research for the parent agent" in model_text
+    assert "Return format:" in model_text
+
+
+def test_contract_text_is_identical_across_parent_turns() -> None:
+    first = _delegation_contract_for_research(
+        parent_context=_context(), report_mode=SUB_AGENT_REPORT_MODE_PLAIN_TEXT
+    )
+    other_turn = _context(request_id="req-other", agent_id="main@req-other")
+    second = _delegation_contract_for_research(
+        parent_context=other_turn, report_mode=SUB_AGENT_REPORT_MODE_PLAIN_TEXT
+    )
+    assert first == second
+    assert "req-" not in str(first["context"])
+
+
+def test_plain_text_contract_tells_child_its_answer_budget() -> None:
+    plain = _delegation_contract_for_research(
+        parent_context=_context(), report_mode=SUB_AGENT_REPORT_MODE_PLAIN_TEXT
+    )
+    assert f"{MAX_DELEGATE_ANSWER_CHARS:,} characters" in str(plain["return_format"])
+    assert "lead with the result" in str(plain["return_format"])

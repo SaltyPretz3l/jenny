@@ -8,7 +8,7 @@ const { beginRuntimeInferenceInitialization, completeRuntimeInferenceInitializat
   assertRuntimeContinuationProtocol, assertRuntimeBudgetProtocol, assertCommandProposalProtocol,
   supportsCommandProposalProtocol, negotiatedChatWorkspaceCapabilities,
   supportsSessionMessageContext, supportsSessionHandoffContext, supportsProducerTool,
-  supportsInferencePerformanceProtocol } = require('../../services/session-runtime/inference-protocol');
+  supportsInferencePerformanceProtocol, supportsMidTurnMail } = require('../../services/session-runtime/inference-protocol');
 const { EMPTY_CHAT_WORKSPACE_CAPABILITIES, REQUESTED_CHAT_WORKSPACE_CAPABILITIES } = require('../../services/backend/chat-workspace-capabilities');
 
 test('mandatory inference requires the current full-runtime acknowledgement', async () => {
@@ -130,7 +130,7 @@ test('session-message context needs this process to acknowledge chat_workspace_v
   const client = new SidecarClient();
   client.process = {};
   const ack = { schema_version: 1, producer_tools: ['propose_session', 'complete_session_handoff'],
-    context_kinds: ['session_message', 'session_handoff'], session_messages: true };
+    context_kinds: ['session_message', 'session_handoff'], session_messages: true, mid_turn_mail: true };
   const initializeWith = async result => {
     client.request = async () => ({ runtime_inference_admission_version: 1, ...result });
     await client.initialize();
@@ -202,6 +202,36 @@ test('the handoff context kind and the producer tools are negotiated per process
   client.detachProcess();
   assert.equal(supportsSessionHandoffContext(client), false);
   assert.equal(supportsProducerTool(client, 'propose_session'), false);
+});
+
+test('mid-turn mail needs this process to acknowledge it alongside negotiated session messages', async () => {
+  const client = new SidecarClient();
+  client.process = {};
+  const ack = { schema_version: 1, producer_tools: [], context_kinds: ['session_message'], session_messages: true, mid_turn_mail: true };
+  const initializeWith = async capabilities => {
+    client.request = async () => ({ runtime_inference_admission_version: 1, chat_workspace_version: 1, chat_workspace_capabilities: capabilities });
+    await client.initialize();
+  };
+  assert.equal(supportsMidTurnMail(client), false, 'no negotiation yet');
+  await initializeWith(ack);
+  assert.equal(supportsMidTurnMail(client), true);
+  assert.equal(supportsSessionMessageContext(client), true);
+  // An acknowledgment without the key (an older sidecar) still negotiates session messages, never mid-turn mail.
+  const { mid_turn_mail: _omitted, ...withoutKey } = ack;
+  await initializeWith(withoutKey);
+  assert.equal(supportsSessionMessageContext(client), true);
+  assert.equal(supportsMidTurnMail(client), false);
+  await initializeWith({ ...ack, mid_turn_mail: false });
+  assert.equal(supportsMidTurnMail(client), false);
+  await initializeWith({ ...ack, session_messages: false });
+  assert.equal(supportsMidTurnMail(client), false, 'rides only on negotiated session messages');
+  await initializeWith({ ...ack, mid_turn_mail: 'true' });
+  assert.equal(supportsMidTurnMail(client), false, 'a non-boolean flag is not the closed shape');
+  assert.equal(supportsSessionMessageContext(client), false);
+  await initializeWith(ack);
+  client.detachProcess();
+  assert.equal(supportsMidTurnMail(client), false);
+  assert.equal(supportsMidTurnMail(null), false);
 });
 
 test('a new initialize resets a previously negotiated chat-workspace grant', async () => {

@@ -147,33 +147,28 @@ test('backend approval never persists always-allow for exit_plan_mode', () => {
   assert.deepEqual(policies, []);
 });
 
-// SP-13: alwaysAllow must never be applied ahead of settlement. Pre-fix,
-// approveToolCall called maybeApplyAlwaysAllowPolicy BEFORE entry.pending.resolve(...),
-// so a throw during settlement left the global policy already flipped even
-// though the waiter itself could hang forever.
-test('approveToolCall settles the waiter before applying the alwaysAllow policy', () => {
-  const order = [];
-  const service = {
-    toolPermissionStore: {
-      setPolicy() {
-        order.push('policy');
+// Tool review batch 2: the grant lands before settlement, so the resolution says `always` only for a
+// persisted grant and `once` after a failed one. SP-13's hung waiter: the poisoned-settlement test below.
+test('approveToolCall persists the alwaysAllow grant before settling, and settles either way', () => {
+  for (const [grantFails, scope] of [[false, 'always'], [true, 'once']]) {
+    const order = [];
+    const service = {
+      toolPermissionStore: {
+        setPolicy() { order.push('policy'); if (grantFails) throw new Error('store unavailable'); },
       },
-    },
-    pendingToolApprovals: new Map([
-      ['approval-order-1', {
-        approvalId: 'approval-order-1',
-        callId: 'call-order-1',
-        streamId: 'stream-order-1',
-        toolName: 'Write',
-        resolve() {
-          order.push('resolve');
+      pendingToolApprovals: new Map([['approval-order-1', {
+        approvalId: 'approval-order-1', callId: 'call-order-1', streamId: 'stream-order-1', toolName: 'Write',
+        resolve(approved, decision, _feedback, _plan, grantScope) {
+          order.push(`resolve:${approved}:${decision}:${grantScope}`);
         },
-      }],
-    ]),
-  };
+      }]]),
+      _emitServiceLog() {},
+    };
 
-  assert.equal(approveToolCall(service, 'approval-order-1', { alwaysAllow: true }), true);
-  assert.deepEqual(order, ['resolve', 'policy']);
+    assert.equal(approveToolCall(service, 'approval-order-1', { alwaysAllow: true }), true);
+    assert.deepEqual(order, ['policy', `resolve:true:approved:${scope}`], scope);
+    assert.equal(service.pendingToolApprovals.size, 0, scope);
+  }
 });
 
 test('approveToolCall settles the waiter and applies alwaysAllow even when settlement is poisoned', async () => {

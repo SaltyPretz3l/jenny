@@ -114,8 +114,8 @@
         callbacks: Object.assign({}, queue, {
           renderAttachmentTray: function () { syncPaneComposer(pane); },
           setDropActive: function (active) { pane.dragDepth = active ? 1 : 0; syncPaneAttachments(pane); },
-          renderComposerPopover: noop, renderCommandPopover: noop,
-          updateComposerSafeOffset: noop, closeComposerPopover: noop, closeCommandPopover: noop,
+          renderComposerPopover: noop,
+          updateComposerSafeOffset: noop, closeComposerPopover: noop,
         }),
       }) || null;
       if (bindings && typeof bindings.bind === 'function') bindings.bind();
@@ -226,6 +226,10 @@
     function buildComposerNodes(pane, paneDom) {
       var rootEl = pane.root;
       var toolbarRight = rootEl.querySelector('.composer-toolbar-right');
+      // Dictation (row 84): the same mic as pane 0; the controller finds it by class.
+      var dictation = globalThis.rendererDictationController
+        || (typeof require === 'function' ? require('../features/renderer-dictation-controller') : null);
+      if (dictation) insertButton(toolbarRight, dictation.micButtonOptions());
       pane.stopButton = insertButton(toolbarRight, {
         className: 'composer-stop-button hidden',
         ariaLabel: jt('composer.stopCurrentResponse', 'Stop current response'),

@@ -149,42 +149,75 @@ test('listener leaves the event unclaimed when the workspace root is known-empty
   assert.equal(calls.openIdeFileAtLine.length, 0);
 });
 
-test('IDE decline falls back to the OS default app', async () => {
+test('IDE decline ends at the IDE toast: no OS default-app fallback', async () => {
+  // F2: the IDE declines binaries and >5 MB files after its own toast; the
+  // chat must not hand such a file (bin/tool.exe) to shell.openPath.
   const dom = buildDom('');
+  const { controller, calls } = makeHarness(dom, {
+    openIdeFileAtLine(path, line, column) {
+      calls.openIdeFileAtLine.push({ path, line, column });
+      return Promise.resolve(false);
+    },
+  });
+  const { claimed } = dispatchOpenEvent(dom, { path: 'bin/tool.exe', line: 3 });
+  await flush();
+
+  assert.equal(claimed, true);
+  assert.deepEqual(calls.openIdeFileAtLine, [{ path: 'bin/tool.exe', line: 3, column: null }]);
+  assert.deepEqual(calls.openInDefaultApp, []);
+  assert.equal(calls.toasts.length, 0, 'the IDE already toasted; no second toast');
+  assert.ok(calls.logs.some((entry) => entry.event === 'chat.path_open_ide_declined'));
+
+  assert.equal(await controller.openInIdePath('scripts/x.scr', 1, null), false);
+  assert.deepEqual(calls.openInDefaultApp, [], 'the direct IDE route never falls back either');
+});
+
+test('IDE failure surfaces one toast and a warn log without calling the OS opener', async () => {
+  const dom = buildDom('');
+  const { calls } = makeHarness(dom, {
+    openIdeFileAtLine() { return Promise.reject({ message: 'nope', error_code: 'CMP-WORKSPACEFS-0004' }); },
+  });
+
+  dispatchOpenEvent(dom, { path: 'stale/path.js', line: 9 });
+  await flush();
+
+  assert.deepEqual(calls.openInDefaultApp, []);
+  assert.equal(calls.toasts.length, 1);
+  assert.match(calls.toasts[0].message, /file not found/);
+  const warnEvents = calls.logs.filter((entry) => entry.level === 'WARN').map((entry) => entry.event);
+  assert.ok(warnEvents.includes('chat.path_open_ide_failed'));
+});
+
+test('a cite link whose IDE open is declined never reaches the OS opener', async () => {
+  const dom = buildDom(
+    '<article class="chat-entry message-shell assistant" data-message-id="m1"'
+    + ' data-message-role="assistant" data-message-status="complete">'
+    + '<div class="chat-bubble chat-bubble-markdown">see dist/huge.js:1 here</div></article>'
+  );
   const { calls } = makeHarness(dom, {
     openIdeFileAtLine(path, line, column) {
       calls.openIdeFileAtLine.push({ path, line, column });
       return Promise.resolve(false);
     },
   });
-  dispatchOpenEvent(dom, { path: 'gone/file.js', line: 3 });
-  await flush();
-
-  assert.deepEqual(calls.openInDefaultApp, [{ path: 'gone/file.js' }]);
-  assert.equal(calls.toasts.length, 0, 'fallback succeeded — no toast');
-});
-
-test('IDE failure + fallback failure surfaces one toast and warn logs', async () => {
-  const dom = buildDom('');
-  const { calls } = makeHarness(dom, {
-    openIdeFileAtLine() { return Promise.reject(new Error('ide exploded')); },
-    getWorkspaceFs() {
-      return {
-        openInDefaultApp() {
-          return Promise.reject({ message: 'nope', error_code: 'CMP-WORKSPACEFS-0004' });
-        },
-      };
-    },
+  const citeOpens = [];
+  const cite = citeUtils.createCodebaseCiteController({
+    document: dom.window.document,
+    window: dom.window,
+    chatTimeline: dom.window.document.getElementById('chatTimeline'),
+    getWorkspaceFs() { return { openInDefaultApp(arg) { citeOpens.push(arg); return Promise.resolve({}); } }; },
+    isEnabled() { return true; },
   });
-
-  dispatchOpenEvent(dom, { path: 'stale/path.js', line: 9 });
+  const detach = cite.attach();
+  const anchor = dom.window.document.querySelector('a.codebase-cite-link');
+  assert.ok(anchor, 'the citation is linkified');
+  anchor.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
   await flush();
+  detach();
 
-  assert.equal(calls.toasts.length, 1);
-  assert.match(calls.toasts[0].message, /file not found/);
-  const warnEvents = calls.logs.filter((entry) => entry.level === 'WARN').map((entry) => entry.event);
-  assert.ok(warnEvents.includes('chat.path_open_ide_failed'));
-  assert.ok(warnEvents.includes('chat.path_open_fallback_failed'));
+  assert.deepEqual(calls.openIdeFileAtLine, [{ path: 'dist/huge.js', line: 1, column: null }]);
+  assert.deepEqual(calls.openInDefaultApp, []);
+  assert.deepEqual(citeOpens, []);
 });
 
 // ---------------------------------------------------------------------------
@@ -215,6 +248,19 @@ test('chip click opens the file and never reaches the row toggle', async () => {
   assert.equal(calls.openIdeFileAtLine.length, 1);
   assert.equal(calls.openIdeFileAtLine[0].path, 'a/b.js');
   assert.equal(toggleSaw, 0, 'capture-phase chip handler must stop the toggle from firing');
+});
+
+test('an unclaimed chip (no IDE wiring) toasts instead of calling the OS opener', async () => {
+  const dom = buildDom(CHIP_ROW_HTML);
+  const { calls } = makeHarness(dom, { openIdeFileAtLine: null });
+
+  dom.window.document.querySelector('.tool-path-chip')
+    .dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  await flush();
+
+  assert.deepEqual(calls.openInDefaultApp, []);
+  assert.equal(calls.toasts.length, 1);
+  assert.match(calls.toasts[0].message, /a\/b\.js/);
 });
 
 test('chip Enter keydown activates the chip', async () => {

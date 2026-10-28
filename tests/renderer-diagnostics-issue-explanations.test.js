@@ -245,3 +245,44 @@ test('local engine stderr warnings get their own plain explanation; engine error
     assert.equal(explainIssue({ event, severity: 'ERROR', message: 'E failed to load model' }).id, 'fallback:' + event);
   }
 });
+
+// Owner launch 2026-10-20: one stopped model server on :8033 surfaced as five
+// separate "Local engine reported a warning" cards with no advice.
+test('every record of one unreachable model server merges into a single card', () => {
+  const at = (s) => `2026-10-20T17:17:${s}.000Z`;
+  const message = 'Model "m" is unavailable: EngineConnectionError: [CMP-AI-0002] server is not reachable';
+  const groups = groupIssues([
+    { level: 'WARN', component: 'ai.engines.factory', layer: 'sidecar', event: 'ai.engines.factory.init_failed', ts: at(29),
+      message: 'OpenAI-compatible engine initialization failed; falling back to MockEngine', data: { error_type: 'EngineConnectionError' } },
+    { level: 'WARN', component: 'electron.main', layer: 'electron', event: 'backend.managed_sidecar_initialize_failed', ts: at(30),
+      message, data: { errorCode: 'CMP-AI-0002' } },
+    { level: 'WARN', component: 'electron.main', layer: 'electron', event: 'backend.start_model_unavailable', ts: at(31),
+      message, data: { errorCode: 'CMP-AI-0002' } },
+    { level: 'ERROR', component: 'electron.main', layer: 'electron', event: 'sidecar.config_refresh_failed', ts: at(31),
+      message, data: { reason: 'ninfer_stopped', message } },
+    { level: 'WARN', component: 'ai.engines.catalog', layer: 'sidecar', event: 'ai.engines.catalog.openai_compatible_discovery_failed', ts: at(32),
+      message: 'Could not query OpenAI-compatible server: connection_error', data: { classification: 'connection_error' } },
+  ]);
+  const merged = mergeByExplanation(groups);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].explanation.id, 'engineUnreachable');
+  assert.equal(merged[0].explanation.title, "Jenny can't reach your model server");
+  assert.equal(merged[0].explanation.area, 'Local engine');
+  assert.equal(merged[0].severity, 'ERROR');
+  assert.equal(merged[0].count, 5);
+});
+
+test('a model start failure that is not a connection error keeps the fallback card', () => {
+  const explained = explainIssue({ event: 'backend.start_model_unavailable', severity: 'WARN',
+    component: 'electron.main', message: 'Model "m" was not found', data: { errorCode: 'CMP-AI-0009' } });
+  assert.equal(explained.id, 'fallback:backend.start_model_unavailable');
+});
+
+test('a degraded workspace orientation explains the git fallback', () => {
+  const explained = explainIssue({ event: 'ai.tools.workspace_manifest.orientation_degraded', severity: 'WARN',
+    component: 'ai.tools.workspace_manifest', data: { inventory_reason: 'command_failed' } });
+  assert.equal(explained.id, 'workspaceGitFallback');
+  assert.equal(explained.title, 'Git could not read this workspace');
+  assert.equal(explained.area, 'Workspace');
+  assert.equal(explained.action, null);
+});

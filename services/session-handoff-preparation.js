@@ -7,7 +7,11 @@ const { createSessionId } = require('./backend/electron-session-store');
 const { buildSessionHandoff } = require('./backend/session-handoff-context');
 const { RUNTIME_UNAVAILABLE_REASONS } = require('./chat-proposal-continuation');
 
+// The preparation turn gets 60 s from the model's first output. Reading a long source chat comes
+// first and is not the model's fault (a cache-cold NInfer re-read of ~43K tokens took 65 s on
+// 2026-10-27), so admission only arms a looser limit for a turn that never produces anything.
 const PREPARATION_DEADLINE_MS = 60000;
+const PREPARATION_FIRST_OUTPUT_LIMIT_MS = 5 * 60000;
 const failure = (reason, retryable = false, cause) => ({
   ok: false, code: R.PROPOSAL_ERROR_CODES[reason], reason, retryable,
   ...(cause ? { cause_code: cause } : {}),
@@ -36,22 +40,31 @@ function buildPreparationRequest(record, sourceSummary) {
 }
 
 const deadlineKey = ({ proposalId, attemptId }) => `${proposalId}:${attemptId}`;
+const outputDeadlineKey = (args) => `${deadlineKey(args)}:output`;
 
+function clearKey(ports, key) {
+  if (!ports.deadlines.has(key)) return;
+  ports.clearTimer(ports.deadlines.get(key));
+  ports.deadlines.delete(key);
+}
+
+// stage 'admitted' arms the first-output limit; stage 'output' replaces it with the 60 s deadline.
+// Each stage starts once per attempt.
 function startPreparationDeadline(ports, args) {
-  const key = deadlineKey(args);
-  if (ports.deadlines.has(key)) return;
+  const output = args.stage === 'output';
+  const key = output ? outputDeadlineKey(args) : deadlineKey(args);
+  if (ports.deadlines.has(key) || (!output && ports.deadlines.has(outputDeadlineKey(args)))) return;
+  if (output) clearKey(ports, deadlineKey(args));
   const handle = ports.setTimer(() => {
     ports.deadlines.delete(key);
     args.onExpire();
-  }, PREPARATION_DEADLINE_MS);
+  }, output ? PREPARATION_DEADLINE_MS : PREPARATION_FIRST_OUTPUT_LIMIT_MS);
   ports.deadlines.set(key, handle);
 }
 
 function clearPreparationDeadline(ports, args) {
-  const key = deadlineKey(args);
-  if (!ports.deadlines.has(key)) return;
-  ports.clearTimer(ports.deadlines.get(key));
-  ports.deadlines.delete(key);
+  clearKey(ports, deadlineKey(args));
+  clearKey(ports, outputDeadlineKey(args));
 }
 
 function readProposal(ports, sessionId, proposalId) {
@@ -260,6 +273,6 @@ async function completeSessionHandoff(ports, args) {
 }
 
 module.exports = {
-  PREPARATION_DEADLINE_MS, buildPreparationRequest, startPreparationDeadline, clearPreparationDeadline,
+  PREPARATION_DEADLINE_MS, PREPARATION_FIRST_OUTPUT_LIMIT_MS, buildPreparationRequest, startPreparationDeadline, clearPreparationDeadline,
   completeSessionHandoff, resumeChildCreation,
 };

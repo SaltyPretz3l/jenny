@@ -68,20 +68,6 @@ from sidecar.runtime.chat_resume import _build_live_approval_working_messages
 # ---------------------------------------------------------------------------
 
 
-def _git_available() -> bool:
-    return (
-        subprocess.run(
-            ["git", "--version"], capture_output=True, text=True, check=False
-        ).returncode
-        == 0
-    )
-
-
-def _skip_if_no_git() -> None:
-    if not _git_available():
-        pytest.skip("git is unavailable in this environment")
-
-
 def _init_repo(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "init"], cwd=path, capture_output=True, text=True, check=True)
@@ -215,7 +201,6 @@ class _FakeContextBuilder:
 def test_append_repository_delta_appends_block_when_repo_has_diverged(
     tmp_path: Path, anchors_root: Path
 ) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "a.txt", "one\n", "initial")
@@ -266,7 +251,6 @@ def test_append_repository_delta_flag_off_appends_nothing_and_never_calls_servic
 def test_append_repository_delta_no_anchor_yet_appends_nothing(
     tmp_path: Path, anchors_root: Path
 ) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "a.txt", "one\n", "initial")
@@ -513,7 +497,6 @@ def _fake_brain_container(config: RuntimeConfig, workspace_root: str) -> SimpleN
 def test_maybe_refresh_repo_anchor_writes_the_current_head_sha(
     tmp_path: Path, anchors_root: Path
 ) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     sha = _commit(repo, "a.txt", "one\n", "initial")
@@ -533,7 +516,6 @@ def test_maybe_refresh_repo_anchor_writes_the_current_head_sha(
 def test_maybe_refresh_repo_anchor_flag_off_writes_no_anchor(
     tmp_path: Path, anchors_root: Path
 ) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "a.txt", "one\n", "initial")
@@ -552,7 +534,6 @@ def test_maybe_refresh_repo_anchor_flag_off_writes_no_anchor(
 def test_maybe_refresh_repo_anchor_empty_session_id_is_a_noop(
     tmp_path: Path, anchors_root: Path
 ) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "a.txt", "one\n", "initial")
@@ -570,7 +551,6 @@ def test_maybe_refresh_repo_anchor_exception_is_fail_closed_and_logs_counts_only
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "a.txt", "one\n", "initial")

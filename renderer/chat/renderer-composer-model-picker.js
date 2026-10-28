@@ -78,7 +78,8 @@
           : [],
         effortSupported: effortSelect?.dataset?.reasoningSupported === 'true',
         effortLocked: effortSelect?.getAttribute?.('aria-disabled') === 'true',
-        backendModel: String(state.status?.model || state.modelList?.active_model || '').trim(),
+        backendModel: utils.resolveDefaultChatModel?.(state)?.model
+          ?? String(state.status?.model || state.modelList?.active_model || '').trim(),
         loadedModel: String(state.status?.model || '').trim(),
       };
     }
@@ -89,10 +90,11 @@
       return `<span class="composer-model-picker-glyph" role="img" title="${safeLabel}" aria-label="${safeLabel}">${svg}</span>`;
     }
 
-    function nameHtml(family, tagText) {
+    function nameHtml(family, tagText, hint) {
       return '<span class="composer-model-picker-name">'
         + `<span class="composer-model-picker-family">${escapeHtml(family)}</span>`
         + `<span class="composer-model-picker-tag">${escapeHtml(tagText)}</span>`
+        + (hint ? `<span class="composer-model-picker-hint">${escapeHtml(hint)}</span>` : '')
         + '</span>';
     }
 
@@ -142,7 +144,7 @@
         disabled: locked || !entry.available,
         dataset: { 'picker-model': entry.id },
         title,
-        trustedHtml: nameHtml(entry.family, tagText) + metaHtml({ ...entry, selected }),
+        trustedHtml: nameHtml(entry.family, tagText, entry.hint) + metaHtml({ ...entry, selected }),
       });
     }
 
@@ -226,7 +228,8 @@
         ...visibleEntries.map((entry) => (
           `${entry.id}|${entry.group.key}|${entry.available}|${entry.reason}|${entry.loaded}|`
             + `${entry.sizeBytes}|${entry.parameterSize}|${entry.quantizationLevel}|`
-            + `${entry.defaultReasoningEffort}|${entry.vision}${entry.thinking}${entry.insert}`
+            + `${entry.defaultReasoningEffort}|${entry.vision}${entry.thinking}${entry.insert}|`
+            + `${entry.group.label}|${entry.hint}`
         )),
       ].join('\u0000');
       if (nextSignature === signature) return;

@@ -44,7 +44,7 @@ test('context usage renders sent-context estimates when available', () => {
   }
 });
 
-test('context detail trusted HTML escapes activity content', () => {
+test('context details leave the compaction outcome to the inline row and toast', () => {
   global.inventory = {
     chip: inventoryChip, popover: inventoryPopover, actionButton: inventoryActionButton,
   };
@@ -55,10 +55,10 @@ test('context detail trusted HTML escapes activity content', () => {
     });
     const html = contextUsageUtils.renderContextUsage('session-escaped-activity', {
       manualCompactionEnabled: true,
-      compactionActivity: { message: '<img src=x onerror=alert(1)>' },
+      compactionActivity: { pending: true, message: '<img src=x onerror=alert(1)>' },
     });
-    assert.doesNotMatch(html, /<img/);
-    assert.match(html, /&lt;img/);
+    assert.doesNotMatch(html, /<img|&lt;img|inv-context-details-status/);
+    assert.match(html, /Compacting…/);
   } finally {
     delete global.inventory;
     contextUsageUtils.clearAllUsage();
@@ -555,11 +555,14 @@ test('Settings never owns Compact now', async (t) => {
 });
 
 test('/compact invokes the shared coordinator without sending or adding a transcript prompt', async (t) => {
+  let finishCompaction;
   const { window, shell } = await loadRendererTestApp(t, {
     shell: {
       chat: {
-        async compactNow() {
-          return { status: 'ok', compacted: true, tokens_before: 400, tokens_after: 120, snapshot_persisted: true };
+        compactNow() {
+          return new Promise((resolve) => {
+            finishCompaction = () => resolve({ status: 'ok', compacted: true, tokens_before: 400, tokens_after: 120, snapshot_persisted: true });
+          });
         },
       },
     },
@@ -572,11 +575,21 @@ test('/compact invokes the shared coordinator without sending or adding a transc
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   window.document.getElementById('sendButton').click();
   await waitForUi(window, 40);
+  // Any composer render while it compacts disables the composer (send busy).
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.equal(input.disabled, true);
+  finishCompaction();
+  await waitForUi(window, 40);
 
   assert.equal(shell.__state.compactNowCalls.length, 1);
   assert.equal(shell.__state.chatCalls.length, 0);
   assert.doesNotMatch(window.document.getElementById('chatTimeline').textContent, /\/compact/);
-  assert.match(window.document.getElementById('composerStatusNotice').textContent, /Future turns use the compact context/i);
+  // Progress is the inline row and the result the timeline divider: the old
+  // composer status line no longer tells compaction.
+  assert.doesNotMatch(window.document.getElementById('composerStatusNotice').textContent, /compact/i);
+  // The settle re-renders the composer: it was left disabled until a chat switch.
+  assert.equal(input.disabled, false);
+  assert.equal(window.document.getElementById('chatTimeline').querySelector('.turn-activity-row'), null);
 });
 
 test('/help lists /compact as a runnable command', async (t) => {

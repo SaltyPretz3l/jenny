@@ -246,7 +246,7 @@ test('the inbox lists a stuck send only for a listed conversation, after every o
   });
   assert.deepEqual(inbox.rows.map((row) => [row.kind, row.sessionTitle]),
     [['question', 'Budget'], ['stuck_send', 'Untitled chat'], ['stuck_send', 'Budget']]);
-  assert.deepEqual({ ...inbox.counts }, { approvals: 0, planReviews: 0, questions: 1, stuckSends: 2, answerable: 3 });
+  assert.deepEqual({ ...inbox.counts }, { approvals: 0, planReviews: 0, questions: 1, deliveryFailures: 0, stuckSends: 2, answerable: 3 });
 });
 
 test('the inbox row opens the conversation or restarts the engine for it', async () => {

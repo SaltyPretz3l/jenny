@@ -5,6 +5,12 @@ const assert = require('node:assert/strict');
 const { ToolRegistry } = require('../services/tools/tool-registry');
 const { ToolExecutor } = require('../services/tools/tool-executor');
 
+// The executor's live policy path (executePreApproved evaluates the same way).
+function policyFor(executor, toolName, input = {}, context = {}) {
+  const tool = executor.registry.getTool(toolName);
+  return executor._evaluateToolPolicy(tool, input, executor._bindExecutionContext(context)).decision;
+}
+
 function makeMockTool(overrides = {}) {
   return {
     name: 'MockTool',
@@ -56,8 +62,8 @@ describe('ToolExecutor permission policy snapshots', () => {
       },
     });
 
-    assert.equal(executor.getToolPolicy('read_file'), 'ask');
-    assert.equal(executor.getToolPolicy('write_file'), 'ask');
+    assert.equal(policyFor(executor, 'read_file'), 'ask');
+    assert.equal(policyFor(executor, 'write_file'), 'ask');
     assert.ok(logs.some(({ level, event, payload }) => (
       level === 'WARN'
       && event === 'tool.policy_snapshot_unavailable'
@@ -72,6 +78,6 @@ describe('ToolExecutor permission policy snapshots', () => {
       logger() {},
     });
 
-    assert.equal(executor.getToolPolicy('read_file'), 'auto');
+    assert.equal(policyFor(executor, 'read_file'), 'auto');
   });
 });

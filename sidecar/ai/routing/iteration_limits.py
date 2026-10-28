@@ -39,7 +39,7 @@ IMAGE_GENERATE_TIMEOUT_SECONDS = 900.0
 LOOP_PROFILE_CLOUD = "cloud"
 LOOP_PROFILE_LOCAL = "local"
 
-_CLOUD_ENGINE_TYPES = frozenset({"chatgpt", "codex-cli"})
+_CLOUD_ENGINE_TYPES = frozenset({"chatgpt", "codex-cli", "api-provider"})
 _CLOUD_CHUNK_INACTIVITY_FLOOR_SECONDS = 300.0
 
 _CHAT_MODE = "chat"
@@ -205,6 +205,17 @@ def wind_down_enabled(config: Any) -> bool:
 
 def append_wind_down_system_message(messages: list[dict[str, object]]) -> None:
     messages.append({"role": "system", "content": _WIND_DOWN_MESSAGE})
+
+
+def has_wind_down_system_message(messages: list[dict[str, object]]) -> bool:
+    """True when an earlier leg of this turn already appended the wind-down row.
+
+    Matched on content alone: a replayed history may carry the row re-labelled.
+    """
+    return any(
+        isinstance(message, dict) and message.get("content") == _WIND_DOWN_MESSAGE
+        for message in messages
+    )
 
 
 def is_sub_agent_final_iteration(

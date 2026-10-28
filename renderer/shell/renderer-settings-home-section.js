@@ -21,16 +21,10 @@
     return {
       descriptors: globalThis.rendererSettingsFieldDescriptors || load('./renderer-settings-field-descriptors'),
       binding: globalThis.rendererSettingsFieldBinding || load('./renderer-settings-field-binding'),
+      surfaces: globalThis.rendererSettingsV2Surfaces || load('./renderer-settings-v2-surfaces'),
     };
   }
   function isRecord(value) { return Boolean(value) && typeof value === 'object' && !Array.isArray(value); }
-  function expectedHomeConfig(current, patch) {
-    const expected = { ...current, ...patch };
-    for (const key of ['widgets', 'scratchpad', 'calendar']) {
-      if (isRecord(patch[key])) expected[key] = { ...current[key], ...patch[key] };
-    }
-    return expected;
-  }
   function readSettings(homeConfig) {
     const settings = isRecord(homeConfig?.scratchpad?.settings) ? homeConfig.scratchpad.settings : {};
     return {
@@ -39,21 +33,24 @@
     };
   }
   function renderHomeSection({ container, status, state } = {}) {
-    const { binding, descriptors } = fieldModules();
+    const { binding, descriptors, surfaces } = fieldModules();
     if (!container || !binding || !descriptors) return;
     const settings = readSettings(state?.homeConfig);
-    container.innerHTML = FIELD_IDS.map((id) => {
+    surfaces.paintSlot(container, FIELD_IDS.map((id) => {
       const descriptor = descriptors.getSettingDescriptor(id);
       return binding.renderSettingRow(descriptor, settings[descriptor.key]);
-    }).join('');
+    }).join(''));
     if (status && status.dataset.state !== 'error') {
       status.textContent = '';
       status.hidden = true;
       status.dataset.state = '';
     }
   }
-  function acknowledgedPreference(config, expected) {
-    return isCompleteHomeConfig(config) && jsonValuesEqual(config, expected);
+  // Only the written object must come back: other Home sections (Scratchpad
+  // notes, rail, calendar) may have moved under a concurrent write, and the
+  // echoed config carries them for adoption.
+  function acknowledgedPreference(config, expectedSettings) {
+    return isCompleteHomeConfig(config) && jsonValuesEqual(config.scratchpad.settings, expectedSettings);
   }
   function bindHomeSection({ container, status, state, renderSettings, registerListener, listenerOptions } = {}) {
     const { binding } = fieldModules();
@@ -77,14 +74,15 @@
     };
     const saveFailed = () => jt('settings.home.preferencesSaveFailed', 'Could not save Home preferences. Your previous setting was restored.');
     async function hydrate() {
-      if (state.homeConfig || typeof homeApi()?.getConfig !== 'function') return;
+      // The Home manager's placeholder is not a loaded config; only a complete one skips the read.
+      if (isCompleteHomeConfig(state.homeConfig) || typeof homeApi()?.getConfig !== 'function') return;
       const config = await homeApi().getConfig();
       if (isCompleteHomeConfig(config)) state.homeConfig = config;
     }
     /* After-ack patch adapter: a batch patches scratchpad.settings on top of
      * the hydrated siblings; `ack` keeps the whole acknowledged config for
      * `apply` to adopt, so a refused batch leaves state.homeConfig untouched. */
-    let expected = null;
+    let expectedSettings = null;
     let acknowledged = null;
     // One coordinator per app state across bind generations; the per-binding
     // status line, re-render and hydration guard are reached through `live`.
@@ -104,13 +102,12 @@
           throw Object.assign(new Error(jt('settings.home.preferencesUnavailable', 'Home preferences are unavailable.')), { code: 'home_unavailable' });
         }
         await hydrate();
-        const patch = { scratchpad: { settings: { ...(state.homeConfig?.scratchpad?.settings || {}), ...payload } } };
-        expected = expectedHomeConfig(state.homeConfig, patch);
+        expectedSettings = { ...(state.homeConfig?.scratchpad?.settings || {}), ...payload };
         live.showStatus(jt('settings.home.preferencesSaving', 'Saving Home preferences…'), false);
-        return api.updateConfig(patch);
+        return api.updateConfig({ scratchpad: { settings: expectedSettings } });
       },
       ack: (config) => {
-        if (!acknowledgedPreference(config, expected)) throw new Error(saveFailed());
+        if (!acknowledgedPreference(config, expectedSettings)) throw new Error(saveFailed());
         acknowledged = config;
         return readSettings(config);
       },

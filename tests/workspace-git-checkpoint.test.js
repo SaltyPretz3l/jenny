@@ -85,7 +85,7 @@ function directApi(root, { retention } = {}) {
 const STUB_ROOT = 'C:/repo';
 
 function scopeResult(args) {
-  if (args.includes('--is-inside-work-tree')) return { success: true, stdout: 'true\n' };
+  if (args.includes('--is-inside-work-tree')) return { success: true, stdout: `true\n${STUB_ROOT}\n` };
   if (args.includes('--show-toplevel')) return { success: true, stdout: `${STUB_ROOT}\n` };
   return null;
 }

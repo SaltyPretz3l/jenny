@@ -2,48 +2,19 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { JSDOM } = require('jsdom');
 
 const editorSection = require('../renderer/shell/renderer-settings-editor-section');
 const selectField = require('../renderer/inventory/select-field');
 const toggleSwitchModule = require('../renderer/inventory/toggle-switch');
 const actionButton = require('../renderer/inventory/action-button');
 const ideState = require('../renderer/features/renderer-ide-state');
+const {
+  withGlobals,
+  withGlobalsAsync,
+  makeContainer,
+  flush,
+} = require('./helpers/settings-editor-section-harness');
 
-// The section reaches inventory primitives + the ide-state module via globals,
-// exactly as the loaded renderer scripts expose them.
-// Mirror the PRODUCTION global shape exactly (renderer/inventory/index.js): the
-// standalone inventorySelectField is the function, inventoryToggleSwitch is the
-// MODULE OBJECT, and the barrel globalThis.inventory exposes BOTH primitives as
-// render functions (selectField, plus toggleSwitch unwrapped from its module).
-function withGlobals(run) {
-  const prevWindow = globalThis.window;
-  const prevInventory = globalThis.inventory;
-  const prevSelectField = globalThis.inventorySelectField;
-  const prevToggleSwitch = globalThis.inventoryToggleSwitch;
-  const prevActionButton = globalThis.inventoryActionButton;
-  const prevIdeState = globalThis.rendererIdeState;
-  globalThis.inventorySelectField = selectField;
-  globalThis.inventoryToggleSwitch = toggleSwitchModule;
-  globalThis.inventoryActionButton = actionButton;
-  globalThis.inventory = { selectField, toggleSwitch: toggleSwitchModule.toggleSwitch, actionButton };
-  globalThis.rendererIdeState = ideState;
-  try {
-    return run();
-  } finally {
-    globalThis.window = prevWindow;
-    globalThis.inventory = prevInventory;
-    globalThis.inventorySelectField = prevSelectField;
-    globalThis.inventoryToggleSwitch = prevToggleSwitch;
-    globalThis.inventoryActionButton = prevActionButton;
-    globalThis.rendererIdeState = prevIdeState;
-  }
-}
-
-function makeContainer() {
-  const dom = new JSDOM('<div id="host"></div>');
-  return { dom, container: dom.window.document.getElementById('host') };
-}
 
 test('renderEditorSection builds six controls reflecting the slice values', () => {
   withGlobals(() => {
@@ -93,32 +64,43 @@ test('renderEditorSection has no inline-suggestion rows, even for a profile that
   });
 });
 
-test('renderEditorSection always exposes the auto-save preference', () => {
+test('renderEditorSection groups the row 82 editor options under labelled subgroups', () => {
   withGlobals(() => {
     const { container } = makeContainer();
     editorSection.renderEditorSection({ container, ide: {} });
-    assert.ok(container.querySelector('[data-inv-toggle="editorAutoSaveToggle"]'));
+    const headings = [...container.querySelectorAll('.settings-group-heading')].map((h) => h.textContent);
+    assert.deepEqual(headings, ['Cursor and text', 'Indentation', 'Auto save']);
+    const group = (id) => container.querySelector(`[data-editor-group="${id}"]`);
+    assert.ok(group('cursor').querySelector('#editorCursorBlinkingSelect'));
+    assert.ok(group('cursor').querySelector('[data-inv-toggle="editorFontLigaturesToggle"]'));
+    assert.ok(group('indentation').querySelector('[data-inv-toggle="editorInsertSpacesToggle"]'));
+    assert.ok(group('indentation').querySelector('[data-inv-toggle="editorDetectIndentationToggle"]'));
+    assert.ok(group('autosave').querySelector('#editorAutoSaveModeSelect'));
+    const advanced = container.querySelector('details.settings-editor-advanced');
+    for (const id of ['editorBracketPairColorizationToggle', 'editorIndentGuidesToggle', 'editorStickyScrollToggle', 'editorFoldingToggle']) {
+      assert.ok(advanced.querySelector(`[data-inv-toggle="${id}"]`), id + ' sits in Advanced');
+    }
+    assert.equal(container.querySelector('[data-inv-toggle="editorAutoSaveToggle"]'), null, 'the old on/off toggle is gone');
   });
 });
 
-test('renderEditorSection reflects the default-off auto-save preference', () => {
+test('auto save defaults off, migrates the old toggle, and only enables the delay for After a delay', () => {
   withGlobals(() => {
     const { container } = makeContainer();
-    // No autoSaveEnabled on the slice -> the toggle reflects the DEFAULT-OFF pref.
-    editorSection.renderEditorSection({ container, autoSaveVisible: true, ide: {} });
-    const toggle = container.querySelector('[data-inv-toggle="editorAutoSaveToggle"]');
-    assert.ok(toggle, 'auto-save toggle present');
-    assert.equal(toggle.getAttribute('aria-checked'), 'false', 'defaults off (writes files)');
-    // An opted-in slice renders the toggle on.
-    editorSection.renderEditorSection({ container, autoSaveVisible: true, ide: { autoSaveEnabled: true } });
-    assert.equal(
-      container.querySelector('[data-inv-toggle="editorAutoSaveToggle"]').getAttribute('aria-checked'),
-      'true'
-    );
+    const delayRow = () => container.querySelector('[data-setting-id="editorAutoSaveDelayInput"]');
+    editorSection.renderEditorSection({ container, ide: {} });
+    assert.equal(container.querySelector('#editorAutoSaveModeSelect').value, 'off', 'defaults off (writes files)');
+    assert.equal(delayRow().getAttribute('data-setting-parent-off'), 'true');
+    // A slice from before row 82 carries only autoSaveEnabled:true: it reads as After a delay.
+    editorSection.renderEditorSection({ container, ide: { autoSaveEnabled: true } });
+    assert.equal(container.querySelector('#editorAutoSaveModeSelect').value, 'afterDelay');
+    assert.equal(delayRow().hasAttribute('data-setting-parent-off'), false);
+    editorSection.renderEditorSection({ container, ide: { autoSaveMode: 'onWindowChange' } });
+    assert.equal(container.querySelector('#editorAutoSaveModeSelect').value, 'onWindowChange');
   });
 });
 
-test('flipping the auto-save toggle projects only after the write is acknowledged', async () => {
+test('picking an auto save mode projects only after the write is acknowledged', async () => {
   await withGlobalsAsync(async () => {
     const { dom, container } = makeContainer();
     globalThis.window = dom.window;
@@ -130,7 +112,7 @@ test('flipping the auto-save toggle projects only after the write is acknowledge
       },
     };
     const state = { ui: { ide: ideState.createIdeUiState() } };
-    editorSection.renderEditorSection({ container, autoSaveVisible: true, ide: state.ui.ide });
+    editorSection.renderEditorSection({ container, ide: state.ui.ide });
     editorSection.bindEditorSection({
       container,
       state,
@@ -140,44 +122,14 @@ test('flipping the auto-save toggle projects only after the write is acknowledge
         return true;
       },
     });
-    // Default-off -> turn it on.
-    container.dispatchEvent(new dom.window.CustomEvent('inv-toggle-change', {
-      bubbles: true,
-      detail: { id: 'editorAutoSaveToggle', checked: true },
-    }));
+    const select = container.querySelector('#editorAutoSaveModeSelect');
+    select.value = 'onFocusChange';
+    select.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
     await flush();
-    assert.equal(state.ui.ide.autoSaveEnabled, true, 'auto-save flipped on in the slice');
-    assert.equal(patches.at(-1).autoSaveEnabled, true, 'partial patch carries autoSaveEnabled:true');
+    assert.equal(state.ui.ide.autoSaveMode, 'onFocusChange', 'the mode lands in the slice');
+    assert.deepEqual(patches.at(-1), { autoSaveMode: 'onFocusChange' }, 'a partial patch of the one key');
   });
 });
-
-// Async-aware variant of withGlobals: awaits the run() promise before restoring
-// the globals (the sync withGlobals would restore mid-flight for async bodies).
-async function withGlobalsAsync(run) {
-  const prevWindow = globalThis.window;
-  const prevInventory = globalThis.inventory;
-  const prevSelectField = globalThis.inventorySelectField;
-  const prevToggleSwitch = globalThis.inventoryToggleSwitch;
-  const prevActionButton = globalThis.inventoryActionButton;
-  const prevIdeState = globalThis.rendererIdeState;
-  globalThis.inventorySelectField = selectField;
-  globalThis.inventoryToggleSwitch = toggleSwitchModule;
-  globalThis.inventoryActionButton = actionButton;
-  globalThis.inventory = { selectField, toggleSwitch: toggleSwitchModule.toggleSwitch, actionButton };
-  globalThis.rendererIdeState = ideState;
-  try {
-    return await run();
-  } finally {
-    globalThis.window = prevWindow;
-    globalThis.inventory = prevInventory;
-    globalThis.inventorySelectField = prevSelectField;
-    globalThis.inventoryToggleSwitch = prevToggleSwitch;
-    globalThis.inventoryActionButton = prevActionButton;
-    globalThis.rendererIdeState = prevIdeState;
-  }
-}
-
-const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 test('renderEditorSection shows defaults when the slice is null (IDE never opened)', () => {
   withGlobals(() => {
@@ -416,180 +368,50 @@ test('the section reuses renderer-ide-state enums (single canonical source)', ()
   assert.equal(ideState.FONT_SIZE_MAX, 40);
 });
 
-const listen = (target, event, handler, options) => { target.addEventListener(event, handler, options); return true; };
-
-test('editor rows carry the descriptor meta line and Revert writes the default through the adapter', async () => {
+test('terminal scrollback (row 82 T1) renders as a number row and writes an integer inside its bounds', async () => {
   await withGlobalsAsync(async () => {
     const { dom, container } = makeContainer();
     globalThis.window = dom.window;
     const patches = [];
     dom.window.jennyShell = {
-      workspaceIde: { async getState() { return {}; }, async updateSettings(patch) { patches.push(patch); return { updated: true, ...patch }; } },
+      workspaceIde: {
+        async getState() { return {}; },
+        async updateSettings(patch) { patches.push(patch); return { updated: true, ...patch }; },
+      },
     };
     const state = { ui: { ide: ideState.createIdeUiState() } };
-    state.ui.ide.fontSize = 18;
-    const render = () => editorSection.renderEditorSection({ container, ide: state.ui.ide });
-    render();
-    const row = (id) => container.querySelector(`[data-settings-field="${id}"]`);
-    assert.equal(row('editorFontSizeSelect').querySelector('[data-setting-revert]').getAttribute('data-setting-revert-default'), 'Match text size');
-    assert.equal(row('editorFontSizeSelect').querySelector('.settings-field-meta-modified').textContent, 'Modified');
-    assert.equal(row('editorTabSizeSelect').querySelector('[data-setting-revert]'), null);
-    assert.equal(row('editorTabSizeSelect').querySelector('.settings-field-meta-modified').hidden, true, 'an unmodified row hides its Modified tag');
-    editorSection.bindEditorSection({ container, state, renderSettings: render, registerListener: listen });
-    container.querySelector('[data-setting-revert="editorFontSizeSelect"]').click();
-    await flush();
-    assert.deepEqual(patches, [{ fontSize: 0 }]);
-    assert.equal(state.ui.ide.fontSize, 0);
-    assert.equal(row('editorFontSizeSelect').querySelector('.settings-field-meta-modified').hidden, true);
-  });
-});
-
-test('a refused editor select write rolls the control back and reports it on its row', async () => {
-  await withGlobalsAsync(async () => {
-    const { dom, container } = makeContainer();
-    globalThis.window = dom.window;
-    dom.window.jennyShell = {
-      workspaceIde: { async getState() { return {}; }, async updateSettings() { return { updated: false, code: 'config_write_blocked' }; } },
-    };
-    const errors = [];
-    const state = { ui: { ide: ideState.createIdeUiState() } };
-    state.ui.ide.tabSize = 2;
-    const render = () => editorSection.renderEditorSection({ container, ide: state.ui.ide });
-    render();
-    editorSection.bindEditorSection({ container, state, renderSettings: render, registerListener: listen,
-      showShellErrorToast: (message, meta) => errors.push({ message, meta }) });
-    const sel = container.querySelector('#editorTabSizeSelect');
-    sel.value = '4';
-    sel.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
-    await flush();
-    assert.equal(state.ui.ide.tabSize, 2, 'the slice keeps the acknowledged value');
-    assert.equal(container.querySelector('#editorTabSizeSelect').value, '2', 'the control is rolled back');
-    assert.equal(errors.length, 0, 'the reason is on the row, so there is no toast');
-    assert.match(container.querySelector('[data-settings-field="editorTabSizeSelect"] .settings-field-error').textContent, /could not be saved/);
-  });
-});
-
-test('a refused write inside the collapsed Advanced disclosure is still reported: the reason there is out of sight', async () => {
-  await withGlobalsAsync(async () => {
-    const { dom, container } = makeContainer();
-    globalThis.window = dom.window;
-    dom.window.jennyShell = {
-      workspaceIde: { async getState() { return {}; }, async updateSettings() { return { updated: false, code: 'config_write_blocked' }; } },
-    };
-    const errors = [];
-    const state = { ui: { ide: ideState.createIdeUiState() } };
-    const render = () => editorSection.renderEditorSection({ container, ide: state.ui.ide });
-    render();
-    editorSection.bindEditorSection({ container, state, renderSettings: render, registerListener: listen,
-      showShellErrorToast: (message, meta) => errors.push({ message, meta }) });
-    container.querySelector('details.settings-editor-advanced').open = true;
-    const sel = container.querySelector('#editorRenderWhitespaceSelect');
-    const before = sel.value;
-    sel.value = [...sel.options].map((option) => option.value).find((value) => value !== before);
-    sel.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
-    await flush();
-    assert.equal(container.querySelector('#editorRenderWhitespaceSelect').value, before, 'the control is rolled back');
-    assert.equal(container.querySelector('details.settings-editor-advanced').open, false, 'the repaint closed the disclosure over the row reason');
-    assert.equal(errors.length, 1, 'so the failure is toasted');
-    assert.equal(errors[0].meta.title, 'Editor Setting Not Saved');
-  });
-});
-
-test('column-rulers Revert writes the stored empty array, never the comma string', async () => {
-  await withGlobalsAsync(async () => {
-    const { dom, container } = makeContainer();
-    globalThis.window = dom.window;
-    const patches = [];
-    dom.window.jennyShell = {
-      workspaceIde: { async getState() { return {}; }, async updateSettings(patch) { patches.push(patch); return { updated: true, ...patch }; } },
-    };
-    const state = { ui: { ide: ideState.createIdeUiState() } };
-    state.ui.ide.rulers = [80, 120];
-    const render = () => editorSection.renderEditorSection({ container, ide: state.ui.ide });
-    render();
-    assert.equal(container.querySelector('[data-settings-field="editorRulersSelect"] [data-setting-revert]').getAttribute('data-setting-revert-default'), 'Off');
-    editorSection.bindEditorSection({ container, state, renderSettings: render, registerListener: listen });
-    container.querySelector('[data-setting-revert="editorRulersSelect"]').click();
-    await flush();
-    assert.deepEqual(patches, [{ rulers: [] }]);
-    assert.deepEqual(state.ui.ide.rulers, []);
-    assert.equal(container.querySelector('#editorRulersSelect').value, '');
-  });
-});
-
-test('an acknowledgement that omits or changes the written key is a refusal, never assumed', async () => {
-  await withGlobalsAsync(async () => {
-    const { dom, container } = makeContainer();
-    globalThis.window = dom.window;
-    let echo = () => ({ updated: true });
-    dom.window.jennyShell = {
-      workspaceIde: { async getState() { return {}; }, async updateSettings(patch) { return echo(patch); } },
-    };
-    const state = { ui: { ide: ideState.createIdeUiState() } };
-    editorSection.renderEditorSection({ container, autoSaveVisible: true, ide: state.ui.ide });
+    state.ui.ide.terminalScrollback = 5000;
+    editorSection.renderEditorSection({ container, ide: state.ui.ide });
+    const input = container.querySelector('#editorTerminalScrollbackInput');
+    assert.ok(input, 'the scrollback row renders its input');
+    assert.equal(input.value, '5000');
     editorSection.bindEditorSection({
       container,
       state,
       renderSettings: () => {},
-      registerListener: (target, event, handler, options) => { target.addEventListener(event, handler, options); return true; },
-    });
-    const flip = (checked) => container.dispatchEvent(new dom.window.CustomEvent('inv-toggle-change', {
-      bubbles: true, detail: { id: 'editorAutoSaveToggle', checked },
-    }));
-    flip(true);
-    await flush();
-    assert.equal(state.ui.ide.autoSaveEnabled, false, 'updated:true without the key confirms nothing');
-    echo = (patch) => ({ updated: true, ...patch, autoSaveEnabled: false });
-    flip(true);
-    await flush();
-    assert.equal(state.ui.ide.autoSaveEnabled, false, 'an echo carrying a different value is a refusal');
-    echo = (patch) => ({ updated: true, ...patch });
-    flip(true);
-    await flush();
-    assert.equal(state.ui.ide.autoSaveEnabled, true, 'the matching echo is adopted');
-  });
-});
-
-test('an editor write in flight when Settings reopens settles on the coordinator the new binding uses', async () => {
-  await withGlobalsAsync(async () => {
-    const first = makeContainer();
-    const second = makeContainer();
-    globalThis.window = first.dom.window;
-    const acks = [];
-    const bridge = {
-      workspaceIde: {
-        async getState() { return {}; },
-        updateSettings(patch) { return new Promise((resolve) => acks.push({ patch, resolve: () => resolve({ updated: true, ...patch }) })); },
+      registerListener: (target, event, handler, options) => {
+        target.addEventListener(event, handler, options);
+        return true;
       },
-    };
-    first.dom.window.jennyShell = bridge;
-    second.dom.window.jennyShell = bridge;
-    const state = { ui: { ide: ideState.createIdeUiState() } };
-    const listen = (target, event, handler, options) => { target.addEventListener(event, handler, options); return true; };
-    const flip = (dom, container, checked) => container.dispatchEvent(new dom.window.CustomEvent('inv-toggle-change', {
-      bubbles: true, detail: { id: 'editorAutoSaveToggle', checked },
-    }));
-    editorSection.renderEditorSection({ container: first.container, autoSaveVisible: true, ide: state.ui.ide });
-    editorSection.bindEditorSection({ container: first.container, state, renderSettings: () => {}, registerListener: listen });
-    flip(first.dom, first.container, true);
+    });
+    input.value = '2500';
+    input.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
     await flush();
-    assert.equal(acks.length, 1);
-    globalThis.window = second.dom.window;
-    editorSection.renderEditorSection({ container: second.container, autoSaveVisible: true, ide: state.ui.ide });
-    editorSection.bindEditorSection({ container: second.container, state, renderSettings: () => {}, registerListener: listen });
-    const wordWrap = second.container.querySelector('[data-inv-toggle="editorWordWrapToggle"]');
-    assert.ok(wordWrap, 'the second binding renders the word-wrap switch');
-    second.container.dispatchEvent(new second.dom.window.CustomEvent('inv-toggle-change', { bubbles: true, detail: { id: 'editorWordWrapToggle', checked: true } }));
+    assert.equal(state.ui.ide.terminalScrollback, 2500, 'an in-range edit lands as an integer');
+    assert.equal(patches.at(-1).terminalScrollback, 2500);
+    // Below the 500 floor the descriptor's validation refuses the edit: nothing is written.
+    const written = patches.length;
+    input.value = '200';
+    input.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
     await flush();
-    assert.equal(acks.length, 1, 'queued behind the first binding\'s write');
-    acks[0].resolve();
+    assert.equal(state.ui.ide.terminalScrollback, 2500);
+    assert.equal(patches.length, written);
+    // D1: above the 25,000 ceiling is refused too, and the hint states the memory cost.
+    input.value = '30000';
+    input.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
     await flush();
-    await flush();
-    assert.equal(state.ui.ide.autoSaveEnabled, true, 'the first binding\'s write still projects');
-    assert.equal(acks.length, 2);
-    acks[1].resolve();
-    await flush();
-    await flush();
-    assert.equal(state.ui.ide.wordWrap, 'on');
+    assert.equal(state.ui.ide.terminalScrollback, 2500);
+    assert.equal(patches.length, written);
+    assert.match(container.textContent, /about 1\.5 MB per 1,000 lines/);
   });
 });

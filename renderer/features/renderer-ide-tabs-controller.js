@@ -1,9 +1,11 @@
 /* renderer/features/renderer-ide-tabs-controller.js - Workspace IDE tab-strip
- * interaction layer (W5): click/middle-click/keyboard activation, the tab
- * context menu (compare, bulk closes, copy path, reveal, send-to-Jenny), tab
- * cycling for the controller's view-level shortcuts, and HTML5 drag-reorder.
- * Pure event/intent module - tab STATE stays in renderer-ide-state via the
- * controller callbacks. */
+ * interaction layer (W5): the tab context menu (compare, keep open, bulk closes,
+ * copy path, reveal, send-to-Jenny), the open-tabs list, tab cycling for the
+ * controller's view-level shortcuts, drag-reorder and the editor-stage tree
+ * drop. The strip's own DOM events (click, middle-click, double-click, arrows,
+ * wheel, drag) come from the shared renderer-ide-tab-strip-events layer, the
+ * same one every editor group uses. Pure event/intent module - tab STATE stays
+ * in renderer-ide-state via the controller callbacks. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory();
@@ -20,19 +22,6 @@
   // mime, which is what keeps OS/external file drops out. Wire contract - the
   // tree's setData() string must match byte-for-byte; the tests pin both sides.
   const TREE_DRAG_MIME = 'application/x-jenny-tree-path';
-  // A file tab moving between editor groups (row 40 W5); the group views share it.
-  const TAB_MIME = 'application/x-jenny-editor-tab';
-
-  function readTabPayload(event) {
-    try {
-      const value = JSON.parse(event.dataTransfer?.getData?.(TAB_MIME) || 'null');
-      return value && typeof value.path === 'string' && value.path ? { path: value.path, fromGroup: String(value.fromGroup || '') } : null;
-    } catch (_error) {
-      return null;
-    }
-  }
-
-  const hasTabPayload = (event) => event.dataTransfer?.types?.includes?.(TAB_MIME) === true;
 
   function resolveModule(globalName, requirePath) {
     if (globalRef[globalName]) {
@@ -58,6 +47,10 @@
       closeOthers = noop,
       closeAll = noop,
       closeSaved = noop,
+      closeToRight = noop,
+      reopenClosedTab,
+      // (surface): the x on a Preview / File Map surface tab.
+      onCloseSurface = noop,
       openUnsavedCompare = noop,
       isDirty = () => false,
       isDiffTabId = () => false,
@@ -73,13 +66,16 @@
     } = callbacks;
     const contextMenu = resolveModule('inventoryContextMenu', '../inventory/context-menu');
     const tabsModule = resolveModule('rendererIdeTabs', './renderer-ide-tabs');
+    // Tab drag payloads between editor groups (row 40 W5) share one format.
+    const { readTabPayload, hasTabPayload } = tabsModule;
+    const stripEvents = resolveModule('rendererIdeTabStripEvents', './renderer-ide-tab-strip-events');
     // Tab STATE mutations (incl. the pinned-first ordering invariant) live in
     // renderer-ide-state; resolve it the same way as the sibling tabs module.
     const ideState = resolveModule('rendererIdeState', './renderer-ide-state');
 
     let bound = null;
     let boundStage = null;
-    let draggedPath = '';
+    let events = null;
 
     // The primary strip's tabs: secondary editor groups (row 40 W5) own theirs.
     function primaryTabs() {
@@ -106,63 +102,45 @@
       return true;
     }
 
-    // "Show all tabs" overflow menu: a quick-pick built entirely from the open
-    // tab list (no new data plumbing). Each row reflects active/dirty state and
-    // activates its tab on click - so an overflowed, scrolled-off tab stays
-    // reachable.
-    function showAllTabsMenu(triggerEl) {
-      if (typeof contextMenu?.show !== 'function') {
+    // The open-tabs list (the "+N" chip and the More button): one row per primary
+    // tab with its folder, dirty hint and the active check, plus the bulk closes
+    // and Reopen Closed Tab. Anchored on the trigger so it follows the strip.
+    function showAllTabsMenu(anchorEl) {
+      if (typeof contextMenu?.show !== 'function' || typeof stripEvents.buildOpenTabsMenuItems !== 'function') {
         return;
       }
       const ide = getIde();
-      const tabs = primaryTabs();
-      if (!tabs.length) {
+      const items = stripEvents.buildOpenTabsMenuItems({
+        tabs: primaryTabs(),
+        activePath: ide.activeTabPath,
+        isDirty: (path) => !isReviewSurface(path) && isDirty(path),
+        displayName: tabsModule.tabDisplayName || ((tab) => String(tab.path).split('/').pop() || String(tab.path)),
+        folderOf: (tab) => (isReviewSurface(tab.path) ? '' : String(tab.path).split('/').slice(0, -1).join('/')),
+        onActivate: activateTab,
+        onCloseSaved: () => closeSaved(),
+        onCloseAll: () => closeAll(),
+        onReopenClosed: typeof reopenClosedTab === 'function' ? () => reopenClosedTab() : undefined,
+      });
+      if (!items.length) {
         return;
       }
-      const rect = typeof triggerEl?.getBoundingClientRect === 'function'
-        ? triggerEl.getBoundingClientRect()
-        : { left: 0, bottom: 0 };
-      const items = tabs.map((tab) => {
-        const path = tab.path;
-        const isReviewSurface = isDiffTabId(path) || isPreviewTabId(path);
-        const active = path === ide.activeTabPath;
-        const dirty = !isReviewSurface && isDirty(path);
-        return {
-          // Dirty dot prefix + an "active" hint convey state without new menu API.
-          label: `${dirty ? '● ' : ''}${tabsModule.tabDisplayName(tab)}`,
-          shortcutHint: active ? 'active' : '',
-          action: () => activateTab(path),
-        };
-      });
       contextMenu.show({
         rootEl: getDom().ideView || null,
-        anchorX: rect.left,
-        anchorY: rect.bottom,
+        anchorEl,
         items,
-        onActionError: (error) => {
-      showShellErrorToast(toErrorMessage(error, jt('ide.tabs.actionFailed', 'The tab action failed.')), {
-            title: jt('ide.explorer.workspace', 'Workspace'),
-            dedupeKey: 'ide:tab:menu',
-          });
-        },
+        onActionError: onMenuActionError,
       });
     }
 
-    // ── Bulk closes ──
-    // Path selection + the batched dirty-confirm live in the controller's close
-    // orchestrator; these are thin intent delegates so one prompt covers the
-    // whole batch (rather than one prompt per dirty tab).
-
-    function closeOtherTabs(path) {
-      closeOthers(path);
+    function isReviewSurface(path) {
+      return isDiffTabId(path) || isPreviewTabId(path);
     }
 
-    function closeAllTabs() {
-      closeAll();
-    }
-
-    function closeSavedTabs() {
-      closeSaved();
+    function onMenuActionError(error) {
+      showShellErrorToast(toErrorMessage(error, jt('ide.tabs.actionFailed', 'The tab action failed.')), {
+        title: jt('ide.explorer.workspace', 'Workspace'),
+        dedupeKey: 'ide:tab:menu',
+      });
     }
 
     // ── Keyboard helpers (invoked from the controller's view keydown) ──
@@ -190,95 +168,91 @@
 
     // ── Drag reorder ──
 
-    // Moves `path` to sit before (or after, when placeAfter) `targetPath`.
-    function reorderTabs(path, targetPath, { placeAfter = false } = {}) {
+    // Moves `path` to `index` among the primary tabs (the list without `path`),
+    // clamped into the tab's own pinned / unpinned partition so a drop can never
+    // break the pinned-first order. Group tabs keep their place in openTabs.
+    function reorderTabToIndex(path, index) {
       const ide = getIde();
-      const fromIndex = ide.openTabs.findIndex((tab) => tab.path === path);
-      const targetIndex = ide.openTabs.findIndex((tab) => tab.path === targetPath);
-      if (fromIndex === -1 || targetIndex === -1 || path === targetPath) {
+      const all = ide.openTabs || [];
+      const moved = all.find((tab) => tab.path === path && !tab.group);
+      if (!moved) {
         return false;
       }
-      // Reorder stays within the pinned / unpinned group: a pinned tab can't be
-      // dragged past an unpinned one (and vice-versa), so the pinned-first
-      // clamp is never violated by a drop.
-      const fromPinned = ide.openTabs[fromIndex].pinned === true;
-      const targetPinned = ide.openTabs[targetIndex].pinned === true;
-      if (fromPinned !== targetPinned) {
+      const others = all.filter((tab) => tab !== moved && !tab.group);
+      const pinnedCount = others.filter((tab) => tab.pinned === true).length;
+      const [low, high] = moved.pinned === true ? [0, pinnedCount] : [pinnedCount, others.length];
+      const target = Math.min(high, Math.max(low, Number.isInteger(index) ? index : high));
+      const rest = all.filter((tab) => tab !== moved);
+      const anchor = others[target] || null;
+      const lastOther = others[others.length - 1] || null;
+      // With no anchor the tab lands after the last primary tab, but an unpinned
+      // tab also stays after every pinned tab (a secondary group's included).
+      const lastPinned = moved.pinned === true ? -1 : rest.reduce((last, tab, at) => (tab.pinned === true ? at : last), -1);
+      const insertAt = anchor
+        ? rest.indexOf(anchor)
+        : Math.max(lastOther ? rest.indexOf(lastOther) + 1 : rest.length, lastPinned + 1);
+      rest.splice(insertAt, 0, moved);
+      if (rest.every((tab, at) => tab === all[at])) {
         return false;
       }
-      const [moved] = ide.openTabs.splice(fromIndex, 1);
-      let insertIndex = ide.openTabs.findIndex((tab) => tab.path === targetPath);
-      if (placeAfter) {
-        insertIndex += 1;
-      }
-      ide.openTabs.splice(insertIndex, 0, moved);
+      ide.openTabs = rest;
       renderTabs();
       schedulePersist();
       return true;
     }
 
-    // ── Event handlers ──
+    // A preview tab stops being replaceable; true only when it was one.
+    function keepTabOpen(path) {
+      if (ideState?.keepTabOpen?.(getIde(), path) !== true) {
+        return false;
+      }
+      renderTabs();
+      schedulePersist();
+      return true;
+    }
 
-    function handleClick(event) {
-      const overflowTrigger = event.target.closest('[data-ide-tab-overflow]');
-      if (overflowTrigger) {
-        showAllTabsMenu(overflowTrigger);
-        return;
-      }
-      const closeTarget = event.target.closest('[data-ide-tab-close]');
-      if (closeTarget) {
-        closeTab(closeTarget.dataset.ideTabClose);
-        return;
-      }
-      const tabTarget = event.target.closest('[data-ide-tab-path]');
-      if (tabTarget) {
-        activateTab(tabTarget.dataset.ideTabPath);
+    // ── Strip intents (the events themselves live in the shared strip-events layer) ──
+
+    // A preview tab keeps its place and stops being replaceable; any other file tab pins.
+    function handleDoubleClick(path) {
+      if (!keepTabOpen(path)) {
+        togglePin(path);
       }
     }
 
-    // Double-click a tab to toggle its pinned state (the close control is a
-    // sibling of the label, so a dbl-click on × never resolves a tab path here).
-    function handleDblClick(event) {
-      const tabTarget = event.target.closest('[data-ide-tab-path]');
-      if (!tabTarget) {
+    // The own strip reorders; a tab dragged in from a group moves into the primary group.
+    function handleStripDrop(payload, index) {
+      if (payload.fromGroup) {
+        onDropTab(payload, index);
         return;
       }
-      togglePin(tabTarget.dataset.ideTabPath || '');
+      reorderTabToIndex(payload.path, index);
     }
 
-    // Middle-click close (auxclick, not mousedown, to skip autoscroll).
-    function handleAuxClick(event) {
-      if (event.button !== 1) {
+    function openTabMenu(path, anchor) {
+      if (typeof contextMenu?.show !== 'function') {
         return;
       }
-      const tabTarget = event.target.closest('[data-ide-tab-path]');
-      if (tabTarget) {
-        event.preventDefault();
-        closeTab(tabTarget.dataset.ideTabPath);
-      }
-    }
-
-    function handleContextMenu(event) {
-      const tabTarget = event.target.closest('[data-ide-tab-path]');
-      if (!tabTarget || typeof contextMenu?.show !== 'function') {
-        return;
-      }
-      const path = tabTarget.dataset.ideTabPath || '';
-      event.preventDefault();
       // Diff/preview review surfaces keep the bulk closes but skip the
       // file-only extras (compare, copy path, reveal, preview, send).
-      const isReviewSurface = isDiffTabId(path) || isPreviewTabId(path);
+      const reviewSurface = isReviewSurface(path);
+      const paths = tabPaths();
       const items = [];
-      if (!isReviewSurface && isDirty(path)) {
+      if (!reviewSurface && isDirty(path)) {
         items.push({ label: jt('ide.tabs.compareWithSaved', 'Compare with Saved'), action: () => openUnsavedCompare(path) });
+      } else if (ideState?.getTab?.(getIde(), path)?.transientPreview === true) {
+        items.push({ label: jt('ide.tabs.keepOpen', 'Keep Open'), action: () => keepTabOpen(path) });
       }
+      const rightOfPath = primaryTabs().slice(paths.indexOf(path) + 1);
       items.push(
         { label: jt('common.close', 'Close'), action: () => closeTab(path) },
-        { label: jt('ide.tabs.closeOthers', 'Close Others'), action: () => closeOtherTabs(path), disabled: tabPaths().length < 2 },
-        { label: jt('ide.tabs.closeSaved', 'Close Saved'), action: () => closeSavedTabs() },
-        { label: jt('ide.tabs.closeAll', 'Close All'), action: () => closeAllTabs() }
+        // Bulk closes go to the close orchestrator, so one prompt covers the batch.
+        { label: jt('ide.tabs.closeOthers', 'Close Others'), action: () => closeOthers(path), disabled: paths.length < 2 },
+        { label: jt('ide.tabs.closeToRight', 'Close to the Right'), action: () => closeToRight(path), disabled: !rightOfPath.some((entry) => entry.pinned !== true) },
+        { label: jt('ide.tabs.closeSaved', 'Close Saved'), action: () => closeSaved() },
+        { label: jt('ide.tabs.closeAll', 'Close All'), action: () => closeAll() }
       );
-      if (!isReviewSurface) {
+      if (!reviewSurface) {
         // Pin/Unpin clamps a file tab to the left of the strip (compact, hard to
         // close by accident, spared by Close Others / Close All).
         items.push(
@@ -298,145 +272,10 @@
       }
       contextMenu.show({
         rootEl: getDom().ideView || null,
-        anchorX: event.clientX,
-        anchorY: event.clientY,
+        ...anchor,
         items,
-        onActionError: (error) => {
-      showShellErrorToast(toErrorMessage(error, jt('ide.tabs.actionFailed', 'The tab action failed.')), {
-            title: jt('ide.explorer.workspace', 'Workspace'),
-            dedupeKey: 'ide:tab:menu',
-          });
-        },
+        onActionError: onMenuActionError,
       });
-    }
-
-    // Roving arrow-key focus across the tab strip (WAI-ARIA tabs, manual
-    // activation: arrows move focus, the tabs are real buttons so Enter and
-    // Space activate natively through the click handler).
-    function handleKeydown(event) {
-      const key = event.key;
-      if (key !== 'ArrowLeft' && key !== 'ArrowRight' && key !== 'Home' && key !== 'End') {
-        return;
-      }
-      const strip = getDom().ideTabStrip || null;
-      const tabs = strip ? [...strip.querySelectorAll('[data-ide-tab-path]')] : [];
-      if (!tabs.length) {
-        return;
-      }
-      const current = event.target?.closest?.('[data-ide-tab-path]');
-      const index = Math.max(0, tabs.indexOf(current));
-      const next = key === 'Home'
-        ? 0
-        : key === 'End'
-          ? tabs.length - 1
-          : key === 'ArrowLeft'
-            ? (index - 1 + tabs.length) % tabs.length
-            : (index + 1) % tabs.length;
-      event.preventDefault();
-      tabs[next].focus();
-    }
-
-    function clearDropIndicators(strip) {
-      for (const tab of strip?.querySelectorAll?.('.ide-tab--drop-before, .ide-tab--drop-after') || []) {
-        tab.classList.remove('ide-tab--drop-before', 'ide-tab--drop-after');
-      }
-    }
-
-    function dropPlacement(event, tabEl) {
-      const rect = typeof tabEl.getBoundingClientRect === 'function'
-        ? tabEl.getBoundingClientRect()
-        : null;
-      if (!rect || !rect.width) {
-        return false;
-      }
-      return event.clientX > rect.left + rect.width / 2;
-    }
-
-    function handleDragStart(event) {
-      const tabEl = event.target?.closest?.('[data-ide-tab]');
-      if (!tabEl) {
-        return;
-      }
-      draggedPath = tabEl.dataset.ideTab || '';
-      event.dataTransfer?.setData?.('text/plain', draggedPath);
-      event.dataTransfer?.setData?.(TAB_MIME, JSON.stringify({ path: draggedPath, fromGroup: '' }));
-      if (event.dataTransfer) {
-        event.dataTransfer.effectAllowed = 'move';
-      }
-      tabEl.classList.add('ide-tab--dragging');
-      // A tab dropped into another group leaves this strip before its dragend fires, and
-      // dragend on a detached tab never bubbles here: listen on the tab itself too, or the
-      // stale draggedPath makes the strip ignore the next tab dragged in from a group.
-      tabEl.addEventListener?.('dragend', handleDragEnd, { once: true });
-    }
-
-    // Where a tab dropped on the primary strip lands: before the first tab whose
-    // midpoint is past the pointer (mirrored right-to-left).
-    function dropIndex(event, strip) {
-      const tabs = [...(strip?.querySelectorAll?.('[data-ide-tab]') || [])];
-      const rtl = (strip?.closest?.('[dir]')?.getAttribute('dir') || '').toLowerCase() === 'rtl';
-      return tabs.filter((tab) => {
-        const rect = tab.getBoundingClientRect?.();
-        const mid = rect ? rect.left + rect.width / 2 : 0;
-        return rtl ? event.clientX < mid : event.clientX > mid;
-      }).length;
-    }
-
-    function handleDragOver(event) {
-      if (!draggedPath) {
-        if (hasTabPayload(event)) {
-          event.preventDefault(); // a tab from another group may land here
-          getDom().ideTabStrip?.setAttribute('data-ide-drop', 'tabs');
-        }
-        return;
-      }
-      const tabEl = event.target?.closest?.('[data-ide-tab]');
-      const strip = getDom().ideTabStrip || null;
-      clearDropIndicators(strip);
-      if (!tabEl || tabEl.dataset.ideTab === draggedPath) {
-        return;
-      }
-      event.preventDefault();
-      if (event.dataTransfer) {
-        event.dataTransfer.dropEffect = 'move';
-      }
-      tabEl.classList.add(dropPlacement(event, tabEl) ? 'ide-tab--drop-after' : 'ide-tab--drop-before');
-    }
-
-    function handleDrop(event) {
-      const tabEl = event.target?.closest?.('[data-ide-tab]');
-      const strip = getDom().ideTabStrip || null;
-      clearDropIndicators(strip);
-      strip?.removeAttribute?.('data-ide-drop');
-      const incoming = draggedPath ? null : readTabPayload(event);
-      if (incoming && incoming.fromGroup) {
-        event.preventDefault();
-        onDropTab(incoming, dropIndex(event, strip));
-        return;
-      }
-      if (!draggedPath || !tabEl) {
-        return;
-      }
-      event.preventDefault();
-      reorderTabs(draggedPath, tabEl.dataset.ideTab || '', {
-        placeAfter: dropPlacement(event, tabEl),
-      });
-      draggedPath = '';
-    }
-
-    // A tab from another group leaving the strip takes its drop mark along (its own
-    // dragend fires on the source group, not here).
-    function handleDragLeave(event) {
-      const strip = getDom().ideTabStrip || null;
-      if (strip && !strip.contains(event.relatedTarget)) strip.removeAttribute('data-ide-drop');
-    }
-
-    function handleDragEnd() {
-      const strip = getDom().ideTabStrip || null;
-      clearDropIndicators(strip);
-      strip?.removeAttribute?.('data-ide-drop');
-      strip?.querySelector?.('.ide-tab--dragging')?.classList.remove('ide-tab--dragging');
-      draggedPath = '';
     }
 
     // ── Editor-stage drop (open a file dragged from the tree) ──
@@ -446,7 +285,7 @@
     // suppressor on window claims (and blocks) them. Tab-reorder drags hover the
     // strip, not the stage, and never set the mime either.
     function stageHasTreePayload(event) {
-      return event.dataTransfer?.types?.includes?.(TREE_DRAG_MIME) === true || (!draggedPath && hasTabPayload(event));
+      return event.dataTransfer?.types?.includes?.(TREE_DRAG_MIME) === true || (events?.isDragging() !== true && hasTabPayload(event));
     }
 
     function handleStageDragOver(event) {
@@ -474,7 +313,7 @@
 
     function handleStageDrop(event) {
       getDom().ideEditorStage?.classList.remove('ide-editor-stage--drop-active');
-      const incoming = draggedPath ? null : readTabPayload(event);
+      const incoming = events?.isDragging() === true ? null : readTabPayload(event);
       if (incoming && incoming.fromGroup) {
         event.preventDefault();
         onDropTab(incoming, tabPaths().length); // a tab from another group joins at the end
@@ -492,18 +331,24 @@
 
     function bindEvents() {
       const strip = getDom().ideTabStrip || null;
-      if (strip && !bound) {
+      if (strip && !bound && typeof stripEvents.createIdeTabStripEvents === 'function') {
         bound = strip;
-        strip.addEventListener('click', handleClick);
-        strip.addEventListener('dblclick', handleDblClick);
-        strip.addEventListener('auxclick', handleAuxClick);
-        strip.addEventListener('contextmenu', handleContextMenu);
-        strip.addEventListener('keydown', handleKeydown);
-        strip.addEventListener('dragstart', handleDragStart);
-        strip.addEventListener('dragover', handleDragOver);
-        strip.addEventListener('drop', handleDrop);
-        strip.addEventListener('dragleave', handleDragLeave);
-        strip.addEventListener('dragend', handleDragEnd);
+        // The tabbar also holds the count chip and the toolbar: the stage switch
+        // owns its own toolbar clicks, so no onEditorAction here.
+        events = stripEvents.createIdeTabStripEvents({
+          root: strip.closest('.ide-tabbar') || strip,
+          getStrip: () => getDom().ideTabStrip || strip,
+          groupId: '',
+          callbacks: {
+            onActivate: (path) => activateTab(path),
+            onClose: (path) => closeTab(path),
+            onCloseSurface: (surface) => onCloseSurface(surface),
+            onDoubleClick: handleDoubleClick,
+            onContextMenu: openTabMenu,
+            onOverflow: showAllTabsMenu,
+            onDropTab: handleStripDrop,
+          },
+        });
       }
       // The editor stage is a distinct element from the strip - bind it
       // independently so a missing strip never skips the drop target (and v.v.).
@@ -517,52 +362,39 @@
     }
 
     function resetForRoot() {
-      draggedPath = '';
+      events?.resetDrag();
       getDom().ideEditorStage?.classList.remove('ide-editor-stage--drop-active');
     }
 
     function dispose() {
-      if (bound) {
-        bound.removeEventListener('click', handleClick);
-        bound.removeEventListener('dblclick', handleDblClick);
-        bound.removeEventListener('auxclick', handleAuxClick);
-        bound.removeEventListener('contextmenu', handleContextMenu);
-        bound.removeEventListener('keydown', handleKeydown);
-        bound.removeEventListener('dragstart', handleDragStart);
-        bound.removeEventListener('dragover', handleDragOver);
-        bound.removeEventListener('drop', handleDrop);
-        bound.removeEventListener('dragleave', handleDragLeave);
-        bound.removeEventListener('dragend', handleDragEnd);
-        bound = null;
-      }
+      events?.dispose();
+      events = null;
+      bound = null;
       if (boundStage) {
         boundStage.removeEventListener('dragover', handleStageDragOver);
         boundStage.removeEventListener('dragleave', handleStageDragLeave);
         boundStage.removeEventListener('drop', handleStageDrop);
         boundStage = null;
       }
-      draggedPath = '';
     }
 
     return {
       bindEvents,
       closeActiveTab,
-      closeAllTabs,
-      closeOtherTabs,
-      closeSavedTabs,
       cycleTab,
       dispose,
       handleStageDragOver,
       handleStageDrop,
       handleStageDragLeave,
-      reorderTabs,
+      keepTabOpen,
+      reorderTabToIndex,
       resetForRoot,
+      showAllTabsMenu,
       togglePin,
     };
   }
 
   return {
-    TAB_MIME,
     createIdeTabsController,
   };
 });

@@ -10,6 +10,9 @@
   const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn)
     || function (key, count, params, one, other) { return jt.call(null, key, count === 1 ? one : other, params); };
   const MAX_RESTORED_TABS = 30;
+  // The PDF page/zoom validator is shared with the reopen-closed-tab stack.
+  const { normalizePdfView } = globalThis.rendererIdeClosedTabs
+    || (typeof require === 'function' ? require('./renderer-ide-closed-tabs') : {});
 
   function createIdeTabRestore(deps = {}) {
     const { editorHost, getDom = () => ({}), getWorkspaceFsApi = () => null, registerCleanup = () => {} } = deps;
@@ -42,7 +45,9 @@
         for (const key of ['line', 'top']) {
           if (Number.isInteger(lines?.[key]) && lines[key] >= 1) entry[key] = lines[key];
         }
-        return entry;
+        // PDF tabs: the live pane position, else the saved one (same fallback as lines).
+        const pdf = editorHost?.getPdfViewPosition?.(tab.path) || saved;
+        return Object.assign(entry, normalizePdfView?.(pdf));
       });
       return { ...snapshot, openTabs, activeTabPath: openTabs.some((tab) => tab.path === snapshot.activeTabPath) ? snapshot.activeTabPath : '' };
     }
@@ -96,6 +101,12 @@
 
     function applyPosition(tab) {
       if (!tab?.restore) return;
+      // A PDF tab carries page/zoom and never line/top.
+      const { page, zoom } = tab.restore;
+      if (page !== undefined || zoom !== undefined) {
+        if (editorHost?.restorePdfView?.(tab.path, { page, zoom }) === true) delete tab.restore;
+        return;
+      }
       const { top = 1, line = 1 } = tab.restore;
       const apply = () => {
         if (editorHost?.revealTopLine?.(tab.path, top, line) === true) delete tab.restore;
@@ -140,6 +151,7 @@
         };
         view.addEventListener('click', onTabAction);
         registerCleanup(() => view.removeEventListener('click', onTabAction));
+        registerCleanup(() => { strip?.remove(); strip = null; });
       }
       strip.hidden = missing.size === 0;
       if (strip.hidden) return;

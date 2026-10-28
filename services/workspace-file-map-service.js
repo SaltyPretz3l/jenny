@@ -101,6 +101,9 @@ class WorkspaceFileMapService {
     scanBudgets = null,
     versionedFileServiceProvider = null,
     logger = null,
+    // Row 77: whether a scan also drafts the Components view (a boolean or a
+    // provider read per scan, e.g. the `file_map_components` flag).
+    componentsEnabled = true,
   } = {}) {
     if (!ideService) {
       throw new TypeError('WorkspaceFileMapService requires ideService');
@@ -116,6 +119,9 @@ class WorkspaceFileMapService {
       ? versionedFileServiceProvider
       : () => this._ideService.versionedFileService || null;
     this._logger = typeof logger === 'function' ? logger : null;
+    this._componentsEnabled = typeof componentsEnabled === 'function'
+      ? componentsEnabled
+      : () => componentsEnabled !== false;
     this._workerBuilder = null;
     if (typeof graphBuilder === 'function') {
       this._graphBuilder = graphBuilder;
@@ -473,6 +479,7 @@ class WorkspaceFileMapService {
       cochangeCommits: freezeCochangeCommits(cochangeScope.commits),
       tsconfigAliases,
       budgets: Object.freeze({ ...GRAPH_BUDGETS, maxNodes: this._scanBudgets.maxFiles }),
+      components: this._componentsEnabled() === true,
     });
     const buildAbort = linkedAbortSignal(operation.signal, this._lifecycleController.signal);
     let graph;

@@ -18,6 +18,7 @@ import hashlib
 import logging
 import os
 import threading
+import time
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,6 +26,8 @@ from typing import Any, Callable
 
 from sidecar.ai.config import read_environment_value
 from sidecar.ai.tools.builtins import pdf_ocr_rapid
+from sidecar.ai.tools.error_paths import redact_error_paths
+from sidecar.ai.tools.sanitization import sanitize_tool_output
 from sidecar.runtime.diagnostics import log_event
 
 logger = logging.getLogger(__name__)
@@ -48,6 +51,8 @@ OCR_RENDER_DPI = 200
 OCR_MAX_PIXELS = 50_000_000
 OCR_MAX_RENDER_DPI = max(OCR_RENDER_DPI, pdf_ocr_rapid.RAPID_RENDER_DPI_HIGH)
 OCR_LANGUAGE = "eng"
+# Model-facing cap for one ocr_uncertain token or its alternate reading.
+OCR_UNCERTAIN_TOKEN_CHARS = 64
 
 _download_lock = threading.Lock()
 _DOWNLOAD_CHUNK_BYTES = 256 * 1024
@@ -68,10 +73,6 @@ class OcrPageResult:
 
 def pdf_ocr_enabled() -> bool:
     return read_environment_value("JENNY_ENABLE_PDF_OCR", "1") != "0"
-
-
-def page_has_text_layer(text: str) -> bool:
-    return bool(text and text.strip())
 
 
 def default_tessdata_dir() -> Path:
@@ -134,7 +135,8 @@ def _download_english_tessdata(
             partial.unlink(missing_ok=True)
         except OSError:
             pass
-        return f"{type(exc).__name__}: {exc}"[:200]
+        # The reason reaches the model through the OCR note: no local paths.
+        return redact_error_paths(f"{type(exc).__name__}: {exc}")[:200]
     return ""
 
 
@@ -228,15 +230,26 @@ def ocr_page_text(page: Any, *, tessdata_dir: Path) -> str:
     return str(textpage.extractText() or "")
 
 
+def _bounded_token(text: str) -> str:
+    """An OCR token as the page lines carry it (sanitized), capped for the model."""
+
+    return sanitize_tool_output(text, max_chars=OCR_UNCERTAIN_TOKEN_CHARS, tool_name="pdf_ocr")
+
+
 @dataclass
 class PdfOcrSession:
     """Per-read OCR context: resolves tessdata at most once, records outcome."""
 
     enabled: bool = True
+    # grep_search turns this off: a search never waits on a model download.
+    allow_tessdata_download: bool = True
     _resolution: TessdataResolution | None = None
     used_pages: list[int] | None = None
     unavailable_reason: str = ""
     rapid_unavailable_reason: str = ""
+    # Time this session spent waiting on the shared RapidOCR engine: its load,
+    # or another caller's recognition holding the call lock.
+    rapid_load_seconds: float = field(default=0.0, init=False)
     engines_used: dict[int, str] = field(default_factory=dict)
     empty_pages: set[int] = field(default_factory=set)
     _engines_attempted: dict[int, list[str]] = field(
@@ -247,6 +260,7 @@ class PdfOcrSession:
     _rapid_engine: Any | None = field(default=None, init=False, repr=False)
     _rapid_load_attempted: bool = field(default=False, init=False, repr=False)
     _rapid_failed: bool = field(default=False, init=False, repr=False)
+    _rapid_transient: bool = field(default=False, init=False, repr=False)
     _rapid_words: dict[int, list[pdf_ocr_rapid.RapidWord]] = field(
         default_factory=dict,
         init=False,
@@ -258,6 +272,17 @@ class PdfOcrSession:
         self.enabled = self.enabled and pdf_ocr_enabled()
         self.used_pages = []
 
+    @property
+    def rapid_transient_failure(self) -> bool:
+        """True after a RapidOCR failure a later read may not repeat.
+
+        That is an engine load failure other than ``ImportError`` (a missing
+        package stays missing) or a page-level recognition error. A Tesseract
+        reading taken because of it is not cached for the process.
+        """
+
+        return self._rapid_transient
+
     def _record_use(self, page_number: int, engine: str) -> None:
         assert self.used_pages is not None
         self.used_pages.append(page_number)
@@ -267,16 +292,20 @@ class PdfOcrSession:
         if self._rapid_load_attempted:
             return self._rapid_engine
         self._rapid_load_attempted = True
-        try:
-            self._rapid_engine = pdf_ocr_rapid.load_engine()
-        except Exception as exc:  # noqa: BLE001 - RapidOCR is an optional fallback.
+        started = time.monotonic()
+        engine, exc = pdf_ocr_rapid.shared_engine()
+        self.rapid_load_seconds += time.monotonic() - started
+        self._rapid_engine = engine
+        if exc is not None:  # RapidOCR is an optional fallback.
             error_type = type(exc).__name__
             self.rapid_unavailable_reason = (
-                f"{error_type}: {exc}"[:200]
+                redact_error_paths(f"{error_type}: {exc}")[:200]
                 if isinstance(exc, ImportError)
                 else error_type[:120]
             )
             self._rapid_failed = True
+            # A missing package stays missing; any other failure may clear up.
+            self._rapid_transient = not isinstance(exc, ImportError)
             log_event(
                 logger,
                 logging.WARNING,
@@ -300,8 +329,12 @@ class PdfOcrSession:
             engine = self._load_rapid_engine()
             if engine is not None:
                 try:
-                    rapid_words, dpi = pdf_ocr_rapid.recognize_page(engine, page)
+                    waited = time.monotonic()
+                    with pdf_ocr_rapid.ENGINE_CALL_LOCK:
+                        self.rapid_load_seconds += time.monotonic() - waited
+                        rapid_words, dpi = pdf_ocr_rapid.recognize_page(engine, page)
                 except Exception as exc:  # noqa: BLE001 - this page can use Tesseract.
+                    self._rapid_transient = True
                     log_event(
                         logger,
                         logging.WARNING,
@@ -338,7 +371,7 @@ class PdfOcrSession:
                     )
 
         if self._resolution is None:
-            self._resolution = resolve_tessdata()
+            self._resolution = resolve_tessdata(allow_download=self.allow_tessdata_download)
         if self._resolution.directory is None:
             self.unavailable_reason = self._resolution.reason
             return None
@@ -380,11 +413,14 @@ class PdfOcrSession:
             return []
         self._has_uncertain_tokens = True
         try:
-            if self._resolution is None:
-                self._resolution = resolve_tessdata()
-            if self._resolution.directory is None:
-                raise RuntimeError(self._resolution.reason)
-            textpage = ocr_page_textpage(page, tessdata_dir=self._resolution.directory)
+            # A second opinion never downloads the model: it uses one already
+            # present, and a miss is not remembered so a later Tesseract
+            # fallback page may still fetch it.
+            resolution = self._resolution or resolve_tessdata(allow_download=False)
+            if resolution.directory is None:
+                raise RuntimeError(resolution.reason)
+            self._resolution = resolution
+            textpage = ocr_page_textpage(page, tessdata_dir=resolution.directory)
             tess_words = list(page.get_text("words", textpage=textpage))
             uncertain = pdf_ocr_rapid.alt_readings(uncertain, rapid_words, tess_words)
         except Exception as exc:  # noqa: BLE001 - the primary reading remains usable.
@@ -401,21 +437,37 @@ class PdfOcrSession:
         for token in uncertain:
             item: dict[str, object] = {
                 "line": token.line,
-                "token": token.token,
+                "word": _bounded_token(token.token),
                 "score": round(token.score, 2),
             }
             if token.alt is not None:
-                item["alt"] = token.alt
+                item["alt"] = _bounded_token(token.alt)
             fields.append(item)
         return fields
 
-    def recover_text(self, page: Any, *, page_number: int) -> str | None:
-        """Return OCR text for a page without a text layer, or None."""
+    def page_outcome(self, page_number: int) -> tuple[tuple[str, ...], bool]:
+        """``(engines attempted, OCR found no words)`` for a recognized page."""
 
-        textpage = self.recover_textpage(page, page_number=page_number)
-        if textpage is None:
-            return None
-        return str(textpage.extractText() or "")
+        attempts = tuple(self._engines_attempted.get(page_number, ()))
+        return attempts, page_number in self.empty_pages
+
+    def record_cached_page(
+        self,
+        page_number: int,
+        *,
+        engine: str,
+        attempts: tuple[str, ...],
+        empty: bool,
+        uncertain: bool,
+    ) -> None:
+        """Replay a cached page's OCR outcome so ``note`` reads as on first recognition."""
+
+        self._engines_attempted[page_number] = list(attempts)
+        if empty:
+            self.empty_pages.add(page_number)
+        if uncertain:
+            self._has_uncertain_tokens = True
+        self._record_use(page_number, engine)
 
     def _refuse_oversized(self, page: Any, *, page_number: int) -> bool:
         if not page_exceeds_pixel_budget(page):
@@ -431,37 +483,6 @@ class PdfOcrSession:
             data={"page_number": page_number, "max_pixels": OCR_MAX_PIXELS},
         )
         return True
-
-    def recover_textpage(self, page: Any, *, page_number: int) -> Any | None:
-        """Return an OCR textpage for a page without a text layer, or None."""
-
-        if not self.enabled:
-            self.unavailable_reason = "OCR disabled (JENNY_ENABLE_PDF_OCR=0)"
-            return None
-        if self._refuse_oversized(page, page_number=page_number):
-            return None
-        if self._resolution is None:
-            self._resolution = resolve_tessdata()
-        if self._resolution.directory is None:
-            self.unavailable_reason = self._resolution.reason
-            return None
-        try:
-            textpage = ocr_page_textpage(page, tessdata_dir=self._resolution.directory)
-        except Exception as exc:  # noqa: BLE001 — OCR is best-effort recovery.
-            self.unavailable_reason = f"OCR failed: {type(exc).__name__}"[:120]
-            log_event(
-                logger,
-                logging.WARNING,
-                component="tools.pdf_ocr",
-                event="tools.pdf_ocr.page_failed",
-                message="OCR of a PDF page failed.",
-                status="failure",
-                data={"page_number": page_number, "error_type": type(exc).__name__},
-            )
-            return None
-        assert self.used_pages is not None
-        self.used_pages.append(page_number)
-        return textpage
 
     def note(self, *, text_less_pages: list[int]) -> str:
         """One model-visible line explaining what happened to scanned pages."""

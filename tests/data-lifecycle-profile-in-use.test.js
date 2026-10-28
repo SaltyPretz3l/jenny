@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 
 const { detectRunningJenny } = require('../services/data-lifecycle/profile-in-use');
+const { windowsOnly } = require('./helpers/platform-skips');
 
 const NOT_IN_USE = { inUse: false, evidence: '' };
 
@@ -57,11 +58,7 @@ describe('detectRunningJenny on Windows', () => {
     assert.deepEqual(detectRunningJenny(userData, { platform: 'win32', fsImpl }), NOT_IN_USE);
   });
 
-  it('leaves a real, unlocked lockfile untouched', (t) => {
-    if (process.platform !== 'win32') {
-      t.skip('lockfile semantics are Windows-only');
-      return;
-    }
+  it('leaves a real, unlocked lockfile untouched', { skip: windowsOnly('real lockfile open semantics') }, () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-profile-in-use-'));
     try {
       const lockPath = path.join(root, 'lockfile');

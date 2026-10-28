@@ -46,6 +46,8 @@
     let values = { ...DEFAULTS };
     let hydrated = false;
     let hydrating = false;
+    let invalidated = false; // a settings invalidation arrived while a snapshot was in flight
+    let edits = 0; // bumped by every set() from an edit or an acknowledgement
     let unsubscribe = null;
     let disposed = false;
 
@@ -55,24 +57,38 @@
     };
     const emit = () => listeners.forEach((listener) => { try { listener(values); } catch (_error) { /* a listener never breaks the store */ } });
 
-    function set(next) {
+    function merge(next) {
       const merged = { ...values, ...pickBooleans(next) };
       const changed = KEYS.some((key) => merged[key] !== values[key]);
       values = merged;
       if (changed) emit();
       return values;
     }
+    function set(next) {
+      edits += 1;
+      return merge(next);
+    }
 
+    // One snapshot in flight at a time. A snapshot requested before an edit or an
+    // acknowledgement landed is older than the value it would overwrite, so it is
+    // dropped and asked again; so is one that an invalidation overtook.
     async function refresh() {
       const api = bridge();
-      if (!api || disposed || hydrating) return values;
+      if (!api || disposed) return values;
+      if (hydrating) { invalidated = true; return values; }
       hydrating = true;
       try {
-        const response = await api.getSnapshot({ schema_version: SCHEMA_VERSION, session_id: HOST_SESSION_ID });
-        if (!disposed && isObject(response) && response.ok === true && isObject(response.settings)) {
-          hydrated = true;
-          set(response.settings);
-        }
+        do {
+          invalidated = false;
+          const asked = edits;
+          const response = await api.getSnapshot({ schema_version: SCHEMA_VERSION, session_id: HOST_SESSION_ID });
+          if (disposed) break;
+          if (asked !== edits) invalidated = true;
+          else if (isObject(response) && response.ok === true && isObject(response.settings)) {
+            hydrated = true;
+            merge(response.settings);
+          }
+        } while (invalidated);
       } catch (_error) { /* the rows keep their last value; the next invalidation retries */ } finally { hydrating = false; }
       return values;
     }

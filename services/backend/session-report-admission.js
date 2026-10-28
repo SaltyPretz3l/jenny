@@ -1,6 +1,6 @@
 'use strict';
 
-// The turn side of a linked child's terminal report (row 59 checkpoint 5b-1, slice B2).
+// The turn side of a terminal report: a linked child's, or a woken chat's report back (row 59 checkpoint 5b-1, slice B2).
 //   admitReportReservation  pre-inference: reserves the report's outbox slot inside the turn guard.
 //   prepareTerminalReport   at settle: finds the reservation, computes the outcome/body and stamps the
 //                           deterministic marker on the terminal patch's assistant row.
@@ -33,6 +33,14 @@ function reportingSpawnedFrom(sessionStore, sessionId) {
   const session = typeof sessionStore?.peekSession === 'function' ? sessionStore.peekSession(sessionId) : null;
   const spawnedFrom = normalizeSpawnedFrom(session?.spawned_from);
   return spawnedFrom?.schema_version === 1 ? spawnedFrom : null;
+}
+
+// True when the chat's raw mail already holds a report slot: a report-back reservation (made after a wake
+// submit) lives on a chat that was never linked. A cheap structural peek, no mail normalization.
+function hasReportReservation(sessionStore, sessionId) {
+  const session = typeof sessionStore?.peekSession === 'function' ? sessionStore.peekSession(sessionId) : null;
+  const list = session?.session_mail?.report_reservations;
+  return Array.isArray(list) && list.length > 0;
 }
 
 // Reserves the turn's report slot. Called from the pre-inference seam of a brand-new model turn
@@ -100,8 +108,8 @@ function prepareTerminalReport(ctx, { kind, mutation, rendererPayload } = {}) {
     const service = ctx?.service;
     const identity = ctx?.turnLease?.identity;
     if (!identity || typeof service?.chatMessages?.convertReport !== 'function') return null;
-    // Only a linked child can hold a reservation: every other chat skips the mail read.
-    if (!reportingSpawnedFrom(service.sessionStore, identity.sessionId)) return null;
+    // Only a linked child or a chat holding a report-back slot can have a reservation: every other chat skips the mail read.
+    if (!reportingSpawnedFrom(service.sessionStore, identity.sessionId) && !hasReportReservation(service.sessionStore, identity.sessionId)) return null;
     const read = createSessionMailStore(service.sessionStore).read(identity.sessionId);
     if (!read.ok || read.frozen || !findReservation(read.mail, identity.turnId)) return null;
     // The same alias table the coordinator applies ('runtime_error' -> 'error', 'canceled' -> 'cancelled', ...).

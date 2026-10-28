@@ -16,9 +16,6 @@
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
 
-  var PAGE_SIZE = 100;
-  var MAX_VISIBLE = 500;
-  var SEARCH_LIMIT = 200;
   // 50 ms is the browser long-task line; boot contention alone put renders at
   // 32-56 ms (2026-09-22 diagnostics), so only a clear stall warns.
   var SLOW_RENDER_MS = 50;
@@ -27,93 +24,28 @@
   var SCROLL_PRESERVE = 'preserve';
   var SCROLL_RESET = 'reset';
   var PHOTO_ICON_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="9" rx="1.5" /><circle cx="6" cy="7" r="1" /><path d="M13 10.5 10.25 7.75 5.5 12.5" /></svg>';
+  // Four-point spark: the mark of the primary "Jenny" chat (row 69).
+  var PRIMARY_MARK_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5c.6 3.6 2.9 5.9 6.5 6.5-3.6.6-5.9 2.9-6.5 6.5-.6-3.6-2.9-5.9-6.5-6.5C5.1 7.4 7.4 5.1 8 1.5z" /></svg>';
 
-  function normalizeInlineText(value) {
-    return String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
-  }
-
-  const { escapeHtml: escapeHtmlText, resolveDefaultTitle } = (typeof globalThis !== 'undefined' && globalThis.stringUtils)
+  const { escapeHtml, resolveDefaultTitle } = (typeof globalThis !== 'undefined' && globalThis.stringUtils)
     || (typeof require === 'function' ? require('../shared/string-utils') : null);
   var treeUi = globalThis.rendererChatsPanelTree || require('./renderer-chats-panel-tree');
+  var scrollUi = globalThis.rendererChatsPanelScroll || require('./renderer-chats-panel-scroll');
+  var normalizeInlineText = treeUi.normalizeInline;
+  var focusQuiet = scrollUi.focusQuiet;
   var unreadUi = globalThis.rendererSessionUnread || (typeof require === 'function' ? require('./renderer-session-unread') : { count: function () { return 0; }, titleClass: function () { return ''; }, markup: function () { return ''; } });
 
-  var compareSessions = treeUi.compareSessions;
-  var groupVisibleSessions = treeUi.groupVisibleSessions;
+  var modelUi = globalThis.rendererChatsPanelModel || require('./renderer-chats-panel-model');
+  var PAGE_SIZE = modelUi.PAGE_SIZE;
+  var MAX_VISIBLE = modelUi.MAX_VISIBLE;
+  var SEARCH_LIMIT = modelUi.SEARCH_LIMIT;
+  var buildChatsViewModel = modelUi.buildChatsViewModel;
+  var projectsUi = globalThis.rendererChatsPanelProjects || require('./renderer-chats-panel-projects');
   var formatSessionTime = treeUi.formatSessionTime;
-  var survivingNeighborIds = treeUi.survivingNeighborIds;
-  var nearestSurvivingSessionId = treeUi.nearestSurvivingSessionId;
+  var nearestSurvivingSessionId = scrollUi.nearestSurvivingSessionId;
 
-  function buildChatsViewModel(options) {
-    var o = options || {};
-    var sessions = Array.isArray(o.sessions) ? o.sessions : [];
-    var pendingDeletes = o.pendingDeleteIds instanceof Set
-      ? o.pendingDeleteIds
-      : new Set(Array.isArray(o.pendingDeleteIds) ? o.pendingDeleteIds : []);
-    var scope = o.scope === 'archived' ? 'archived' : 'recent';
-    var query = normalizeInlineText(o.query).toLowerCase();
-    // Projects v2: '' = all projects; a chat without project_id is General. Every count follows the filter (D15).
-    var projectId = String(o.projectId || '').trim();
-    var recentTotal = 0;
-    var archivedTotal = 0;
-    var projectTotal = 0;
-    var eligible = [];
-
-    sessions.forEach(function (session) {
-      if (!session || !session.id || pendingDeletes.has(session.id)) return;
-      if (projectId && (String(session.project_id || '').trim() || GENERAL_PROJECT_ID) !== projectId) return;
-      var archived = Boolean(session.archived_at);
-      if (archived) archivedTotal += 1;
-      else recentTotal += 1;
-      projectTotal += 1;
-      if ((scope === 'archived') !== archived) return;
-      if (query) {
-        var title = normalizeInlineText(session.title).toLowerCase();
-        if (!title || title === 'new chat') title += ' ' + jt('session.defaultTitle.chat', 'New Chat').toLowerCase();
-        var preview = normalizeInlineText(session.last_message_preview).toLowerCase();
-        if (!(title + ' ' + preview).includes(query)) return;
-      }
-      eligible.push(session);
-    });
-
-    eligible.sort(compareSessions);
-    var matchedCount = eligible.length;
-    var requestedLimit = Number.isFinite(o.visibleLimit) ? Math.max(PAGE_SIZE, o.visibleLimit) : PAGE_SIZE;
-    var mountLimit = query ? SEARCH_LIMIT : Math.min(requestedLimit, MAX_VISIBLE);
-    var visibleSessions = eligible.slice(0, mountLimit);
-    // Linked chats nest under a parent only when the parent is itself shown here.
-    var tree = treeUi.buildSessionTree({ sessions: visibleSessions, allSessions: sessions, pendingDeletes: pendingDeletes, scope: scope, projectId: projectId, query: query, isActive: o.isActive });
-    var layout = treeUi.layoutGroups(tree, scope, o.now);
-    var scopeTotal = scope === 'archived' ? archivedTotal : recentTotal;
-    var hasMore = !query && visibleSessions.length < Math.min(matchedCount, MAX_VISIBLE);
-    var capped = query ? matchedCount > SEARCH_LIMIT : matchedCount > MAX_VISIBLE && visibleSessions.length >= MAX_VISIBLE;
-    var emptyKind = '';
-    if (!visibleSessions.length) {
-      if (query) emptyKind = 'search';
-      else if (sessions.length && projectId && scope !== 'archived') emptyKind = 'project';
-      else emptyKind = sessions.length && scope === 'archived' ? 'archived' : 'empty';
-    }
-    return {
-      scope: scope,
-      query: query,
-      noHistory: !query && !sessions.some(function (s) { return s && s.id && !pendingDeletes.has(s.id); }),
-      projectId: projectId,
-      projectTotal: projectTotal,
-      recentTotal: recentTotal,
-      archivedTotal: archivedTotal,
-      scopeTotal: scopeTotal,
-      matchedCount: matchedCount,
-      visibleCount: visibleSessions.length,
-      visibleSessions: layout.rendered,
-      nodes: tree.nodes,
-      groups: layout.groups,
-      hasMore: hasMore,
-      capped: capped,
-      remaining: Math.max(Math.min(matchedCount, MAX_VISIBLE) - visibleSessions.length, 0),
-      emptyKind: emptyKind,
-    };
-  }
-
-  var GENERAL_PROJECT_ID = 'project_general';
+  var GENERAL_PROJECT_ID = treeUi.GENERAL_PROJECT_ID;
+  var ROW_FOCUS_SELECTORS = ['[data-session-action="menu"]', '[data-session-toggle]', '[data-session-open]'];
 
   function createChatsPanelController(deps) {
     var state = deps.state;
@@ -131,22 +63,46 @@
     var callbacks = deps.callbacks || {};
     var actionButton = deps.inventory && deps.inventory.actionButton || globalThis.inventoryActionButton;
     var segmentedControl = deps.inventory && deps.inventory.segmentedControl || globalThis.inventorySegmentedControl;
-    var escapeHtml = typeof callbacks.escapeHtml === 'function' ? callbacks.escapeHtml : escapeHtmlText;
     var rowById = new Map();
+    // Per row: the markup signature it was built from, and the signature plus key its attributes were last written for.
+    var rowKeys = new WeakMap();
     var groupByKey = new Map();
     var visibleLimit = PAGE_SIZE;
     var scheduledFrame = 0;
     var pendingScrollPolicy = SCROLL_PRESERVE;
     var disposed = false;
     var lastSlowLogAt = 0;
-    var lastScopeState = null;
+    var lastScopeSignature = '';
     var rovingSessionId = '';
+    // The active chat last brought into view: a project the user collapses afterwards stays collapsed.
+    var revealedActiveId = '';
+    // A render while the list is not displayed (collapsed panel, other view) only marks it stale;
+    // the list catches up once it has a size again. Without ResizeObserver every render runs.
+    var listShown = true;
+    var staleWhileHidden = false;
+    var sizeObserver = null;
     var lastNodes = new Map();
+    // Mounted rows whose linked children are folded: the only rows a runtime pass repaints.
+    var collapsedParentIds = [];
     var treeChains = new Map();
     // Projects v2 filter: the shared project switcher (lazy) names projects
     // and opens the one project menu; cached once it resolves.
     var projectSwitcher = null;
-    var projectSwitcherRequested = false;
+    var projectSwitcherPromise = null;
+    // Chats grouped by project (row 74): project sections, their menus, the group-by control and the saved view.
+    var projectsCtl = projectsUi.createProjectGroupsController({
+      documentRef: documentRef,
+      windowRef: windowRef,
+      actionButton: actionButton,
+      contextMenu: deps.inventory && deps.inventory.contextMenu || windowRef.inventoryContextMenu,
+      getSwitcher: function () { return projectSwitcher; },
+      sectionOf: function (key) { return groupByKey.get(key) || null; },
+      requestSwitcher: requestProjectSwitcher,
+      scheduleRender: scheduleRender,
+      setProjectFilter: setProjectFilter,
+      appendClientLog: callbacks.appendClientLog,
+      showToastMessage: callbacks.showToastMessage,
+    });
 
     function nowMs() {
       return windowRef.performance && typeof windowRef.performance.now === 'function'
@@ -162,25 +118,32 @@
       return String(state.ui && state.ui.chatsProjectFilter || '').trim();
     }
 
+    // One request in flight; a failed or empty load clears it so a later render asks again.
     function requestProjectSwitcher() {
       if (projectSwitcher) return Promise.resolve(projectSwitcher);
       if (typeof callbacks.getProjectSwitcher !== 'function') return Promise.resolve(null);
-      var first = !projectSwitcherRequested;
-      projectSwitcherRequested = true;
-      return Promise.resolve(callbacks.getProjectSwitcher()).then(function (switcher) {
+      if (projectSwitcherPromise) return projectSwitcherPromise;
+      projectSwitcherPromise = Promise.resolve().then(callbacks.getProjectSwitcher).then(function (switcher) {
+        projectSwitcherPromise = null;
         if (disposed || !switcher) return null;
         projectSwitcher = switcher;
-        if (first) Promise.resolve(switcher.refresh()).then(function () { scheduleRender(); }).catch(function () {});
+        // An already-loaded list paints now; the refresh (and its jenny:projects-changed) paints the rest.
+        if (typeof switcher.getProjects === 'function' && switcher.getProjects().length) scheduleRender();
+        if (typeof switcher.refresh === 'function') Promise.resolve(switcher.refresh()).then(function () { scheduleRender(); }).catch(function () {});
         return switcher;
-      }).catch(function () { return null; });
+      }, function () {
+        projectSwitcherPromise = null;
+        return null;
+      });
+      return projectSwitcherPromise;
     }
 
+    // The label a group header shows, so a filter and a header never name one project differently.
     function projectFilterName(projectId) {
       if (!projectId) return jt('projects.filter.all', 'All projects');
-      var project = projectSwitcher && typeof projectSwitcher.projectById === 'function' ? projectSwitcher.projectById(projectId) : null;
-      if (project) return project.name;
       if (!projectSwitcher) requestProjectSwitcher();
-      return projectId === GENERAL_PROJECT_ID ? jt('projects.switcher.generalName', 'General') : jt('projects.filter.project', 'Project');
+      var project = projectSwitcher && typeof projectSwitcher.projectById === 'function' ? projectSwitcher.projectById(projectId) : null;
+      return projectsCtl.labelOf(projectId) || (project && project.name) || modelUi.defaultProjectName(projectId);
     }
 
     // The filtered project can vanish (deleted in Settings): fall back to all.
@@ -206,14 +169,9 @@
         : []);
     }
 
-    function formatRelativeTime(value) {
-      return formatSessionTime(value);
-    }
-
+    // The same model the canonical display state reports (last used, else preferred), read off the row's own summary.
     function modelLabel(session) {
-      var derive = globalThis.rendererShellRuntimeUtils && globalThis.rendererShellRuntimeUtils.deriveCanonicalSessionDisplayState;
-      var displayState = typeof derive === 'function' ? derive(state, session.id) : null;
-      var model = normalizeInlineText(displayState && displayState.model || session.last_model_used || session.preferred_model || 'pending');
+      var model = normalizeInlineText(session.last_model_used || session.preferred_model || jt('sidebar.chats.modelPending', 'pending'));
       return model.length <= 26 ? model : model.slice(0, 23).trim() + '...';
     }
 
@@ -236,14 +194,20 @@
       return outcome ? [outcome, state.awayDigest?.digest?.latestTerminalBySession?.[id]] : null;
     }
 
-    // Streaming or waiting-for-approval chats: a collapsed parent signals them on its chip.
-    function runtimeActiveIds() {
+    // Streaming or waiting-for-approval chats: a collapsed parent signals them on its chip, a collapsed project on its dot.
+    function runtimeStates() {
       var streams = windowRef.rendererMultiStreamController;
-      var ids = new Set();
-      ['getStreamingSessionIds', 'getApprovalPendingSessionIds'].forEach(function (name) {
+      function read(name) {
+        var ids = new Set();
         try { (streams && typeof streams[name] === 'function' ? streams[name]() : []).forEach(function (id) { ids.add(String(id)); }); } catch (_error) { /* best effort */ }
-      });
-      return ids;
+        return ids;
+      }
+      var streaming = read('getStreamingSessionIds');
+      var approval = read('getApprovalPendingSessionIds');
+      return {
+        active: new Set(Array.from(streaming).concat(Array.from(approval))),
+        stateOf: function (id) { return approval.has(id) ? 'approval' : (streaming.has(id) ? 'streaming' : ''); },
+      };
     }
 
     function toggleChildren(sessionId) {
@@ -261,6 +225,7 @@
         preview: session.last_message_preview || '',
         model: session.last_model_used || session.preferred_model || '',
         pinned: session.pinned === true,
+        role: session.session_role || '',
         archived: Boolean(session.archived_at),
         active: active,
         type: session.session_type || '',
@@ -269,6 +234,7 @@
         lockdown: isOfflineLockdownVisible(session),
         outcome: outcomeFor(session.id),
         outbox: outbox.map(function (item) { return [item && item.id, item && item.revision, item && item.status]; }),
+        paused: treeUi.isPrimarySession(session) && state.ui && state.ui.primaryChat && state.ui.primaryChat.paused === true ? 1 : 0,
         tree: treeUi.nodeSignature(node),
       });
     }
@@ -280,19 +246,24 @@
       var provider = normalizeInlineText(session.plugin_session && session.plugin_session.provider_name).slice(0, 40);
       var usesPhoto = isPlugin && session.plugin_session && session.plugin_session.icon_token === 'image';
       var lockdown = isOfflineLockdownVisible(session);
-      var sessionNoun = isPlugin ? jt('sidebar.chats.pluginSession', '{provider} session', { provider: provider || jt('sidebar.chats.pluginFallback', 'plugin') }) : jt('sidebar.chats.session', 'session');
+      var primary = treeUi.isPrimarySession(session);
+      var sessionNoun = primary ? jt('sidebar.chats.primarySession', 'your Jenny chat') : isPlugin ? jt('sidebar.chats.pluginSession', '{provider} session', { provider: provider || jt('sidebar.chats.pluginFallback', 'plugin') }) : jt('sidebar.chats.session', 'session');
       var timestamp = session.updated_at || session.created_at || '';
       var outcome = outcomeFor(session.id);
-      var when = outcome && formatRelativeTime(outcome[1]);
+      var when = outcome && formatSessionTime(outcome[1]);
       var outcomeLine = outcome ? '\n' + (outcome[0] === 'failed' ? jt('sidebar.chats.lastRunFailed', 'Last run failed · {when}', { when: when }) : jt('sidebar.chats.lastRunFinished', 'Finished · {when}', { when: when })) : '';
       var outbox = state.sendOutboxBySession instanceof Map ? state.sendOutboxBySession.get(session.id) || [] : [];
       var failed = outbox.filter(function (item) { return item && (item.status === 'failed' || item.status === 'needs_review'); }).length;
       var outboxMarkup = outbox.length
         ? '<span class="send-outbox-badge' + (failed ? ' send-outbox-badge--failed' : '') + '" aria-label="'
           + escapeHtml(failed ? jtn('sidebar.chats.queuedSendFailedCount', failed, { count: failed }, '{count} queued send failed', '{count} queued send failed') : jtn('sidebar.chats.queuedSendCount', outbox.length, { count: outbox.length }, '{count} queued send', '{count} queued sends')) + '">'
-          + escapeHtml(failed ? failed + ' failed' : outbox.length + ' queued') + '</span>'
+          + escapeHtml(failed ? jt('sidebar.chats.outboxFailedShort', '{count} failed', { count: failed }) : jt('sidebar.chats.outboxQueuedShort', '{count} queued', { count: outbox.length })) + '</span>'
         : '';
-      var pinMarkup = session.pinned === true
+      var pausedMarkup = primary && state.ui && state.ui.primaryChat && state.ui.primaryChat.paused === true
+        ? '<span class="session-row__paused">' + escapeHtml(jt('sidebar.chats.paused', 'Paused')) + '</span>' : '';
+      var pinMarkup = primary
+        ? '<span class="session-row__primary-mark" aria-hidden="true">' + PRIMARY_MARK_SVG + '</span>'
+        : session.pinned === true
         ? '<span class="session-row__pin" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M9.5 2 14 6.5l-3 .75-2.25 3.5L8 12 4 8l1.25-.75 3.5-2.25z" /><path d="M5.5 10.5 2.5 13.5" /></svg></span>'
         : '';
       var typeMarkup = usesPhoto
@@ -310,13 +281,14 @@
         plain: true,
         className: 'session-row__open',
         ariaLabel: lockdown ? jt('sidebar.chats.openSessionLockdown', 'Open {session} {title}, Offline lockdown', { session: sessionNoun, title: accessibleTitle }) : jt('sidebar.chats.openSession', 'Open {session} {title}', { session: sessionNoun, title: accessibleTitle }),
-        title: (lockdown ? jt('sidebar.chats.sessionTitleLockdown', '{preview}\nModel: {model}\nOffline lockdown', { preview: previewLabel(session), model: modelLabel(session) }) : jt('sidebar.chats.sessionTitle', '{preview}\nModel: {model}', { preview: previewLabel(session), model: modelLabel(session) })) + outcomeLine,
+        title: (primary ? jt('sidebar.chats.primaryChatTitle', 'Your Jenny chat: ask what you were working on, what remains and what is next in any project.\nModel: {model}', { model: modelLabel(session) })
+          : lockdown ? jt('sidebar.chats.sessionTitleLockdown', '{preview}\nModel: {model}\nOffline lockdown', { preview: previewLabel(session), model: modelLabel(session) }) : jt('sidebar.chats.sessionTitle', '{preview}\nModel: {model}', { preview: previewLabel(session), model: modelLabel(session) })) + outcomeLine,
         tabIndex: tabStop ? 0 : -1,
         dataset: { 'session-open': session.id, 'session-id': session.id },
         trustedHtml: '<span class="session-row__selection" aria-hidden="true"></span><span class="session-row__dot" aria-hidden="true"></span>'
           + '<span class="conversation-title session-row__title' + unreadUi.titleClass(session) + '">' + pinMarkup + typeMarkup + lockdownMarkup
-          + '<span class="session-row__title-text">' + escapeHtml(title) + '</span>' + outboxMarkup + '</span>'
-          + unreadUi.markup(session) + '<time class="session-row__time" datetime="' + escapeHtml(timestamp) + '">' + escapeHtml(formatRelativeTime(timestamp)) + '</time>'
+          + '<span class="session-row__title-text">' + escapeHtml(title) + '</span>' + pausedMarkup + outboxMarkup + '</span>'
+          + unreadUi.markup(session) + '<time class="session-row__time" datetime="' + escapeHtml(timestamp) + '">' + escapeHtml(formatSessionTime(timestamp)) + '</time>'
           + treeUi.relationMarkup(session, node),
       });
       var menuMarkup = actionButton({
@@ -342,24 +314,28 @@
         rowById.set(session.id, row);
       }
       var signature = rowSignature(session, active, node);
-      var activeElement = documentRef.activeElement;
-      var focusedControl = activeElement && row.contains(activeElement)
-        ? (activeElement.matches('[data-session-action="menu"]') ? 'menu' : (activeElement.matches('[data-session-toggle]') ? 'toggle' : 'open'))
-        : '';
-      var renameEditor = row.querySelector('.inv-inline-title-editor');
-      if (row.dataset.renderSignature !== signature && !renameEditor) {
-        row.dataset.renderSignature = signature;
+      var keys = rowKeys.get(row);
+      if (!keys) rowKeys.set(row, keys = { signature: '', attrsSignature: '', attrs: '' });
+      if (keys.signature !== signature && !row.querySelector('.inv-inline-title-editor')) {
+        var focusedControl = scrollUi.focusedSelector(row, ROW_FOCUS_SELECTORS);
+        keys.signature = signature;
         row.innerHTML = buildRowContents(session, active, tabStop, node);
         var relation = row.querySelector('[id^="' + treeUi.RELATION_ID_PREFIX + '"]');
         if (relation) row.querySelector('[data-session-open]').setAttribute('aria-describedby', relation.id);
-        if (focusedControl) {
-          var replacement = row.querySelector(focusedControl === 'menu' ? '[data-session-action="menu"]'
-            : (focusedControl === 'toggle' ? '[data-session-toggle]' : '[data-session-open]'));
-          try { replacement && replacement.focus({ preventScroll: true }); }
-          catch (_error) { replacement && replacement.focus(); }
-        }
+        if (focusedControl) focusQuiet(row.querySelector(focusedControl));
       }
+      // The attributes below read the signature plus the Tab stop and the thread lines; an unchanged
+      // row (the common case on every refresh) skips the writes and the style invalidation they cause.
+      // A row kept by an open title editor stays stale, so it never records a key.
+      var current = keys.signature === signature;
+      var attrKey = tabStop + '|' + (node ? node.last + ':' + node.through.join(',') + ':' + node.parentId : '');
+      if (current && keys.attrsSignature === signature && keys.attrs === attrKey) return row;
+      keys.attrsSignature = current ? signature : '';
+      keys.attrs = attrKey;
       row.dataset.sessionPinned = session.pinned === true ? 'true' : 'false';
+      if (treeUi.isPrimarySession(session)) row.dataset.sessionRole = 'primary';
+      else delete row.dataset.sessionRole;
+      row.classList.toggle('session-row--primary', treeUi.isPrimarySession(session));
       row.dataset.sessionArchived = session.archived_at ? 'true' : 'false';
       row.dataset.sessionType = session.session_type === 'plugin' ? 'plugin' : 'chat';
       row.dataset.sessionLockdown = isOfflineLockdownVisible(session) ? 'true' : 'false';
@@ -371,7 +347,7 @@
       var openButton = row.querySelector('[data-session-open]');
       var menuButton = row.querySelector('[data-session-action="menu"]');
       openButton && openButton.setAttribute('tabindex', tabStop ? '0' : '-1');
-      menuButton && menuButton.setAttribute('tabindex', tabStop && !row.classList.contains('sidebar-bulk-selecting') ? '0' : '-1');
+      menuButton && menuButton.setAttribute('tabindex', tabStop ? '0' : '-1');
       if (openButton) {
         if (active) openButton.setAttribute('aria-current', 'page');
         else openButton.removeAttribute('aria-current');
@@ -381,6 +357,11 @@
 
     function ensureGroup(group) {
       var section = groupByKey.get(group.key);
+      if (group.kind === 'project') {
+        section = projectsCtl.ensureSection(section, group);
+        groupByKey.set(group.key, section);
+        return section;
+      }
       if (!section) {
         section = documentRef.createElement('section');
         section.className = 'conversation-group';
@@ -397,28 +378,18 @@
     }
 
     function renderScopeControl(model) {
-      if (!dom.scopeSlot || typeof segmentedControl !== 'function') return;
+      if (!dom.scopeSlot) return;
       var filterLabel = projectFilterName(model.projectId);
-      if (lastScopeState
-        && lastScopeState.scope === model.scope
-        && lastScopeState.recentTotal === model.recentTotal
-        && lastScopeState.archivedTotal === model.archivedTotal
-        && lastScopeState.projectId === model.projectId
-        && lastScopeState.filterLabel === filterLabel) return;
+      var signature = JSON.stringify([model.scope, model.recentTotal, model.archivedTotal, model.projectId, model.grouping,
+        model.groupByAvailable, projectsCtl.groupMode(), filterLabel]);
+      if (signature === lastScopeSignature) return;
       var focusedScope = documentRef.activeElement && dom.scopeSlot.contains(documentRef.activeElement)
         ? documentRef.activeElement.dataset && documentRef.activeElement.dataset.value
         : '';
       var filterHost = dom.projectRow || dom.scopeSlot;
-      var focusedFilter = documentRef.activeElement && filterHost.contains(documentRef.activeElement)
-        && documentRef.activeElement.hasAttribute('data-chats-project-filter');
-      lastScopeState = {
-        scope: model.scope,
-        recentTotal: model.recentTotal,
-        archivedTotal: model.archivedTotal,
-        projectId: model.projectId,
-        filterLabel: filterLabel,
-      };
-      var filterMarkup = typeof callbacks.getProjectSwitcher === 'function' && typeof actionButton === 'function'
+      var focusedFilter = scrollUi.focusedSelector(filterHost, ['[data-chats-project-filter]', '[data-chats-group-by]']);
+      lastScopeSignature = signature;
+      var filterMarkup = typeof callbacks.getProjectSwitcher === 'function'
         ? actionButton({
           plain: true,
           className: 'chats-project-filter' + (model.projectId ? ' chats-project-filter--set' : ''),
@@ -431,28 +402,25 @@
             + '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg>',
         })
         : '';
-      // The filter lives on its own row above the tabs when the shell provides
-      // one (index.html #chatsProjectRow); older hosts keep it in the slot.
-      if (dom.projectRow) dom.projectRow.innerHTML = filterMarkup;
-      dom.scopeSlot.innerHTML = (dom.projectRow ? '' : filterMarkup) + segmentedControl({
+      // The filter lives on its own row above the tabs (index.html #chatsProjectRow);
+      // a host without that row (the unit harnesses) keeps it in the scope slot.
+      var groupByMarkup = projectsCtl.groupByMarkup(model);
+      if (dom.projectRow) dom.projectRow.innerHTML = filterMarkup + groupByMarkup;
+      dom.scopeSlot.innerHTML = (dom.projectRow ? '' : filterMarkup + groupByMarkup) + segmentedControl({
         id: 'chats-scope',
         className: 'chats-scope-control',
         ariaLabel: jt('sidebar.chats.historyScope', 'Chat history scope'),
         value: model.scope,
         options: [
           { value: 'recent', label: jt('sidebar.chats.recent', 'Recent') },
-          { value: 'archived', label: jt('sidebar.chats.archivedCount', 'Archived {count}', { count: model.archivedTotal }) },
+          { value: 'archived', label: model.archivedTotal === 0 ? jt('sidebar.chats.archived', 'Archived') : jt('sidebar.chats.archivedCount', 'Archived {count}', { count: model.archivedTotal }) },
         ],
       });
       if (focusedScope) {
-        var selected = dom.scopeSlot.querySelector('[data-value="' + model.scope + '"]')
-          || dom.scopeSlot.querySelector('[data-value="' + focusedScope + '"]');
-        try { selected && selected.focus({ preventScroll: true }); }
-        catch (_error) { selected && selected.focus(); }
+        focusQuiet(dom.scopeSlot.querySelector('[data-value="' + model.scope + '"]')
+          || dom.scopeSlot.querySelector('[data-value="' + focusedScope + '"]'));
       } else if (focusedFilter) {
-        var filterButton = filterHost.querySelector('[data-chats-project-filter]');
-        try { filterButton && filterButton.focus({ preventScroll: true }); }
-        catch (_error) { filterButton && filterButton.focus(); }
+        focusQuiet(filterHost.querySelector(focusedFilter));
       }
     }
 
@@ -485,8 +453,24 @@
       return [jt('sidebar.chats.emptyTitle', 'No chats yet.'), model.noHistory ? '' : jt('sidebar.chats.emptyDescription', 'Start a conversation and it will appear here.')];
     }
 
+    /** A marked direct child of the list (empty state, pagination): no scan of every row. */
+    function listChild(attribute) {
+      var children = dom.conversationGroups.children;
+      for (var index = children.length - 1; index >= 0; index -= 1) {
+        if (children[index].hasAttribute(attribute)) return children[index];
+      }
+      return null;
+    }
+
+    /** What the empty state and pagination currently say: a change there shifts the list's bottom. */
+    function tailKey() {
+      var empty = listChild('data-chats-empty');
+      var pagination = listChild('data-chats-pagination');
+      return (empty ? empty.textContent : '') + '\u0000' + (pagination ? pagination.textContent : '');
+    }
+
     function renderEmpty(model) {
-      var empty = dom.conversationGroups.querySelector('[data-chats-empty]');
+      var empty = listChild('data-chats-empty');
       if (!model.emptyKind) {
         empty && empty.remove();
         return;
@@ -525,12 +509,11 @@
       var target = targetRow && targetRow.querySelector('[data-session-open]');
       if (!target) return;
       setRovingSession(targetId);
-      try { target.focus({ preventScroll: true }); }
-      catch (_error) { target.focus(); }
+      focusQuiet(target);
     }
 
     function renderPagination(model) {
-      var pagination = dom.conversationGroups.querySelector('[data-chats-pagination]');
+      var pagination = listChild('data-chats-pagination');
       var paginationHadFocus = Boolean(
         pagination && documentRef.activeElement && pagination.contains(documentRef.activeElement)
       );
@@ -578,10 +561,7 @@
       if (pagination !== dom.conversationGroups.lastElementChild) {
         dom.conversationGroups.appendChild(pagination);
       }
-      if (focusTarget && documentRef.activeElement !== focusTarget) {
-        try { focusTarget.focus({ preventScroll: true }); }
-        catch (_error) { focusTarget.focus(); }
-      }
+      if (focusTarget && documentRef.activeElement !== focusTarget) focusQuiet(focusTarget);
     }
 
     function chooseRovingSession(model, snapshot) {
@@ -600,138 +580,103 @@
     }
 
     function captureScrollAnchor() {
-      var container = dom.conversationGroups;
-      var top = Number(container.scrollTop) || 0;
-      var clientHeight = Number(container.clientHeight) || 0;
-      var scrollHeight = Number(container.scrollHeight) || 0;
-      var snapshot = {
-        top: top,
-        bottomDistance: Math.max(scrollHeight - clientHeight - top, 0),
-        atBottom: clientHeight > 0 && scrollHeight > clientHeight && scrollHeight - clientHeight - top <= 2,
-        sessionId: '',
-        anchorIndex: -1,
-        offset: 0,
-        orderedIds: [],
-        focusedSessionId: '',
-        focusedIndex: -1,
-        focusedControl: '',
-      };
-      var rows = getVisibleSessionElements();
-      snapshot.orderedIds = Array.from(rows, function (row) { return row.dataset.sessionId; });
-      var activeElement = documentRef.activeElement;
-      var focusedRow = activeElement && activeElement.closest && activeElement.closest('.conversation-item[data-session-id]');
-      if (focusedRow && container.contains(focusedRow)) {
-        snapshot.focusedSessionId = focusedRow.dataset.sessionId;
-        snapshot.focusedIndex = snapshot.orderedIds.indexOf(snapshot.focusedSessionId);
-        snapshot.focusedControl = activeElement.matches('[data-session-action="menu"]') ? 'menu' : 'open';
-      }
-      if (!clientHeight || typeof container.getBoundingClientRect !== 'function') return snapshot;
-      var containerRect = container.getBoundingClientRect();
-      for (var index = 0; index < rows.length; index += 1) {
-        var rect = rows[index].getBoundingClientRect();
-        if (rect.bottom > containerRect.top && rect.top < containerRect.bottom) {
-          snapshot.sessionId = rows[index].dataset.sessionId;
-          snapshot.anchorIndex = index;
-          snapshot.offset = rect.top - containerRect.top;
-          break;
-        }
-      }
-      return snapshot;
+      return scrollUi.captureScrollAnchor(dom.conversationGroups, getVisibleSessionElements(), documentRef.activeElement);
     }
 
     function restoreScrollAnchor(snapshot, scrollPolicy) {
-      var container = dom.conversationGroups;
-      if (scrollPolicy === SCROLL_RESET) {
-        container.scrollTop = 0;
-        return;
-      }
-      if (snapshot.atBottom) {
-        container.scrollTop = Math.max((Number(container.scrollHeight) || 0) - (Number(container.clientHeight) || 0), 0);
-        return;
-      }
-      // At the very top, stay there: a chat that lands above the first row
-      // must show, not shove the list down a row under the viewport edge.
-      if (snapshot.top === 0) {
-        container.scrollTop = 0;
-        return;
-      }
-      var currentRows = Array.from(getVisibleSessionElements());
-      var currentIds = currentRows.map(function (row) { return row.dataset.sessionId; });
-      var ids = new Set(currentIds);
-      var anchor = snapshot.sessionId && rowById.get(snapshot.sessionId);
-      if (anchor) {
-        var currentIndex = currentIds.indexOf(snapshot.sessionId);
-        var neighbors = survivingNeighborIds(snapshot, snapshot.anchorIndex, ids);
-        var crossedPrevious = neighbors.previousId
-          && currentIds.indexOf(neighbors.previousId) > currentIndex;
-        var crossedNext = neighbors.nextId
-          && currentIds.indexOf(neighbors.nextId) < currentIndex;
-        if (currentIndex < 0 || crossedPrevious || crossedNext) anchor = null;
-      }
-      if (!anchor && snapshot.anchorIndex >= 0) {
-        var fallbackId = nearestSurvivingSessionId(snapshot, snapshot.anchorIndex, ids);
-        anchor = fallbackId && rowById.get(fallbackId);
-      }
-      if (anchor && anchor.isConnected && typeof anchor.getBoundingClientRect === 'function') {
-        // Measure from the live offset: the layout the rect read forces has
-        // already applied the browser's own scroll anchoring, and adding the
-        // delta to the stale snapshot.top would undo it (a one-row jump).
-        var delta = anchor.getBoundingClientRect().top - container.getBoundingClientRect().top - snapshot.offset;
-        container.scrollTop = Math.max(0, (Number(container.scrollTop) || 0) + delta);
-        return;
-      }
-      var max = Math.max((Number(container.scrollHeight) || 0) - (Number(container.clientHeight) || 0), 0);
-      var hasLayoutMetrics = Number(container.scrollHeight) > 0 || Number(container.clientHeight) > 0;
-      container.scrollTop = hasLayoutMetrics ? Math.min(snapshot.top, max) : snapshot.top;
+      if (scrollPolicy === SCROLL_RESET) dom.conversationGroups.scrollTop = 0;
+      else scrollUi.restoreScrollAnchor(dom.conversationGroups, snapshot, getVisibleSessionElements(), rowById);
     }
 
     function restoreRemovedRowFocus(snapshot) {
       if (!snapshot.focusedSessionId || rowById.has(snapshot.focusedSessionId)) return;
       var targetRow = rovingSessionId && rowById.get(rovingSessionId);
       if (!targetRow) return;
-      var target = snapshot.focusedControl === 'menu'
+      focusQuiet(snapshot.focusedControl === 'menu'
         ? targetRow.querySelector('[data-session-action="menu"]')
-        : targetRow.querySelector('[data-session-open]');
-      try { target && target.focus({ preventScroll: true }); }
-      catch (_error) { target && target.focus(); }
+        : targetRow.querySelector('[data-session-open]'));
     }
 
+    /** Keyed reconcile; true when it moved, added, removed or rebuilt anything (heights may have changed). */
     function reconcileGroups(model, snapshot) {
       var usedGroups = new Set();
       var usedRows = new Set();
       var sectionCursor = dom.conversationGroups.firstElementChild;
+      var moved = false;
       rovingSessionId = chooseRovingSession(model, snapshot);
       model.groups.forEach(function (group) {
         var section = ensureGroup(group);
         var list = section.querySelector('.group-items');
         var rowCursor = list.firstElementChild;
         usedGroups.add(group.key);
-        if (section !== sectionCursor) dom.conversationGroups.insertBefore(section, sectionCursor);
-        else sectionCursor = section.nextElementSibling;
+        if (section !== sectionCursor) {
+          dom.conversationGroups.insertBefore(section, sectionCursor);
+          moved = true;
+        } else sectionCursor = section.nextElementSibling;
         group.items.forEach(function (session) {
+          var before = rowById.get(session.id);
+          var signature = before && rowKeys.get(before) && rowKeys.get(before).signature;
           var row = ensureRow(session, session.id === state.currentSessionId, session.id === rovingSessionId, model.nodes.get(session.id));
+          if (row !== before || rowKeys.get(row).signature !== signature) moved = true;
           usedRows.add(session.id);
-          if (row !== rowCursor) list.insertBefore(row, rowCursor);
-          else rowCursor = row.nextElementSibling;
+          if (row !== rowCursor) {
+            list.insertBefore(row, rowCursor);
+            moved = true;
+          } else rowCursor = row.nextElementSibling;
         });
       });
       groupByKey.forEach(function (section, key) {
         if (!usedGroups.has(key)) {
           section.remove();
           groupByKey.delete(key);
+          moved = true;
         }
       });
       rowById.forEach(function (row, id) {
         if (!usedRows.has(id)) {
           row.remove();
           rowById.delete(id);
+          moved = true;
         }
       });
+      return moved;
     }
 
     function cancelFrame(id) {
       if (typeof windowRef.cancelAnimationFrame === 'function') windowRef.cancelAnimationFrame(id);
       else windowRef.clearTimeout && windowRef.clearTimeout(id);
+    }
+
+    function buildModel(runtime) {
+      return buildChatsViewModel({
+        ...projectsCtl.modelOptions(),
+        runtimeState: runtime.stateOf,
+        isActive: function (id) { return runtime.active.has(id); },
+        sessions: state.sessions,
+        pendingDeleteIds: pendingDeleteIds(),
+        scope: currentScope(),
+        projectId: reconcileProjectFilter(),
+        query: dom.searchInput && dom.searchInput.value,
+        visibleLimit: visibleLimit,
+        primaryChatEnabled: state.features?.featureFlags?.primary_chat !== false,
+      });
+    }
+
+    // The active chat must have a row: when it changes to one inside a collapsed project, or past
+    // its project's shown page, open the project that far once (a later collapse is respected).
+    function revealActive(model, runtime) {
+      var activeId = String(state.currentSessionId || '');
+      if (!activeId || activeId === revealedActiveId || model.query) return model;
+      if (model.visibleSessions.some(function (session) { return session.id === activeId; })) {
+        revealedActiveId = activeId;
+        return model;
+      }
+      // Not in this model at all (sessions still loading, other scope, filtered out, date grouping):
+      // try again on a later render rather than spending the reveal.
+      var placement = modelUi.projectPlacement(model, activeId);
+      if (!placement) return model;
+      revealedActiveId = activeId;
+      return projectsCtl.reveal(placement.projectId, placement.roots) ? buildModel(runtime) : model;
     }
 
     function renderNow() {
@@ -741,20 +686,13 @@
       if (scheduledFrame) cancelFrame(scheduledFrame);
       scheduledFrame = 0;
       if (disposed || !dom.conversationGroups) return null;
+      staleWhileHidden = false;
       var scrollPolicy = pendingScrollPolicy;
       pendingScrollPolicy = SCROLL_PRESERVE;
       var startedAt = nowMs();
       var scrollAnchor = captureScrollAnchor();
-      var activeIds = runtimeActiveIds();
-      var model = buildChatsViewModel({
-        isActive: function (id) { return activeIds.has(id); },
-        sessions: state.sessions,
-        pendingDeleteIds: pendingDeleteIds(),
-        scope: currentScope(),
-        projectId: reconcileProjectFilter(),
-        query: dom.searchInput && dom.searchInput.value,
-        visibleLimit: visibleLimit,
-      });
+      var runtime = runtimeStates();
+      var model = revealActive(buildModel(runtime), runtime);
       var panelRoot = dom.conversationGroups.closest('.view-panel');
       if (panelRoot && model.noHistory) panelRoot.dataset.chatsHistory = 'none';
       else if (panelRoot) delete panelRoot.dataset.chatsHistory;
@@ -770,21 +708,30 @@
           : jt('sidebar.chats.countChats', '{count} chats', { count: totalChats }));
       }
       lastNodes = model.nodes;
-      reconcileGroups(model, scrollAnchor);
+      var tailBefore = tailKey();
+      var moved = reconcileGroups(model, scrollAnchor);
+      if (projectsCtl.takeLayoutChange()) moved = true;
+      collapsedParentIds = model.visibleSessions.filter(function (session) {
+        var node = model.nodes.get(session.id);
+        return node && node.hasChildren && !node.expanded;
+      }).map(function (session) { return session.id; });
+      projectsCtl.afterModel(model);
       renderEmpty(model);
       renderPagination(model);
-      restoreScrollAnchor(scrollAnchor, scrollPolicy);
+      if (tailKey() !== tailBefore) moved = true;
+      // Nothing moved or changed height: leave scrollTop alone and skip the forced layout of a re-measure.
+      if (moved || scrollPolicy === SCROLL_RESET) restoreScrollAnchor(scrollAnchor, scrollPolicy);
       if (dom.status) {
         dom.status.textContent = model.query
           ? jt('sidebar.chats.showingMatches', 'Showing {visible} of {total} matching chats.', { visible: model.visibleCount, total: model.matchedCount })
           : (model.scope === 'archived' ? jt('sidebar.chats.showingArchived', 'Showing {visible} of {total} archived chats.', { visible: model.visibleCount, total: model.scopeTotal }) : jt('sidebar.chats.showingRecent', 'Showing {visible} of {total} recent chats.', { visible: model.visibleCount, total: model.scopeTotal }));
       }
       callbacks.afterRenderSessions && callbacks.afterRenderSessions(
-        getVisibleSessionElements(),
+        model.visibleSessions.map(function (session) { return rowById.get(session.id); }),
         model.visibleSessions
       );
       restoreRemovedRowFocus(scrollAnchor);
-      if (typeof windowRef.Event === 'function') dom.conversationGroups.dispatchEvent(new windowRef.Event('sidebar-rendered'));
+      announceRendered();
       var durationMs = nowMs() - startedAt;
       if (durationMs > SLOW_RENDER_MS && Date.now() - lastSlowLogAt >= SLOW_LOG_INTERVAL_MS) {
         lastSlowLogAt = Date.now();
@@ -810,14 +757,46 @@
         pendingScrollPolicy = SCROLL_RESET;
       }
       if (scheduledFrame) return;
-      scheduledFrame = requestFrame(renderNow);
+      scheduledFrame = requestFrame(renderWhenShown);
+    }
+
+    // Listeners (the composer's project pill) read state, so a render deferred while hidden announces too.
+    function announceRendered() {
+      if (typeof windowRef.Event === 'function') dom.conversationGroups.dispatchEvent(new windowRef.Event('sidebar-rendered'));
+    }
+
+    // A scheduled render of a list that is not displayed only marks it stale; the badge, strip and
+    // inbox pass still runs on the rows that are there, since the collapsed strip shows that state.
+    function renderWhenShown() {
+      if (listShown || disposed || !dom.conversationGroups) return renderNow();
+      scheduledFrame = 0;
+      staleWhileHidden = true;
+      callbacks.afterRenderSessions && callbacks.afterRenderSessions(getVisibleSessionElements());
+      announceRendered();
+      return null;
+    }
+
+    function observeListSize() {
+      if (!dom.conversationGroups || typeof windowRef.ResizeObserver !== 'function') return;
+      sizeObserver = new windowRef.ResizeObserver(function (entries) {
+        var box = entries[entries.length - 1].contentRect;
+        listShown = box.width > 0 || box.height > 0;
+        if (listShown && staleWhileHidden) scheduleRender();
+      });
+      sizeObserver.observe(dom.conversationGroups);
+    }
+
+    /** Back to the first page everywhere (date list and every project), list scrolled to the top. */
+    function resetPaging() {
+      visibleLimit = PAGE_SIZE;
+      projectsCtl.resetLimits();
+      scheduleRender({ scrollPolicy: SCROLL_RESET });
     }
 
     function setScope(scope) {
       var archived = scope === 'archived';
       if (state.ui) state.ui.sidebarArchivedView = archived;
-      visibleLimit = PAGE_SIZE;
-      scheduleRender({ scrollPolicy: SCROLL_RESET });
+      resetPaging();
       callbacks.appendClientLog && callbacks.appendClientLog('INFO', 'sessions.archived_view_toggled', { visible: archived });
     }
 
@@ -838,14 +817,20 @@
       var next = String(projectId || '').trim();
       if (next === currentProjectFilter()) return;
       state.ui.chatsProjectFilter = next;
-      visibleLimit = PAGE_SIZE;
-      scheduleRender({ scrollPolicy: SCROLL_RESET });
+      resetPaging();
       callbacks.appendClientLog && callbacks.appendClientLog('INFO', 'sessions.project_filter_set', { projectId: next });
     }
 
-    function handleScopeSlotClick(event) {
+    // Clicks on the filter row and the scope slot (the listener sits on each, so a match is inside it).
+    function handleFilterControlsClick(event) {
+      var groupBy = event.target && event.target.closest && event.target.closest('[data-chats-group-by]');
+      if (groupBy) {
+        event.preventDefault();
+        projectsCtl.openGroupByMenu(groupBy);
+        return;
+      }
       var button = event.target && event.target.closest && event.target.closest('[data-chats-project-filter]');
-      if (!button || !(dom.scopeSlot.contains(button) || (dom.projectRow && dom.projectRow.contains(button)))) return;
+      if (!button) return;
       event.preventDefault();
       requestProjectSwitcher().then(function (switcher) {
         if (!switcher || disposed) return;
@@ -862,19 +847,56 @@
       scheduleRender();
     }
 
-    function prepareForStripExpansion() {
-      if (state.ui) state.ui.sidebarArchivedView = false;
+    /** No search, no project filter, the given scope, first page; the list counts as shown. */
+    function clearFilters(archived) {
+      if (state.ui) {
+        state.ui.sidebarArchivedView = archived;
+        state.ui.chatsProjectFilter = '';
+      }
       if (dom.searchInput) dom.searchInput.value = '';
-      visibleLimit = PAGE_SIZE;
-      scheduleRender({ scrollPolicy: SCROLL_RESET });
+      listShown = true; // the frame renders before the size observer reports the expanded list
+      resetPaging();
+    }
+
+    // The strip lists the newest chats of every project, so the panel it expands into does too.
+    function prepareForStripExpansion() {
+      clearFilters(false);
+    }
+
+    /**
+     * Brings one chat's row into the list ("Show in Chats"): no search, its own scope, every project,
+     * then its project opened far enough (grouped) or the date list paged far enough. Renders
+     * synchronously; true when the row is mounted.
+     */
+    function revealSession(sessionId) {
+      var id = String(sessionId || '');
+      var session = (state.sessions || []).find(function (item) { return item && item.id === id; });
+      if (!session || disposed) return false;
+      clearFilters(Boolean(session.archived_at));
+      var model = renderNow();
+      if (!model || rowById.has(id)) return rowById.has(id);
+      var placement = modelUi.projectPlacement(model, id);
+      if (placement) {
+        projectsCtl.reveal(placement.projectId, placement.roots);
+        renderNow();
+      }
+      while (!placement && !rowById.has(id) && visibleLimit < MAX_VISIBLE) {
+        visibleLimit = Math.min(visibleLimit + PAGE_SIZE, MAX_VISIBLE);
+        renderNow();
+      }
+      return rowById.has(id);
     }
 
     function setRovingSession(sessionId) {
       rovingSessionId = String(sessionId || '');
       getVisibleSessionElements().forEach(function (row) {
         var selected = row.dataset.sessionId === rovingSessionId;
-        row.querySelector('[data-session-open]')?.setAttribute('tabindex', selected ? '0' : '-1');
-        row.querySelector('[data-session-action="menu"]')?.setAttribute('tabindex', selected && !row.classList.contains('sidebar-bulk-selecting') ? '0' : '-1');
+        var open = row.querySelector('[data-session-open]');
+        // The Tab stop moved outside a render: the row's recorded attribute key no longer matches its DOM.
+        var keys = rowKeys.get(row);
+        if (keys && open && open.getAttribute('tabindex') !== (selected ? '0' : '-1')) keys.attrs = '';
+        open?.setAttribute('tabindex', selected ? '0' : '-1');
+        row.querySelector('[data-session-action="menu"]')?.setAttribute('tabindex', selected ? '0' : '-1');
       });
     }
 
@@ -884,26 +906,33 @@
         : [];
     }
 
+    // Runtime-only chrome pass (streaming/approval ticks): collapsed parents' chips and collapsed
+    // projects' dots. Row badges have their own pass, so this never calls afterRenderSessions.
     function patchRuntimeState() {
       if (disposed) return;
-      var activeIds = runtimeActiveIds();
-      treeUi.patchCollapsedChips(getVisibleSessionElements(), lastNodes, function (id) { return activeIds.has(id); });
-      callbacks.afterRenderSessions && callbacks.afterRenderSessions(getVisibleSessionElements());
+      var runtime = runtimeStates();
+      var parents = collapsedParentIds.map(function (id) { return rowById.get(id); }).filter(Boolean);
+      if (parents.length) treeUi.patchCollapsedChips(parents, lastNodes, function (id) { return runtime.active.has(id); });
+      projectsCtl.patchTones(runtime.stateOf);
     }
 
     function handlePanelClick(event) {
+      if (projectsCtl.handleClick(event)) return;
       var toggle = event.target && event.target.closest && event.target.closest('[data-session-toggle]');
       if (toggle && dom.conversationGroups.contains(toggle)) {
         event.preventDefault();
         toggleChildren(toggle.dataset.sessionToggle);
         return;
       }
+      if (event.target && event.target.closest && event.target.closest('[data-chats-load-more]')) {
+        loadMore();
+        return;
+      }
       var action = event.target && event.target.closest && event.target.closest('[data-chats-empty-action]');
       if (!action || !dom.conversationGroups.contains(action)) return;
       if (action.dataset.chatsEmptyAction === 'search') {
         if (dom.searchInput) dom.searchInput.value = '';
-        visibleLimit = PAGE_SIZE;
-        scheduleRender({ scrollPolicy: SCROLL_RESET });
+        resetPaging();
         dom.searchInput && dom.searchInput.focus();
       } else if (action.dataset.chatsEmptyAction === 'archived') {
         setScope('recent');
@@ -918,36 +947,38 @@
       disposed = true;
       if (scheduledFrame) cancelFrame(scheduledFrame);
       scheduledFrame = 0;
+      if (sizeObserver) sizeObserver.disconnect();
+      sizeObserver = null;
       dom.scopeSlot && dom.scopeSlot.removeEventListener('inv-segmented-change', handleScopeChange);
-      dom.scopeSlot && dom.scopeSlot.removeEventListener('click', handleScopeSlotClick);
-      dom.projectRow && dom.projectRow.removeEventListener('click', handleScopeSlotClick);
-      windowRef && typeof windowRef.removeEventListener === 'function' && windowRef.removeEventListener('jenny:projects-changed', handleProjectsChanged);
+      dom.scopeSlot && dom.scopeSlot.removeEventListener('click', handleFilterControlsClick);
+      dom.projectRow && dom.projectRow.removeEventListener('click', handleFilterControlsClick);
+      if (typeof callbacks.getProjectSwitcher === 'function') windowRef.removeEventListener('jenny:projects-changed', handleProjectsChanged);
       dom.conversationGroups && dom.conversationGroups.removeEventListener('click', handlePanelClick);
+      dom.conversationGroups && dom.conversationGroups.removeEventListener('contextmenu', projectsCtl.handleContextMenu);
       if (dom.scopeSlot) dom.scopeSlot.replaceChildren();
       if (dom.projectRow) dom.projectRow.replaceChildren();
       if (dom.conversationGroups) dom.conversationGroups.replaceChildren();
       if (dom.status) dom.status.textContent = '';
       rowById.clear();
       groupByKey.clear();
+      projectsCtl.dispose();
     }
 
     dom.scopeSlot && dom.scopeSlot.addEventListener('inv-segmented-change', handleScopeChange);
-    dom.scopeSlot && dom.scopeSlot.addEventListener('click', handleScopeSlotClick);
-    dom.projectRow && dom.projectRow.addEventListener('click', handleScopeSlotClick);
-    if (typeof callbacks.getProjectSwitcher === 'function' && windowRef && typeof windowRef.addEventListener === 'function') {
-      windowRef.addEventListener('jenny:projects-changed', handleProjectsChanged);
-    }
+    dom.scopeSlot && dom.scopeSlot.addEventListener('click', handleFilterControlsClick);
+    dom.projectRow && dom.projectRow.addEventListener('click', handleFilterControlsClick);
+    if (typeof callbacks.getProjectSwitcher === 'function') windowRef.addEventListener('jenny:projects-changed', handleProjectsChanged);
     dom.conversationGroups && dom.conversationGroups.addEventListener('click', handlePanelClick);
+    dom.conversationGroups && dom.conversationGroups.addEventListener('contextmenu', projectsCtl.handleContextMenu);
+    observeListSize();
 
     return {
       renderSessions: scheduleRender,
       renderNow: renderNow,
-      resetQuery: function () { visibleLimit = PAGE_SIZE; scheduleRender({ scrollPolicy: SCROLL_RESET }); },
+      revealSession: revealSession,
       setScope: setScope,
       toggleScope: toggleScope,
-      getScope: currentScope,
       setProjectFilter: setProjectFilter,
-      getProjectFilter: currentProjectFilter,
       loadMore: loadMore,
       prepareForStripExpansion: prepareForStripExpansion,
       setRovingSession: setRovingSession,
@@ -958,12 +989,6 @@
   }
 
   return {
-    PAGE_SIZE: PAGE_SIZE,
-    MAX_VISIBLE: MAX_VISIBLE,
-    SEARCH_LIMIT: SEARCH_LIMIT,
-    compareSessions: compareSessions,
-    groupVisibleSessions: groupVisibleSessions,
-    formatSessionTime: formatSessionTime,
     buildChatsViewModel: buildChatsViewModel,
     createChatsPanelController: createChatsPanelController,
   };

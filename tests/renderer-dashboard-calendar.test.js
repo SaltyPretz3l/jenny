@@ -692,7 +692,8 @@ test('the view toggle switches to the week grid and persists the choice', async 
   await flush();
   assert.equal(calls.length, 1);
   // The full calendar object is written so feeds can't be dropped by a partial write.
-  assert.deepEqual(calls[0].calendar, { feeds: [], viewMode: 'week' });
+  // viewMode alone: the config service merges the calendar section shallowly.
+  assert.deepEqual(calls[0].calendar, { viewMode: 'week' });
   assert.equal(appliedConfigs.length, 1);
 });
 
@@ -730,7 +731,8 @@ test('the view toggle switches to the month grid and persists the choice', async
 
   await flush();
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].calendar, { feeds: [], viewMode: 'month' });
+  // viewMode alone: the config service merges the calendar section shallowly.
+  assert.deepEqual(calls[0].calendar, { viewMode: 'month' });
   assert.equal(appliedConfigs.length, 1);
 });
 
@@ -968,4 +970,42 @@ test('a tz-approximate feed instance shows an approximate-time badge in the agen
   assert.ok(row);
   assert.match(row.textContent, /~tz/);
   assert.match(row.getAttribute('aria-label'), /approximate time/);
+});
+
+test('a save that fails after Escape closed the form neither throws nor reopens it', async () => {
+  let reject;
+  const shell = { calendar: { createEvent: () => new Promise((_, r) => { reject = r; }) } };
+  const { dom, body, widget, ctx } = createHarness({ shell });
+  widget.render(body, ctx);
+  click(dom, body.querySelector('[data-cal-new-event]'));
+  body.querySelector('#calFormTitle').value = 'Lunch';
+  click(dom, body.querySelector('[data-cal-form-action="save"]'));
+  keydown(dom, body.querySelector('#calFormTitle'), 'Escape');
+  assert.equal(body.querySelector('[data-cal-form="1"]'), null);
+  const unhandled = [];
+  const onUnhandled = (error) => unhandled.push(error);
+  process.on('unhandledRejection', onUnhandled);
+  reject(new Error('disk full'));
+  await flush();
+  await flush();
+  process.off('unhandledRejection', onUnhandled);
+  assert.deepEqual(unhandled, []);
+  assert.equal(body.querySelector('[data-cal-form="1"]'), null);
+  dom.window.close();
+});
+
+test('a double Enter in quick-add creates the event once', async () => {
+  const calls = [];
+  let resolve;
+  const shell = { calendar: { createEvent: (p) => { calls.push(p); return new Promise((r) => { resolve = r; }); } } };
+  const { dom, body, widget, ctx } = createHarness({ shell });
+  widget.render(body, ctx);
+  const input = expandQuickAdd(dom, body);
+  input.value = 'Dentist tomorrow 3pm';
+  keydown(dom, input, 'Enter');
+  keydown(dom, body.querySelector('[data-cal-quickadd-input]') || input, 'Enter');
+  resolve(makeState().calendar);
+  await flush();
+  assert.equal(calls.length, 1);
+  dom.window.close();
 });

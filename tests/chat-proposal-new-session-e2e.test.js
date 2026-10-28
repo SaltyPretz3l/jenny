@@ -36,7 +36,7 @@ function negotiatedClient() {
   return client;
 }
 
-function setup(t) {
+function setup(t, { emit } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-new-session-e2e-'));
   const store = new ElectronSessionStore(path.join(dir, 'sessions.json'), { logger() {} });
   t.after(() => {
@@ -64,7 +64,7 @@ function setup(t) {
     },
   });
   backend.createLinkedChildSession = (spec) => createLinkedChildSession(backend, spec);
-  const proposals = createChatProposalService({ backendService: backend });
+  const proposals = createChatProposalService({ backendService: backend, ...(emit ? { emit } : {}) });
   t.after(() => proposals.dispose());
   return { store, backend, proposals, submits };
 }
@@ -200,4 +200,43 @@ test('the child never gets more authority than its source has when it is created
   assert.equal(child.lockdown, true);
   assert.equal(env.submits[1].request.planMode, true);
   assert.equal(env.submits[1].request.approvalMode, 'prompt');
+});
+
+test('F3b: the accepted card follows its child: facts, a failed first turn with Retry, and a refresh of the source', async (t) => {
+  const emitted = [];
+  const env = setup(t, { emit: (event) => emitted.push(event) });
+  const sourceId = env.store.createSession({ title: 'source', projectId: 'project_one' }).id;
+  const { proposalId, incarnation } = await publishSuggestion(env, sourceId);
+  await env.proposals.decide({
+    schema_version: 1, session_id: sourceId, proposal_id: proposalId, expected_revision: 1,
+    decision_id: '55555555-5555-4555-8555-555555555555', choice: 'new_session',
+  });
+  const done = await env.proposals.completeHandoff({
+    sessionId: sourceId, sessionIncarnation: incarnation, turnId: 'turn_1', toolCallId: 'call_h',
+    proposalId, attemptId: recordOf(env.store, sourceId).attempt_id, task: 'Review the commits.', background: '',
+  });
+  assert.equal(done.ok, true, JSON.stringify(done));
+  const childId = done.child_session_id;
+  const read = async () => (await env.proposals.get({ schema_version: 1, session_id: sourceId, proposal_id: proposalId })).proposal;
+  const started = await read();
+  assert.equal(started.action_state, 'succeeded');
+  assert.equal(started.child.phase, 'starting');
+  assert.equal(started.child.run_mode, 'ask', 'the mode the child really got, not the card option');
+
+  const firstTurn = recordOf(env.store, sourceId).first_turn_turn_id;
+  env.store.appendMessage(childId, { id: 'child_user_1', role: 'user', content: 'Review the commits.', turn_id: firstTurn });
+  env.store.appendMessage(childId, {
+    id: 'child_reply_1', role: 'assistant', content: '', turn_id: firstTurn, error_code: 'CMP-AI-0002', stream_error: 'busy',
+    recovery_title: 'Model was still switching',
+  });
+  emitted.length = 0;
+  env.backend.emit('chat-stream', { type: 'error', sessionId: childId, turnId: firstTurn, error_code: 'CMP-AI-0002' });
+  const failed = await read();
+  assert.equal(failed.child.phase, 'failed');
+  assert.equal(failed.child.error_class, 'model_busy');
+  assert.equal(failed.child.failed_turn_is_first, true);
+  assert.deepEqual(failed.child.retry, { message_id: 'child_reply_1' });
+  assert.notEqual(failed.child.key, started.child.key);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.ok(emitted.some((event) => event.session_id === sourceId), 'the source chat is told to refetch its cards');
 });

@@ -205,10 +205,11 @@ test('each pane\'s rail names its own session: select values, pill label, run-mo
   assert.notEqual(chip1.getAttribute('title'), doc.getElementById('composerRunModeChip').getAttribute('title'));
 
   // Rail contents first, then Stop, then Send (W1-4c order kept). W3-3: the two
-  // slots sit in the settings group, the summary pill follows it.
+  // slots sit in the settings group, the summary pill follows it. Row 84: the
+  // dictation mic goes before Stop, so it sits beside Send when idle.
   const railChildren = [...pane1.root.querySelector('.composer-rail').children];
   assert.deepEqual(railChildren.map((node) => node.getAttribute('data-chat-node') || node.getAttribute('data-inv-chip') || node.className.split(' ')[0]),
-    ['composerSettingsGroup', 'composer-settings-summary', 'composer-stop-button', 'composer-send']);
+    ['composerSettingsGroup', 'composer-settings-summary', 'composer-icon-button', 'composer-stop-button', 'composer-send']);
   assert.deepEqual([...rail.composerSettingsGroup.children].map((node) => node.getAttribute('data-chat-node')),
     ['composerRunModeSlot', 'composerModelPillSlot']);
 });
@@ -255,10 +256,18 @@ test('a model change in pane 1 persists to session-b only', async (t) => {
   assert.equal(window.__rendererState.currentSessionId, 'session-a', 'the change never moved focus');
 });
 
-test('a run-mode chip click in pane 1 cycles session-b only', async (t) => {
+// Row 63: the chip opens the run-mode menu; picking a mode writes that pane's session.
+function pickRunMode(doc, chip, mode) {
+  chip.click();
+  const item = doc.querySelector(`.composer-run-mode-menu [data-value="${mode}"]`);
+  assert.ok(item, `the run-mode menu offers ${mode}`);
+  item.click();
+}
+
+test('a run-mode menu pick in pane 1 writes session-b only', async (t) => {
   const { window, doc, writes, pane1 } = await openTwoPanes(t);
   const chip1 = railOf(pane1).composerRunModeSlot.querySelector('[data-inv-chip="composer-run-mode"]');
-  chip1.click();
+  pickRunMode(doc, chip1, 'plan');
   await waitForUi(window, 80);
   assert.deepEqual(writes.map((entry) => [entry.sessionId, entry.preferences.run_mode]), [['session-b', 'plan']]);
   const sessions = window.__rendererState.sessions;
@@ -427,7 +436,7 @@ test('W3-3: a narrow pane 1 collapses while pane 0 stays expanded; its summary f
   await waitForUi(window, 80);
   assert.equal(pillLabel(pill).startsWith('qwen3.5'), true, 'precondition: pane 1\'s pill follows the write');
   assert.equal(summary.querySelector('.inv-chip-label').textContent, `Auto \u00b7 ${pillLabel(pill)}`, 'the summary follows the model');
-  railOf(pane1).composerRunModeSlot.querySelector('[data-inv-chip="composer-run-mode"]').click();
+  pickRunMode(doc, railOf(pane1).composerRunModeSlot.querySelector('[data-inv-chip="composer-run-mode"]'), 'plan');
   await waitForUi(window, 80);
   assert.equal(summary.querySelector('.composer-settings-summary-mode').textContent, 'Plan \u00b7', 'plan mode shows the Plan tag');
 

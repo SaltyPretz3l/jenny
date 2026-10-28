@@ -57,10 +57,12 @@ from enum import Enum
 from sidecar.ai import feature_flags as _feature_flags
 from sidecar.ai.tools.builtins.shell_command_split import split_compound_command
 from sidecar.ai.tools.builtins.shell_security_tokens import (
+    _SCRIPT_SUFFIXES,
     _command_argv,
     _has_truncating_redirect,
     _interpreter_payload,
     _path_basename,
+    _pathed_or_script_executable,
     _split_powershell_commands,
     _strip_surrounding_quotes,
 )
@@ -86,17 +88,29 @@ class ClassificationResult:
 
 # ── Lists ─────────────────────────────────────────────────────────────
 
+# A system command counts only at command position (start of the string or of
+# a compound segment, optionally behind sudo): `git commit -m "fix reboot loop"`
+# and `git log --format %H` are ordinary work, not a reboot or a disk format.
+_COMMAND_POSITION = r"(?:^|[;&|(]\s*)(?:sudo\s+)?"
 _BLOCKED_PATTERN_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("rm -rf /*", re.compile(r"\brm\s+-rf\s+/\*", re.IGNORECASE)),
-    ("rm -rf /", re.compile(r"\brm\s+-rf\s+/", re.IGNORECASE)),
-    ("del /f /s /q", re.compile(r"\bdel\s+/f\s+/s\s+/q\b", re.IGNORECASE)),
-    ("format ", re.compile(r"\bformat\s+", re.IGNORECASE)),
-    ("mkfs", re.compile(r"\bmkfs(?:\.\w+)?\b", re.IGNORECASE)),
-    ("shutdown ", re.compile(r"\bshutdown\s+", re.IGNORECASE)),
-    ("reboot", re.compile(r"\breboot\b", re.IGNORECASE)),
+    # `rm -rf /` (or `/*`) anywhere, but not `rm -rf /tmp/x`: the root slash
+    # must be the whole target.
+    ("rm -rf /", re.compile(r"\brm\s+-(?:rf|fr)\s+/(?:\*|\s|$)", re.IGNORECASE)),
+    ("del /f /s /q", re.compile(_COMMAND_POSITION + r"del\s+/f\s+/s\s+/q\b", re.IGNORECASE)),
+    ("format ", re.compile(_COMMAND_POSITION + r"format\s+[A-Za-z]:", re.IGNORECASE)),
+    ("mkfs", re.compile(_COMMAND_POSITION + r"mkfs(?:\.\w+)?\b", re.IGNORECASE)),
+    ("shutdown ", re.compile(_COMMAND_POSITION + r"shutdown\s+", re.IGNORECASE)),
+    ("reboot", re.compile(_COMMAND_POSITION + r"reboot\b", re.IGNORECASE)),
     (":(){:|:&};:", re.compile(re.escape(":(){:|:&};:"), re.IGNORECASE)),
     ("> /dev/sda", re.compile(r">\s*/dev/sda\b", re.IGNORECASE)),
 )
+
+# Command substitution runs an arbitrary inner command before the outer one is
+# even considered, so `echo $(rm -rf x)` must never ride a safe executable's
+# ALLOWED verdict. Backticks are PowerShell's escape character, so there only
+# `$(` counts; process substitution `<(`/`>(` is POSIX-only.
+_POSIX_COMMAND_SUBSTITUTION_RE = re.compile(r"\$\(|`|<\(|>\(")
+_POWERSHELL_COMMAND_SUBSTITUTION_RE = re.compile(r"\$\(")
 
 _SHELL_EXECUTABLE_RE = r"(?:bash|sh|zsh|ksh|dash|csh|tcsh|fish)"
 
@@ -172,13 +186,8 @@ SAFE_EXECUTABLES: frozenset[str] = frozenset(
         "cut",
         "paste",
         "jq",
-        "yq",
-        # archive
-        "tar",
-        "zip",
-        "unzip",
-        "gzip",
-        "gunzip",
+        # archive tools write or delete files (`tar -x`, `zip`, `gzip` removes
+        # the original) and `yq -i` edits in place: they need approval.
         # misc safe
         "diff",
         "basename",
@@ -260,7 +269,6 @@ DESTRUCTIVE_EXECUTABLES: frozenset[str] = frozenset(
     }
 )
 
-_SCRIPT_SUFFIXES: tuple[str, ...] = (".bat", ".cmd", ".ps1", ".sh", ".command")
 _SHELL_TEMP_SCRIPT_LANGUAGES: frozenset[str] = frozenset(
     {"", "cmd", "sh", "powershell"}
 )
@@ -311,7 +319,39 @@ _GIT_WRITE_SUBCOMMANDS = frozenset({
     "stash", "config", "submodule", "worktree", "gc", "prune", "am", "apply",
     "format-patch", "tag", "remote", "init", "clone",
 })
-_FIND_EXECUTION_ARGUMENTS = frozenset({"-exec", "-execdir", "-ok", "-okdir", "-delete"})
+_FIND_EXECUTION_ARGUMENTS = frozenset({
+    "-exec", "-execdir", "-ok", "-okdir", "-delete",
+    # these write to a file named on the command line
+    "-fprint", "-fprint0", "-fprintf", "-fls",
+})
+# Arguments that turn a read-only text tool into a writer or a launcher.
+_SORT_WRITE_ARGUMENTS = frozenset({"-o", "--output", "--compress-program"})
+_RG_LAUNCH_ARGUMENTS = frozenset({"--pre", "--hostname-bin"})
+_SED_SCRIPT_FILE_ARGUMENTS = frozenset({"-f", "--file"})
+# sed `-i`/`--in-place` (also clustered, `-ni`, or suffixed, `-i.bak`) rewrites
+# the named file; the allowlist admits sed as a text filter only.
+_SED_IN_PLACE_RE = re.compile(r"^(?:-[A-Za-z]*i|--in-place)")
+# Windows sort.exe writes with `/O`; GNU sort with `-o`/`--output`.
+_SORT_WINDOWS_OUTPUT_SWITCH = "/o"
+# awk programs that shell out, read extra input, write files or load code
+# from a file the classifier cannot inspect (`@include`, `@load`).
+_AWK_UNSAFE_RE = re.compile(r"system\s*\(|getline|[|>]|@include|@load")
+# awk options that take the program or a library from a file: `-f`/`--file`,
+# gawk `-i`/`--include`, `-l`/`--load`, `-E`/`--exec`. `-F` (field separator)
+# is case-distinct and stays allowed.
+_AWK_FILE_OPTION_RE = re.compile(r"^(?:-[filE]|--(?:file|include|load|exec)(?:=|$))")
+# sed commands `e` (execute), `w`/`W` (write file) and the `e`/`w` flags of
+# `s///`: a command letter after a non-letter, ending the token or a command.
+_SED_UNSAFE_COMMAND_RE = re.compile(r"(?:^|[^A-Za-z])[ewW](?:\s|;|$)")
+# Wrappers that run their trailing argv as a new command.
+_WRAPPER_EXECUTABLES: frozenset[str] = frozenset({
+    "sudo", "doas", "env", "nohup", "time", "command", "exec", "timeout", "nice",
+    "ionice", "stdbuf", "busybox", "builtin", "setsid", "chrt", "caffeinate",
+})
+# Shell grouping and keyword tokens that precede a command in a segment.
+_GROUPING_PREFIX_TOKENS: frozenset[str] = frozenset({
+    "(", "{", "!", "then", "do", "else", "elif", "if", "while", "until",
+})
 _CMD_CARET_WORD_ESCAPE_RE = re.compile(r"\^[A-Za-z]")
 _START_COMMAND_RE = re.compile(r'^\s*start(?:\.exe)?(?:\s|$)', re.IGNORECASE)
 _POWERSHELL_OPAQUE_SYNTAX_RE = re.compile(
@@ -480,6 +520,15 @@ def _classify_single(command: str, *, powershell: bool = False) -> Classificatio
 
     exe = _executable_name(argv[0])
 
+    pathed_reason = _pathed_or_script_executable(argv[0])
+    if pathed_reason is not None:
+        return ClassificationResult(
+            CommandVerdict.NEEDS_APPROVAL,
+            pathed_reason,
+            exe,
+            command,
+        )
+
     if _has_truncating_redirect(command, powershell=powershell, sensitive_only=False):
         return ClassificationResult(
             CommandVerdict.NEEDS_APPROVAL,
@@ -499,12 +548,11 @@ def _classify_single(command: str, *, powershell: bool = False) -> Classificatio
             exe,
             command,
         )
-    if exe == "find" and _FIND_EXECUTION_ARGUMENTS.intersection(
-        _strip_surrounding_quotes(token).lower() for token in argv[1:]
-    ):
+    guard_reason = _safe_executable_argument_guard(exe, argv)
+    if guard_reason is not None:
         return ClassificationResult(
             CommandVerdict.NEEDS_APPROVAL,
-            "find argument can execute or delete",
+            guard_reason,
             exe,
             command,
         )
@@ -523,6 +571,49 @@ def _classify_single(command: str, *, powershell: bool = False) -> Classificatio
         exe,
         command,
     )
+
+
+def _safe_executable_argument_guard(executable: str, argv: list[str]) -> str | None:
+    """Return why a normally safe executable needs approval for *argv*, if it does.
+
+    The allowlist admits text and listing tools by name; these arguments make
+    them write files or launch programs, which the name alone does not show.
+    """
+    arguments = [_strip_surrounding_quotes(token) for token in argv[1:]]
+    lowered = [token.lower() for token in arguments]
+    if executable == "find" and _FIND_EXECUTION_ARGUMENTS.intersection(lowered):
+        return "find argument can execute, delete or write"
+    if executable == "sort" and any(
+        token in _SORT_WRITE_ARGUMENTS
+        or token == _SORT_WINDOWS_OUTPUT_SWITCH
+        or token.startswith(("--output=", "--compress-program="))
+        for token in lowered
+    ):
+        return "sort argument writes a file or runs a program"
+    if executable == "rg" and any(
+        token in _RG_LAUNCH_ARGUMENTS or token.startswith(("--pre=", "--hostname-bin="))
+        for token in lowered
+    ):
+        return "rg argument runs a program"
+    if executable == "awk":
+        if any(_AWK_FILE_OPTION_RE.match(token) for token in arguments):
+            return "awk program or library file is not inspectable"
+        if any(_AWK_UNSAFE_RE.search(token) for token in arguments):
+            return "awk program shells out, reads input, writes or loads a file"
+    if executable == "sed":
+        if any(
+            token in _SED_SCRIPT_FILE_ARGUMENTS or token.startswith("--file=")
+            for token in lowered
+        ):
+            return "sed script file is not inspectable"
+        if any(_SED_IN_PLACE_RE.match(token) for token in arguments):
+            return "sed in-place edit rewrites the file"
+        if any(
+            not token.startswith("-") and _SED_UNSAFE_COMMAND_RE.search(token)
+            for token in arguments
+        ):
+            return "sed command can execute or write a file"
+    return None
 
 
 def _destructive_git_use(argv: list[str], lowered: list[str]) -> str | None:
@@ -688,8 +779,56 @@ def _launcher_match(executable: str, argv: list[str], *, depth: int) -> str | No
     return _find_destructive(remainder, depth=depth + 1, powershell=False)
 
 
+def _strip_grouping_prefix(argv: list[str]) -> list[str]:
+    """Drop shell grouping and control keywords that precede the real command.
+
+    ``(rm -rf x)``, ``{ rm -rf x; }`` and ``if true; then rm x; fi`` split into
+    segments whose first token is a paren, a brace or a keyword; the command
+    the shell runs starts after them.
+    """
+    tokens = list(argv)
+    while tokens:
+        head = tokens[0]
+        stripped = head.lstrip("({!")
+        if stripped != head:
+            if stripped:
+                tokens[0] = stripped
+            else:
+                tokens.pop(0)
+            continue
+        if head.lower() in _GROUPING_PREFIX_TOKENS:
+            tokens.pop(0)
+            continue
+        break
+    if tokens:
+        tokens[-1] = tokens[-1].rstrip(")}") or tokens[-1]
+    return tokens
+
+
+def _wrapper_match(executable: str, argv: list[str], *, depth: int) -> str | None:
+    """Look through ``sudo``/``env``/``nohup``-style wrappers at the wrapped command."""
+    if executable not in _WRAPPER_EXECUTABLES:
+        return None
+    if depth >= _MAX_INTERPRETER_UNWRAP_DEPTH:
+        return executable
+    for index, token in enumerate(argv[1:], start=1):
+        nested_executable = _executable_name(token)
+        if nested_executable not in (
+            DESTRUCTIVE_EXECUTABLES | _INTERPRETER_EXECUTABLES | _WRAPPER_EXECUTABLES
+        ):
+            continue
+        match = _find_destructive(
+            " ".join(argv[index:]),
+            depth=depth + 1,
+            powershell=False,
+        )
+        if match is not None:
+            return match
+    return None
+
+
 def _find_destructive_segment(segment: str, *, depth: int, powershell: bool) -> str | None:
-    argv = _command_argv(segment)
+    argv = _strip_grouping_prefix(_command_argv(segment))
     if not argv:
         return _OPAQUE_START if _START_COMMAND_RE.match(segment) else None
     environment_match = _environment_interpreter_match(argv, depth=depth)
@@ -714,6 +853,9 @@ def _find_destructive_segment(segment: str, *, depth: int, powershell: bool) -> 
     launcher_match = _launcher_match(executable, argv, depth=depth)
     if launcher_match is not None:
         return launcher_match
+    wrapper_match = _wrapper_match(executable, argv, depth=depth)
+    if wrapper_match is not None:
+        return wrapper_match
     destructive_use = _destructive_safe_executable_use(executable, argv)
     if destructive_use is not None:
         return destructive_use
@@ -814,6 +956,16 @@ def classify_command(command: str, *, powershell: bool = False) -> Classificatio
         return ClassificationResult(
             CommandVerdict.NEEDS_APPROVAL,
             "shell-exec",
+            "",
+            command,
+        )
+    substitution_re = (
+        _POWERSHELL_COMMAND_SUBSTITUTION_RE if powershell else _POSIX_COMMAND_SUBSTITUTION_RE
+    )
+    if substitution_re.search(stripped):
+        return ClassificationResult(
+            CommandVerdict.NEEDS_APPROVAL,
+            "command substitution",
             "",
             command,
         )

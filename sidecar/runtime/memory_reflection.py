@@ -68,9 +68,35 @@ _ROLE_CAPS = {"user": MAX_USER_MESSAGE_CHARS, "assistant": MAX_ASSISTANT_MESSAGE
 
 
 class ReflectionInferenceError(RuntimeError):
-    """The engine failed (not a cancel or admission refusal); ``reason`` names how."""
+    """The engine failed (not a cancel or admission refusal); ``reason`` names how.
+
+    ``details`` carries the provider's status code, error code and classification
+    (never conversation text) so the failure log says why, not just which class.
+    """
 
     reason = REFLECTION_INFERENCE_FAILED
+
+    def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.details: dict[str, Any] = details or {}
+
+
+def _provider_failure_details(error: BaseException) -> dict[str, Any]:
+    details: dict[str, Any] = {}
+    for key in ("status_code", "code", "classification", "provider"):
+        value = getattr(error, key, None)
+        if isinstance(value, (str, int)) and not isinstance(value, bool) and value != "":
+            details[key] = value
+    provider_error = getattr(error, "body", None)
+    if isinstance(provider_error, dict) and isinstance(provider_error.get("error"), dict):
+        for key in ("code", "type"):
+            value = provider_error["error"].get(key)
+            if isinstance(value, str) and value:
+                details[f"provider_error_{key}"] = value[:80]
+    message = str(error).strip()
+    if details and message:
+        details["provider_message"] = message[:200]
+    return details
 
 
 class ReflectionOutputInvalid(ReflectionInferenceError):
@@ -229,7 +255,9 @@ def reflect_memories(  # noqa: PLR0913 - keyword-only request ports
     except Exception as error:  # noqa: BLE001 - boundary
         if cancel_handle is not None and cancel_handle.cancelled:
             raise
-        raise ReflectionInferenceError(type(error).__name__) from error
+        raise ReflectionInferenceError(
+            type(error).__name__, details=_provider_failure_details(error)
+        ) from error
     checked = check_reflection_output(
         str(raw or ""),
         new_user_messages=numbered_new_user_messages(request.messages, request.new_user_ids),

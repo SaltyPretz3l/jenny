@@ -190,6 +190,18 @@ test('failure details are bounded and outcome tracking is bounded', () => {
     'the oldest request was evicted');
 });
 
+test('outcome tracking is bounded per session, so a busy session never evicts another', () => {
+  const { service } = outcomeService();
+  const quiet = service.requestPresentation({ view: 'preview', path: 'quiet.md', session_id: 'session-2' });
+  const busyFirst = service.requestPresentation({ view: 'preview', path: 'a.md', session_id: 'session-1' });
+  for (let index = 0; index < 70; index += 1) {
+    service.requestPresentation({ view: 'preview', path: `f${index}.md`, session_id: 'session-1' });
+  }
+  assert.equal(service.recordOutcome({ request_id: busyFirst.request_id, decision: 'shown' }).reason, 'unknown_request');
+  assert.deepEqual(service.recordOutcome({ request_id: quiet.request_id, decision: 'shown' }), { ok: true });
+  assert.match(service.consumeOutcomeNote('session-2'), /quiet\.md/);
+});
+
 test('an audit sink failure never escapes recordOutcome', () => {
   const service = new WorkspacePresentationService({ sendBridgeEvent: () => {}, isRendererAvailable: () => true });
   service.setOutcomeListener(() => { throw new Error('store gone'); });

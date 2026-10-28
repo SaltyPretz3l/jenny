@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import builtins
 import importlib
-import io
 import json
 from pathlib import Path
 
 import pytest
 
-from sidecar.ai.error_codes import CMP_TOOL_OUTSIDE_WORKSPACE
-from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
 
 
@@ -177,39 +173,58 @@ def test_notebook_inspect_invalid_json_returns_unsupported(tmp_path: Path) -> No
     assert result.metadata["failure"]["reason"] == "notebook_parse_failed"
 
 
-def test_notebook_parser_rejects_redirected_handle_after_validation(
+def test_notebook_parses_the_validated_bytes_without_reopening(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import hashlib
+
     module = importlib.import_module("sidecar.ai.tools.builtins.rich_files.notebook")
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
     path = workspace_root / "sample.ipynb"
-    outside = tmp_path / "outside.ipynb"
     _write_notebook(path)
-    _write_notebook(outside)
+    validated = hashlib.sha256(path.read_bytes()).hexdigest()
     original_validate = module.validate_rich_file_source
-    original_open = builtins.open
-    original_io_open = io.open
 
-    def validate_then_redirect(**kwargs):
+    def validate_then_swap(**kwargs):
         source = original_validate(**kwargs)
-
-        def redirect(file, *args, **options):
-            target = outside if isinstance(file, (str, Path)) and Path(file) == path else file
-            return original_open(target, *args, **options)
-
-        def redirect_io(file, *args, **options):
-            target = outside if isinstance(file, (str, Path)) and Path(file) == path else file
-            return original_io_open(target, *args, **options)
-
-        monkeypatch.setattr(builtins, "open", redirect)
-        monkeypatch.setattr(io, "open", redirect_io)
+        # A swap or growth after validation never reaches the parser: it reads
+        # the bytes validation hashed, not the file again.
+        path.write_bytes(b"swapped after validation" * 4096)
         return source
 
-    monkeypatch.setattr(module, "validate_rich_file_source", validate_then_redirect)
-    with pytest.raises(ToolExecutionFailure) as exc:
-        module.notebook_inspect_tool(
-            {"path": "sample.ipynb"}, WorkspaceGuard(str(workspace_root))
-        )
-    assert exc.value.code == CMP_TOOL_OUTSIDE_WORKSPACE
+    monkeypatch.setattr(module, "validate_rich_file_source", validate_then_swap)
+    result = module.notebook_inspect_tool({"path": "sample.ipynb"}, WorkspaceGuard(str(workspace_root)))
+
+    assert result.success is True
+    assert result.metadata["source"]["sha256"] == validated
+    assert "visible source" in result.output
+
+
+def test_notebook_kernel_and_language_names_are_sanitized_and_capped(tmp_path: Path) -> None:
+    module = importlib.import_module("sidecar.ai.tools.builtins.rich_files.notebook")
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    (workspace_root / "odd.ipynb").write_text(
+        json.dumps(
+            {
+                "nbformat": 4,
+                "nbformat_minor": 5,
+                "metadata": {
+                    "kernelspec": {"name": "k" * 500},
+                    "language_info": {"name": "py\nthon\u200b"},
+                },
+                "cells": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _notebook_tool()({"path": "odd.ipynb"}, WorkspaceGuard(str(workspace_root)))
+
+    summary = result.metadata["summary"]
+    assert result.success is True
+    assert len(summary["kernel_name"]) <= module.MAX_METADATA_NAME_CHARS
+    assert summary["kernel_name"].startswith("kkk")
+    assert summary["language"] == "py thon"

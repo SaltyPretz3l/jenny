@@ -355,7 +355,7 @@ test('shell controller: an injected context is passed through as-is, and a malfo
   );
 });
 
-test('shell controller: the one-pane default, with and without the context module loaded', (t) => {
+test('shell controller: the one-pane default, in Node and in browser load order', (t) => {
   const got = spySubControllers(t);
   const state = { currentSessionId: '  session-1 ', ui: {} };
   const { deps, seen } = shellDeps(state);
@@ -366,23 +366,35 @@ test('shell controller: the one-pane default, with and without the context modul
   seen.send.sessionContext.setSessionId(' session-9 ');
   assert.equal(state.currentSessionId, 'session-9');
 
-  // Browser load order today: the context module has no <script> tag yet
-  // (W1-4c adds it), so the shell controller builds its inline default.
-  const context = vm.createContext({ rendererPaneVisibilityUtils: require('../renderer/chat/renderer-pane-visibility-utils') });
-  const source = path.join(ROOT, 'renderer/chat/renderer-chat-shell-controller.js');
-  vm.runInContext(fs.readFileSync(source, 'utf8'), context, { filename: source });
-  assert.equal(context.rendererPaneSessionContext, undefined);
+  // Browser load order: index.html tags the context module before the shell
+  // controller, which resolves it from the global at call time.
+  const runScript = (context, relative) => {
+    const file = path.join(ROOT, relative);
+    vm.runInContext(fs.readFileSync(file, 'utf8'), context, { filename: file });
+  };
+  const context = vm.createContext({
+    stringUtils: require('../renderer/shared/string-utils'),
+    rendererPaneVisibilityUtils: require('../renderer/chat/renderer-pane-visibility-utils'),
+  });
+  runScript(context, 'renderer/chat/renderer-pane-session-context.js');
+  runScript(context, 'renderer/chat/renderer-chat-shell-controller.js');
+  assert.equal(typeof context.rendererPaneSessionContext?.createPaneSessionContext, 'function');
   const browserState = { currentSessionId: ' session-1 ', ui: {} };
   const browser = shellDeps(browserState);
   context.rendererChatShellControllerUtils.createChatShellController(browser.deps);
-  const inline = browser.seen.send.sessionContext;
-  assert.equal(inline.paneId, 0);
-  assert.equal(inline.getSessionId(), A);
-  assert.equal(inline.isCurrent(A), true);
-  inline.setSessionId(' session-9 ');
+  const fromGlobal = browser.seen.send.sessionContext;
+  assert.equal(fromGlobal.paneId, 0);
+  assert.equal(fromGlobal.getSessionId(), A);
+  assert.equal(fromGlobal.isCurrent(A), true);
+  fromGlobal.setSessionId(' session-9 ');
   assert.equal(browserState.currentSessionId, 'session-9');
-  assert.equal(browser.seen.flow.sessionContext, inline);
-  // The inline default honours the paneId shorthand too.
+  assert.equal(browser.seen.flow.sessionContext, fromGlobal);
+  // A load-order slip fails loudly instead of building a second context.
+  const bare = vm.createContext({});
+  runScript(bare, 'renderer/chat/renderer-chat-shell-controller.js');
+  assert.throws(() => bare.rendererChatShellControllerUtils.createChatShellController(shellDeps({ currentSessionId: A, ui: {} }).deps),
+    /renderer-pane-session-context\.js must load before/);
+  // The paneId shorthand resolves that pane's session.
   const paneState = { currentSessionId: A, ui: {}, panes: normalizePaneLayout({ panes: [A, B], focusedPaneId: 0 }) };
   const paneBrowser = shellDeps(paneState, { paneId: 1 });
   context.rendererChatShellControllerUtils.createChatShellController(paneBrowser.deps);

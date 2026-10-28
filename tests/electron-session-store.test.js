@@ -343,9 +343,9 @@ test('electron session summaries expose bounded compaction context without conte
     tokens_after: 900,
     // Derived from the replacement messages by normalizeCompactionSnapshot (P2 Wave 1).
     replacement_tokens: 11,
+    boundary_message_id: 'a1',
     boundary_message_count: 2,
   });
-  assert.equal(Object.hasOwn(summary.compaction_context, 'boundary_message_id'), false);
   assert.equal(Object.hasOwn(summary.compaction_context, 'messages'), false);
   assert.equal(JSON.stringify(summary).includes('private compacted summary'), false);
 });
@@ -569,9 +569,15 @@ test('electron session store round-trips subagent steps and answer and drops unk
         usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
         evidence: [], tools_used: [], uncertainties: [], budget: { elapsed_ms: 900 },
         answer: '## Findings\n\nThe store persists reports.',
+        answer_truncated: true,
+        prompt: 'Inspect persistence.\nReport the writer.',
         steps: [
           { tool: 'read_file', display: 'Read File', ok: true, target: 'services/store.js', raw: 'drop' },
           { tool: 'read_file', display: 'Read File', ok: false, error_code: 'CMP-TOOL-0001', detail: 'Denied' },
+          {
+            tool: 'read_pdf', display: 'Read PDF', ok: true, target: 'docs/m.pdf',
+            range: 'p1–3', path: 'docs/m.pdf',
+          },
         ],
       } },
     },
@@ -580,6 +586,8 @@ test('electron session store round-trips subagent steps and answer and drops unk
   const reloaded = new ElectronSessionStore(storePath);
   const report = reloaded.getSessionMessages(created.id)[0].tool_result.metadata.subagent_report;
   assert.equal(report.answer, '## Findings\n\nThe store persists reports.');
+  assert.equal(report.answer_truncated, true);
+  assert.equal(report.prompt, 'Inspect persistence.\nReport the writer.');
   assert.equal(report.model, 'codex-cli/gpt-test');
   assert.equal(report.reasoning_effort, 'low');
   assert.equal(report.usage.total_tokens, 15);
@@ -587,7 +595,51 @@ test('electron session store round-trips subagent steps and answer and drops unk
   assert.deepEqual(report.steps, [
     { tool: 'read_file', display: 'Read File', ok: true, target: 'services/store.js' },
     { tool: 'read_file', display: 'Read File', ok: false, error_code: 'CMP-TOOL-0001', detail: 'Denied' },
+    {
+      tool: 'read_pdf', display: 'Read PDF', ok: true, target: 'docs/m.pdf',
+      range: 'p1–3', path: 'docs/m.pdf',
+    },
   ]);
+});
+
+test('electron session store round-trips the subagent transcript and drops unknown entry keys and kinds', () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-subagent-transcript-roundtrip-'));
+  trackDirectory(userDataPath);
+  const storePath = path.join(userDataPath, 'sessions.json');
+  const store = new ElectronSessionStore(storePath);
+  const created = store.createSession({ title: 'Subagent transcript' });
+  store.appendMessage(created.id, {
+    id: 'tool_result_subagent_transcript', role: 'tool', content: '',
+    tool_result: {
+      call_id: 'call-transcript', tool_name: 'subagent_run', output_text: '{}',
+      metadata: { subagent_report: {
+        task_id: 'child-transcript', label: 'Inspect persistence', status: 'completed', summary: 'Done.',
+        evidence: [], tools_used: [], uncertainties: [], budget: { elapsed_ms: 900 },
+        transcript_dropped: 3,
+        transcript: [
+          { kind: 'thought', text: 'Plan the read.', ms: 800, raw: 'drop' },
+          { kind: 'text', text: 'Reading the writer first.' },
+          {
+            kind: 'tool', call_id: 'call-1', tool: 'read_file', display: 'Read File', status: 'completed',
+            input: '{"path":"services/store.js"}', output: 'api_key=store-secret-value\nbody', ms: 12, raw: 'drop',
+          },
+          { kind: 'mystery', text: 'unknown kind' },
+        ],
+      } },
+    },
+  });
+
+  const reloaded = new ElectronSessionStore(storePath);
+  const report = reloaded.getSessionMessages(created.id)[0].tool_result.metadata.subagent_report;
+  assert.equal(report.transcript_dropped, 3);
+  assert.equal(report.transcript.length, 3);
+  assert.deepEqual(report.transcript[0], { kind: 'thought', text: 'Plan the read.', ms: 800 });
+  assert.deepEqual(report.transcript[1], { kind: 'text', text: 'Reading the writer first.' });
+  assert.equal(report.transcript[2].input, '{"path":"services/store.js"}');
+  assert.equal(report.transcript[2].output.includes('store-secret-value'), false);
+  assert.equal(report.transcript[2].output.endsWith('\nbody'), true);
+  assert.equal(report.transcript[2].ms, 12);
+  assert.equal(Object.hasOwn(report.transcript[2], 'raw'), false);
 });
 
 // CTL-010: compaction drops oldest WHOLE turns (never a raw event tail — a

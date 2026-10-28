@@ -4,6 +4,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { sandboxError } = require('./sandbox-errors');
+const { findOnPath } = require('../backend/executable-on-path');
 const OWNER = 'com.jenny.command.owner';
 const VERSION = 'com.jenny.command.version';
 const VERSION_VALUE = '1';
@@ -46,7 +47,9 @@ class DockerLauncher {
     this.env = environment(env);
     this.platform = platform;
     const windowsDocker = path.join(env.ProgramFiles || 'C:\\Program Files', 'Docker', 'Docker', 'resources', 'bin', 'docker.exe');
-    this.command = platform === 'win32' && fs.existsSync(windowsDocker) ? windowsDocker : 'docker';
+    // Windows spawn searches the cwd before PATH, so a bare name is resolved here; a miss is docker_missing.
+    this.command = platform !== 'win32' ? 'docker'
+      : fs.existsSync(windowsDocker) ? windowsDocker : findOnPath('docker', { env, platform });
     this.endpoint = null;
     this.volumeName = 'jenny-command-' + ownerId;
     this.pendingCommands = new Set();
@@ -55,6 +58,7 @@ class DockerLauncher {
   async _run(args, { input = null, timeoutMs = 15000, maxBytes = 4 * 1024 * 1024, endpoint = true } = {}) {
     const prefix = endpoint ? ['--host', this.endpoint] : [];
     if (endpoint && !localEndpoint(this.endpoint)) throw sandboxError('docker_endpoint_invalid');
+    if (!this.command) throw sandboxError('docker_missing');
     if (this.pendingCommands.size >= 32) throw sandboxError('docker_command_capacity');
     return new Promise((resolve, reject) => {
       const child = this.spawn(this.command, [...prefix, ...args], {

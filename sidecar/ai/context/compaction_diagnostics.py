@@ -8,10 +8,12 @@ messages before the runtime system rows are inserted.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from sidecar.ai.context.compaction import is_compaction_summary_content
 from sidecar.ai.context.compaction_window import _tool_call_name, is_mid_turn_nudge_row
+from sidecar.runtime.diagnostics import log_event
 
 WINDOW_SHAPE_MAX_ROWS = 128
 _TOOL_NAME_MAX_CHARS = 128
@@ -110,3 +112,39 @@ def compacted_event_extras(result: Any) -> dict[str, Any]:
         "window_shape": compaction_window_shape(result.messages),
         "summary_source_dropped_messages": max(0, int(result.summary_input_dropped_messages or 0)),
     }
+
+
+def log_preflight_compaction_result(
+    logger: logging.Logger, compaction_result: Any, *, request_id: str
+) -> None:
+    """Log a preflight compaction's outcome (and a micro fallback) on the router's logger."""
+    log_event(
+        logger,
+        logging.INFO,
+        component="ai.router",
+        event="ai.router.compaction_completed",
+        message="Context compaction completed.",
+        status="success" if compaction_result.error is None else "degraded",
+        data={
+            "strategy": compaction_result.strategy,
+            "tokens_before": compaction_result.tokens_before,
+            "tokens_after": compaction_result.tokens_after,
+            "error": compaction_result.error,
+        },
+        request_id=request_id,
+    )
+    if not compaction_result.micro_fallback:
+        return
+    log_event(
+        logger,
+        logging.WARNING,
+        component="ai.router",
+        event="ai.router.compaction_micro_fallback",
+        message="Context compaction fell back to microcompaction after full compaction failed.",
+        status="degraded",
+        data={
+            "tokens_before": compaction_result.tokens_before,
+            "tokens_after": compaction_result.tokens_after,
+        },
+        request_id=request_id,
+    )

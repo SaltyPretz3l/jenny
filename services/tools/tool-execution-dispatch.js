@@ -17,6 +17,7 @@ function normalizeToolErrorCode(error, fallback = TOOL_ERROR_CODES.EXECUTION_FAI
   return CMP_ERROR_CODE_PATTERN.test(candidate) ? candidate : fallback;
 }
 
+// `call.input` is already a plain object: executePreApproved normalises it once.
 async function executeResolvedTool(executor, call, context, {
     approvalState,
     policyDecision = null,
@@ -100,6 +101,9 @@ async function executeResolvedTool(executor, call, context, {
       projectNotesService: scopedServices?.projectNotesService
         || (typeof executor._projectNotesService === 'function' ? executor._projectNotesService() : null),
       configService: scopedServices ? scopedServices.configService || null : executor._configService,
+      // Not project-scoped: the directory derives the caller's scope from the session itself.
+      sessionDirectoryService: typeof executor._sessionDirectoryService === 'function'
+        ? executor._sessionDirectoryService() : null,
       refreshManagedConfig: executor._refreshManagedConfig,
       logger: executor._logger,
       };
@@ -137,7 +141,7 @@ async function executeResolvedTool(executor, call, context, {
         durationMs,
         metadata: executor._mergePolicyDecisionMetadata(result.metadata, policyDecision),
         // F27: an image_generate picture reaches a vision chat model like a preview_test screenshot.
-        ...((toolName === 'image_generate' || (toolName === 'preview_test' && input?.screenshot === true))
+        ...((toolName === 'image_generate' || (toolName === 'preview_test' && input.screenshot === true))
           && tool.category === 'builtin' && !isError ? { previewImage: result.previewImage } : {}),
         errorCode,
       };

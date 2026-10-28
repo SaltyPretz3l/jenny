@@ -13,12 +13,6 @@ const {
   normalizeArchivePath,
 } = require('../services/ollama-linux-archive');
 
-const zstdAvailable = typeof zlib.createZstdDecompress === 'function'
-  && typeof zlib.zstdCompressSync === 'function';
-const archiveTest = zstdAvailable
-  ? test
-  : (name, fn) => test.skip(`${name} (Zstandard unavailable on Node ${process.version})`, fn);
-
 function writeString(block, value, offset, length) {
   const bytes = Buffer.from(value);
   if (bytes.length > length) throw new Error(`tar field too long: ${value}`);
@@ -122,7 +116,7 @@ async function rejectsCode(archive, code, options = {}) {
   });
 }
 
-archiveTest('exports the frozen error-code contract and fail-closed path normalizer', () => {
+test('exports the frozen error-code contract and fail-closed path normalizer', () => {
   assert.equal(Object.isFrozen(ARCHIVE_ERROR_CODES), true);
   assert.deepEqual(ARCHIVE_ERROR_CODES, [
     'zstd_unavailable', 'archive_corrupt', 'archive_unsupported_entry', 'archive_unsafe_path',
@@ -139,7 +133,7 @@ archiveTest('exports the frozen error-code contract and fail-closed path normali
   }
 });
 
-archiveTest('extracts regular files, nested directories, and executable mode', async () => {
+test('extracts regular files, nested directories, and executable mode', async () => {
   const archive = compressedTar([
     { name: 'bin/', type: '5', mode: 0o755 },
     { name: 'bin/ollama', mode: 0o755, content: 'ELF' },
@@ -170,7 +164,7 @@ archiveTest('extracts regular files, nested directories, and executable mode', a
   });
 });
 
-archiveTest('creates in-tree symbolic and prior-file hard links through injected fs', async () => {
+test('creates in-tree symbolic and prior-file hard links through injected fs', async () => {
   const archive = compressedTar([
     { name: 'lib/ollama/libcudart.so.12.8.90', content: 'cuda' },
     {
@@ -204,7 +198,7 @@ archiveTest('creates in-tree symbolic and prior-file hard links through injected
   });
 });
 
-archiveTest('reads GNU-format headers without treating the atime field as a path prefix', async () => {
+test('reads GNU-format headers without treating the atime field as a path prefix', async () => {
   const archive = compressedTar([{ name: 'bin/ollama', mode: 0o755, content: 'ELF', gnu: true }]);
   await withFixture(archive, async ({ archivePath, destinationDir }) => {
     const result = await extractTarZst({ archivePath, destinationDir, fsImpl: { ...fs, chmodSync: () => {} } });
@@ -213,7 +207,7 @@ archiveTest('reads GNU-format headers without treating the atime field as a path
   });
 });
 
-archiveTest('streams a multi-megabyte entry without accumulating write-stream listeners', async () => {
+test('streams a multi-megabyte entry without accumulating write-stream listeners', async () => {
   const size = 2 * 1024 * 1024;
   const warnings = [];
   const onWarning = (warning) => warnings.push(warning.name);
@@ -232,7 +226,7 @@ archiveTest('streams a multi-megabyte entry without accumulating write-stream li
   assert.deepEqual(warnings.filter((name) => name === 'MaxListenersExceededWarning'), []);
 });
 
-archiveTest('reads GNU base-256 file sizes', async () => {
+test('reads GNU base-256 file sizes', async () => {
   const archive = compressedTar([{ name: 'base256', content: 'data', base256Size: true }]);
   await withFixture(archive, async ({ archivePath, destinationDir }) => {
     const result = await extractTarZst({ archivePath, destinationDir });
@@ -241,7 +235,7 @@ archiveTest('reads GNU base-256 file sizes', async () => {
   });
 });
 
-archiveTest('rejects escaping and absolute symlinks and unresolved hard links', async () => {
+test('rejects escaping and absolute symlinks and unresolved hard links', async () => {
   const cases = [
     [{ name: 'bin/bad.so', type: '2', linkname: '../../etc/passwd' }],
     [{ name: 'lib/ollama/bad.so', type: '2', linkname: '/etc/passwd' }],
@@ -264,7 +258,7 @@ archiveTest('rejects escaping and absolute symlinks and unresolved hard links', 
   }
 });
 
-archiveTest('applies PAX and GNU long names and ignores a leading global PAX header', async () => {
+test('applies PAX and GNU long names and ignores a leading global PAX header', async () => {
   const paxPath = `lib/ollama/${'p'.repeat(110)}.so`;
   const gnuPath = `lib/ollama/${'g'.repeat(110)}.so`;
   const archive = compressedTar([
@@ -282,13 +276,13 @@ archiveTest('applies PAX and GNU long names and ignores a leading global PAX hea
   });
 });
 
-archiveTest('rejects unsafe paths', async () => {
+test('rejects unsafe paths', async () => {
   for (const name of ['../escape', '/abs/file', 'a\\b']) {
     await rejectsCode(compressedTar([{ name, content: 'bad' }]), 'archive_unsafe_path');
   }
 });
 
-archiveTest('rejects unsupported entry types and resource-limit violations', async () => {
+test('rejects unsupported entry types and resource-limit violations', async () => {
   await rejectsCode(compressedTar([{ name: 'pipe', type: '6' }]), 'archive_unsupported_entry');
   await rejectsCode(compressedTar([
     { name: 'one', content: '1' },
@@ -304,7 +298,7 @@ archiveTest('rejects unsupported entry types and resource-limit violations', asy
   });
 });
 
-archiveTest('rejects a corrupt checksum and truncated tar payload', async () => {
+test('rejects a corrupt checksum and truncated tar payload', async () => {
   const corrupt = rawTar([{ name: 'file', content: 'data' }]);
   corrupt[0] ^= 1;
   await rejectsCode(zlib.zstdCompressSync(corrupt), 'archive_corrupt');
@@ -314,7 +308,7 @@ archiveTest('rejects a corrupt checksum and truncated tar payload', async () => 
   await rejectsCode(zlib.zstdCompressSync(truncated), 'archive_corrupt');
 });
 
-archiveTest('cancels before the second entry without creating it', async () => {
+test('cancels before the second entry without creating it', async () => {
   const archive = compressedTar([
     { name: 'first', content: 'one' },
     { name: 'second', content: 'two' },
@@ -335,7 +329,7 @@ archiveTest('cancels before the second entry without creating it', async () => {
   });
 });
 
-archiveTest('cancels inside a large entry instead of finishing it', async () => {
+test('cancels inside a large entry instead of finishing it', async () => {
   const big = 'x'.repeat(4 * 1024 * 1024);
   const archive = compressedTar([
     { name: 'big', content: big },
@@ -359,7 +353,7 @@ archiveTest('cancels inside a large entry instead of finishing it', async () => 
   });
 });
 
-archiveTest('reports monotonic progress once per entry', async () => {
+test('reports monotonic progress once per entry', async () => {
   const archive = compressedTar([
     { name: 'first', content: '1' },
     { name: 'second', content: '22' },

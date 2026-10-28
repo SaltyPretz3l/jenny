@@ -1,6 +1,7 @@
 import pytest
 
 from scripts.eval.tool_contract_live import _write_generated_fixture, _write_workspace_fixture
+from tests.sidecar._platform_skips import make_dir_link
 
 
 @pytest.mark.parametrize("generated", [False, True])
@@ -24,10 +25,7 @@ def test_fixture_rejects_link_escape(tmp_path, generated):
     workspace.mkdir()
     outside = tmp_path / "outside"
     outside.mkdir()
-    try:
-        (workspace / "link").symlink_to(outside, target_is_directory=True)
-    except OSError:
-        pytest.skip("creating symlinks requires Windows permission")
+    make_dir_link(workspace / "link", outside)
     with pytest.raises(ValueError, match="fixture path"):
         if generated:
             _write_generated_fixture({"generated_fixture": {"path": "link/file", "line": "bad", "repeat": 1}}, workspace)

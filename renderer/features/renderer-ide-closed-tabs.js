@@ -1,6 +1,6 @@
 /* renderer/features/renderer-ide-closed-tabs.js
  *
- * Bounded LIFO of recently closed file tabs ({ path, viewState, group }) backing the
+ * Bounded LIFO of recently closed file tabs ({ path, viewState, group, pdfView? }) backing the
  * reopen-closed-tab shortcut (Ctrl+Shift+T). Pure - no DOM, no IPC, no Monaco.
  *
  * Entries are dropped when their file is deleted or renamed (dropUnder mirrors
@@ -16,6 +16,17 @@
   'use strict';
 
   const DEFAULT_LIMIT = 10;
+  const PDF_ZOOM_KEYWORDS = ['page-width', 'page-fit', 'page-actual', 'auto'];
+
+  // A PDF tab's reopen memory: `{ page, zoom }` with each key kept only when valid.
+  function normalizePdfView(value) {
+    if (!value || typeof value !== 'object') return null;
+    const view = {};
+    if (Number.isSafeInteger(value.page) && value.page >= 1 && value.page <= 100000) view.page = value.page;
+    if (PDF_ZOOM_KEYWORDS.includes(value.zoom)) view.zoom = value.zoom;
+    else if (typeof value.zoom === 'number' && Number.isFinite(value.zoom) && value.zoom >= 0.25 && value.zoom <= 8) view.zoom = value.zoom;
+    return Object.keys(view).length ? view : null;
+  }
 
   function createIdeClosedTabsStack(options) {
     const limit = Math.max(1, Number(options && options.limit) || DEFAULT_LIMIT);
@@ -43,7 +54,11 @@
       // De-dupe: re-closing a path moves it back to the top with its newest
       // view state rather than accumulating stale duplicates.
       dropPath(path);
-      stack.push({ path, viewState: (entry && entry.viewState) || null, group: typeof entry?.group === 'string' ? entry.group : '' });
+      const pdfView = normalizePdfView(entry && entry.pdfView);
+      stack.push({
+        path, viewState: (entry && entry.viewState) || null, group: typeof entry?.group === 'string' ? entry.group : '',
+        ...(pdfView ? { pdfView } : {}),
+      });
       while (stack.length > limit) {
         stack.shift();
       }
@@ -87,5 +102,5 @@
     return { push, pop, peek, find, dropPath, dropUnder, clear };
   }
 
-  return { createIdeClosedTabsStack };
+  return { createIdeClosedTabsStack, normalizePdfView };
 });

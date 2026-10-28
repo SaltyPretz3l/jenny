@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import subprocess
 import threading
 import time
 import uuid
@@ -14,9 +13,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Iterable, TypeVar
 
-from sidecar.ai.config import read_environment_value
 from sidecar.ai.error_codes import (
-    CMP_TOOL_COMMAND_ABORTED,
     CMP_TOOL_INVALID_PATH,
     CMP_TOOL_PRECONDITION_UNMET,
     CMP_TOOL_WORKTREE_BASELINE_NOT_FOUND,
@@ -27,6 +24,20 @@ from sidecar.ai.tools.builtins.git_ops import (
     _resolve_cwd,
     _run_git,
     _run_git_raw,
+)
+from sidecar.ai.tools.builtins.worktree_shell_evidence import (
+    MAX_STRAY_NOTE_ENTRIES,
+    SHELL_CHANGE_EVIDENCE_FLAG,  # noqa: F401 - re-export
+    call_outcome,
+    created_untracked_entries,
+    diff_id_prefix_for,
+    failure_outcome,
+    model_notes,
+    shell_change_evidence_enabled,
+    with_model_notes,
+)
+from sidecar.ai.tools.builtins.worktree_shell_evidence import (
+    is_cache_path as _is_cache_path,
 )
 from sidecar.ai.tools.contracts import (
     TOOL_FAILURE_RESULT_METADATA_KEYS,
@@ -42,25 +53,15 @@ MAX_STATUS_OUTPUT_CHARS = 12_000
 MAX_DELTA_OUTPUT_CHARS = 12_000
 MAX_TREE_PATHS_PER_QUERY = 128
 MAX_TREE_PATHSPEC_CHARS = 16_000
+# Lock-free HEAD lookups per delta before the last pass finishes under the lock.
+_DELTA_LOOKUP_ATTEMPTS = 3
 MAX_OPERATION_LEDGER_ENTRIES = 128
 MAX_OPERATION_LEDGER_PATHS = 256
 MIN_PORCELAIN_RECORD_CHARS = 4
 _DIRECT_SESSION_ID = "builtin-mcp"
-# TR-015: foreground shell tools report ``workspace_changed`` from a status diff
-# (``JENNY_ENABLE_SHELL_CHANGE_EVIDENCE=0`` disables the probe). Interpreter and
-# test caches are not the model's edits. Row 34: the same probe captures
-# user-only diffs and a ``scripted_change_review`` record for these tools.
-SHELL_CHANGE_EVIDENCE_FLAG = "JENNY_ENABLE_SHELL_CHANGE_EVIDENCE"
+# TR-015 / row 34: these foreground tools get the shell change-evidence probe,
+# which also captures user-only diffs and a ``scripted_change_review`` record.
 _SHELL_EVIDENCE_TOOLS = frozenset({"run_command", "run_temp_script", "python_execute"})
-_CACHE_PATH_SEGMENTS = frozenset({"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"})
-# ``source_changed`` narrows that to saved source: index-only transitions
-# (``git add``/``commit``) and untracked outputs without a source suffix (a stray
-# ``cfile=none``, a repo-root ``holdout/`` data folder) are not saves. New stray
-# outputs are named in the result so the model notices them (MQ-014/MQ-027).
-_SOURCE_SUFFIXES = scripted.SOURCE_SUFFIXES
-MAX_STRAY_NOTE_ENTRIES = 5
-MAX_STRAY_NOTE_CHARS = 400
-_STRAY_NOTE_PREFIX = "New untracked files outside ignored folders: "
 _INTERNAL_STATUS_PREFIXES = (
     ".jenny/artifacts/",
     ".jenny/backups/",
@@ -173,20 +174,57 @@ def workspace_change_delta_tool(
             retryable=False,
         )
     with _LOCK:
-        baseline = _require_baseline_locked(baseline_id.strip())
-        if baseline.session_id != _session_id(arguments):
+        observed = _require_baseline_locked(baseline_id.strip())
+        if observed.session_id != _session_id(arguments):
             raise _missing_baseline()
-        repo_root = baseline.initial.repo_root
+        initial = observed.initial
     current = (_capture(arguments, workspace) if arguments.get("cwd")
-               else _capture_repo(repo_root, workspace=workspace))
-    with _LOCK:
-        baseline = _require_baseline_locked(baseline_id.strip())
-        if _repo_key(baseline.initial.repo_root) != _repo_key(current.repo_root):
-            raise _missing_baseline()
-        _record_between_calls(baseline, current)
-        baseline.last_observed = current
-        payload = _build_delta(baseline, current, workspace=workspace)
-    return ToolHandlerResult(output=json.dumps(payload, indent=2), success=True, metadata=payload)
+               else _capture_repo(initial.repo_root, workspace=workspace))
+    if _repo_key(initial.repo_root) != _repo_key(current.repo_root):
+        raise _missing_baseline()
+    # `git ls-tree` runs outside the global lock; the lock is re-taken only to
+    # record the observation and categorize. A path a concurrent call added in
+    # between is looked up on the next pass.
+    preexisting_paths = set(initial.status)
+    queried: set[str] = set()
+    for attempt in range(1, _DELTA_LOOKUP_ATTEMPTS + 1):
+        with _LOCK:
+            baseline = _require_baseline_locked(baseline_id.strip())
+            if baseline is not observed:
+                raise _missing_baseline()
+            pending = sorted(_delta_candidates(baseline, current) - preexisting_paths - queried)
+            if not pending or initial.head is None or attempt == _DELTA_LOOKUP_ATTEMPTS:
+                # The last attempt (a repeated race) finishes its lookup under the lock.
+                preexisting_paths |= _preexisting_at_head(initial, pending, workspace)
+                _record_between_calls(baseline, current)
+                baseline.last_observed = current
+                payload = _build_delta(baseline, current, preexisting_paths=preexisting_paths)
+                return ToolHandlerResult(
+                    output=json.dumps(payload, indent=2), success=True, metadata=payload
+                )
+        preexisting_paths |= _preexisting_at_head(initial, pending, workspace)
+        queried.update(pending)
+    raise AssertionError("unreachable: the last attempt always returns")  # pragma: no cover
+
+
+def _preexisting_at_head(
+    initial: WorktreeSnapshot, paths: list[str], workspace: WorkspaceGuard
+) -> set[str]:
+    """Which of ``paths`` the baseline's HEAD already tracked."""
+    if initial.head is None or not paths:
+        return set()
+    return _paths_at_ref(initial.repo_root, initial.head, paths, workspace=workspace)
+
+
+def _delta_candidates(baseline: WorktreeBaseline, current: WorktreeSnapshot) -> set[str]:
+    """Every path the delta may categorize once this observation is recorded."""
+    return (
+        set(baseline.initial.status)
+        | set(current.status)
+        | baseline.session_paths
+        | baseline.external_paths
+        | _changed_paths(baseline.last_observed, current)
+    )
 
 
 def run_with_worktree_observation(  # noqa: PLR0913 - dispatch context is explicit.
@@ -246,10 +284,10 @@ def run_with_worktree_observation(  # noqa: PLR0913 - dispatch context is explic
     output = result.output
     if shell_probe is not None:
         shell_evidence, notes = _finish_shell_change_probe(
-            shell_probe, workspace, _call_outcome(result)
+            shell_probe, workspace, call_outcome(result)
         )
         evidence.update(shell_evidence)
-        output = _with_model_notes(output, notes)
+        output = with_model_notes(output, notes)
     if not evidence:
         return result
     return replace(result, output=output, metadata={**result.metadata, **evidence})
@@ -297,18 +335,6 @@ def _shell_probe_state(
     )
 
 
-def shell_change_evidence_enabled() -> bool:
-    """False when ``JENNY_ENABLE_SHELL_CHANGE_EVIDENCE=0`` disables the probe."""
-    return read_environment_value(SHELL_CHANGE_EVIDENCE_FLAG, "1") != "0"
-
-
-def diff_id_prefix_for(arguments: dict[str, object]) -> str:
-    return scripted.diff_id_prefix(
-        arguments.get("_jenny_operation_id") or arguments.get("_jenny_tool_call_id")
-        or uuid.uuid4().hex[:12]
-    )
-
-
 def _probe_failure(error: Exception) -> tuple[str, str]:
     if isinstance(error, _StatusOverLimit):
         return scripted.STATE_UNAVAILABLE, "status_over_limit"
@@ -339,7 +365,7 @@ def _attach_failure_evidence(
     The model-facing message gains only the path-only scripted-edit line.
     """
     try:
-        evidence, notes = _finish_shell_change_probe(probe, workspace, _failure_outcome(error))
+        evidence, notes = _finish_shell_change_probe(probe, workspace, failure_outcome(error))
     except Exception:  # noqa: BLE001 - the raised error stays the primary outcome.
         return
     carried = {key: evidence[key] for key in TOOL_FAILURE_RESULT_METADATA_KEYS if key in evidence}
@@ -347,15 +373,6 @@ def _attach_failure_evidence(
     note = dict(notes).get("scripted_edit_note")
     if note:
         error.message = f"{error.message}\n{note}" if error.message else note
-
-
-def _failure_outcome(error: ToolExecutionFailure) -> str:
-    """``cancelled`` for a user stop (both handlers raise COMMAND_ABORTED)."""
-    if error.code == CMP_TOOL_COMMAND_ABORTED:
-        return "cancelled"
-    if isinstance(error.__cause__, subprocess.TimeoutExpired):
-        return "timed_out"
-    return "failed"
 
 
 def _finish_shell_change_probe(
@@ -374,7 +391,7 @@ def _finish_shell_change_probe(
             path for path in _changed_paths(before, after) if not _is_cache_path(path)
         )
         source_paths = [path for path in changed if _is_source_change(before, after, path)]
-        created_untracked = _created_untracked_entries(before, after, changed)
+        created_untracked = created_untracked_entries(before, after, changed)
     except Exception as error:  # noqa: BLE001 - evidence is optional; the tool result is primary.
         state, reason = _probe_failure(error)
         review = scripted.build_review(
@@ -392,28 +409,10 @@ def _finish_shell_change_probe(
         state=scripted.observed_state(diffs), call_outcome=outcome,
         changed_paths=changed, diffs=diffs, restore_point=point,
     )
-    notes = _model_notes(before, after, source_paths, created_untracked)
+    notes = model_notes(before, after, source_paths, created_untracked)
     if created_untracked:
         evidence["created_untracked_paths"] = list(created_untracked[:MAX_STRAY_NOTE_ENTRIES])
     return evidence, notes
-
-
-def _model_notes(
-    before: WorktreeSnapshot,
-    after: WorktreeSnapshot,
-    source_paths: list[str],
-    created_untracked: tuple[str, ...],
-) -> list[tuple[str, str]]:
-    """Path-only lines: source files the call rewrote, then new stray outputs."""
-    notes: list[tuple[str, str]] = []
-    rewritten = [path for path in source_paths if not _created_untracked(before, after, path)]
-    if rewritten:
-        notes.append(
-            ("scripted_edit_note", scripted.scripted_edit_note(scripted.order_paths(rewritten)))
-        )
-    if created_untracked:
-        notes.append(("new_untracked_files", _stray_note(created_untracked)))
-    return notes
 
 
 def _scripted_diffs_fail_soft(
@@ -438,20 +437,6 @@ def _scripted_diffs_fail_soft(
         return scripted.summary_only_diffs(changed, probe.diff_id_prefix, "unknown")
 
 
-def _call_outcome(result: ToolHandlerResult) -> str:
-    if result.metadata.get("timed_out") is True:
-        return "timed_out"
-    return "succeeded" if result.success else "failed"
-
-
-def _created_untracked(before: WorktreeSnapshot, after: WorktreeSnapshot, path: str) -> bool:
-    return after.status.get(path) == "??" and before.status.get(path) != "??"
-
-
-def _is_source_like(path: str) -> bool:
-    return scripted.is_source_like(path)
-
-
 def _is_source_change(before: WorktreeSnapshot, after: WorktreeSnapshot, path: str) -> bool:
     """Content changed and the path is tracked, or untracked with a source suffix.
 
@@ -469,57 +454,7 @@ def _is_source_change(before: WorktreeSnapshot, after: WorktreeSnapshot, path: s
         if before.fingerprints.get(path) == after_print:
             return False
     tracked = "??" not in (before_state, after_state)
-    return tracked or _is_source_like(path)
-
-
-def _created_untracked_entries(
-    before: WorktreeSnapshot, after: WorktreeSnapshot, changed: list[str]
-) -> tuple[str, ...]:
-    """New untracked, non-source outputs; 2+ under one top-level folder collapse."""
-    strays = [
-        path for path in changed
-        if _created_untracked(before, after, path) and not _is_source_like(path)
-    ]
-    by_folder: dict[str, list[str]] = {}
-    for path in strays:
-        top, _, rest = path.partition("/")
-        by_folder.setdefault(f"{top}/" if rest else path, []).append(path)
-    entries = [
-        f"{key} ({len(paths)} files)" if len(paths) > 1 else paths[0]
-        for key, paths in sorted(by_folder.items())
-    ]
-    return tuple(scripted.printable(entry) for entry in entries)
-
-
-def _stray_note(entries: tuple[str, ...]) -> str:
-    shown = entries[:MAX_STRAY_NOTE_ENTRIES]
-    hidden = len(entries) - len(shown)
-    suffix = f" (+{hidden} more)" if hidden else ""
-    body = ", ".join(shown)
-    budget = MAX_STRAY_NOTE_CHARS - len(_STRAY_NOTE_PREFIX) - len(suffix)
-    if len(body) > budget:
-        body = body[: budget - 3] + "..."
-    return f"{_STRAY_NOTE_PREFIX}{body}{suffix}"
-
-
-def _with_model_notes(output: str, notes: list[tuple[str, str]]) -> str:
-    """One more line per note for the model; a JSON object result gains keys instead."""
-    if not notes:
-        return output
-    try:
-        payload = json.loads(output)
-    except ValueError:
-        payload = None
-    if isinstance(payload, dict):
-        return json.dumps({**payload, **dict(notes)}, ensure_ascii=False, indent=2)
-    lines = [output] if output else []
-    return "\n".join([*lines, *(note for _key, note in notes)])
-
-
-def _is_cache_path(path: str) -> bool:
-    return path.endswith(".pyc") or any(
-        part in _CACHE_PATH_SEGMENTS for part in path.split("/")
-    )
+    return tracked or scripted.is_source_like(path)
 
 
 def _finish_observation_fail_soft(  # noqa: PLR0913 - dispatch evidence context.
@@ -777,20 +712,11 @@ def _is_internal_status_path(path: str) -> bool:
 
 
 def _build_delta(baseline: WorktreeBaseline, current: WorktreeSnapshot,
-                 *, workspace: WorkspaceGuard | None = None) -> dict[str, object]:
+                 *, preexisting_paths: set[str]) -> dict[str, object]:
+    """Categorize under the lock; ``preexisting_paths`` covers every candidate path."""
     initial = baseline.initial.status
     final = current.status
     all_paths = sorted(set(initial) | set(final) | baseline.session_paths | baseline.external_paths)
-    preexisting_paths = set(initial)
-    if baseline.initial.head is not None:
-        preexisting_paths.update(
-            _paths_at_ref(
-                baseline.initial.repo_root,
-                baseline.initial.head,
-                (path for path in all_paths if path not in initial),
-                workspace=workspace,
-            )
-        )
     changed_from_initial = _changed_paths(baseline.initial, current)
     categories: dict[str, list[str]] = {
         "created_by_session": [],

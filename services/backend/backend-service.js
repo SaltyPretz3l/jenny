@@ -18,11 +18,14 @@ const {
   answerUserQuestions: _answerUserQuestions,
   declineUserQuestions: _declineUserQuestions,
 } = require('./backend-chat-stream');
+const { generateHandoffNote: _generateHandoffNote } = require('./backend-handoff');
 const {
   startManagedSidecarChatStream: _startManagedSidecarChatStream,
 } = require('./managed-sidecar-chat');
 const { discardUnsavedReply: _discardUnsavedReply, retryUnsavedReply: _retryUnsavedReply } = require('./backend-terminal-repair-actions');
-const { assertChatTurnAdmissible, assertLinkedFirstTurnAdmissible } = require('./chat-turn-admission');
+const {
+  assertChatTurnAdmissible, assertLinkedFirstTurnAdmissible, assertRegenerateAnchorAdmissible,
+} = require('./chat-turn-admission');
 const {
   buildManagedSidecarConfig: _buildManagedSidecarConfig,
   disposeSidecarClient: _disposeSidecarClient,
@@ -139,6 +142,9 @@ const {
   deleteSessionWithQuiescence: _deleteSessionWithQuiescence,
 } = require('./backend-session-delete-lifecycle');
 const {
+  PRIMARY_PROTECTED, ensurePrimarySession: _ensurePrimarySession, isPrimarySession,
+} = require('./primary-session');
+const {
   inferEngineTypeFromModel,
 } = require('./backend-service-utils');
 const {
@@ -160,11 +166,13 @@ const {
   initializeConversationStorage,
 } = require('./backend-conversation-storage');
 const { backfillTaskBoardProjects } = require('./task-board-project-backfill');
+const { createServiceLogBuffer } = require('./service-log-buffer');
 class BackendService extends EventEmitter {
   constructor(options) {
     super();
     options = options && typeof options === 'object' ? options : {};
     this.options = options;
+    this._earlyServiceLogs = createServiceLogBuffer();
     // Host ports are pure policy. Desktop callers with no host options retain
     // the existing managed-engine behavior; server callers inject their
     // credential service and explicitly opt into external engine ownership.
@@ -503,11 +511,15 @@ class BackendService extends EventEmitter {
   }
 
   _emitServiceLog(level, event, details = {}) {
-    this.emit('service-log', {
-      level: String(level || 'INFO').toUpperCase(),
-      event: String(event || 'service.event'),
-      details,
-    });
+    const entry = { level: String(level || 'INFO').toUpperCase(), event: String(event || 'service.event'), details };
+    if (this.listenerCount('service-log') === 0 && this._earlyServiceLogs?.hold(entry)) return;
+    this.emit('service-log', entry);
+  }
+
+  // Logs emitted before the host listened (constructor-time runtime recovery);
+  // the host replays them once, right after it attaches its listener.
+  drainEarlyServiceLogs() {
+    return this._earlyServiceLogs?.drain() || [];
   }
 
   async restoreAuthState() {
@@ -574,9 +586,13 @@ class BackendService extends EventEmitter {
     return path.join(this.options.userDataPath, 'background-memory');
   }
 
-  async createSession({ title, preferences, sessionType, providerAuthority, initialPrompt, linkedTaskId, projectId, draftImageAttachments } = {}) {
+  async createSession({
+    title, preferences, sessionType, providerAuthority, initialPrompt, linkedTaskId, projectId, draftImageAttachments,
+    handoffFromSessionId,
+  } = {}) {
     return _createSession(this, {
       title, preferences, sessionType, providerAuthority, initialPrompt, linkedTaskId, projectId, draftImageAttachments,
+      handoffFromSessionId,
     });
   }
 
@@ -585,7 +601,28 @@ class BackendService extends EventEmitter {
   }
 
   async deleteSession(sessionId, options) {
+    // Row 69: refuse the primary chat before the deletion lifecycle cancels its stream.
+    if (isPrimarySession(this.sessionStore, sessionId)) {
+      return { object: 'session', id: String(sessionId).trim(), deleted: false, reason: PRIMARY_PROTECTED };
+    }
     return _deleteSessionWithQuiescence(this, sessionId, options);
+  }
+
+  // Row 69: the profile's one primary Jenny chat. Internal path only (the wiring runs it deferred after
+  // the window exists); never throws, and sessions.create can never mint a primary.
+  async ensurePrimarySession() {
+    return _ensurePrimarySession({
+      sessionStore: this.sessionStore,
+      createSession: (options) => _createSession(this, options),
+      featureFlags: this.featureFlags,
+      log: (level, event, details) => this._emitServiceLog(level, event, details),
+    });
+  }
+
+  // The session directory behind sessions_list (row 69), or null before the runtime composition
+  // wires a tool executor; profile-overview-block.js reads it for the primary chat's overview.
+  getSessionDirectory() {
+    return this.toolExecutor?.getSessionDirectoryService?.() || null;
   }
 
   async getSessionMessages(sessionId) {
@@ -817,6 +854,7 @@ class BackendService extends EventEmitter {
     if (!sessionId || !editedMessageId) {
       throw new TypeError('Edit-and-regenerate requires sessionId and editedMessageId.');
     }
+    assertRegenerateAnchorAdmissible(this, sessionId, editedMessageId);
     return this.startChatStream({
       ...payload,
       sessionId,
@@ -852,6 +890,11 @@ class BackendService extends EventEmitter {
   // message-mapping logic (kept there to stay under the file-size cap here).
   async compactContextNow(sessionId) {
     return _compactContextNow(this, sessionId);
+  }
+
+  // /handoff: an off-transcript handoff note from the same prepared history.
+  async generateHandoffNote(sessionId, options) {
+    return _generateHandoffNote(this, sessionId, options);
   }
 
   approveToolCall(callId, options = {}) {

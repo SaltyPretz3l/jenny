@@ -16,6 +16,7 @@
     || (typeof require === 'function' ? require('./renderer-citation-chips-utils') : null) || {};
   const resolveArticlePredictionUtils = () => globalThis.rendererRenderPipelineArticlePrediction
     || (typeof require === 'function' ? require('./renderer-render-pipeline-article-prediction') : null);
+  const { isPrimarySessionId = () => false } = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)) || {};
   function createArticleMarkupPipeline(deps) {
     const {
       state = {},
@@ -26,6 +27,11 @@
     } = deps || {};
     const { MESSAGE_STATUS = {} } = constants;
     const { chatTimeline = null, chatThreadColumn = null } = dom;
+    // The pane's primary flag is resolved once per (sessions list, its length, pane session id), not scanned per bubble.
+    let primaryFlagSessions = null;
+    let primaryFlagLength = -1;
+    let primaryFlagId = '';
+    let primaryFlag = false;
     const {
       // Upstream pipeline methods (projection-cache C1, hydration C2,
       // projection-context C3, thread-state B1, thinking B3):
@@ -69,15 +75,27 @@
       renderSlashCommandOutput = () => '',
       // Addressed session messages (role:'context'): attributed cards that render before
       // the turn's user bubble as their own article (renderer-session-message-rows.js).
-      renderSessionMessage = (message) => {
+      renderSessionMessage = (message, extra) => {
         const rows = globalThis.rendererSessionMessageRows
           || (typeof require === 'function' ? (() => { try { return require('./renderer-session-message-rows'); } catch (_error) { return null; } })() : null);
-        return rows ? rows.renderSessionMessage(message, { escapeHtml, getSessions: () => state?.sessions }) : '';
+        return rows ? rows.renderSessionMessage(message, { escapeHtml, getSessions: () => state?.sessions, ...extra }) : '';
       },
       formatMessageTerminalTimestamp = () => '',
       isArtifactReviewVisible = () => false,
       // Split view W1-4a: the session this pane shows (one pane: currentSessionId).
       getPaneSessionId = () => String(state.currentSessionId || '').trim(),
+      // Row 69: the primary Jenny chat offers no Branch (its transcript spans every project).
+      paneSessionIsPrimary = () => {
+        const id = getPaneSessionId();
+        const sessions = Array.isArray(state.sessions) ? state.sessions : null;
+        if (sessions !== primaryFlagSessions || (sessions ? sessions.length : -1) !== primaryFlagLength || id !== primaryFlagId) {
+          primaryFlagSessions = sessions;
+          primaryFlagLength = sessions ? sessions.length : -1;
+          primaryFlagId = id;
+          primaryFlag = isPrimarySessionId(sessions, id);
+        }
+        return primaryFlag;
+      },
       // Transcript view of the session this pane shows (renderer-render-pipeline-utils.js).
       getPaneTranscriptView = () => 'thinking',
       // Split view W3-1: does THIS pane own selection mode (a bag without one is pane 0)?
@@ -221,12 +239,14 @@
         followUpDisabledReason,
         regenerateRequest,
         editingMessageId,
+        branchUnavailable: paneSessionIsPrimary(),
       };
       let bubbleInnerHtml = null;
       let streamUnits = null;
       let streamChangedStart = -1;
       let messageMarkup;
-      const sessionMessageMarkup = String(message.role || '') === 'context' ? renderSessionMessage(message) : '';
+      const sessionMessageMarkup = String(message.role || '') === 'context'
+        ? renderSessionMessage(message, { wokeTurn: wakeCardRole(message, messages) }) : '';
       if (sessionMessageMarkup) {
         messageMarkup = sessionMessageMarkup;
       } else if (message.kind === 'interactive_round_recap') {
@@ -436,6 +456,7 @@
         editingMessageId: state.ui && typeof state.ui.editingMessageId === 'string'
           ? state.ui.editingMessageId
           : '',
+        branchUnavailable: paneSessionIsPrimary(),
       };
       // Footer label: a terminal assistant_error notice on the turn outranks
       // the contentful action target (which stays the copy/regenerate target),
@@ -587,6 +608,53 @@
     // (options.envelopeSibling) render dotless, since their article's rows
     // paint the dots, and carry data-thread-compat-enveloped so the thread-DOM
     // layer can drop the matching collapse toggle for compat-only subtrees.
+    // App-started turns (chat-bubble-action-utils.js applicationTurnOf) are not the person's
+    // messages. A New session preparation or wake turn draws no row: the proposal card or the mail
+    // card above says why it ran. An auto-resume has no card, so it keeps one quiet line.
+    const HIDDEN_APPLICATION_TURNS = new Set(['handoff_preparation', 'wake']);
+    function applicationTurnOf(message) {
+      const actions = globalThis.chatBubbleActionUtils
+        || (typeof require === 'function' ? require('./chat-bubble-action-utils') : null);
+      return actions?.applicationTurnOf ? actions.applicationTurnOf(message) : '';
+    }
+
+    // The first mail card of a wake turn (context rows sit right before the turn's user row) says
+    // it woke the chat: 'jenny' in the primary chat, 'chat' elsewhere; '' for any other card.
+    function wakeCardRole(message, messages) {
+      const list = Array.isArray(messages) ? messages : [];
+      const index = list.findIndex((entry) => entry && entry.id === message?.id);
+      if (index < 0 || (index > 0 && String(list[index - 1]?.role || '') === 'context')) return '';
+      let next = index + 1;
+      while (next < list.length && String(list[next]?.role || '') === 'context') next += 1;
+      if (applicationTurnOf(list[next]) !== 'wake') return '';
+      return paneSessionIsPrimary() ? 'jenny' : 'chat';
+    }
+
+    function formatNoteTime(value) {
+      const stamp = Date.parse(String(value || ''));
+      if (!Number.isFinite(stamp)) return '';
+      try {
+        return new Date(stamp).toLocaleTimeString(globalThis.jennyI18n?.tag?.(), {
+          hour: 'numeric', ...globalThis.jennyI18n?.timeOptions?.(), minute: '2-digit',
+        });
+      } catch (_error) {
+        return '';
+      }
+    }
+
+    function buildApplicationTurnNoteArticle(message) {
+      const time = formatNoteTime(message.timestamp);
+      const text = jt('chat.applicationTurn.autoResumed', 'Resumed automatically after a turn-budget stop');
+      return buildMessageShellArticle({
+        className: 'app-turn-note-entry',
+        messageId: message.id,
+        messageRole: 'system',
+        messageStatus: MESSAGE_STATUS.COMPLETE || 'complete',
+        innerHtml: `<p class="chat-app-turn-note" role="note"><span>${escapeHtml(text)}</span>`
+          + (time ? `<span class="chat-app-turn-note-time">${escapeHtml(time)}</span>` : '') + '</p>',
+      });
+    }
+
     function buildThreadCompatAnchor(message, options) {
       const messageId = String(message?.id || '').trim();
       const envelopeSibling = !!(options && options.envelopeSibling);
@@ -643,6 +711,9 @@
       if (message.kind === 'tool_result') {
         return '';
       }
+      const applicationTurn = applicationTurnOf(message);
+      if (HIDDEN_APPLICATION_TURNS.has(applicationTurn)) return buildThreadCompatAnchor(message, { envelopeSibling: true });
+      if (applicationTurn) return buildApplicationTurnNoteArticle(message);
       const messageModel = buildMessageInnerMarkup(
         message,
         messages,

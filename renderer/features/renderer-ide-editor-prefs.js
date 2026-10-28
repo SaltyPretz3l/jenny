@@ -7,8 +7,9 @@
  * Settings "Editor" section applies the moment the user returns to the IDE),
  * and routes statusbar chip picks through persistChipChange().
  *
- * Editor-LEVEL prefs (fontSize/lineNumbers/renderWhitespace/minimap/wordWrap)
- * go through editorHost.setEditorOptions(); per-MODEL prefs (tabSize/eol) are
+ * Editor-LEVEL prefs (fontSize/lineNumbers/renderWhitespace/minimap/wordWrap, plus the
+ * row 82 font family, cursor, ligature, bracket/indent guide, sticky scroll, folding,
+ * scroll-beyond-last-line, wheel-zoom and indentation-detection prefs) go through editorHost.setEditorOptions(); per-MODEL prefs (tabSize/eol) are
  * handed to the chip-picker as its session defaults, which it applies to the
  * active doc and to each newly opened file. No DOM, no IPC. */
 (function (root, factory) {
@@ -23,14 +24,28 @@
 
   function noop() {}
 
-  // The render-whitespace whitelist is owned by renderer-ide-state.js (the
-  // renderer-canonical source); reuse it so this sibling can't drift. The
-  // literal fallback only matters if that module isn't loaded (never in app).
-  function whitespaceValues() {
-    const ref = (typeof globalThis !== 'undefined' && globalThis.rendererIdeState) || null;
-    return Array.isArray(ref && ref.RENDER_WHITESPACE)
-      ? ref.RENDER_WHITESPACE
-      : ['none', 'boundary', 'selection', 'trailing', 'all'];
+  // The enum whitelists are renderer-ide-state.js's pref tables (the renderer-canonical
+  // source, an eager script; required under Node), so this sibling can't drift.
+  const ideState = (typeof globalThis !== 'undefined' && globalThis.rendererIdeState) || require('./renderer-ide-state');
+
+  // Defensive reads of the row 82 prefs: the slice may be partial, so each falls back to
+  // its persisted default (same values as the renderer-ide-state / service specs).
+  const flag = (value, fallback) => (fallback ? value !== false : value === true);
+  function pick(value, allowed, fallback) {
+    return allowed.includes(value) ? value : fallback;
+  }
+  // '' (use the app mono token) resolves the live --font-family-mono value; an empty
+  // result is OMITTED by the caller because Monaco treats '' as a real family.
+  function resolveFontFamily(custom) {
+    // renderer-ide-state.js owns the sanitizer.
+    const clean = ideState.normalizeFontFamily(custom);
+    if (clean) {
+      return clean;
+    }
+    const monacoUtils = (typeof globalThis !== 'undefined' && globalThis.rendererMonacoEditorUtils) || null;
+    return typeof monacoUtils?.resolveMonacoFontFamily === 'function'
+      ? String(monacoUtils.resolveMonacoFontFamily() || '').trim()
+      : '';
   }
 
   // Reads editor prefs off the IDE slice and pushes them to the live editor.
@@ -46,16 +61,40 @@
     const fontSize = typeof monacoUtils?.setCodeFontSizePreference === 'function'
       ? monacoUtils.setCodeFontSizePreference(ide.fontSize)
       : (Number(ide.fontSize) > 0 ? Number(ide.fontSize) : 13);
+    const indentGuides = flag(ide.indentGuides, true);
+    const fontFamily = resolveFontFamily(ide.fontFamily);
+    // The shared typography observer retunes every editor to the token; this keeps a
+    // custom family on the IDE editor through that pass (row 82 E1).
+    monacoUtils?.setIdeFontFamilyResolver?.({
+      resolve: () => resolveFontFamily(ide.fontFamily),
+      apply: (family) => editorHost.setEditorOptions({ fontFamily: family }),
+    });
     editorHost.setEditorOptions({
+      ...(fontFamily ? { fontFamily } : {}),
       fontSize,
       wordWrap: ide.wordWrap === 'on' ? 'on' : 'off',
       minimap: { enabled: ide.minimap !== false },
       lineNumbers: ide.lineNumbers === 'off' ? 'off' : 'on',
-      renderWhitespace: whitespaceValues().includes(ide.renderWhitespace) ? ide.renderWhitespace : 'selection',
+      renderWhitespace: pick(ide.renderWhitespace, ideState.RENDER_WHITESPACE, 'selection'),
       // Column rulers: always pass an array (a copy so Monaco can't retain the
       // slice) so disabling them (-> []) clears the guides rather than leaving
       // the last value in place.
       rulers: Array.isArray(ide.rulers) ? ide.rulers.slice() : [],
+      cursorStyle: pick(ide.cursorStyle, ideState.CURSOR_STYLES, 'line'),
+      cursorBlinking: pick(ide.cursorBlinking, ideState.CURSOR_BLINKING, 'smooth'),
+      cursorSmoothCaretAnimation: flag(ide.cursorSmoothCaretAnimation, true) ? 'on' : 'off',
+      fontLigatures: flag(ide.fontLigatures, true),
+      bracketPairColorization: { enabled: flag(ide.bracketPairColorization, true) },
+      guides: {
+        indentation: indentGuides,
+        bracketPairs: indentGuides && flag(ide.bracketPairColorization, true),
+      },
+      stickyScroll: { enabled: flag(ide.stickyScroll, true) },
+      folding: flag(ide.folding, true),
+      scrollBeyondLastLine: flag(ide.scrollBeyondLastLine, false),
+      mouseWheelZoom: flag(ide.mouseWheelZoom, true),
+      insertSpaces: flag(ide.insertSpaces, true),
+      detectIndentation: flag(ide.detectIndentation, true),
     });
     // Per-model defaults: null means "follow the file" (the chip-picker default).
     chipPicker?.seedDefaults?.({

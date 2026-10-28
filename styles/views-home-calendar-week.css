@@ -12,7 +12,7 @@
 }
 
 .cal-week__header {
-  border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 85%, transparent);
+  border-bottom: 1px solid var(--cal-hairline);
 }
 
 .cal-week__head-cell {
@@ -37,7 +37,7 @@
 
 .cal-week__allday {
   min-height: 28px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border-subtle) 85%, transparent);
+  border-bottom: 1px solid var(--cal-hairline);
 }
 
 .cal-week__allday-cell {
@@ -47,11 +47,11 @@
   gap: 1px;
   min-width: 0;
   padding: var(--space-1);
-  border-inline-start: 1px solid color-mix(in srgb, var(--border-subtle) 85%, transparent);
+  border-inline-start: 1px solid var(--cal-hairline);
 }
 
 .cal-week__allday-cell--weekend {
-  background: color-mix(in srgb, var(--bg-base) 22%, transparent);
+  background: var(--cal-tint-weekend);
 }
 
 .cal-week__allday-label {
@@ -130,7 +130,7 @@
 .cal-week__day {
   position: relative;
   height: 1440px;
-  border-inline-start: 1px solid color-mix(in srgb, var(--border-subtle) 85%, transparent);
+  border-inline-start: 1px solid var(--cal-hairline);
   background-image: repeating-linear-gradient(
     to bottom,
     transparent 0,
@@ -144,7 +144,7 @@
 .cal-week__day--weekend::before {
   position: absolute;
   inset: 0;
-  background: color-mix(in srgb, var(--bg-base) 22%, transparent);
+  background: var(--cal-tint-weekend);
   content: "";
   pointer-events: none;
 }
@@ -154,7 +154,7 @@
   inset-inline-end: 0;
   inset-inline-start: 0;
   z-index: 1;
-  background: color-mix(in srgb, var(--bg-base) 45%, transparent);
+  background: var(--cal-tint-offhours);
   pointer-events: none;
 }
 
@@ -211,13 +211,11 @@
 }
 
 .cal-event__title {
-  font-size: var(--font-size-xs);
   font-weight: 500;
 }
 
 .cal-event__time {
   color: color-mix(in srgb, var(--cal-event-fg) 70%, transparent);
-  font-size: var(--font-size-xs);
 }
 
 .cal-event__marker {

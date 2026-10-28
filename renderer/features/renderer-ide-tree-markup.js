@@ -7,6 +7,7 @@
   root.rendererIdeTreeMarkup = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const EXPLORER_SORT_MODES = ['name', 'type', 'modified'];
 
@@ -34,12 +35,14 @@
     return normalized.split('/').pop() || normalized;
   }
 
+  // One shared collator: the same default-locale order as localeCompare
+  // without building a comparator per call.
+  const collator = new Intl.Collator();
+
   // Mirrors the service's listDirectory ordering (workspace-ide-service.js):
   // lowercased localeCompare, so flag-on 'name' mode never reorders a listing.
   function compareNames(left, right) {
-    const leftName = String(left?.name || '').toLowerCase();
-    const rightName = String(right?.name || '').toLowerCase();
-    return leftName.localeCompare(rightName);
+    return collator.compare(String(left?.name || '').toLowerCase(), String(right?.name || '').toLowerCase());
   }
 
   function extensionOf(entry) {
@@ -54,13 +57,24 @@
     if (mode === 'type' && left?.kind !== 'directory') {
       const leftExtension = extensionOf(left);
       const rightExtension = extensionOf(right);
-      if (leftExtension !== rightExtension) return leftExtension.localeCompare(rightExtension);
+      if (leftExtension !== rightExtension) return collator.compare(leftExtension, rightExtension);
     } else if (mode === 'modified') {
       const leftMtime = Number(left?.mtimeMs) > 0 ? Number(left.mtimeMs) : 0;
       const rightMtime = Number(right?.mtimeMs) > 0 ? Number(right.mtimeMs) : 0;
       if (leftMtime !== rightMtime) return rightMtime - leftMtime;
     }
     return compareNames(left, right);
+  }
+
+  // Sorted copy per (listing array, sort mode). A refreshed listing is a new
+  // array, so a render re-sorts only directories whose listing changed.
+  const sortedByListing = new WeakMap();
+  function sortEntries(entries, mode) {
+    const cached = sortedByListing.get(entries);
+    if (cached && cached.mode === mode) return cached.sorted;
+    const sorted = [...entries].sort((left, right) => compareEntries(left, right, mode));
+    sortedByListing.set(entries, { mode, sorted });
+    return sorted;
   }
 
   // Tier-2 git slice: file-tree decoration badges by git state.
@@ -78,6 +92,9 @@
     const getIde = deps.getIde;
     const escapeHtml = deps.escapeHtml;
     const getGitDecoration = deps.getGitDecoration;
+    // Optional decorators (tree-filter / tree-badges modules); absent = plain rows.
+    const filter = deps.filter || null;
+    const badges = deps.badges || null;
     const childrenByDir = deps.childrenByDir;
     const errorByDir = deps.errorByDir;
     const truncatedDirs = deps.truncatedDirs;
@@ -141,6 +158,21 @@
       if (isCut(entry.relPath)) {
         classes.push('ide-tree-row--cut');
       }
+      // Problem + ignored decoration, same grammar as git below (badge sits before it).
+      let problemBadge = '';
+      const problem = badges?.getProblemDecoration?.(entry.relPath, entry.kind);
+      if (problem) {
+        if (isDir) {
+          classes.push(`ide-tree-row--problem-rollup-${problem.severity}`);
+          problemBadge = '<span class="ide-tree-problem-dot" aria-hidden="true"></span>';
+        } else {
+          classes.push(`ide-tree-row--problem-${problem.severity}`);
+          problemBadge = `<span class="ide-tree-problem-badge" data-severity="${problem.severity}" aria-label="${escapeHtml(jtn('ide.tree.problemCount', problem.count, { count: problem.count }, '{count} problem', '{count} problems'))}">${problem.count > 9 ? '9+' : problem.count}</span>`;
+        }
+      }
+      if (badges?.isIgnored?.(entry.relPath)) {
+        classes.push('ide-tree-row--ignored');
+      }
       // Git decoration: a colour class + an M/A/U badge (files) or a roll-up dot
       // (directories with dirty descendants). No-op when git is off / clean.
       let gitBadge = '';
@@ -168,7 +200,8 @@
         + ` style="--ide-tree-depth:${depth}" tabindex="-1" title="${escapeHtml(entry.relPath)}">`
         + `<span class="ide-tree-twisty" aria-hidden="true">${twisty}</span>`
         + icon
-        + `<span class="ide-tree-name">${escapeHtml(entry.name)}</span>`
+        + `<span class="ide-tree-name">${filter ? filter.decorateName(entry.name) : escapeHtml(entry.name)}</span>`
+        + problemBadge
         + gitBadge
         + '</div>';
     }
@@ -185,9 +218,8 @@
         const failure = errorByDir.get(dirPath);
         return markup + buildStatusRow(failure || 'Loading…', depth);
       }
-      const entries = [...cachedEntries]
-        .sort((left, right) => compareEntries(left, right, getIde().explorerSortMode));
-      for (const entry of entries) {
+      for (const entry of sortEntries(cachedEntries, ide.explorerSortMode)) {
+        if (filter && !filter.isVisible(entry.relPath)) continue;
         markup += buildEntryRowMarkup(entry, depth);
         if (entry.kind === 'directory' && ide.expandedDirs?.has(entry.relPath)) {
           if (!childrenByDir.has(entry.relPath) && !loadingDirs.has(entry.relPath)
@@ -209,13 +241,11 @@
       }
       const showGenerated = getIde().showGenerated === true;
       const generatedTitle = showGenerated ? jt('ide.tree.hideGeneratedDirectories', 'Hide generated directories') : jt('ide.tree.showGeneratedDirectories', 'Show generated directories');
-      const svgOpen = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"'
-        + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
+      const svgOpen = HEADER_GLYPHS.svgOpen;
       const newFileSvg = `${svgOpen}<path d="M3.5 1.5h6l3 3v10h-9z"/><path d="M9.5 1.5v3h3"/><path d="M5.5 9h5M8 6.5v5"/></svg>`;
       const newFolderSvg = `${svgOpen}<path d="M1.5 4h5l1.5 2h6.5v7.5h-13z"/><path d="M5.5 9.5h5M8 7v5"/></svg>`;
       const refreshSvg = `${svgOpen}<path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2.5V5h-2.5"/></svg>`;
-      const collapseSvg = `${svgOpen}<path d="M3 4.5h10M5.5 8H13M8 11.5h5"/><path d="m4.5 7 1.5 1.5L4.5 10"/></svg>`;
-      const sortSvg = `${svgOpen}<path d="M3 4h7M3 8h5M3 12h3"/><path d="m11 9 2 2 2-2M13 4v7"/></svg>`;
+      const { collapse: collapseSvg, sort: sortSvg } = HEADER_GLYPHS;
       const buttons = [
         {
           className: `ide-tree-header-button ide-tree-generated-toggle${showGenerated ? ' ide-tree-generated-toggle--active' : ''}`,
@@ -235,6 +265,7 @@
         { ariaLabel: jt('ide.tree.newFolder', 'New Folder'), title: jt('ide.tree.newFolder', 'New Folder'), trustedHtml: newFolderSvg, dataset: { 'ide-tree-action': 'new-folder' } },
         { ariaLabel: sortTitle, title: sortTitle, trustedHtml: sortSvg, dataset: { 'ide-tree-action': 'cycle-sort' } }
       );
+      if (filter) buttons.splice(3, 0, filter.headerButtonOptions());
       const buttonMarkup = (getRootNeedsChoose() ? [] : buttons)
         .map((options) => actionButton({ plain: true, className: 'ide-tree-header-button', ...options }))
         .join('');
@@ -253,7 +284,8 @@
       return '<div class="ide-tree-header">'
         + titleMarkup
         + `<span class="ide-tree-header-actions">${buttonMarkup}</span></div>`
-        + buildProjectNudge().markup;
+        + buildProjectNudge().markup
+        + (filter && !getRootNeedsChoose() ? filter.hostMarkup() : '');
     }
 
     // The nudge line and its identity key ('' when absent). The key is what a
@@ -282,6 +314,7 @@
     function buildTreeMarkup() {
       const rootError = getRootError();
       const rootNeedsChoose = getRootNeedsChoose();
+      filter?.prepare();
       let body;
       if (rootError) {
         body = buildStatusRow(rootError, 0);
@@ -298,7 +331,9 @@
       } else {
         body = buildChildrenMarkup('', 0);
         if (!body) {
-          body = buildStatusRow(jt('ide.tree.emptyWorkspace', 'Workspace is empty - right-click to create a file.'), 0);
+          body = filter?.isActive()
+            ? buildStatusRow(jt('ide.tree.filterNoMatches', 'No loaded files match the filter.'), 0)
+            : buildStatusRow(jt('ide.tree.emptyWorkspace', 'Workspace is empty - right-click to create a file.'), 0);
         }
       }
       return buildTreeHeaderMarkup()
@@ -307,7 +342,6 @@
 
     return {
       buildTreeMarkup,
-      buildChildrenMarkup,
       buildProjectNudge,
     };
   }
@@ -315,6 +349,15 @@
   function projectNudgeKey(projectId, text) {
     return projectId ? `${projectId}\n${text}` : '';
   }
+
+  // The explorer header's glyphs; the Outline view's header reuses the sort and collapse ones.
+  const SVG_OPEN = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"'
+    + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
+  const HEADER_GLYPHS = Object.freeze({
+    svgOpen: SVG_OPEN,
+    collapse: `${SVG_OPEN}<path d="M3 4.5h10M5.5 8H13M8 11.5h5"/><path d="m4.5 7 1.5 1.5L4.5 10"/></svg>`,
+    sort: `${SVG_OPEN}<path d="M3 4h7M3 8h5M3 12h3"/><path d="m11 9 2 2 2-2M13 4v7"/></svg>`,
+  });
 
   // The key a rendered nudge node carries ('' for no node).
   function readProjectNudgeKey(node) {
@@ -324,6 +367,8 @@
   return {
     createIdeTreeMarkup,
     readProjectNudgeKey,
+    HEADER_GLYPHS,
+    sortEntries,
     parentDirOf,
     nameOf,
   };

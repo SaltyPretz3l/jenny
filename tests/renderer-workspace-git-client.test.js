@@ -9,9 +9,14 @@ function makeWindow(workspaceGit) {
   return { jennyShell: workspaceGit ? { workspaceGit } : {} };
 }
 
-test('exposes all 14 typed pass-throughs plus getApi/isAvailable', () => {
+test('exposes all 25 typed pass-throughs plus getApi/isAvailable', () => {
   const client = createWorkspaceGitClient({ windowRef: makeWindow({}) });
-  assert.equal(GIT_METHODS.length, 14);
+  assert.equal(GIT_METHODS.length, 25);
+  for (const method of ['getFileAtIndex', 'getFileAtCommit', 'getCommitFiles', 'listStashes', 'getLastCommitMessage', 'deleteBranch', 'applyPatch', 'blameFile', 'discardFiles']) {
+    assert.ok(GIT_METHODS.includes(method), method);
+  }
+  assert.ok(GIT_METHODS.includes('resolveDelete'));
+  assert.ok(GIT_METHODS.includes('checkIgnored'));
   for (const method of GIT_METHODS) {
     assert.equal(typeof client[method], 'function', `${method} is a function`);
   }
@@ -71,6 +76,21 @@ test('a rejecting bridge call degrades to a structured failure, preserving the c
   assert.equal(result.reason, 'call_failed');
   assert.equal(result.error_code, 'CMP-GIT-0020');
   assert.match(result.message, /empty/);
+});
+
+test('an aborted call settles at once as reason aborted; the payload never carries the signal', async () => {
+  let release;
+  const seen = [];
+  const api = { blameFile: (payload) => { seen.push(payload); return new Promise((resolve) => { release = resolve; }); } };
+  const client = createWorkspaceGitClient({ windowRef: makeWindow(api) });
+  const controller = new AbortController();
+  const pending = client.blameFile({ path: 'a.js' }, { signal: controller.signal });
+  controller.abort();
+  assert.deepEqual(await pending, { ok: false, available: true, isRepo: true, op: 'blameFile', reason: 'aborted' });
+  assert.deepEqual(seen, [{ path: 'a.js' }]);
+  release({ ok: true });
+  assert.equal((await client.blameFile({ path: 'a.js' }, { signal: controller.signal })).reason, 'aborted', 'already aborted: no call');
+  assert.equal(seen.length, 1);
 });
 
 test('re-reads the bridge on every call (resilient to a late-arriving bridge)', async () => {

@@ -77,6 +77,16 @@ def _mcp_rows(config: Any | None) -> list[str]:
     return [f"{name} ({transport}, {host})" for name, transport, host in rows]
 
 
+def _engine_host_source(config: Any | None, engine_type: str) -> object:
+    if engine_type == "chatgpt":
+        return _value(config, "chatgpt_base_url")
+    if engine_type == "api-provider":
+        # The descriptor's endpoint host only; the key never reaches this view.
+        descriptor = _value(config, "api_provider_descriptor")
+        return descriptor.get("endpoint") if isinstance(descriptor, dict) else None
+    return _value(config, "api_url")
+
+
 def _build_connections_output(
     config: Any | None, *, session_offline_lockdown: bool = False
 ) -> str:
@@ -90,9 +100,7 @@ def _build_connections_output(
         _value(
             config,
             "connections_engine_host",
-            _value(config, "chatgpt_base_url")
-            if engine_type == "chatgpt"
-            else _value(config, "api_url"),
+            _engine_host_source(config, engine_type),
         )
     )
     if engine_locality == "remote":

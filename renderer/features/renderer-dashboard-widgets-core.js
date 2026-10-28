@@ -186,8 +186,8 @@
     // touches.
     //
     // Anatomy: a two-row stack, not a capsule. The field row draws ONE
-    // hairline rule under the text; the meta row below it carries the model
-    // trigger, the keyboard hint, and the send button. The meta row's height
+    // hairline rule under the text; the meta row below it carries the
+    // keyboard hint and the send button. The meta row's height
     // is reserved at every state so nothing on Home shifts as it reveals
     // itself.
     function ensureAskRegion(stripEl) {
@@ -219,8 +219,7 @@
           dataset: { 'home-ask-input': '1' },
         })
         + '</div>'
-        // The config controller mounts its model trigger + panel in here, at
-        // the FRONT of the row; the hint and the send button follow it.
+        // Meta row: the hint and the send button.
         + '<div class="home-ask__meta"></div>'
         + '</div>';
       stripEl.append(ask);
@@ -268,6 +267,7 @@
       return chrome;
     }
 
+    const renderedHtml = new WeakMap();
     function render(stripEl, ctx = {}) {
       if (!stripEl) {
         return;
@@ -282,7 +282,7 @@
       // focus/edit controls live in the built-once ask region's page menu);
       // digest wraps onto its own full-width line below. Leaf class names are
       // unchanged so the strip's selector-based tests keep matching.
-      chromeEl.innerHTML = ''
+      const html = ''
         + '<div class="home-info-strip__lead">'
         + `<span class="home-info-strip__time">${escapeHtml(formatClockTime(now))}</span>`
         + '<span class="home-info-strip__heading">'
@@ -293,6 +293,12 @@
         + (digest
           ? `<div class="home-info-strip__digest">${escapeHtml(digest)}</div>`
           : '');
+      // Most paints change nothing here (same minute, same digest): skip the
+      // rewrite so the strip does not dirty layout for the whole page.
+      if (renderedHtml.get(chromeEl) !== html) {
+        chromeEl.innerHTML = html;
+        renderedHtml.set(chromeEl, html);
+      }
       ensureAskRegion(stripEl);
       stripEl.hidden = false;
     }

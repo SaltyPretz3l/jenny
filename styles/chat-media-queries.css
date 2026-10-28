@@ -84,6 +84,18 @@
     padding-inline-start: calc(var(--thread-dot-hit-size) + var(--space-4));
   }
 
+  /* Mirror of ide-chat-dock.css: the first child wrapper only groups the
+   * prompt with its response, and the nested response row already reserves
+   * the rail gutter. Indenting it as well moved the row dots 32px off the
+   * root rail line, which does not take this padding. */
+  .chat-view .chat-thread-children[data-thread-depth="1"] {
+    padding-inline-start: 0;
+  }
+
+  .chat-view .chat-thread-children[data-thread-depth="2"] {
+    padding-inline-start: var(--space-3);
+  }
+
   /* Depth-cap the nested-thread indent (mirror of ide-chat-dock.css). Nested
    * .chat-thread-children padding-left compounds per tree level; a multi-
    * iteration tool loop chains an O(iterations)-deep tree that would run content

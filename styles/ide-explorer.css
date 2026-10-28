@@ -138,6 +138,122 @@
   height: 14px;
 }
 
+/* ── Files filter (row 82 X1): the header toggle plus the shared search-bar
+ * primitive, flattened from its floating chat pill into the workbench row
+ * look and kept under the sticky header (6 + 22 + 6 px + 1 px border). ── */
+.ide-tree-filter-toggle--active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+.ide-tree-filter {
+  position: sticky;
+  top: 35px;
+  z-index: 1;
+  padding-block: 4px;
+  padding-inline: 8px;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--line);
+}
+
+.ide-tree-filter .chat-search-bar {
+  animation: none;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: var(--font-size-body);
+}
+
+.ide-tree-filter .chat-search-bar-input {
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg-base);
+}
+
+.ide-tree-filter .chat-search-bar-input:focus-visible {
+  border-color: var(--accent);
+  box-shadow: none;
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.ide-tree-filter .chat-search-bar-button {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 3px;
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.ide-tree-filter .chat-search-bar-button:hover {
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
+}
+
+.ide-tree-filter .chat-search-bar-toggle[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+.ide-tree-filter .chat-search-bar-count {
+  min-width: 0;
+  font-size: var(--font-size-caption);
+}
+
+.ide-tree-filter-hit {
+  padding: 0;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: inherit;
+}
+
+/* ── Problem badges and ignored rows (row 82 X1): the git decoration grammar
+ * (styles/ide-source-control.css) with the Problems severity tokens. A problem
+ * tint wins over a git tint on the name, as in VS Code (the doubled class
+ * outranks ide-source-control.css, which loads later). ── */
+.ide-tree-row.ide-tree-row--problem-error .ide-tree-name { color: var(--state-danger); }
+.ide-tree-row.ide-tree-row--problem-warning .ide-tree-name { color: var(--state-warning); }
+
+.ide-tree-problem-badge {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+  padding-inline-start: 6px;
+  font-size: var(--font-size-caption);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.ide-tree-problem-badge[data-severity="error"] { color: var(--state-danger); }
+.ide-tree-problem-badge[data-severity="warning"] { color: var(--state-warning); }
+
+/* With both badges the git letter follows the count instead of pushing to the end. */
+.ide-tree-problem-badge + .ide-tree-git-badge,
+.ide-tree-problem-dot + .ide-tree-git-dot {
+  margin-inline-start: 4px;
+}
+
+.ide-tree-problem-dot {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.ide-tree-row--problem-rollup-error .ide-tree-problem-dot { background: var(--state-danger); }
+.ide-tree-row--problem-rollup-warning .ide-tree-problem-dot { background: var(--state-warning); }
+
+.ide-tree-row--ignored .ide-tree-name,
+.ide-tree-row--ignored .ide-tree-icon {
+  opacity: 0.55;
+}
+
 .ide-tree-import-strip {
   --ide-tree-import-progress: 0%;
   position: absolute;
@@ -228,6 +344,15 @@
 .ide-tree-icon--config { color: var(--text-muted); }
 .ide-tree-icon--diagram { color: var(--accent-strong); }
 .ide-tree-icon--file { color: var(--text-muted); }
+/* Row 82 categories (renderer-ide-icons.js); palette tokens only. */
+.ide-tree-icon--sys { color: var(--accent-strong); }
+.ide-tree-icon--script { color: var(--text-danger-soft); }
+.ide-tree-icon--data { color: var(--accent-amber); }
+.ide-tree-icon--lock { color: var(--text-muted); }
+.ide-tree-icon--git { color: var(--text-danger-soft); }
+.ide-tree-icon--archive { color: var(--accent-amber); }
+.ide-tree-icon--font { color: var(--text-accent-soft); }
+.ide-tree-icon--build { color: var(--accent-cyan); }
 
 /* ── Indent guides ──
  * One 1px vertical line per ancestor depth, painted as a horizontally

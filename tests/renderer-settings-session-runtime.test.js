@@ -780,3 +780,13 @@ test('delete explains only pending memory moves and preserves the success tone',
     } finally { h.controller.dispose(); h.window.close(); }
   }
 });
+
+test('the page heading is focusable, so the nav can move focus to it when Projects opens', async () => {
+  const h = createHarness({ api: { async list() { return { ok: true, projects: [project('project_general', 'General')] }; } } });
+  h.controller.bind();
+  await settle();
+  const heading = h.host.querySelector('h3');
+  assert.equal(heading.getAttribute('tabindex'), '-1');
+  heading.focus();
+  assert.equal(h.document.activeElement, heading);
+});

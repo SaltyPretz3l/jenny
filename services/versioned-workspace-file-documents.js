@@ -73,6 +73,22 @@ function unsupportedDocument(relPath, message) {
   );
 }
 
+function invalidDocumentEncoding(relPath) {
+  return workspaceFsError(
+    WORKSPACE_FS_ERROR_CODES.UNSUPPORTED_ENCODING,
+    'Document bytes must be valid base64.',
+    buildPathHint(relPath)
+  );
+}
+
+function documentTooLarge(service, relPath, size) {
+  return workspaceFsError(
+    WORKSPACE_FS_ERROR_CODES.DOCUMENT_TOO_LARGE,
+    'Document bytes must be non-empty and within the save limit.',
+    { ...buildPathHint(relPath), size, max_bytes: service._maxDocumentBytes }
+  );
+}
+
 async function readDocument(service, payload) {
   const relPath = service._normalizeRelPath(payload.path);
   if (!getDocumentDescriptor(relPath)) {
@@ -125,14 +141,18 @@ function validateWriteDocumentPayload(service, payload) {
       'Document format must match a PDF or DOCX file extension.'
     );
   }
-  if (typeof payload.base64 !== 'string'
-    || !/^[A-Za-z0-9+/]*={0,2}$/.test(payload.base64)
-    || payload.base64.length % 4 !== 0) {
-    throw workspaceFsError(
-      WORKSPACE_FS_ERROR_CODES.UNSUPPORTED_ENCODING,
-      'Document bytes must be valid base64.',
-      buildPathHint(relPath)
-    );
+  if (typeof payload.base64 !== 'string' || payload.base64.length % 4 !== 0) {
+    throw invalidDocumentEncoding(relPath);
+  }
+  if (payload.base64.length > Math.ceil(service._maxDocumentBytes / 3) * 4) {
+    throw documentTooLarge(service, relPath, Math.floor(payload.base64.length / 4) * 3);
+  }
+  // Buffer.from skips characters outside the alphabet instead of failing, so
+  // a lossless round trip is the strict check; it is about 6x cheaper than a
+  // regex over a 43 MB payload on the main process.
+  const bytes = Buffer.from(payload.base64, 'base64');
+  if (bytes.toString('base64') !== payload.base64) {
+    throw invalidDocumentEncoding(relPath);
   }
   if (!Number.isSafeInteger(payload.expectedGeneration) || payload.expectedGeneration < 0) {
     throw workspaceFsError(
@@ -149,13 +169,8 @@ function validateWriteDocumentPayload(service, payload) {
       buildPathHint(relPath)
     );
   }
-  const bytes = Buffer.from(payload.base64, 'base64');
   if (bytes.length === 0 || bytes.length > service._maxDocumentBytes) {
-    throw workspaceFsError(
-      WORKSPACE_FS_ERROR_CODES.DOCUMENT_TOO_LARGE,
-      'Document bytes must be non-empty and within the save limit.',
-      { ...buildPathHint(relPath), size: bytes.length, max_bytes: service._maxDocumentBytes }
-    );
+    throw documentTooLarge(service, relPath, bytes.length);
   }
   if (!documentBytesMatchDescriptor(bytes, descriptor)) {
     throw unsupportedDocument(

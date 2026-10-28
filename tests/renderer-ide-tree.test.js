@@ -728,3 +728,54 @@ test('ide tree dragstart writes the internal payload for a file row', async (t) 
   assert.equal(dirResult.writes['application/x-jenny-tree-path'], undefined, 'directory dragstart writes no single-file payload');
   assert.deepEqual(JSON.parse(dirResult.writes['application/x-jenny-tree-paths']), ['src']);
 });
+
+test('Refresh keeps the old rows painted, re-lists only expanded dirs, and reveal retargets in place', async () => {
+  const { getDom } = buildIdeDom();
+  const ide = ideStateUtils.createIdeUiState();
+  const listings = {
+    '': [
+      { name: 'src', relPath: 'src', kind: 'directory' },
+      { name: 'a.js', relPath: 'a.js', kind: 'file' },
+      { name: 'b.js', relPath: 'b.js', kind: 'file' },
+    ],
+    src: [{ name: 'x.js', relPath: 'src/x.js', kind: 'file' }],
+  };
+  const calls = [];
+  let gate = null;
+  const tree = createIdeTree({
+    getIde: () => ide,
+    getMountEl: () => getDom().ideRailPanel,
+    isActivePanel: () => true,
+    getWorkspaceFsApi: () => ({
+      async listDirectory({ path }) {
+        calls.push(path);
+        if (gate) await gate.promise;
+        return { entries: listings[path] || [] };
+      },
+    }),
+  });
+  tree.bindEvents();
+  tree.refreshRoot();
+  await settle();
+  const panel = getDom().ideRailPanel;
+  panel.querySelector('[data-ide-tree-path="src"]').click();
+  await settle();
+  panel.querySelector('[data-ide-tree-path="src"]').click(); // collapse: 'src' stays cached
+  await settle();
+
+  calls.length = 0;
+  gate = deferred();
+  panel.querySelector('[data-ide-tree-action="refresh"]').click();
+  await settle();
+  assert.deepEqual(calls, [''], 'a collapsed cached directory is not re-listed');
+  assert.ok(panel.querySelector('[data-ide-tree-path="a.js"]'), 'the old listing stays painted while re-listing');
+  assert.equal(panel.querySelector('.ide-tree-status'), null, 'no Loading row during a refresh');
+  gate.resolve();
+  gate = null;
+  await settle();
+
+  const row = panel.querySelector('[data-ide-tree-path="b.js"]');
+  await tree.revealPath('b.js', { focus: false });
+  assert.equal(panel.querySelector('[data-ide-tree-path="b.js"]'), row, 'an unchanged tree is not repainted');
+  assert.equal(row.tabIndex, 0, 'the roving tabindex moved to the revealed row');
+});

@@ -34,4 +34,6 @@ def resume_budget_tracker(  # keyword-only budget inputs.
         reasoning_effort=reasoning_effort,
         tool_schema_tokens=estimate_tool_schema_tokens(tool_payload) if num_tools else None,
     )
+    if tracker is not None:
+        tracker.charge_tool_schemas(tool_payload, num_tools)
     return tracker

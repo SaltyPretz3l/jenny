@@ -30,7 +30,10 @@ const OUTCOME_DECISIONS = Object.freeze([
   'shown', 'shown_by_user', 'prompted', 'dismissed', 'superseded', 'rejected', 'dropped',
 ]);
 const OUTCOME_RENDER_STATES = Object.freeze(['loaded', 'failed', 'replaced', 'cancelled']);
-const MAX_TRACKED_REQUESTS = 64;
+// Per session, so one busy session cannot evict another's pending outcomes; the
+// global ceiling only bounds memory across many sessions.
+const MAX_TRACKED_REQUESTS_PER_SESSION = 64;
+const MAX_TRACKED_REQUESTS = 1024;
 const MAX_OUTCOME_DETAIL_CHARS = 200;
 const MAX_RESOURCE_COUNT = 999;
 const MAX_NOTE_ENTRIES = 8;
@@ -51,20 +54,7 @@ const { createProjectPresentationService } = require('./projects/project-present
 // drive-lettered, escaping, or scheme-like collapses to '' — the service is
 // the last line before the payload crosses the IPC boundary, so it re-checks
 // even though the tool already validated.
-function normalizeRelativePosixPath(value) {
-  if (typeof value !== 'string') {
-    return '';
-  }
-  const raw = value.trim().replace(/\\/g, '/');
-  if (!raw || raw.includes('\0') || raw.includes(':') || raw.startsWith('/')) {
-    return '';
-  }
-  const segments = raw.split('/').filter((segment) => segment.length > 0 && segment !== '.');
-  if (!segments.length || segments.some((segment) => segment === '..')) {
-    return '';
-  }
-  return segments.join('/');
-}
+const { toRelativePosix: normalizeRelativePosixPath } = require('./shared/workspace-tool-helpers');
 
 function normalizeOpaqueId(value, maxLength = 160) {
   const normalized = typeof value === 'string' ? value.trim() : '';
@@ -136,6 +126,8 @@ class WorkspacePresentationService {
     this._sequence = 0;
     // request_id → tracked record (insertion-ordered; oldest evicted first).
     this._tracked = new Map();
+    // session id → that session's tracked request ids (insertion-ordered).
+    this._trackedBySession = new Map();
     this._outcomeListener = null;
   }
 
@@ -159,9 +151,27 @@ class WorkspacePresentationService {
       externalStylesheets: 0,
       unreported: false,
     });
-    while (this._tracked.size > MAX_TRACKED_REQUESTS) {
-      this._tracked.delete(this._tracked.keys().next().value);
+    let sessionRequests = this._trackedBySession.get(sessionId);
+    if (!sessionRequests) {
+      sessionRequests = new Set();
+      this._trackedBySession.set(sessionId, sessionRequests);
     }
+    sessionRequests.add(requestId);
+    if (sessionRequests.size > MAX_TRACKED_REQUESTS_PER_SESSION) {
+      this._untrack(sessionRequests.values().next().value);
+    }
+    while (this._tracked.size > MAX_TRACKED_REQUESTS) {
+      this._untrack(this._tracked.keys().next().value);
+    }
+  }
+
+  _untrack(requestId) {
+    const record = this._tracked.get(requestId);
+    if (!record) return;
+    this._tracked.delete(requestId);
+    const sessionRequests = this._trackedBySession.get(record.sessionId);
+    sessionRequests?.delete(requestId);
+    if (sessionRequests?.size === 0) this._trackedBySession.delete(record.sessionId);
   }
 
   /**
@@ -321,7 +331,7 @@ class WorkspacePresentationService {
         view,
         path: relPath,
         request_id: requestId,
-        source: source === 'tool' ? 'tool' : String(source || 'tool').slice(0, 32),
+        source: String(source || 'tool').slice(0, 32),
         ...(scopedService || view === 'change_diff' ? {
           session_id: normalizedSessionId,
           workspace_id: normalizedWorkspaceId.toLowerCase(),

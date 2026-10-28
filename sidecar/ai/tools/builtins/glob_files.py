@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import bisect
-import fnmatch
 import logging
 import os
 from dataclasses import dataclass
@@ -17,6 +16,8 @@ from sidecar.ai.tools.builtins.grep_search_file import (
     MAX_BRACE_EXPANSIONS,
     BraceExpansionLimitError,
     expand_brace_patterns,
+    is_link_entry,
+    matches_relative_glob,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
 from sidecar.ai.tools.workspace import WorkspaceGuard
@@ -53,7 +54,7 @@ def glob_files_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> 
     try:
         for candidate in _iter_search_files(search_root, workspace, budget=budget):
             relative_to_search = candidate.relative_to(search_root).as_posix()
-            if not any(_matches_glob(relative_to_search, token) for token in match_patterns):
+            if not any(matches_relative_glob(relative_to_search, glob) for glob in match_patterns):
                 continue
             relative_path = workspace_relative_path(candidate, workspace.root)
             matched_count_scanned += 1
@@ -228,6 +229,8 @@ def _iter_search_files(
     budget: _ScanBudget,
 ) -> Iterator[Path]:
     pending = [search_root]
+    # Backstop against any link shape the entry check misses.
+    seen = {os.path.normcase(str(search_root))}
     while pending:
         current_path = pending.pop()
         budget.enter_directory()
@@ -236,9 +239,10 @@ def _iter_search_files(
             with os.scandir(current_path) as entries:
                 for entry in entries:
                     budget.check_time()
-                    candidate = Path(entry.path)
+                    candidate = current_path / entry.name
                     try:
-                        is_link = entry.is_symlink()
+                        # Junctions count as links: Python 3.11 does not report them.
+                        is_link = is_link_entry(entry)
                         is_directory = entry.is_dir(follow_symlinks=False)
                         is_file = entry.is_file(follow_symlinks=False)
                     except OSError:
@@ -247,19 +251,23 @@ def _iter_search_files(
                     if is_link:
                         _log_skip("symlink_dir" if is_directory else "symlink_file", candidate)
                         continue
-                    if is_directory and _ignored_directory_name(entry.name):
-                        continue
-                    try:
-                        resolved = workspace.ensure_within_root(candidate)
-                    except ToolExecutionFailure:
-                        _log_skip("outside_workspace", candidate)
-                        continue
-                    if is_directory:
+                    if is_directory and not _ignored_directory_name(entry.name):
+                        # Containment is resolved once per directory; a regular
+                        # non-link file inside a verified directory is contained.
+                        try:
+                            resolved = workspace.ensure_within_root(candidate)
+                        except ToolExecutionFailure:
+                            _log_skip("outside_workspace", candidate)
+                            continue
+                        if os.path.normcase(str(resolved)) in seen:
+                            _log_skip("revisited_dir", candidate)
+                            continue
+                        seen.add(os.path.normcase(str(resolved)))
                         budget.discover_directory()
                         child_directories.append(resolved)
                     elif is_file:
                         budget.scan_file()
-                        yield resolved
+                        yield candidate
         except _ScanBudgetExceeded:
             raise
         except OSError:
@@ -276,51 +284,6 @@ def _ignored_directory_name(name: str) -> bool:
         else SEARCH_IGNORE_DIRS
     )
     return candidate in ignored
-
-
-def _matches_glob(relative_path: str, pattern: str) -> bool:
-    normalized = relative_path.replace("\\", "/")
-    token = pattern.replace("\\", "/")
-    if "/" not in token:
-        return _matches_segment(PurePosixPath(normalized).name, token)
-    path_parts = tuple(part for part in normalized.split("/") if part)
-    pattern_parts = tuple(part for part in token.split("/") if part)
-    return _matches_glob_parts(path_parts, pattern_parts)
-
-
-def _matches_glob_parts(
-    path_parts: tuple[str, ...],
-    pattern_parts: tuple[str, ...],
-) -> bool:
-    states: set[tuple[int, int]] = {(0, 0)}
-    visited: set[tuple[int, int]] = set()
-    while states:
-        path_index, pattern_index = states.pop()
-        state = (path_index, pattern_index)
-        if state in visited:
-            continue
-        visited.add(state)
-        if pattern_index == len(pattern_parts):
-            if path_index == len(path_parts):
-                return True
-            continue
-        pattern_part = pattern_parts[pattern_index]
-        if pattern_part == "**":
-            states.add((path_index, pattern_index + 1))
-            if path_index < len(path_parts):
-                states.add((path_index + 1, pattern_index))
-            continue
-        if path_index < len(path_parts) and _matches_segment(
-            path_parts[path_index], pattern_part
-        ):
-            states.add((path_index + 1, pattern_index + 1))
-    return False
-
-
-def _matches_segment(value: str, pattern: str) -> bool:
-    if os.name == "nt":
-        return fnmatch.fnmatchcase(value.lower(), pattern.lower())
-    return fnmatch.fnmatchcase(value, pattern)
 
 
 def _candidate_mtime_ns(candidate: Path) -> int:

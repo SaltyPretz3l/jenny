@@ -110,3 +110,28 @@ test('a canonical approval request cuts the pre-tool text segment before it is c
   }, deps);
   assert.deepEqual(order, ['event:text_delta']);
 });
+
+// Owner runs 2026-10-27: every ordinary tool call stored its tool_use event ahead of the text that
+// introduced it (row_order_violation "assistant_text:3 tool_call:2"), so a reload drew the reasoning
+// and tool row above that text. Any tool-opening event now cuts the segment first.
+test('a canonical tool call or execution start cuts the pre-tool text segment before it is captured', () => {
+  for (const [type, payload] of [
+    ['tool_call_requested', { tool_name: 'read_file', tool_input: { path: 'README.md' } }],
+    ['tool_execution_started', { tool_name: 'read_file' }],
+  ]) {
+    const ctx = makeCtx();
+    const order = [];
+    const persist = ctx.persistCurrentTextSegment;
+    ctx.persistCurrentTextSegment = (opts) => { order.push('segment'); return persist(opts); };
+    const noteEvent = ctx.turnEventCollector.noteEvent;
+    ctx.turnEventCollector.noteEvent = (params, meta) => {
+      order.push(`event:${params.type}`);
+      return noteEvent(params, meta);
+    };
+    handleNotification(ctx, {
+      method: 'turn.event',
+      params: canonicalEvent(type, payload, { seq: 2, tool_call_id: 'call-2' }),
+    }, { toolContext: {}, handleToolNotification: makeHandleToolNotification(ctx) });
+    assert.deepEqual(order.slice(0, 2), ['segment', `event:${type}`], type);
+  }
+});

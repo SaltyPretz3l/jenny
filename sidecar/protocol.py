@@ -37,6 +37,12 @@ COMMAND_EXECUTE_PROPOSAL_METHOD = "command.execute_proposal"
 # huge tool call) is not mistaken for a hung one. Routed by the multiplexer.
 ENGINE_ACTIVITY_METHOD = "engine.activity"
 SESSION_RUN_MODE_UPDATED_METHOD = "session.run_mode_updated"
+# Inbound shell->sidecar NOTIFICATION (row 70 W2a, mid-turn mail): addressed
+# session-message context rows for the live chat.send of ``session_id``
+# (``{session_id, request_id, rows}``). Parked on that turn's handle and drained
+# by the tool loop before its next generation. Gated by the negotiated
+# ``mid_turn_mail`` chat-workspace capability; never answered.
+SESSION_MAIL_ARRIVED_METHOD = "session.mail_arrived"
 # Manual context-compaction trigger. Request/response sibling of chat.send /
 # chat.cancel -- NOT a notification, so it is intentionally absent from
 # ALLOWED_NOTIFICATION_METHODS. Success re-emits the existing
@@ -51,6 +57,9 @@ MODELS_UNLOAD_METHOD = "models.unload"
 # load" self-catalog feature. See sidecar/runtime/request_dispatch.py.
 MODELS_RESIDENT_METHOD = "models.resident"
 MODELS_OLLAMA_BLOB_METHOD = "models.ollama_blob"
+# Local push-to-talk dictation (desktop only; see sidecar/ai/speech/).
+SPEECH_PREPARE_METHOD = "speech.prepare"
+SPEECH_TRANSCRIBE_METHOD = "speech.transcribe"
 MEMORY_SAVE_METHOD = "memory.save"
 MEMORY_LIST_METHOD = "memory.list"
 MEMORY_PENDING_LIST_METHOD = "memory.pending.list"
@@ -101,6 +110,8 @@ CONVERSATIONS_SEARCH_METHOD = "conversations.search"
 CONVERSATIONS_EMBED_STEP_METHOD = "conversations.embed_step"
 SUGGESTIONS_GENERATE_METHOD = "suggestions.generate"
 COMMIT_GENERATE_MESSAGE_METHOD = "commit.generate_message"
+# Row 60 W4: one-shot, off-transcript note that seeds a new chat (/handoff).
+HANDOFF_GENERATE_NOTE_METHOD = "handoff.generate_note"
 HARDWARE_PROFILE_METHOD = "hardware.profile"
 HARDWARE_VRAM_USAGE_METHOD = "hardware.vram_usage"
 HARNESS_INSPECT_METHOD = "harness.inspect"
@@ -134,8 +145,8 @@ WORKSPACE_TEST_CLEANUP_METHOD = "workspace_test.cleanup"
 WORKSPACE_TEST_CLOSE_METHOD = "workspace_test.close"
 
 # Shell -> sidecar request methods that participate in the lockstep API-version
-# contract. ``engine.activity`` and ``session.run_mode_updated`` are unversioned
-# inbound notifications;
+# contract. ``engine.activity``, ``session.run_mode_updated`` and
+# ``session.mail_arrived`` are unversioned inbound notifications;
 # JSON-RPC responses (tool approval decisions) carry no method or params.
 INBOUND_VERSIONED_REQUEST_METHODS: frozenset[str] = frozenset(
     {
@@ -151,6 +162,8 @@ INBOUND_VERSIONED_REQUEST_METHODS: frozenset[str] = frozenset(
         MODELS_UNLOAD_METHOD,
         MODELS_RESIDENT_METHOD,
         MODELS_OLLAMA_BLOB_METHOD,
+        SPEECH_PREPARE_METHOD,
+        SPEECH_TRANSCRIBE_METHOD,
         MEMORY_SAVE_METHOD,
         MEMORY_LIST_METHOD,
         MEMORY_PENDING_LIST_METHOD,
@@ -186,6 +199,7 @@ INBOUND_VERSIONED_REQUEST_METHODS: frozenset[str] = frozenset(
         CONVERSATIONS_EMBED_STEP_METHOD,
         SUGGESTIONS_GENERATE_METHOD,
         COMMIT_GENERATE_MESSAGE_METHOD,
+        HANDOFF_GENERATE_NOTE_METHOD,
         HARDWARE_PROFILE_METHOD,
         HARDWARE_VRAM_USAGE_METHOD,
         HARNESS_INSPECT_METHOD,
@@ -301,7 +315,11 @@ RUNTIME_OPERATION_METHOD = "runtime.operation"
 MONITOR_EVENT_METHOD = "monitor.event"
 # delegate child frames additionally carry reasoning_effort and child_activity:
 # cumulative sequence, <=40 sanitized steps, <=4000 visible-text characters,
-# counts/truncation flags and an optional current-response visible-token estimate.
+# counts/truncation flags, an optional current-response visible-token estimate,
+# and the UI-only transcript (<=80 thought/text/tool entries, 24000 shared
+# characters) with transcript_version (and transcript_dropped when > 0). The
+# transcript rides only when its version changed since the previous frame and
+# always on the terminal frame; the parent model never sees it.
 # Advisory/ephemeral only; terminal report metadata remains reload authority.
 AGENT_PROGRESS_METHOD = "agent.progress"
 BUDGET_UPDATE_METHOD = "budget.update"
@@ -321,6 +339,10 @@ CONTEXT_USAGE_METHOD = "context.usage"
 RUNTIME_GAP_CANDIDATE_METHOD = "runtime.gap_candidate"
 RUNTIME_PROGRESS_METHOD = "runtime.progress"
 RUNTIME_LOAD_FAILURE_METHOD = "runtime.load_failure"
+# Mid-turn mail acknowledgement (row 70 W2a). EPHEMERAL: outside canonical history
+# and never journaled; Electron persists the consumed context rows at the turn's
+# terminal settle. Payload: standard chat ctx + ``message_ids``, ``iteration``.
+SESSION_MAIL_CONSUMED_METHOD = "session.mail_consumed"
 
 # Canonical set of notification method names the sidecar is permitted to emit.
 # Any new notification method MUST be added here so `rpc.notification()` can
@@ -354,5 +376,6 @@ ALLOWED_NOTIFICATION_METHODS: frozenset[str] = frozenset(
         RUNTIME_GAP_CANDIDATE_METHOD,
         RUNTIME_PROGRESS_METHOD,
         RUNTIME_LOAD_FAILURE_METHOD,
+        SESSION_MAIL_CONSUMED_METHOD,
     }
 )

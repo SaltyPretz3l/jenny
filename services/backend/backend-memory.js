@@ -160,9 +160,11 @@ function unavailableMemoryStatus(reason) {
 
 async function getMemoryStatus(service) {
   if (!service.sidecarClient) {
+    // The renderer asks before the sidecar has attached on every launch; the
+    // page shows "unavailable" until it does, so this is not a warning.
     const reason = 'sidecar_unavailable';
     service._emitServiceLog(
-      'WARN',
+      'INFO',
       'memory.status_unavailable',
       { reason }
     );

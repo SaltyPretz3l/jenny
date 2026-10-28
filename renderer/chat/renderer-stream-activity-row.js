@@ -7,7 +7,7 @@
   root.rendererStreamActivityRow = factory(root.rendererStreamWaitingLine, root.rendererStreamActivityTyped);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (waitingLine, activityTyped) {
   'use strict';
-  const { createChecklistScanner, scanChecklistArguments, checklistValue, checklistCount } = activityTyped;
+  const { createChecklistScanner, scanChecklistArguments, describeToolInput, typedElapsedText } = activityTyped;
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   /* This module fills silent stream phases with an EPHEMERAL activity row at
@@ -19,12 +19,19 @@
      non-typed event removes it (a full render destroying the node is
      equivalent — authoritative content has taken over). A reply that waits by
      itself behind another chat is the one typed state that is not silence:
-     renderer-stream-waiting-line.js owns it (absent, waits degrade to silence). */
+     renderer-stream-waiting-line.js owns it (absent, waits degrade to silence).
+
+     A manual compaction (/compact, the meter's Compact now) has no stream: the
+     compaction coordinator reports it per session (noteSessionCompaction), so
+     it wears the same typed compaction row and sprite state as an automatic one. */
 
   const SILENCE_THRESHOLD_MS = 1500;
+  const SESSION_COMPACTION_KEY = 'session-compaction:';
   const ELAPSED_REVEAL_MS = 10000;
   const ESCALATE_MS = 30000;
   const CHECK_INTERVAL_MS = 500;
+  // Longest a dismissed row waits for the render that replaces it.
+  const RETIRE_FALLBACK_MS = 120;
   const MAX_TRACKED_STREAMS = 8;
 
   // Honest, action-flavored fallback copy for untyped silence. Nothing here
@@ -49,12 +56,6 @@
     ['task_board', { keys: ['action', 'title'], checklist: true }],
     ['exit_plan_mode', { keys: ['title'], checklist: false }],
   ]);
-  const TASK_BOARD_NAMES = {
-    add: jt('chat.streamActivity.addingTask', 'Adding a task'),
-    update: jt('chat.streamActivity.updatingTask', 'Updating a task'),
-    complete: jt('chat.streamActivity.completingTask', 'Completing a task'),
-    list: jt('chat.streamActivity.readingTaskBoard', 'Reading the task board'),
-  };
 
   // Events that prove first visible progress this turn; silence only counts
   // after one of these (the initial thinking indicator owns turn start).
@@ -65,6 +66,7 @@
     'phase_completed',
     'tool_result',
     'tool_output_chunk',
+    'tool_progress',
   ]);
   const TERMINAL_TYPES = new Set(['complete', 'error']);
   // Chrome-only telemetry: proves nothing about turn progress, so it neither
@@ -89,56 +91,6 @@
     return utils && typeof utils.getToolDisplayName === 'function'
       ? utils.getToolDisplayName(toolName)
       : toolName;
-  }
-
-  // Name + label for a typed tool_input row. Checklist tools say what the
-  // list work is; every other tool uses its transcript display name.
-  function describeToolInput(typed, resolveDisplayName) {
-    const composing = jt('chat.streamActivity.composingArguments', 'Composing…');
-    if (typed.toolName === 'todo_write') {
-      return {
-        name: jt('chat.streamActivity.updatingChecklist', 'Updating checklist'),
-        copy: checklistValue(typed.scanner, 'content') || composing,
-        isPath: false,
-      };
-    }
-    if (typed.toolName === 'task_board') {
-      const action = checklistValue(typed.scanner, 'action');
-      return {
-        name: TASK_BOARD_NAMES[action] || jt('chat.streamActivity.updatingTaskBoard', 'Updating the task board'),
-        copy: checklistValue(typed.scanner, 'title') || composing,
-        isPath: false,
-      };
-    }
-    if (typed.toolName === 'exit_plan_mode') {
-      return {
-        name: jt('chat.streamActivity.preparingPlan', 'Preparing the plan'),
-        copy: checklistValue(typed.scanner, 'title') || composing,
-        isPath: false,
-      };
-    }
-    let name = typed.toolName;
-    try {
-      name = String(resolveDisplayName(typed.toolName) || typed.toolName);
-    } catch (_error) { /* raw id fallback */ }
-    return { name, copy: typed.path || composing, isPath: Boolean(typed.path) };
-  }
-
-  // Right-hand meta for a typed row: checklist rows count items, argument
-  // rows show size, compaction shows elapsed only.
-  function typedElapsedText(typed, timestamp) {
-    const elapsed = formatElapsedLabel(timestamp - typed.startedAt);
-    if (typed.kind !== 'tool_input') return elapsed;
-    if (typed.checklist) {
-      const itemCount = checklistCount(typed.scanner, 'content');
-      return itemCount > 0
-        ? jt('chat.streamActivity.itemAndElapsed', 'item {count} · {elapsed}', { count: itemCount, elapsed })
-        : elapsed;
-    }
-    const size = typed.bytes < 1024
-      ? jt('chat.streamActivity.bytes', '{count} B', { count: typed.bytes })
-      : jt('chat.streamActivity.kilobytes', '{count} KB', { count: (typed.bytes / 1024).toFixed(1) });
-    return jt('chat.streamActivity.sizeAndElapsed', '{size} · {elapsed}', { size, elapsed });
   }
 
   function createRowNode(documentRef, streamId) {
@@ -176,6 +128,8 @@
   function createStreamActivityRow(options = {}) {
     const {
       getChatTimeline = () => null,
+      // A session compaction's own pane (split view): its timeline there, else null.
+      getSessionTimeline = () => null,
       isStreamLive = () => false,
       isSessionVisible = () => false,
       hasBlockingToolState = () => false,
@@ -192,6 +146,13 @@
       // The row is a direct DOM patch that bypasses the render pipeline, so it
       // must ask the viewport to follow when it lands (or moves) at the tail.
       onRowMounted = () => {},
+      // Opt-in hand-off: a dismissed row leaves with the timeline's next element
+      // write (the paired render), so no layout sees the tail without either.
+      retireOnTimelineWrite = false,
+      MutationObserverRef = typeof MutationObserver === 'function' ? MutationObserver : null,
+      setTimeoutFn = typeof setTimeout === 'function' ? setTimeout : null,
+      clearTimeoutFn = typeof clearTimeout === 'function' ? clearTimeout : null,
+      retireFallbackMs = RETIRE_FALLBACK_MS,
     } = options;
 
     // streamId -> { sessionId, lastEventAt, armed, node, episodeStartedAt, copyIndex, typed, afterReasoning }
@@ -226,6 +187,47 @@
       entry.copyIndex = -1;
     }
 
+    const retiring = new Set();
+    let retireObserver = null;
+    let retireTimer = null;
+
+    function flushRetiring() {
+      retireObserver?.disconnect();
+      retireObserver = null;
+      if (retireTimer !== null && clearTimeoutFn) clearTimeoutFn(retireTimer);
+      retireTimer = null;
+      for (const node of retiring) {
+        try { node.remove(); } catch (_error) { /* detached */ }
+      }
+      retiring.clear();
+    }
+
+    // An element added outside the retiring rows: the render has landed.
+    const isTimelineWrite = (record) => [...(record.addedNodes || [])].some((added) => added.nodeType === 1
+      && ![...retiring].some((node) => node === added || node.contains(record.target)));
+
+    function retireNode(entry) {
+      const node = entry.node;
+      const chatTimeline = retireOnTimelineWrite && node?.isConnected === true ? getChatTimeline() : null;
+      if (!chatTimeline || !MutationObserverRef || !chatTimeline.contains?.(node)) {
+        removeNode(entry);
+        return;
+      }
+      retiring.add(node);
+      entry.node = null;
+      removeNode(entry); // the episode ends now; only the node lingers
+      if (retireObserver) return;
+      try {
+        retireObserver = new MutationObserverRef((records) => { if (records.some(isTimelineWrite)) flushRetiring(); });
+        retireObserver.observe(chatTimeline, { childList: true, subtree: true });
+      } catch (_error) {
+        flushRetiring();
+        return;
+      }
+      retireTimer = setTimeoutFn ? setTimeoutFn(flushRetiring, retireFallbackMs) : null;
+      retireTimer?.unref?.();
+    }
+
     function untrack(streamId) {
       const entry = tracked.get(streamId);
       if (entry) {
@@ -236,8 +238,13 @@
       if (!tracked.size) stopInterval();
     }
 
+    function sessionTimelineOf(entry) {
+      if (!entry.sessionCompaction) return null;
+      try { return getSessionTimeline(entry.sessionId) || null; } catch (_error) { return null; }
+    }
+
     function findMountPoint(entry) {
-      const chatTimeline = getChatTimeline();
+      const chatTimeline = sessionTimelineOf(entry) || getChatTimeline();
       if (!chatTimeline || typeof chatTimeline.querySelectorAll !== 'function') return null;
       // Prefer the live streaming article's content column (geometry for
       // free); a settled tail (post-tool boundary) falls back to the last
@@ -332,7 +339,7 @@
       const elapsedNode = node.querySelector('.turn-activity-elapsed');
       if (elapsedNode) {
         if (entry.typed) {
-          const text = typedElapsedText(entry.typed, timestamp);
+          const text = typedElapsedText(entry.typed, timestamp, formatElapsedLabel);
           if (entry.typed.kind === 'tool_input') {
             // The shared clock rewrites the whole node as elapsed-only, which
             // would erase the size or item count between our ticks; this tick owns it.
@@ -373,7 +380,8 @@
       }
       const timestamp = Number(now());
       for (const [streamId, entry] of [...tracked.entries()]) {
-        if (!safeIsStreamLive(entry.sessionId, streamId)) {
+        // A session compaction lives until the coordinator settles it.
+        if (!entry.sessionCompaction && !safeIsStreamLive(entry.sessionId, streamId)) {
           untrack(streamId);
           continue;
         }
@@ -383,8 +391,9 @@
           try {
             // The tool a reply waits for has not started: a row that still
             // reads running must not hide why nothing is happening.
-            show = isSessionVisible(entry.sessionId) === true
-              && (waitingLine?.isWaiting(entry) === true || hasBlockingToolState(entry.sessionId, streamId) !== true);
+            show = (isSessionVisible(entry.sessionId) === true || Boolean(sessionTimelineOf(entry)))
+              && (entry.sessionCompaction === true || waitingLine?.isWaiting(entry) === true
+                || hasBlockingToolState(entry.sessionId, streamId) !== true);
           } catch (_error) {
             show = false;
           }
@@ -424,7 +433,7 @@
         // (main bounds how many of those there can be).
         for (const [otherId, other] of [...tracked]) {
           if (tracked.size <= maxTrackedStreams) break;
-          if (otherId !== streamId && !waitingLine?.isWaiting(other)) untrack(otherId);
+          if (otherId !== streamId && !other.sessionCompaction && !waitingLine?.isWaiting(other)) untrack(otherId);
         }
       }
       const sessionId = normalizeId(payload && payload.sessionId);
@@ -499,7 +508,7 @@
       if (ARMING_TYPES.has(type)) entry.armed = true;
       // Any real event both resets the silence clock and dismisses a visible
       // row (the paired render replaces it with authoritative content).
-      removeNode(entry);
+      retireNode(entry);
       startInterval();
     }
 
@@ -507,6 +516,33 @@
     function noteStreamEvent(payload) {
       handleStreamEvent(payload);
       typedActivity.sync(normalizeId(payload && payload.streamId));
+    }
+
+    // The coordinator's pending flag for one session: true tracks the typed
+    // compaction row, anything else ends it (untrack announces the release).
+    function noteSessionCompaction(sessionId, pending) {
+      const id = normalizeId(sessionId);
+      if (!id) return;
+      const key = SESSION_COMPACTION_KEY + id;
+      if (pending !== true) {
+        untrack(key);
+        return;
+      }
+      if (tracked.has(key)) return;
+      const startedAt = Number(now());
+      tracked.set(key, {
+        sessionId: id, lastEventAt: startedAt, armed: true, node: null, episodeStartedAt: 0, copyIndex: -1,
+        afterReasoning: false, sessionCompaction: true,
+        typed: { kind: 'compaction', phase: 'manual', tokensBefore: 0, messageCount: 0, startedAt },
+      });
+      typedActivity.sync(key);
+      startInterval();
+      tick();
+    }
+
+    function getSessionTypedActivity(sessionId) {
+      const id = normalizeId(sessionId);
+      return id ? typedActivity.queries.getTypedActivity(SESSION_COMPACTION_KEY + id) : null;
     }
 
     function reset() {
@@ -517,10 +553,11 @@
 
     function dispose() {
       reset();
+      flushRetiring();
       stopInterval();
     }
 
-    return { noteStreamEvent, tick, reset, dispose, ...typedActivity.queries, ...(waitingLine ? waitingLine.createQueries(tracked) : {}) };
+    return { noteStreamEvent, noteSessionCompaction, getSessionTypedActivity, tick, reset, dispose, ...typedActivity.queries, ...(waitingLine ? waitingLine.createQueries(tracked) : {}) };
   }
 
   return {
@@ -531,6 +568,7 @@
     ELAPSED_REVEAL_MS,
     ESCALATE_MS,
     CHECK_INTERVAL_MS,
+    RETIRE_FALLBACK_MS,
     formatElapsedLabel,
   };
 });

@@ -20,6 +20,7 @@
   ]);
 
   const normalizeId = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).normalizeId;
+  const APPLICATION_TURNS = new Set(['handoff_preparation', 'wake', 'auto_resume']);
 
   function normalizeRecoveryActionText(value) {
     return typeof value === 'string' ? value.trim() : '';
@@ -98,6 +99,21 @@
     return Boolean(getMessageById(ownId, messages));
   }
 
+  // A failed app-started turn (New session preparation, wake, auto-resume): its anchor user
+  // message is an app label (application_turn, chat-bubble-action-utils.js), so its card offers
+  // no Retry; the proposal card or the person's next message continues it.
+  function resolveHandoffPreparationErrorNotice(renderMessage, messages) {
+    const ownId = normalizeId(renderMessage && renderMessage.id);
+    const sourceMessages = Array.isArray(messages) ? messages : [];
+    let index = ownId ? sourceMessages.findIndex((message) => normalizeId(message && message.id) === ownId) : -1;
+    for (index -= 1; index >= 0; index -= 1) {
+      const message = sourceMessages[index];
+      if (normalizeId(message && message.role) !== 'user') continue;
+      return APPLICATION_TURNS.has(normalizeId(message.application_turn));
+    }
+    return false;
+  }
+
   function hasAssistantErrorRecoveryMetadata(message) {
     return Boolean(
       normalizeId(message && message.error_code)
@@ -163,15 +179,10 @@
     return view;
   }
 
+  // The one tool-duration label lives in tool-call-utils (loaded earlier).
   function formatDurationMs(ms) {
-    const durationMs = Number(ms);
-    if (!Number.isFinite(durationMs) || durationMs <= 0) {
-      return '';
-    }
-    if (durationMs < 1000) {
-      return `${Math.round(durationMs)}ms`;
-    }
-    return `${(durationMs / 1000).toFixed(1)}s`;
+    const toolCallUtils = globalThis.toolCallUtils || (typeof require === 'function' ? require('./tool-call-utils') : null);
+    return toolCallUtils.formatToolDurationMs(ms);
   }
 
   return {
@@ -185,6 +196,7 @@
     hasRecoveryActions,
     normalizeId,
     normalizeReasoningPhase,
+    resolveHandoffPreparationErrorNotice,
     resolveSupersededErrorNotice,
   };
 });

@@ -25,8 +25,9 @@ test('lockdown classification covers every manifest tool exactly once', () => {
   const manifestNames = manifest.tools.map((tool) => tool.name).sort();
   const classifiedNames = Object.keys(TOOL_NETWORK_CLASSIFICATION).sort();
 
-  assert.equal(manifestNames.length, 67);
+  assert.equal(manifestNames.length, 73);
   assert.equal(TOOL_NETWORK_CLASSIFICATION.recall_tool_output, 'none');
+  assert.equal(TOOL_NETWORK_CLASSIFICATION.report_findings, 'none');
   assert.deepEqual(classifiedNames, manifestNames);
   assert.equal(TOOL_NETWORK_CLASSIFICATION.task_board, 'none');
   assert.equal(TOOL_NETWORK_CLASSIFICATION.project_notes, 'none');
@@ -39,6 +40,7 @@ test('lockdown classification covers every manifest tool exactly once', () => {
   assert.equal(TOOL_NETWORK_CLASSIFICATION.conversations_recent, 'none');
   assert.equal(TOOL_NETWORK_CLASSIFICATION.conversation_open, 'none');
   assert.equal(TOOL_NETWORK_CLASSIFICATION.conversations_search, 'none');
+  for (const name of ['sessions_list', 'session_status', 'session_transcript', 'session_stop', 'jenny_help']) assert.equal(TOOL_NETWORK_CLASSIFICATION[name], 'none');
   assert.equal(TOOL_NETWORK_CLASSIFICATION.session_spawn, 'possible');
   assert.equal(TOOL_NETWORK_CLASSIFICATION.session_wait, 'none');
   assert.equal(TOOL_NETWORK_CLASSIFICATION.session_result, 'none');
@@ -106,6 +108,7 @@ test('remote engines refuse before dispatch while local engines remain available
   for (const engine of [
     { engineType: 'chatgpt' },
     { engineType: 'codex-cli' },
+    { engineType: 'api-provider' },
     { engineType: 'openai-compatible', openAiCompatibleApiUrl: 'https://api.example.test/v1' },
     { engineType: 'openai-compatible', openAiCompatibleApiUrl: 'https://127.attacker.test/v1' },
   ]) {

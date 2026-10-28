@@ -93,18 +93,20 @@ class _ToolCallPhasesMixin:
     cycle_hint_attempted: bool
     current_info_context_injected: bool
     failure_context_outcome_count: int
+    failure_context_nudged: bool
     max_iterations: Any
     iteration_base: int
     iteration_total: int
     quota_registry: Any
+    current_tool_signatures: tuple[str, ...] | None
+    meter_estimate_tokens: int
+    missing_status_counter: Any
 
     if TYPE_CHECKING:
-        # Hub methods (``_ToolLoopRun``, tool_loop_run.py) plus the sibling
-        # ``_FinalResponseMixin._defers_empty_final``. ``TYPE_CHECKING``
+        # Hub methods (``_ToolLoopRun``, tool_loop_run.py). ``TYPE_CHECKING``
         # is False at runtime, so these never shadow the real implementations.
         def _finish(self, loop_result: Any, *, reason: str) -> Any: ...
         def _settle_unfinished_tool_results(self, reason: str) -> int: ...
-        def _defers_empty_final(self, result: Any) -> bool: ...
 
     def _request_sub_agent_budget_finalization(
         self,
@@ -152,35 +154,18 @@ class _ToolCallPhasesMixin:
         )
         return True
 
-    def _handle_final_response(self, result: Any, _iteration: int) -> Any | None:
-        """Wind down an empty post-tool completion before normal finalization."""
-        import sidecar.ai.routing.tool_loop as _tl_hub
-
-        cap_final = _tl_hub.tool_loop_recovery.maybe_wind_down_tool_cap_final
-        if tool_cap_result := cap_final(self, result):
-            return tool_cap_result
-        if (
-            self.outcomes and not str(result.content or "").strip()
-            and not self._defers_empty_final(result)
-            and not self.post_tool_continuation_attempted
-            and _iteration < self.iteration_total
-        ):
-            return _tl_hub.tool_loop_recovery.empty_final_wind_down(self)
-        return super()._handle_final_response(result, _iteration)  # type: ignore[misc]
-
-    # -- Closure conversions (910-1090) -----------------------------------
+    # -- Cycle-state and blocked-call helpers -----------------------------
     def _append_failed_tool_context_if_needed(self) -> None:
         import sidecar.ai.routing.tool_loop as _tl_hub
 
         new_outcomes = self.outcomes[self.failure_context_outcome_count:]
         self.failure_context_outcome_count = len(self.outcomes)
-        if not any(not getattr(outcome, "success", False) for outcome in new_outcomes):
+        failed = any(not getattr(o, "success", False) for o in new_outcomes)
+        if self.failure_context_nudged or not failed:  # one row per turn
             return
-        # Appended after the conversation history -> a NON-leading system
-        # message. Safe only because every template-based local engine builder
-        # runs demote_non_leading_system_messages (sidecar/runtime/local_engine/
-        # messages.py) before dispatch; without it, system-first GGUF templates
-        # (e.g. ornith:9b-48k) reject the request with HTTP 400.
+        self.failure_context_nudged = True
+        # Non-leading system row: template-based local engine builders demote it to
+        # user (local_engine/messages.py); system-first GGUF templates reject it otherwise.
         self.working_messages.append(
             {"role": "system", "content": _tl_hub._TOOL_FAILURE_CONTEXT_NUDGE}
         )
@@ -384,7 +369,7 @@ class _ToolCallPhasesMixin:
         resolution_context = self.tool_resolution_context
         if resolution_context is None:
             return frozenset()
-        retired = tool_loop_cycle_recovery.repeated_missing_status_tools(self.outcomes)
+        retired = self.missing_status_counter.retired(self.outcomes)
         if not retired:
             return frozenset()
         resolution_context.un_deferred_names.difference_update(retired)
@@ -421,13 +406,11 @@ class _ToolCallPhasesMixin:
         merged ``input_tokens`` total.
         """
         usage = getattr(result, "usage", None)
-        provider_tokens = 0
-        if usage is not None:
-            provider_tokens = (
-                getattr(usage, "last_request_input_tokens", 0)
-                or getattr(usage, "input_tokens", 0)
-                or 0
-            )
+        provider_tokens = (
+            getattr(usage, "last_request_input_tokens", 0) or getattr(usage, "input_tokens", 0) or 0
+        )
+        # The plain message estimate (context.preview's units), never the measured rescale.
+        estimate = self.meter_estimate_tokens or current_context_tokens
         context_usage_events.emit_context_usage(
             self.runtime,
             phase=context_usage_events.PHASE_ITERATION,
@@ -436,11 +419,11 @@ class _ToolCallPhasesMixin:
             feature_flags=self.feature_flags,
             config=self.kernel._config,
             engine=self.kernel._engine,
-            context_tokens_estimate=current_context_tokens,
+            context_tokens_estimate=estimate,
             last_request_input_tokens=provider_tokens,
         )
 
-    # -- P7: tool-call branch (1303-1999) ---------------------------------
+    # -- P7: tool-call branch ----------------------------------------------
 
     def _handle_tool_calls(  # noqa: C901, PLR0911, PLR0912, PLR0915
         self,
@@ -976,8 +959,8 @@ class _ToolCallPhasesMixin:
             # tool_search can promote deferred entries to full schemas between
             # iterations. Charge the prospective payload before deciding
             # whether the expanded request still fits the context window.
-            self.budget_tracker.num_tools = _tl_hub.count_full_tool_schemas(
-                next_tool_payload
+            self.budget_tracker.charge_tool_schemas(
+                next_tool_payload, _tl_hub.count_full_tool_schemas(next_tool_payload)
             )
             current_context_tokens = _tl_hub.tool_loop_compaction.compact_tool_loop_context(
                 self,

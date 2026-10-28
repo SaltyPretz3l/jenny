@@ -422,10 +422,10 @@
     var unsubscribe = null;
     var disposed = false;
 
-    function notify(key) {
+    function notify(key, progressTick) { // progressTick: a running pull's byte update, no status change
       if (disposed) return;
       if (opts.state) opts.state.modelPulls = getPulls();
-      if (opts.state && opts.windowRef) opts.windowRef.dispatchEvent(new opts.windowRef.CustomEvent('jenny:model-state-changed'));
+      if (opts.state && opts.windowRef) opts.windowRef.dispatchEvent(new opts.windowRef.CustomEvent('jenny:model-state-changed', { detail: { pullProgress: progressTick === true } }));
       onChange(key);
     }
 
@@ -480,7 +480,7 @@
       record.bytesText = pullBytesText(payload);
       if (Number.isFinite(payload.bytes)) record.completedBytes = payload.bytes;
       if (Number.isFinite(payload.totalBytes)) record.totalBytes = payload.totalBytes;
-      notify(record.key);
+      notify(record.key, true);
     }
 
     function subscribe() {

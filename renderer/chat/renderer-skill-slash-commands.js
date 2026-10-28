@@ -9,6 +9,7 @@
   'use strict';
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  // Reserved even before the registry has them; builtInNames() adds whatever the app registered.
   const BUILT_INS = new Set(['help', 'context', 'compact', 'note', 'remember', 'forget', 'memory']);
   const CHIP_TOKEN = 'skill_pending';
   const SPARKLE_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5l1.6 4.2L14 7.5l-4.4 1.8L8 13.5 6.4 9.3 2 7.5l4.4-1.8z"/></svg>';
@@ -100,8 +101,18 @@
       log('WARN', 'slash.skill_command_collision', { command, firstId, secondId });
     }
 
+    function builtInNames() {
+      const names = new Set(BUILT_INS);
+      const listed = typeof registry?.listCommands === 'function' ? registry.listCommands() : [];
+      for (const entry of Array.isArray(listed) ? listed : []) {
+        if (entry?.action !== 'attach') names.add(String(entry?.name || '').replace(/^\//, ''));
+      }
+      return names;
+    }
+
     function collect(snapshot) {
       const desired = new Map();
+      const reserved = builtInNames();
       const scopes = Array.isArray(snapshot?.scopes) ? snapshot.scopes : [];
       for (const scope of scopes) {
         if (scope?.enabled !== true) continue;
@@ -110,7 +121,7 @@
           if (entry?.enabled !== true) continue;
           const skill = cleanSkill(entry, scope.scope);
           if (!skill) continue;
-          if (BUILT_INS.has(skill.command)) {
+          if (reserved.has(skill.command)) {
             warnCollision(skill.command, `builtin/${skill.command}`, skill.id);
             continue;
           }
@@ -320,13 +331,12 @@
     const autocompleteUtils = options.autocompleteUtils
       || (typeof globalThis !== 'undefined' ? globalThis.rendererSlashAutocomplete : null);
     // Split view: each pane's send path owns the menu on ITS composer. A
-    // second pane's textarea is not #chatInput: its menu binds that textarea,
-    // keys on its session and leaves pane 0's Commands button alone.
+    // second pane's textarea is not #chatInput: its menu binds that textarea
+    // and keys on its session.
     const ownsDocumentComposer = !chatInput || chatInput === chatInput.ownerDocument?.getElementById?.('chatInput');
     const autocomplete = autocompleteUtils?.createSlashAutocomplete?.({
       document: chatInput?.ownerDocument,
       getInput: chatInput ? () => chatInput : undefined,
-      getButton: ownsDocumentComposer ? undefined : () => null,
       getSessionId: !ownsDocumentComposer && typeof sessionContext?.getSessionId === 'function'
         ? () => sessionContext.getSessionId()
         : undefined,

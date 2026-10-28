@@ -15,6 +15,7 @@ const { promisify } = require('node:util');
 
 const { WorkspaceGitService } = require('../services/workspace-git-service');
 const { cleanupTrackedResources, createTrackedTempDir } = require('./helpers/resource-cleanup');
+const { posixOnly } = require('./helpers/platform-skips');
 
 const execFileAsync = promisify(execFile);
 
@@ -87,7 +88,7 @@ test('discardFile on a bracket-named tracked file leaves the glob-matching sibli
 });
 
 test('a file literally named like a magic pathspec can be staged by itself', {
-  skip: process.platform === 'win32' ? 'colon is not a legal Windows filename character' : false,
+  skip: posixOnly('colon is not a legal Windows filename character'),
 }, async (t) => {
   t.after(cleanupTrackedResources);
   const root = await createRepo();

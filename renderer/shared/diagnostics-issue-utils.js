@@ -44,7 +44,8 @@
     var data = dataOf(entry); var layer = text(entry.layer || entry.source);
     var dedupeKey = layer === 'renderer' || component.startsWith('renderer.') ? text(data.dedupe_key) : '';
     var matches = getExplanations().matchIssueVariant;
-    var variant = matches ? matches({ event: event, severity: level, message: text(entry.message || data.message || event) }) : false;
+    var variant = matches ? matches({ event: event, severity: level, error_code: code, data: data,
+      message: text(entry.message || data.message || event) }) : false;
     return { component: component, event: event, error_code: code, severity: level,
       key: [component, event, code, level, dedupeKey, variant].join('\u0000') };
   }

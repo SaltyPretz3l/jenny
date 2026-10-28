@@ -16,6 +16,11 @@ from sidecar.ai.config_models import uses_minimal_system_prompt
 from sidecar.ai.context import compaction_diagnostics as _compaction_diag
 from sidecar.ai.context import prompt_modes as _prompt_modes
 from sidecar.ai.context import runtime_overlays as _runtime_overlays
+from sidecar.ai.context.context_count import (
+    ContextCalibration,
+    publish_request_token_scale,
+    resolve_token_scale,
+)
 from sidecar.ai.context.history_reframe import reframe_tool_history_messages
 from sidecar.ai.context.messages import (
     build_context_block_system_messages,
@@ -128,7 +133,11 @@ def _build_chat_decision(
         approval_plan=approval_plan,
         tool_results=tool_results,
         usage=usage,
-        context_tokens_estimate=kernel._context_tokens_estimate(working_messages),
+        context_tokens_estimate=(
+            estimate_messages_tokens(working_messages, budget_tracker.backend)
+            if budget_tracker is not None and budget_tracker.backend is not None
+            else kernel._context_tokens_estimate(working_messages)
+        ),
         message_count=message_count if message_count is not None else len(working_messages),
         tool_schema_count=tool_schema_count,
         streamed_event_types=streamed_event_types or frozenset(),
@@ -138,6 +147,7 @@ def _build_chat_decision(
         terminal_error_code=str(terminal_error_code or "").strip() or None,
         terminal_subcode=str(terminal_subcode or "").strip() or None,
         terminal_error_retryable=bool(terminal_error_retryable),
+        context_calibration=getattr(budget_tracker, "calibration_reading", None),
         **budget_meter_fields(budget_tracker),
     )
 
@@ -156,6 +166,10 @@ class _BudgetPreflightContext:
     cache_source_key: str
     reasoning_effort: str | None
     input_complete: bool
+    # Last turn's provider-vs-estimate reading (count-source ladder, context_count.py),
+    # and the ladder result the tool-budget probe already resolved this turn.
+    context_calibration: ContextCalibration | None = None
+    count_scale: tuple[float | None, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -214,6 +228,18 @@ def _prepare_context_budget(
 
     kernel = context.kernel
     num_tools = count_full_tool_schemas(context.tool_payload) if kernel._config.tools_enabled else 0
+    # Count-source ladder: an engine's exact count, else last turn's calibration,
+    # else the plain estimate. The scaled backend it yields counts the status,
+    # the compaction and (via the tracker) the tool loop in one set of units.
+    token_scale, scale_source = context.count_scale or resolve_token_scale(
+        engine=kernel._engine,
+        config=kernel._config,
+        messages=working_messages,
+        tool_payload=context.tool_payload if kernel._config.tools_enabled else (),
+        calibration=context.context_calibration,
+        extra_tokens=vision_token_surcharge,
+    )
+    publish_request_token_scale(kernel._engine, token_scale)
     working_messages, budget, budget_tracker = apply_budget_check(
         working_messages,
         kernel._config,
@@ -221,9 +247,13 @@ def _prepare_context_budget(
         num_tools=num_tools,
         reasoning_effort=context.reasoning_effort,
         tool_schema_tokens=estimate_tool_schema_tokens(context.tool_payload) if num_tools else None,
+        token_scale=token_scale,
+        scale_source=scale_source,
     )
     if budget is None:
         return _BudgetPreflightResult(working_messages, budget_tracker)
+    if budget_tracker is not None:
+        budget_tracker.charge_tool_schemas(context.tool_payload, num_tools)
 
     # Count with the backend apply_budget_check already built, NOT the chars//4
     # default: the window this status is compared against was already reduced by
@@ -333,7 +363,9 @@ def _run_context_compaction(
             runtime=context.runtime,
         ),
     )
-    _log_compaction_result(context, compaction_result)
+    _compaction_diag.log_preflight_compaction_result(
+        logger, compaction_result, request_id=context.request_id
+    )
     if context.runtime is not None:
         context.runtime.emit_safe(
             ContextCompactedEvent(
@@ -381,39 +413,6 @@ def _run_context_compaction(
             reason="compaction",
         )
     return _BudgetPreflightResult(working_messages, compaction.budget_tracker)
-
-
-def _log_compaction_result(context: _BudgetPreflightContext, compaction_result: Any) -> None:
-    log_event(
-        logger,
-        logging.INFO,
-        component="ai.router",
-        event="ai.router.compaction_completed",
-        message="Context compaction completed.",
-        status="success" if compaction_result.error is None else "degraded",
-        data={
-            "strategy": compaction_result.strategy,
-            "tokens_before": compaction_result.tokens_before,
-            "tokens_after": compaction_result.tokens_after,
-            "error": compaction_result.error,
-        },
-        request_id=context.request_id,
-    )
-    if not compaction_result.micro_fallback:
-        return
-    log_event(
-        logger,
-        logging.WARNING,
-        component="ai.router",
-        event="ai.router.compaction_micro_fallback",
-        message="Context compaction fell back to microcompaction after full compaction failed.",
-        status="degraded",
-        data={
-            "tokens_before": compaction_result.tokens_before,
-            "tokens_after": compaction_result.tokens_after,
-        },
-        request_id=context.request_id,
-    )
 
 
 def _terminal_compaction_result(
@@ -919,6 +918,8 @@ def build_chat_decision(
         session_id=session_id, system_prompt_text=system_prompt_text, runtime=runtime,
         cache_break_detector=cache_break_detector, cache_source_key=cache_source_key,
         reasoning_effort=reasoning_effort, input_complete=semantic_admission.input_complete,
+        context_calibration=getattr(request_context, "context_calibration", None),
+        count_scale=budget_filter_result.count_scale,
     )
 
     def _initialize_deferred_budget() -> _BudgetPreflightResult:

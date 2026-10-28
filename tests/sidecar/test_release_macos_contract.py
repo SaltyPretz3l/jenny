@@ -127,7 +127,7 @@ def test_runtime_lock_keeps_platform_dependencies_and_mac_wheel_hashes():
     assert "pefile==2024.8.26 ; sys_platform == 'win32'" in lock
     assert "pywin32-ctypes==0.2.3 ; sys_platform == 'win32'" in lock
     # The exact wheel rejected by the public macOS release is now permitted.
-    assert '4bd4cd07944443f5a265608cc6aab442e4f74dff8088b0dfc8238647b8f6ae9a' in lock
+    assert '7d3391b2188d18737cb2fa147028b1096236eaa7e156446c650a489fa2cadc91' in lock
 
 
 @pytest.mark.parametrize('mutation', ['missing-smoke', 'ignored-smoke', 'unguarded-publish'])

@@ -50,6 +50,12 @@
     if (engineType === 'chatgpt') {
       return { key: 'chatgpt', label: 'ChatGPT', order: 40 };
     }
+    // Row 78: each API-key provider is its own group, named by the user's label.
+    if (engineType === 'api-provider') {
+      var instanceId = String(source.apiProviderInstanceId || '').trim();
+      var providerLabel = String(source.provider || '').trim();
+      return { key: 'api-provider:' + instanceId, label: providerLabel || instanceId, order: 60 };
+    }
     if (/^(?:hf\.co|huggingface\.co)\//i.test(id)) {
       return { key: 'huggingface', label: jt('composer.modelPicker.huggingFaceGroup', 'Hugging Face'), order: 30 };
     }
@@ -97,7 +103,10 @@
       : {};
     var loadedModel = String(config.loadedModel || '').trim();
     var canonicalize = config.canonicalize || defaultCanonicalize;
-    var split = splitModelId(id);
+    // A provider row shows the provider's own model id, not the namespaced one.
+    var split = engineType === 'api-provider'
+      ? { family: String(source.apiProviderModelId || source.label || id), tag: '', tagHead: '', org: '', engineHint: '' }
+      : splitModelId(id);
     return {
       id: id,
       engineType: engineType,
@@ -116,8 +125,26 @@
       tagHead: split.tagHead,
       org: split.org,
       engineHint: split.engineHint,
-      group: resolveModelGroup({ id: id, engineType: engineType, managed: source.managed }),
+      group: resolveModelGroup({
+        id: id,
+        engineType: engineType,
+        managed: source.managed,
+        apiProviderInstanceId: source.apiProviderInstanceId,
+        provider: source.provider,
+      }),
+      hint: apiProviderHint(engineType, source),
     };
+  }
+
+  // One line under an API-key provider row that cannot run as listed.
+  function apiProviderHint(engineType, source) {
+    if (engineType !== 'api-provider') return '';
+    if (source.hasKey === false) {
+      return jt('composer.modelPicker.apiProviderNoKey', 'Add a key in Settings › Models');
+    }
+    return source.limitsUnknown === true
+      ? jt('composer.modelPicker.apiProviderLimitsUnknown', 'Limits unknown: set them in Settings')
+      : '';
   }
 
   function groupCatalogEntries(models, options) {
@@ -200,6 +227,25 @@
     return ' · ' + effortSegmentLabel(effort);
   }
 
+  // The model a "Default" chat (preferred_model '') runs on: the Settings
+  // default for local inference unless a cloud engine is active, otherwise the
+  // loaded model. Mirrors backend-chat-model-resolution.js resolveDefaultChatModel.
+  function resolveDefaultChatModel(state) {
+    var source = state || {};
+    var status = source.status || {};
+    var modelList = source.modelList || {};
+    var loaded = String(status.model || modelList.active_model || '').trim();
+    var loadedEngine = String(status.engine || status.engine_type || modelList.engine_type || '').trim().toLowerCase();
+    var preferred = String((source.offline && source.offline.preferredLocalModel) || '').trim();
+    var cloud = loadedEngine === 'chatgpt' || loadedEngine === 'codex-cli' || loadedEngine === 'api-provider';
+    if (!preferred || preferred === loaded || cloud) return { model: loaded, engineType: loadedEngine };
+    // The catalog lists one engine family at a time, so an unlisted default (NInfer while Ollama
+    // runs) is still the default; its engine is known only when listed.
+    var models = Array.isArray(modelList.data) ? modelList.data : [];
+    var entry = models.find(function (model) { return String((model && (model.id || model.name)) || '') === preferred; });
+    return { model: preferred, engineType: String((entry && (entry.engine_type || entry.engineType)) || '').trim().toLowerCase() };
+  }
+
   function formatComposerModelPillLabel(input) {
     var source = input || {};
     var preferredModel = String(source.preferredModel || '').trim();
@@ -237,5 +283,6 @@
     effortSegmentLabel: effortSegmentLabel,
     formatComposerModelPillLabel: formatComposerModelPillLabel,
     buildPillTitle: buildPillTitle,
+    resolveDefaultChatModel: resolveDefaultChatModel,
   };
 });

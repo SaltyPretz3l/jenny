@@ -58,80 +58,70 @@
     // flight; the value is the newest change that arrived meanwhile (or null).
     const reconcileSlots = new Map();
 
-    async function reconcileExternalChange(change) {
+    // The open-document key for a watcher change (normalized, then resolved
+    // through the file operations' path identity when available).
+    function resolveChangePath(change) {
       const requestedPath = ideStateUtils.normalizeIdeRelativePath?.(change?.relPath) || '';
-      const path = fileOperations?.resolvePath(requestedPath) || requestedPath;
+      return fileOperations?.resolvePath(requestedPath) || requestedPath;
+    }
+
+    async function reconcileExternalChange(change) {
+      const path = resolveChangePath(change);
       if (!path || !editorHost?.hasDocument(path)) {
         return;
       }
       const ide = getIde();
+      const markStale = () => {
+        ideStateUtils.setTabStale?.(ide, path, true);
+        renderTabs();
+      };
       if (change.kind === 'deleted') {
         if (editorHost.isDirty(path)) {
-          ideStateUtils.setTabStale?.(ide, path, true);
           showToastMessage(jt('ide.watch.deletedWithUnsavedEdits', '{path} was deleted on disk. Its unsaved editor remains open so you can copy the changes.', { path }), {
             dedupeKey: `ide:stale:${path}`,
           });
-          renderTabs();
+          markStale();
         } else {
           onExternalDelete(path);
         }
         return;
       }
       if (editorHost.isDirty(path)) {
-        ideStateUtils.setTabStale?.(ide, path, true);
         showToastMessage(jt('ide.watch.changedWithUnsavedEdits', '{path} changed on disk. Your unsaved edits now differ from the file.', { path }), {
           dedupeKey: `ide:stale:${path}`,
         });
-        renderTabs();
+        markStale();
         return;
       }
+      // Every reload path needs the versioned file operations.
+      if (!fileOperations) return;
       try {
+        const snapshot = fileOperations.captureReload(path);
+        if (!snapshot) return;
         if (editorHost.getDocumentKind(path) === 'image') {
-          if (!fileOperations) return;
-          const snapshot = fileOperations.captureReload(path);
-          if (!snapshot) return;
           const read = await fileOperations.readImageForReload(snapshot);
           if (read.stale || !read.payload || !fileOperations.canCommitReload(snapshot, read.payload)) {
-            ideStateUtils.setTabStale?.(ide, path, true); renderTabs(); return;
+            markStale();
+            return;
           }
           if (!editorHost.openImageDocument(read.payload)
             || !fileOperations.commitReload(snapshot, read.payload)) return;
-        } else if (editorHost.getDocumentKind(path) === 'document') {
-          if (!fileOperations) return;
-          const snapshot = fileOperations.captureReload(path);
-          if (!snapshot) return;
-          const read = await fileOperations.readDocumentForReload(snapshot);
-          if (read.stale || !read.payload || !fileOperations.canCommitReload(snapshot, read.payload)) {
-            ideStateUtils.setTabStale?.(ide, path, true); renderTabs(); return;
-          }
-          const applied = await editorHost.openBinaryDocument({
-            ...read.payload,
-            shouldApply: () => fileOperations.canCommitReload(snapshot, read.payload),
-            onApplied: () => fileOperations.commitReload(snapshot, read.payload),
-          });
-          if (!applied) {
-            ideStateUtils.setTabStale?.(ide, path, true); renderTabs(); return;
-          }
         } else {
-          if (!fileOperations) return;
-          const snapshot = fileOperations?.captureReload(path);
-          if (!snapshot) return;
-          const read = await fileOperations.readForReload(snapshot);
-          if (read.stale || !read.payload) {
-            if (editorHost.isDirty(path)) {
-              ideStateUtils.setTabStale?.(ide, path, true); renderTabs();
-            }
-            return;
-          }
-          const applied = await editorHost.openDocument({
+          const isDocument = editorHost.getDocumentKind(path) === 'document';
+          const read = isDocument
+            ? await fileOperations.readDocumentForReload(snapshot)
+            : await fileOperations.readForReload(snapshot);
+          const unusable = read.stale || !read.payload
+            || (isDocument && !fileOperations.canCommitReload(snapshot, read.payload));
+          const applied = !unusable && await (isDocument ? editorHost.openBinaryDocument : editorHost.openDocument).call(editorHost, {
             ...read.payload,
             shouldApply: () => fileOperations.canCommitReload(snapshot, read.payload),
             onApplied: () => fileOperations.commitReload(snapshot, read.payload),
           });
           if (!applied) {
-            if (editorHost.isDirty(path)) {
-              ideStateUtils.setTabStale?.(ide, path, true); renderTabs();
-            }
+            // A rich document always flags staleness; a text buffer only when
+            // the user edited it meanwhile (a clean one just keeps its view).
+            if (isDocument || editorHost.isDirty(path)) markStale();
             return;
           }
         }
@@ -169,8 +159,7 @@
     }
 
     function scheduleReconcile(change) {
-      const requestedPath = ideStateUtils.normalizeIdeRelativePath?.(change?.relPath) || '';
-      const key = fileOperations?.resolvePath(requestedPath) || requestedPath;
+      const key = resolveChangePath(change);
       if (!key) return;
       if (reconcileSlots.has(key)) {
         reconcileSlots.set(key, change);
@@ -340,22 +329,15 @@
       clearRetryTimer();
       retryAttempt = 0;
       degraded = false;
-      if (unsubscribeWatch) {
+      for (const unsubscribe of [unsubscribeWatch, unsubscribeLifecycle]) {
         try {
-          unsubscribeWatch();
+          unsubscribe?.();
         } catch (_error) {
           /* already gone */
         }
-        unsubscribeWatch = null;
       }
-      if (unsubscribeLifecycle) {
-        try {
-          unsubscribeLifecycle();
-        } catch (_error) {
-          /* already gone */
-        }
-        unsubscribeLifecycle = null;
-      }
+      unsubscribeWatch = null;
+      unsubscribeLifecycle = null;
       if (!watcherActive) {
         return;
       }

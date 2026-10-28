@@ -50,6 +50,12 @@ def _object_placeholder_value(schema: dict[str, Any]) -> dict[str, object]:
 
 def schema_placeholder_value(schema: dict[str, Any] | None) -> object:
     candidate = _select_schema_variant(schema if isinstance(schema, dict) else {})
+    declared_type = candidate.get("type")
+    if isinstance(declared_type, list):
+        # A type union: the example takes the first concrete member, so a
+        # required ["integer", "null"] property round-trips its own schema.
+        members = [item for item in declared_type if isinstance(item, str) and item != "null"]
+        return schema_placeholder_value({**candidate, "type": members[0] if members else ""})
     if "default" in candidate:
         value: object = candidate["default"]
     else:
@@ -133,8 +139,15 @@ def _string_placeholder_value(schema: dict[str, Any]) -> str:
     for value in candidates:
         if len(value) < min_length or (max_length is not None and len(value) > max_length):
             continue
-        if not isinstance(pattern, str) or re.search(pattern, value) is not None:
+        if not isinstance(pattern, str):
             return value
+        try:
+            if re.search(pattern, value) is not None:
+                return value
+        except re.error:
+            # An external schema's broken pattern must not take the prompt
+            # digest or the repair hints down with it (tool review C1 #3).
+            break
     return "x" * target_length
 
 

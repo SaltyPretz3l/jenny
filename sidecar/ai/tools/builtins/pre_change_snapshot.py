@@ -8,7 +8,7 @@ import stat as stat_module
 import tempfile
 from pathlib import Path
 
-from sidecar.ai.tools.builtins.structured_diff import normalize_diff_input_text, sha256_text
+from sidecar.ai.tools.builtins.structured_diff import NormalizedText, normalized_text
 from sidecar.ai.tools.workspace_path_identity import NodeIdentity, is_link_object
 
 MAX_ENTRIES = 200
@@ -17,8 +17,18 @@ MAX_SNAPSHOT_BYTES = 5 * 1024 * 1024
 SNAPSHOT_SUFFIX = ".snap"
 
 
-def capture(root: str | None, path_hint: str, content: object) -> dict[str, object]:
-    """Store normalized text by its structured-diff hash without raising."""
+def capture(
+    root: str | None,
+    path_hint: str,
+    content: object,
+    *,
+    normalized_content: NormalizedText | None = None,
+) -> dict[str, object]:
+    """Store normalized text by its structured-diff hash without raising.
+
+    ``normalized_content`` is ``normalized_text(content)`` when the caller has
+    already computed it for the structured diff's ``before_hash``.
+    """
 
     del path_hint  # Reserved for bounded diagnostics; file content is never logged.
     if not isinstance(root, str) or not root.strip():
@@ -29,8 +39,8 @@ def capture(root: str | None, path_hint: str, content: object) -> dict[str, obje
     hash_value = ""
     temp_path: Path | None = None
     try:
-        normalized = normalize_diff_input_text(content)
-        hash_value = sha256_text(normalized)
+        prepared = normalized_content or normalized_text(content)
+        normalized, hash_value = prepared.text, prepared.sha256
         if len(normalized.encode("utf-8")) > MAX_SNAPSHOT_BYTES:
             return {"stored": False, "reason": "too_large", "hash": hash_value}
 

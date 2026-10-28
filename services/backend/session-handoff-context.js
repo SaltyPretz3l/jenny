@@ -20,6 +20,10 @@ const HANDOFF_KEYS = Object.freeze([
   'schema_version', 'proposal_id', 'source_session_id', 'source_session_incarnation', 'body', 'body_sha256',
 ]);
 const PREPARATION_KEYS = Object.freeze(['proposal_id', 'attempt_id']);
+// `application_turn` on the preparation turn's persisted user message. Only the New session card
+// can run that turn again: a plain Retry or Edit would replay its label as an ordinary prompt,
+// without the trusted preparation field, so complete_session_handoff could never be called.
+const APPLICATION_TURN_HANDOFF_PREPARATION = 'handoff_preparation';
 // Stable reason codes of a failed admission (the turn fails visibly; none is a user-facing sentence).
 const HANDOFF_ERROR_CODES = Object.freeze({
   INVALID: 'session_handoff_invalid',
@@ -172,6 +176,7 @@ function admitSessionHandoffForTurn({
 }
 
 module.exports = {
+  APPLICATION_TURN_HANDOFF_PREPARATION,
   HANDOFF_ERROR_CODES,
   HANDOFF_KEYS,
   HANDOFF_ROW_KIND,

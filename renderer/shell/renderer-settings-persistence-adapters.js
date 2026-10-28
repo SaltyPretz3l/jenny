@@ -61,59 +61,12 @@
     if (spec.normalize !== undefined && typeof spec.normalize !== 'function') {
       throw new TypeError(`createSettingsAdapter("${spec.id}"): spec.normalize must be a function when provided`);
     }
-    if (spec.redact !== undefined && typeof spec.redact !== 'function') {
-      throw new TypeError(`createSettingsAdapter("${spec.id}"): spec.redact must be a function when provided`);
-    }
     if (spec.apply !== undefined && typeof spec.apply !== 'function') {
       throw new TypeError(`createSettingsAdapter("${spec.id}"): spec.apply must be a function when provided`);
     }
     if (spec.log !== undefined && typeof spec.log !== 'function') {
       throw new TypeError(`createSettingsAdapter("${spec.id}"): spec.log must be a function when provided`);
     }
-  }
-
-  /**
-   * Wrap a domain read/write pair into a settings adapter with the
-   * read -> normalize -> write -> default -> redact -> rollback contract.
-   *
-   * @param {object} spec
-   * @param {string} spec.id - stable adapter id, used in error/log messages.
-   * @param {function} spec.read - () => raw stored value (sync).
-   * @param {function} [spec.normalize] - (raw) => normalized value. Defaults
-   *   to identity.
-   * @param {function} spec.write - (normalizedValue) => (writtenValue |
-   *   Promise<writtenValue> | undefined). May be sync or async. A returned
-   *   value is normalized and used as the reconciled final value; returning
-   *   undefined means "the input value was written as-is".
-   * @param {function} spec.getDefault - () => default value for this section.
-   * @param {function} [spec.redact] - (value) => a copy safe to display/log
-   *   (e.g. with secrets stripped). Defaults to identity.
-   * @param {function} [spec.apply] - (value) => void, optional optimistic
-   *   apply hook (DOM/state mutation) called before and, on reconciliation,
-   *   after the write.
-   * @param {function} [spec.log] - (message) => void, optional; called with
-   *   a useful message on write failure, before rollback and rethrow.
-   * @returns {{ id: string, read: function, normalize: function,
-   *   getDefault: function, redact: function, write: function }}
-   */
-  // Default listEditableKeys(): the allowlisted top-level keys for a JSON-
-  // editor slice, derived from getDefault()'s own keys (a plain object's key
-  // set is exactly "the fields this section owns"). A spec.listEditableKeys
-  // override lets a section narrow (or otherwise compute) the allowlist
-  // instead of exposing every default key.
-  function defaultListEditableKeys(getDefault) {
-    return function listEditableKeys() {
-      let value;
-      try {
-        value = getDefault();
-      } catch (_error) {
-        return [];
-      }
-      if (value && typeof value === 'object' && !Array.isArray(value)) {
-        return Object.keys(value);
-      }
-      return [];
-    };
   }
 
   /**
@@ -176,12 +129,33 @@
     return { open: open, isNewest: isNewest, settle: settle };
   }
 
+  /**
+   * Wrap a domain read/write pair into a settings adapter with the
+   * read -> normalize -> write -> default -> rollback contract.
+   *
+   * @param {object} spec
+   * @param {string} spec.id - stable adapter id, used in error/log messages.
+   * @param {function} spec.read - () => raw stored value (sync).
+   * @param {function} [spec.normalize] - (raw) => normalized value. Defaults
+   *   to identity.
+   * @param {function} spec.write - (normalizedValue) => (writtenValue |
+   *   Promise<writtenValue> | undefined). May be sync or async. A returned
+   *   value is normalized and used as the reconciled final value; returning
+   *   undefined means "the input value was written as-is".
+   * @param {function} spec.getDefault - () => default value for this section.
+   * @param {function} [spec.apply] - (value) => void, optional optimistic
+   *   apply hook (DOM/state mutation) called before and, on reconciliation,
+   *   after the write.
+   * @param {function} [spec.log] - (message) => void, optional; called with
+   *   a useful message on write failure, before rollback and rethrow.
+   * @returns {{ id: string, read: function, normalize: function,
+   *   getDefault: function, write: function }}
+   */
   function createSettingsAdapter(spec) {
     validateSettingsAdapterSpec(spec);
 
     const id = spec.id;
     const normalize = spec.normalize || identity;
-    const redact = spec.redact || identity;
     const apply = typeof spec.apply === 'function' ? spec.apply : null;
     const log = typeof spec.log === 'function' ? spec.log : noopLog;
 
@@ -192,10 +166,6 @@
     function getDefault() {
       return spec.getDefault();
     }
-
-    const listEditableKeys = typeof spec.listEditableKeys === 'function'
-      ? spec.listEditableKeys
-      : defaultListEditableKeys(getDefault);
 
     // UIUX-028(b): overlapping write() calls on the same adapter (e.g. a
     // Quick Settings control clicked twice fast) race independently over the
@@ -283,9 +253,7 @@
       read: read,
       normalize: normalize,
       getDefault: getDefault,
-      redact: redact,
       write: write,
-      listEditableKeys: listEditableKeys,
     };
   }
 
@@ -297,7 +265,7 @@
   }
 
   /**
-   * Proof adapter #1: appearance preferences over an injected localStorage-
+   * Appearance preferences over an injected localStorage-
    * shaped `storage`. Thin wrapper around renderer/shared/appearance-utils.js
    * -- reuses its read/write/normalize/default, does not reimplement them.
    *
@@ -324,9 +292,6 @@
       normalize: (raw) => appearanceUtils.normalizeAppearancePreferences(raw),
       write: (value) => appearanceUtils.saveAppearancePreferences(storage, value),
       getDefault: () => appearanceUtils.getDefaultAppearancePreferences(),
-      // No secrets in appearance preferences (palette/typography/motion ids);
-      // redact is lossless identity.
-      redact: identity,
       apply: typeof settings.applyAppearance === 'function' ? settings.applyAppearance : undefined,
       log: settings.log,
     });
@@ -353,13 +318,13 @@
   }
 
   /**
-   * Proof adapter #3: offline-intelligence mode + preferred local model, over
+   * Offline-intelligence mode + preferred local model, over
    * IPC (window.jennyShell.offline.updateSettings). The IPC response echoes
    * the FULL recomputed live offline state (services/offline-intelligence-
    * service.js:443-449 returns getState(), which includes readiness fields
    * like localChatReady/summary/localCatalog) -- normalize projects that
    * echo down to the two editable keys so a stray readiness field can never
-   * leak into the JSON-editor slice or get written back as if it were
+   * leak into the adapter value or get written back as if it were
    * user-owned config.
    *
    * @param {object} deps
@@ -385,14 +350,19 @@
       id: 'offline',
       read: () => settings.getCurrent(),
       normalize: (raw) => normalizeOfflineSlice(raw),
+      // A missing or non-object echo means the save was not confirmed: it must
+      // reject (and roll back), never pass as the default slice.
       write: (value) => Promise.resolve(settings.updateSettings({
         mode: value.mode,
         preferredLocalModel: value.preferredLocalModel,
-      })).then((response) => normalizeOfflineSlice(response)),
+      })).then((response) => {
+        if (!response || typeof response !== 'object' || Array.isArray(response)) {
+          throw new Error('createOfflineAdapter: updateSettings returned no offline state');
+        }
+        return normalizeOfflineSlice(response);
+      }),
       // Matches DEFAULT_OFFLINE_INTELLIGENCE (services/shell-config-state.js:70-73).
       getDefault: () => ({ mode: 'disabled', preferredLocalModel: '' }),
-      // No secrets in mode/preferredLocalModel; redact is lossless identity.
-      redact: identity,
       apply: typeof settings.apply === 'function' ? settings.apply : undefined,
       log: settings.log,
     });

@@ -335,6 +335,7 @@ class _ExactRun(TerminalBuilders):  # noqa: PLR0902 - one run's identity, emitte
                 request_disabled_tools=disabled,
                 policy_decisions_by_call=policy.decisions_by_call,
                 approval_mode=self.request.approval_mode,
+                execution_context=self.request.execution_context,
             )
         except ToolExecutionFailure as exc:
             return (

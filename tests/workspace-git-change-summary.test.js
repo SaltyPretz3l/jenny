@@ -24,6 +24,7 @@ const {
   synthesizeAdditionDiff,
 } = require('../services/workspace-git-change-summary');
 const { cleanupTrackedResources, createTrackedTempDir } = require('./helpers/resource-cleanup');
+const { fileSymlinkSkip, linkDirectory } = require('./helpers/platform-skips');
 
 const execFileAsync = promisify(execFile);
 
@@ -253,18 +254,13 @@ test('a status-listed path that resolves outside the root through a link is refu
   const root = await createRepo();
   const outside = createTrackedTempDir('jenny-chatws-outside-');
   await fs.writeFile(path.join(outside, 'secret.txt'), 'one\ntwo\nthree\nfour\nfive\n', 'utf8');
-  const links = [];
-  try {
-    await fs.symlink(outside, path.join(root, 'jdir'), process.platform === 'win32' ? 'junction' : 'dir');
-    links.push('jdir');
-  } catch { /* link creation unavailable */ }
-  try {
+  const links = ['jdir'];
+  linkDirectory(outside, path.join(root, 'jdir'));
+  // File symlinks need Developer Mode or an elevated token on Windows; the
+  // junction above always runs, the file link adds coverage where it is possible.
+  if (!fileSymlinkSkip()) {
     await fs.symlink(path.join(outside, 'secret.txt'), path.join(root, 'link.txt'), 'file');
     links.push('link.txt');
-  } catch { /* file symlinks need privilege on Windows */ }
-  if (!links.length) {
-    t.skip('neither a junction nor a symlink could be created on this machine');
-    return;
   }
   let opens = 0;
   const watchingFs = new Proxy(fs, {
@@ -313,12 +309,7 @@ test('resolveContained resolves a deleted leaf through its parent and refuses es
   assert.equal(inside.exists, false);
   assert.ok(isInside(inside.rootReal, inside.real));
   const outside = createTrackedTempDir('jenny-chatws-outside-');
-  try {
-    await fs.symlink(outside, path.join(root, 'out'), process.platform === 'win32' ? 'junction' : 'dir');
-  } catch {
-    t.skip('no link creation available');
-    return;
-  }
+  linkDirectory(outside, path.join(root, 'out'));
   const escaped = await resolveContained(root, 'out/never-created.txt');
   assert.deepEqual([escaped.ok, escaped.reason], [false, 'path_outside_workspace']);
 });

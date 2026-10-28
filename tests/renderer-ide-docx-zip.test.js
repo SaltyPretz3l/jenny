@@ -191,3 +191,15 @@ test('stores incompressible bytes and deflates compressible bytes', async () => 
   assert.equal(roundTrip.entries.get('random.bin').method, 0);
   assert.equal(roundTrip.entries.get('repeated.bin').method, 8);
 });
+
+test('rejects duplicate entry names and bounds inflation by the reader limits', async () => {
+  const source = await readZip(fixture('paragraphs.docx'));
+  const duplicated = await writeZip({ ...source, order: [...source.order, source.order[0]] }, new Map());
+  await assert.rejects(readZip(duplicated), assertCode('zip_invalid'));
+
+  const zip = await readZip(fixture('paragraphs.docx'));
+  const largest = zip.order.reduce((left, right) => (
+    zip.entries.get(left).uncompressedSize >= zip.entries.get(right).uncompressedSize ? left : right));
+  zip.limits = { ...zip.limits, maxEntryBytes: zip.entries.get(largest).uncompressedSize - 1 };
+  await assert.rejects(readEntryBytes(zip, largest), assertCode('zip_too_large'));
+});

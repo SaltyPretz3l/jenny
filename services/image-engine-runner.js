@@ -228,11 +228,15 @@ function runImageGeneration(options = {}) {
     let outputClosed = false;
     let resolveOutputClosed;
     const outputClosedPromise = new Promise((done) => { resolveOutputClosed = done; });
+    const notify = (event) => {
+      try { onProgress?.(event); } catch (_error) { /* Consumer callbacks are isolated. */ }
+    };
+    // Step updates are throttled; phase changes (load, decode) always pass.
     const progress = (event, final = false) => {
       const time = clock();
       if (!final && time - lastProgressAt < 250) return;
       lastProgressAt = time;
-      try { onProgress?.(event); } catch (_error) { /* Consumer callbacks are isolated. */ }
+      notify(event);
     };
     const beginSampling = () => {
       if (loadStarted !== null && result.seconds.load === null) result.seconds.load = Math.max(0, clock() - loadStarted) / 1000;
@@ -254,12 +258,17 @@ function runImageGeneration(options = {}) {
       }
       const phase = classifyPhaseLine(line);
       if (phase?.phase === 'load') {
-        if (loadStarted === null) loadStarted = clock();
+        if (loadStarted === null) {
+          loadStarted = clock();
+          notify({ phase: 'load' });
+        }
       } else if (phase?.phase === 'sample') {
         beginSampling();
       } else if (phase?.phase === 'sampled') {
         beginSampling();
         result.seconds.sample = phase.seconds;
+        // Sampling is done; the VAE decode and the PNG write remain.
+        notify({ phase: 'decode' });
       }
     };
     const truncated = () => {

@@ -214,10 +214,8 @@ test('attachment event bindings let image paste win over oversized clipboard tex
         prepareDroppedAttachments: async () => {},
         getDroppedFilePaths() { return []; },
         renderComposerPopover() {},
-        renderCommandPopover() {},
         updateComposerSafeOffset() {},
         closeComposerPopover() {},
-        closeCommandPopover() {},
         queueInlineImageAttachment: async (payload) => {
           queuedImages.push(payload);
         },
@@ -282,8 +280,7 @@ test('attachment event bindings fail closed when popover targets are missing', (
   global.navigator = { mediaDevices: {} };
 
   let composerPopoverCloseCalls = 0;
-  let commandPopoverCloseCalls = 0;
-  const uiState = { composerPopoverOpen: true, commandPopoverOpen: true };
+  const uiState = { composerPopoverOpen: true };
 
   try {
     const controller = attachmentUtils.createAttachmentEventBindings({
@@ -306,10 +303,8 @@ test('attachment event bindings fail closed when popover targets are missing', (
         prepareDroppedAttachments: async () => {},
         getDroppedFilePaths() { return []; },
         renderComposerPopover() {},
-        renderCommandPopover() {},
         updateComposerSafeOffset() {},
         closeComposerPopover() { composerPopoverCloseCalls += 1; uiState.composerPopoverOpen = false; },
-        closeCommandPopover() { commandPopoverCloseCalls += 1; uiState.commandPopoverOpen = false; },
         queueInlineImageAttachment: async () => {},
         handleAttachmentPicker: async () => {},
         showToastMessage() {},
@@ -332,7 +327,6 @@ test('attachment event bindings fail closed when popover targets are missing', (
     });
 
     assert.equal(composerPopoverCloseCalls, 1);
-    assert.equal(commandPopoverCloseCalls, 1);
   } finally {
     global.window = previousWindow;
     global.document = previousDocument;

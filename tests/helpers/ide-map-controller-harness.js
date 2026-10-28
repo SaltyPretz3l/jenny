@@ -63,7 +63,12 @@ function makeSpies() {
     setStateCalls: [],
     setStatusCalls: [],
     setTestCountsCalls: [],
-    bucketStripCalls: [],
+    footerUpdates: [],
+    footerAdopted: [],
+    footerHealth: [],
+    footerHideTests: [],
+    transformOpts: [],
+    setHasMapCalls: [],
     warnLogs: [],
   };
 }
@@ -82,14 +87,14 @@ function stubSiblings(globalRef, spies, overrides = {}) {
   const names = [
     'rendererIdeState', 'rendererIdeMapTransform', 'rendererIdeMapAtlasView', 'rendererIdeMapStates',
     'rendererIdeMapA11y', 'rendererIdeMapFindings', 'rendererIdeMapControls',
-    'rendererIdeMapLod', 'rendererIdeMapOverview', 'rendererIdeMapAtlasLayout',
+    'rendererIdeMapLod', 'rendererIdeMapOverview', 'rendererIdeMapAtlasLayout', 'rendererIdeMapFooter',
   ];
   const previous = {};
   for (const name of names) previous[name] = globalRef[name];
 
   globalRef.rendererIdeState = realIdeState;
   globalRef.rendererIdeMapTransform = overrides.transform || {
-    createMapTransform: () => ({
+    createMapTransform: (opts) => (spies.transformOpts.push(opts), {
       setBounds: (b) => spies.setBoundsCalls.push(b),
       // Returns true (fit applied) like the real transform on a sized viewport.
       fitToContent: (b, reason) => { spies.fitToContentCalls.push([b, reason]); return true; },
@@ -131,12 +136,20 @@ function stubSiblings(globalRef, spies, overrides = {}) {
       getTier: () => 'regions',
       dispose: () => {},
     }),
-    renderBucketStrip: (el, buckets) => spies.bucketStripCalls.push(buckets || []),
+  };
+  globalRef.rendererIdeMapFooter = {
+    createMapFooter: () => ({
+      update: (model) => spies.footerUpdates.push(model),
+      adoptFindings: (el) => spies.footerAdopted.push(el),
+      setHealth: (on) => spies.footerHealth.push(on),
+      setHideTests: (on) => spies.footerHideTests.push(on),
+      dispose: () => {},
+    }),
   };
   globalRef.rendererIdeMapStates = {
     createMapStates: () => ({
       render: (name, payload) => spies.stateRenders.push({ name, payload }),
-      clear: () => {}, hide: () => {}, show: () => {}, dispose: () => {},
+      clear: () => {}, dispose: () => {},
     }),
   };
   globalRef.rendererIdeMapA11y = {
@@ -161,7 +174,8 @@ function stubSiblings(globalRef, spies, overrides = {}) {
         getState: () => ({ search: '', hideTests: false, layers: { activity: true, health: false, deps: true } }),
         setState: (next) => spies.setStateCalls.push(next),
         setTestCounts: (hidden, total) => spies.setTestCountsCalls.push([hidden, total]),
-        focusFilter: () => {},
+        setHasMap: (v) => spies.setHasMapCalls.push(v),
+        focusSearch: () => {},
         setStatus: (msg, opts) => spies.setStatusCalls.push({ msg, opts: opts || {} }),
         clearStatus: () => spies.setStatusCalls.push({ msg: null }),
         setOverviewPressed: () => {},

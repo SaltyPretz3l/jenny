@@ -6,10 +6,11 @@ const { normalizeSessionStartDate } = require('./session-normalizers');
 const { buildSessionPreferencesPatch } = require('./session-preferences-patch');
 const { normalizeSpawnedFrom } = require('./session-coordination-records');
 const { normalizeSessionType, normalizePluginSession, createOfficialImagePluginSession } = require('./session-type');
+const { normalizeSessionRole } = require('./primary-session');
 
 function buildCreatedSession(sessionId, {
   title, preferences, sessionType, pluginSession, imageConfig, composerDraft, linkedTaskId, projectId,
-  sessionIncarnation, spawnedFrom,
+  sessionIncarnation, spawnedFrom, sessionRole,
 } = {}, { normalizeSession, clipTitle }) {
   if (sessionIncarnation !== undefined && (typeof sessionIncarnation !== 'string'
     || !/^inc_[0-9a-f]{32}$/.test(sessionIncarnation))) throw new TypeError('session_incarnation_invalid');
@@ -25,6 +26,8 @@ function buildCreatedSession(sessionId, {
       || (rawSessionType === 'image' ? createOfficialImagePluginSession(imageConfig) : null))
     : null;
   if (normalizedType === 'plugin' && !normalizedPluginSession) return null;
+  // Row 69: a primary chat is born pinned; only the internal ensure path passes a role.
+  const role = normalizedType === 'chat' ? normalizeSessionRole(sessionRole) : null;
   const session = normalizeSession(sessionId, {
     title: clipTitle(title),
     project_id: projectId || GENERAL_PROJECT_ID,
@@ -38,6 +41,7 @@ function buildCreatedSession(sessionId, {
     ...(provenance ? { spawned_from: provenance } : {}),
     ...(composerDraft ? { composer_draft: composerDraft } : {}),
     ...(linkedTaskId ? { linked_task_id: linkedTaskId } : {}),
+    ...(role ? { session_role: role, pinned: true } : {}),
     messages: [],
   });
   if (provenance) session.session_mail.reporting_enabled = true;

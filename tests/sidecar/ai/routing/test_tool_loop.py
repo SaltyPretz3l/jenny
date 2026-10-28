@@ -779,6 +779,7 @@ def test_sub_agent_budget_stop_uses_reserved_constrained_report_iteration(
         ),
         check_should_continue=lambda: False,
     )
+    tracker.charge_tool_schemas = lambda _payload, num_tools: setattr(tracker, "num_tools", num_tools)
     monkeypatch.setattr(
         "sidecar.ai.routing.chat_decision.apply_budget_check",
         lambda messages, _config, _engine, **_kwargs: (

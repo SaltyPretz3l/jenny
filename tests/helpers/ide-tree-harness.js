@@ -50,7 +50,11 @@ function createBridgeStub({
   failDelete = false,
   failWriteText = false,
 } = {}) {
+  // .editorconfig chain lookups (row 82 E2) are recorded apart from document reads, so
+  // tests that enumerate readFile paths keep asserting only the files they opened.
+  const isEditorconfigRead = (p) => String(p || '').split('/').pop() === '.editorconfig';
   const calls = {
+    editorconfigReads: [],
     listDirectory: [],
     createFile: [],
     createDirectory: [],
@@ -126,7 +130,7 @@ function createBridgeStub({
           return { workspaceRoot: 'G:/fake-root', workspaceRootStatus: { state: 'ready', message: '' } };
         },
         async readFile(payload) {
-          calls.readFile.push(payload);
+          (isEditorconfigRead(payload.path) ? calls.editorconfigReads : calls.readFile).push(payload);
           if (!(payload.path in state.files)) {
             const error = new Error('File not found in the workspace.');
             error.code = 'CMP-WORKSPACEFS-0004';

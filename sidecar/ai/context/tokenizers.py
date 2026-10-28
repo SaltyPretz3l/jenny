@@ -12,6 +12,7 @@ applied when a cross-family encoding is in use.
 from __future__ import annotations
 
 import logging
+from functools import lru_cache
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
@@ -184,12 +185,52 @@ def create_tokenizer_backend(
     *,
     local_tokenizer_loader: Callable[[str], Any] | None = None,
 ) -> Any:
-    """Create the best available tokenizer backend.
+    """Return the best available tokenizer backend for ``model_family``.
 
     Prefers a locally available model-family tokenizer for known local model
-    families, then tiktoken, then ``CharEstimationBackend``.
+    families, then tiktoken, then ``CharEstimationBackend``. Backends hold no
+    per-call state, so one instance per family is shared process-wide (the
+    fallback log fires once per family); a caller-supplied loader bypasses it.
     """
     normalized_family = str(model_family or "").strip().lower()
+    if local_tokenizer_loader is not None:
+        return _build_tokenizer_backend(normalized_family, local_tokenizer_loader)[0]
+    try:
+        return _shared_tokenizer_backend(normalized_family)
+    except _UncachedFallback as fallback:
+        return fallback.backend
+
+
+class _UncachedFallback(Exception):
+    """A fallback picked after a transient failure (offline download, loader error).
+
+    Raised through ``lru_cache`` so the next call tries the real backend again.
+    """
+
+    def __init__(self, backend: Any) -> None:
+        super().__init__("uncached tokenizer fallback")
+        self.backend = backend
+
+
+@lru_cache(maxsize=None)
+def _shared_tokenizer_backend(normalized_family: str) -> Any:
+    backend, cacheable = _build_tokenizer_backend(normalized_family, None)
+    if not cacheable:
+        raise _UncachedFallback(backend)
+    return backend
+
+
+def reset_tokenizer_backend_cache() -> None:
+    """Forget cached backends (tests that swap the tiktoken import)."""
+    _shared_tokenizer_backend.cache_clear()
+
+
+def _build_tokenizer_backend(
+    normalized_family: str,
+    local_tokenizer_loader: Callable[[str], Any] | None,
+) -> tuple[Any, bool]:
+    """(backend, cacheable): a missing package is final, a failed load may heal."""
+    cacheable = True
     if normalized_family in _LOCAL_TOKENIZER_FAMILIES:
         loader = local_tokenizer_loader or _load_optional_local_tokenizer
         try:
@@ -198,7 +239,7 @@ def create_tokenizer_backend(
                 return LocalModelTokenizerBackend(
                     model_family=normalized_family,
                     tokenizer=tokenizer,
-                )
+                ), True
         except ImportError:
             logger.info(
                 "Local tokenizer packages not available for family=%s; falling back.",
@@ -210,20 +251,19 @@ def create_tokenizer_backend(
                 normalized_family,
                 exc,
             )
+            cacheable = False
 
     try:
-        return TiktokenBackend(model_family=model_family)
+        return TiktokenBackend(model_family=normalized_family), cacheable
     except ImportError:
-        logger.info(
-            "tiktoken not available; using CharEstimationBackend.",
-        )
-        return _char_estimation_backend()
+        logger.info("tiktoken not available; using CharEstimationBackend.")
+        return _char_estimation_backend(), cacheable
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "TiktokenBackend initialization failed: %s; using CharEstimationBackend.",
             exc,
         )
-        return _char_estimation_backend()
+        return _char_estimation_backend(), False
 
 
 def _load_optional_local_tokenizer(model_family: str) -> Any | None:

@@ -246,3 +246,31 @@ test('a throwing live-tail callback does not break the chunk handler', async () 
   });
   assert.deepEqual(result, { buffered: false, terminal: false });
 });
+
+test('steady chunks reuse the cached row, append to one text node and never wake the reconcile', async () => {
+  const { dom, timeline, block } = makeTimeline('call-perf');
+  const tail = createToolLiveTail({ getChatTimeline: () => timeline });
+  tail.appendChunk(chunkPayload('call-perf', [{ stream: 'stdout', text: 'one' }]));
+  await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+  const textNode = block.querySelector('.tool-live-output-text').firstChild;
+
+  let timelineQueries = 0;
+  const original = timeline.querySelectorAll.bind(timeline);
+  timeline.querySelectorAll = (selector) => { timelineQueries += 1; return original(selector); };
+  tail.appendChunk(chunkPayload('call-perf', [{ stream: 'stdout', text: 'two' }]));
+  tail.appendChunk(chunkPayload('call-perf', [{ stream: 'stderr', text: 'three' }]));
+  // Let the MutationObserver deliver the pane writes.
+  await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+
+  assert.equal(timelineQueries, 0, 'no timeline-wide lookup per chunk, and the own-pane writes skip the reconcile');
+  const pre = block.querySelector('.tool-live-output-text');
+  assert.equal(pre.firstChild, textNode, 'the text grows in place');
+  assert.equal(pre.childNodes.length, 1);
+  assert.equal(pre.textContent, 'one\ntwo\n! three');
+
+  // A render that replaces the row drops the cache: the next chunk finds the new row.
+  block.outerHTML = '<div class="tool-call-block" data-call-id="call-perf" data-tool-status="running"></div>';
+  await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+  tail.appendChunk(chunkPayload('call-perf', [{ stream: 'stdout', text: 'four' }]));
+  assert.equal(timeline.querySelector('.tool-live-output-text').textContent, 'one\ntwo\n! three\nfour');
+});

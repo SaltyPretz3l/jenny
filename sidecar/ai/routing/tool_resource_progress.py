@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, fields
+import logging
+from dataclasses import dataclass
 from functools import partial
 from types import SimpleNamespace
 from typing import Any
@@ -13,8 +14,13 @@ from sidecar.ai.routing.tool_resource_deferral import (
     ToolLoopSuspended,
     _freeze_loop_quota,
     build_before_tool_dispatch_continuation,
+    canonical_json_bytes,
+    extend_continuation,
 )
 from sidecar.runtime.continuation_outcomes import outcome_refs
+from sidecar.runtime.diagnostics import log_event
+
+logger = logging.getLogger(__name__)
 
 _MAX_EFFECTS = 256
 
@@ -46,9 +52,69 @@ class ResourceProgressContinuation(BeforeToolDispatchContinuation):
         BeforeToolDispatchContinuation.__post_init__(self)
 
 
-def _capture(loop: Any, iteration: int, deferred: Any, calls: tuple) -> Any:
+@dataclass(frozen=True, slots=True)
+class SettledEffects:
+    """Every completed effect ref, proven to extend the predecessor and be settled."""
+
+    effects: list[dict]
+    previous: list[dict]
+    predecessor: dict | None
+    current_execution_count: int
+
+    def checkpoint_fields(self) -> dict[str, Any]:
+        return {
+            "completed_effects_json": canonical_json_bytes(self.effects),
+            "prior_checkpoint_json": (
+                canonical_json_bytes(self.predecessor) if self.predecessor else None
+            ),
+            "prior_effect_count": len(self.previous),
+            "current_execution_count": self.current_execution_count,
+        }
+
+
+def settled_effects(
+    loop: Any, *, tool_calls: tuple = (), quota_state_json: bytes | None
+) -> SettledEffects | None:
+    """Return the settled effect ledger, or None while a current execution is unsettled.
+
+    Raises ValueError when the request carries unsupported transient state or the
+    completed effects no longer extend the predecessor checkpoint's effects.
+    """
+
+    # Imported at the request edge: decision snapshot imports the checkpoint
+    # transport, which imports the legacy dependency dataclass at startup.
     from sidecar.runtime.decision_checkpoint import _assert_supported, _previous
 
+    _assert_supported(
+        SimpleNamespace(
+            request_context=loop.request_context,
+            quota_state_json=quota_state_json,
+            tool_calls=tool_calls,
+            outcomes=loop.outcomes,
+            frozen_inputs=(),
+            tool_contract=loop.tool_contract,
+        )
+    )
+    previous, predecessor = _previous(loop.request_context)
+    effects = outcome_refs(loop.outcomes)
+    if effects[: len(previous)] != previous:
+        raise ValueError("continuation_effects_changed")
+    previous_ids = {ref["call_id"] for ref in previous}
+    current = {item.call_id: item for item in loop.outcomes if item.call_id not in previous_ids}
+    runtime = loop.runtime
+    records = runtime.emitted_tool_calls
+    if any(
+        call_id not in current
+        or call_id not in runtime.tool_result_emitted_call_ids
+        or record.get("tool_name") != current[call_id].tool_name
+        or record.get("arguments") != current[call_id].tool_input
+        for call_id, record in records.items()
+    ):
+        return None
+    return SettledEffects(effects, previous, predecessor, len(records))
+
+
+def _capture(loop: Any, iteration: int, deferred: Any, calls: tuple) -> Any:
     runtime = loop.runtime
     if (
         not runtime.streaming
@@ -63,37 +129,10 @@ def _capture(loop: Any, iteration: int, deferred: Any, calls: tuple) -> Any:
     quota = _freeze_loop_quota(loop)
     if quota is None or deferred.prepared is None:
         return None
-    _assert_supported(
-        SimpleNamespace(
-            request_context=loop.request_context,
-            quota_state_json=quota,
-            tool_calls=calls,
-            outcomes=loop.outcomes,
-            frozen_inputs=(),
-            tool_contract=loop.tool_contract,
-        )
-    )
     if deferred.prepared.frozen_input()["effective_tool_arguments"].get("_jenny_change_set_id"):
         return None
-    previous, predecessor = _previous(loop.request_context)
-    effects = outcome_refs(loop.outcomes)
-    if not effects:
-        return None
-    if effects[: len(previous)] != previous:
-        raise ValueError("resource_progress_effects_changed")
-    current = {
-        item.call_id: item
-        for item in loop.outcomes
-        if item.call_id not in {ref["call_id"] for ref in previous}
-    }
-    records = runtime.emitted_tool_calls
-    if any(
-        call_id not in current
-        or call_id not in runtime.tool_result_emitted_call_ids
-        or record.get("tool_name") != current[call_id].tool_name
-        or record.get("arguments") != current[call_id].tool_input
-        for call_id, record in records.items()
-    ):
+    settled = settled_effects(loop, tool_calls=calls, quota_state_json=quota)
+    if settled is None or not settled.effects:
         return None
     deadline = runtime.wall_clock_deadline
     base = build_before_tool_dispatch_continuation(
@@ -109,21 +148,29 @@ def _capture(loop: Any, iteration: int, deferred: Any, calls: tuple) -> Any:
         tool_calls=calls,
         quota_state_json=quota,
     )
-    values = {item.name: getattr(base, item.name) for item in fields(base)}
-    values["tool_calls_consumed"] = runtime.tool_calls_consumed
-    return ResourceProgressContinuation(
-        **values,
-        completed_effects_json=json.dumps(effects, sort_keys=True, separators=(",", ":")).encode(),
-        prior_checkpoint_json=json.dumps(predecessor).encode() if predecessor else None,
-        prior_effect_count=len(previous),
-        current_execution_count=len(records),
+    return extend_continuation(
+        base,
+        ResourceProgressContinuation,
+        tool_calls_consumed=runtime.tool_calls_consumed,
+        **settled.checkpoint_fields(),
     )
 
 
 def _suspend(loop: Any, iteration: int, deferred: Any, calls: tuple) -> None:
     try:
         captured = _capture(loop, iteration, deferred, calls)
-    except (ValueError, TypeError, AttributeError):
+    except (ValueError, TypeError, AttributeError) as error:
+        # Capture is optional: fall back to the legacy retryable wait, but keep
+        # the reason observable.
+        log_event(
+            logger,
+            logging.WARNING,
+            component="ai.router",
+            event="ai.router.resource_progress_capture_skipped",
+            message="Resource progress continuation was not captured",
+            status="degraded",
+            data={"error_type": type(error).__name__},
+        )
         return
     if captured is not None:
         # Publication failures propagate: never fabricate a pending result after

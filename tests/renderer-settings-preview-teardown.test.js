@@ -26,8 +26,19 @@ test('leaving Settings releases the Appearance effect preview controller', async
 
   doc.querySelector('[data-tab-id="settings"]').click();
   await waitForUi(window, 50);
+  const openSection = async (id) => {
+    doc.querySelector(`.settings-nav-item[data-settings-section="${id}"]`).click();
+    await waitForUi(window, 50);
+  };
+  await openSection('tools');
+  assert.equal(bound.size, 0, 'another Settings section leaves the preview unbound');
+  await openSection('appearance');
   assert.equal(host.getAttribute('data-widget-modifier'), 'context-weave', 'the preview mounted the chosen effect');
-  assert.ok(bound.size > 0, 'the preview controller binds pointer listeners while Settings is open');
+  assert.ok(bound.size > 0, 'the preview controller binds pointer listeners while Appearance is open');
+  await openSection('tools');
+  assert.equal(bound.size, 0, 'leaving Appearance for another section releases the preview');
+  await openSection('appearance');
+  assert.ok(bound.size > 0);
 
   doc.querySelector('[data-tab-id="chat"]').click();
   await waitForUi(window, 50);

@@ -1,15 +1,16 @@
 """Retention and maintenance primitives for the ``.jenny/trash`` store.
 
-* ``apply_trash_retention`` enforces count + age + aggregate-byte quotas,
-  evicting the OLDEST entries first and never the newest one (the entry a
-  delete that just happened relies on). Quotas are module constants read at
-  call time (test-injectable) and the clock is injectable.
+* ``apply_trash_retention`` enforces count + aggregate-byte quotas, evicting
+  active-use-age-eligible entries first, then the OLDEST, and never the
+  newest one (the entry a delete that just happened relies on). Quotas are
+  module constants read at call time (test-injectable); age only orders
+  eviction and comes from the injectable active-use source.
 * ``list_trash_entries`` / ``purge_trash_entry`` / ``purge_trash`` are the
   tool-level primitives (no UI): enumerate the timestamped entries newest
   first with bounded recursive sizes, delete one by name, or empty the trash.
 
 Everything goes through :class:`GuardedWorkspaceStore` — no raw path writes.
-Entry age comes from the entry's ``%Y%m%dT%H%M%S_%f`` stamp (the name
+Entry order comes from the entry's ``%Y%m%dT%H%M%S_%f`` stamp (the name
 ``delete_file`` assigns), falling back to filesystem mtime for foreign names.
 """
 
@@ -18,7 +19,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Callable, Protocol
+from typing import Callable, NamedTuple, Protocol
 
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace_store import (
@@ -32,7 +33,6 @@ from sidecar.runtime.diagnostics import log_event
 logger = logging.getLogger(__name__)
 
 MAX_TRASH_ENTRIES = 200
-MAX_TRASH_AGE_DAYS = 30
 MAX_TRASH_TOTAL_BYTES = 512 * 1024 * 1024
 # Bounded recursive-size walk: enough for any sane trash entry, small enough
 # that a pathological tree cannot stall a delete.
@@ -48,6 +48,14 @@ class TrashEntry:
     created_at_ns: int
     size_bytes: int
     is_directory: bool
+    # True when the bounded size walk stopped early: ``size_bytes`` is then
+    # the partial total counted so far, never an over-quota sentinel.
+    size_truncated: bool = False
+
+
+class SizeWalk(NamedTuple):
+    total_bytes: int
+    truncated: bool
 
 
 @dataclass(frozen=True)
@@ -62,10 +70,12 @@ class ActiveUseAgeSource(Protocol):
     Structural (no import of ``sidecar.ai.tools.workspace_retention`` here --
     that module imports this one) so a caller can plug in the active-use
     clock without this file knowing anything about the journal or Electron's
-    cumulative counter.
+    cumulative counter. ``file_history`` imports this same protocol for its
+    backup snapshots.
     """
 
     def is_age_eligible(self, entry_name: str, created_at_ns: int) -> bool: ...
+
 
 def _created_at_ns(name: str, mtime_ns: int) -> int:
     try:
@@ -76,9 +86,15 @@ def _created_at_ns(name: str, mtime_ns: int) -> int:
 
 
 def _entry_total_bytes(store: GuardedWorkspaceStore, ref: StoreRef, *, is_directory: bool,
-                       size_bytes: int) -> int:
+                       size_bytes: int) -> SizeWalk:
+    """Sum an entry's file sizes with a bounded walk.
+
+    Past ``MAX_SIZE_WALK_ENTRIES`` the walk stops and reports the partial
+    total with ``truncated=True``; the partial count stands in for the entry's
+    size so one huge tree cannot inflate the aggregate and evict everything.
+    """
     if not is_directory:
-        return size_bytes
+        return SizeWalk(size_bytes, False)
     total = 0
     seen = 0
     stack: list[StoreRef] = [ref]
@@ -103,12 +119,12 @@ def _entry_total_bytes(store: GuardedWorkspaceStore, ref: StoreRef, *, is_direct
                     status="degraded",
                     data={"max_entries": MAX_SIZE_WALK_ENTRIES},
                 )
-                return MAX_TRASH_TOTAL_BYTES + 1
+                return SizeWalk(total, True)
             if child.is_directory:
                 stack.append(child.ref)
             else:
                 total += child.size_bytes
-    return total
+    return SizeWalk(total, False)
 
 
 def list_trash_entries(
@@ -122,15 +138,17 @@ def list_trash_entries(
     for raw in store.list_entries(
         trash_root, max_entries=max_entries, quarantine_links=False
     ):
+        walk = _entry_total_bytes(
+            store, raw.ref, is_directory=raw.is_directory, size_bytes=raw.size_bytes
+        )
         entries.append(
             TrashEntry(
                 ref=raw.ref,
                 name=raw.name,
                 created_at_ns=_created_at_ns(raw.name, raw.mtime_ns),
-                size_bytes=_entry_total_bytes(
-                    store, raw.ref, is_directory=raw.is_directory, size_bytes=raw.size_bytes
-                ),
+                size_bytes=walk.total_bytes,
                 is_directory=raw.is_directory,
+                size_truncated=walk.truncated,
             )
         )
     entries.sort(key=lambda entry: (entry.created_at_ns, entry.name), reverse=True)
@@ -140,7 +158,6 @@ def list_trash_entries(
 def apply_trash_retention(
     store: GuardedWorkspaceStore,
     *,
-    now_ns: int | None = None,
     is_entry_pinned: Callable[[str], bool] | None = None,
     active_use_age_source: ActiveUseAgeSource | None = None,
 ) -> TrashRetentionOutcome:
@@ -150,11 +167,10 @@ def apply_trash_retention(
     never evicted — a delete that just happened must stay reversible even
     when a quota is still exceeded.
 
-    ``now_ns`` remains injectable for compatibility and ordering tests, but it
-    never makes an entry eligible. Eligibility comes from the persisted
-    active-use source and controls priority; hard quotas remain unconditional.
+    Wall-clock age never makes an entry eligible. Eligibility comes from the
+    persisted active-use source and controls priority; the count and byte
+    quotas remain unconditional.
     """
-    del now_ns
     source = active_use_age_source or _default_active_use_source(store)
     entries = list(
         reversed(list_trash_entries(store, max_entries=MAX_STORE_LIST_ENTRIES))
@@ -277,10 +293,10 @@ def _log_evict_failed(name: str, error_type: str) -> None:
 
 
 __all__ = [
-    "MAX_TRASH_AGE_DAYS",
     "MAX_TRASH_ENTRIES",
     "MAX_TRASH_TOTAL_BYTES",
     "ActiveUseAgeSource",
+    "SizeWalk",
     "TrashEntry",
     "TrashRetentionOutcome",
     "apply_trash_retention",

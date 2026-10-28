@@ -292,6 +292,14 @@
   font-size: var(--font-size-body);
 }
 
+/* F3b: the facts a New session's child really got (project · model · mode), under the receipt title. */
+.proposal-session-meta {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+  overflow-wrap: anywhere;
+}
+
 .proposal-session-desc {
   margin: var(--space-2) 0 0;
   color: var(--text-secondary);
@@ -449,4 +457,17 @@
   .proposal-status[data-running="true"] > .status-dot {
     animation: none;
   }
+}
+
+/* /handoff from the primary Jenny chat (row 73): like a session proposal it starts a chat in one
+   project, so it sits here. The project choice leads the dialog body; the line naming other work
+   the note mentions sits under the note in the warning color (scoped past the field-hint base). */
+.inv-step-modal-body .handoff-project-field {
+  margin-bottom: var(--space-4);
+}
+
+.inv-step-modal-body .handoff-note-mentions {
+  display: block;
+  margin: var(--space-2) 0 0;
+  color: var(--state-warning);
 }

@@ -8,12 +8,20 @@ const {
 const {
   registerWorkspaceRootIpcHandlers: registerWorkspaceRootIpcHandlersWithDeps,
 } = require('../workspace-root-ipc');
+const { createWorkspaceBackupService } = require('../workspace-backup-service');
+const { WORKSPACE_BACKUP_ERROR_CODES } = require('../backend/error-codes');
 const { invokeVersionedWorkspaceFile } = require('./workspace-file-ipc-result');
 
 function registerWorkspaceIpcHandlers(
   ipcMainLike,
   configService,
-  { authorization = {}, getRootContext = () => null } = {}
+  {
+    authorization = {},
+    getRootContext = () => null,
+    userDataPath = '',
+    isWorkspaceBackupEnabled = () => true,
+    workspaceBackupService = userDataPath ? createWorkspaceBackupService({ userDataPath }) : null,
+  } = {}
 ) {
   const context = () => getRootContext() || {
     rootPath: '', rootId: null, generation: 0, phase: 'ready',
@@ -42,6 +50,24 @@ function registerWorkspaceIpcHandlers(
       ...(evictedRootCount > 0 ? { evictedRootCount } : {}),
       ...state,
     };
+  };
+  // Row 82 E3 hot exit backups: the root comes from main's root context (never the
+  // renderer); flag-off answers before the service is touched, so nothing hits disk.
+  // A write/remove also gets main's generation: the service refuses a payload whose
+  // captured expectedRootId/expectedGeneration no longer match (a root switch).
+  const backupCall = (method, payload, { needsPayload = true } = {}) => {
+    if (!isWorkspaceBackupEnabled()) return { ok: false, code: WORKSPACE_BACKUP_ERROR_CODES.DISABLED };
+    const rootContext = context();
+    if (rootContext.phase !== 'ready' || !rootContext.rootId) return { ok: false, code: 'root_transitioning' };
+    if (needsPayload && !isWorkspaceIdeRecord(payload)) {
+      return { ok: false, code: WORKSPACE_BACKUP_ERROR_CODES.INVALID_PAYLOAD };
+    }
+    if (method === 'write' || method === 'remove') {
+      return workspaceBackupService[method](rootContext.rootId, payload, rootContext.generation);
+    }
+    return needsPayload
+      ? workspaceBackupService[method](rootContext.rootId, payload)
+      : workspaceBackupService[method](rootContext.rootId);
   };
   registerIpcInvokeHandlers(ipcMainLike, {
     'reminders.snooze': (_, id, minutes = 10) => (
@@ -121,6 +147,12 @@ function registerWorkspaceIpcHandlers(
       }
       return { updated: true, context: rootContext, ...statePayload() };
     },
+    ...(workspaceBackupService ? {
+      'workspaceBackup.write': (_, payload) => backupCall('write', payload),
+      'workspaceBackup.remove': (_, payload) => backupCall('remove', payload),
+      'workspaceBackup.list': () => backupCall('list', undefined, { needsPayload: false }),
+      'workspaceBackup.read': (_, payload) => backupCall('read', payload),
+    } : {}),
   }, authorization);
 }
 
@@ -204,6 +236,7 @@ function registerWorkspaceGitIpcHandlers(ipcMainLike, workspaceGitService, autho
     'workspaceGit.getLog': (_, payload) => workspaceGitService.getLog(payload),
     'workspaceGit.getBranches': (_, payload) => workspaceGitService.getBranches(payload),
     'workspaceGit.blameRange': (_, payload) => workspaceGitService.blameRange(payload),
+    'workspaceGit.checkIgnored': (_, payload) => workspaceGitService.checkIgnored(payload),
     'workspaceGit.stage': (_, payload) => workspaceGitService.stage(payload),
     'workspaceGit.unstage': (_, payload) => workspaceGitService.unstage(payload),
     'workspaceGit.commit': (_, payload) => workspaceGitService.commit(payload),
@@ -211,12 +244,26 @@ function registerWorkspaceGitIpcHandlers(ipcMainLike, workspaceGitService, autho
     'workspaceGit.checkout': (_, payload) => workspaceGitService.checkout(payload),
     'workspaceGit.stash': (_, payload) => workspaceGitService.stash(payload),
     'workspaceGit.undoLastCommit': (_, payload) => workspaceGitService.undoLastCommit(payload),
+    'workspaceGit.resolveDelete': (_, payload) => workspaceGitService.resolveDelete(payload),
+    // Row 82 P4 (G1/G2).
+    'workspaceGit.getFileAtIndex': (_, payload) => workspaceGitService.getFileAtIndex(payload),
+    'workspaceGit.getFileAtCommit': (_, payload) => workspaceGitService.getFileAtCommit(payload),
+    'workspaceGit.getCommitFiles': (_, payload) => workspaceGitService.getCommitFiles(payload),
+    'workspaceGit.listStashes': (_, payload) => workspaceGitService.listStashes(payload),
+    'workspaceGit.getLastCommitMessage': (_, payload) => workspaceGitService.getLastCommitMessage(payload),
+    'workspaceGit.deleteBranch': (_, payload) => workspaceGitService.deleteBranch(payload),
+    'workspaceGit.applyPatch': (_, payload) => workspaceGitService.applyPatch(payload),
+    // Row 82 cleanup G2/G3.
+    'workspaceGit.blameFile': (_, payload) => workspaceGitService.blameFile(payload),
+    'workspaceGit.discardFiles': (_, payload) => workspaceGitService.discardFiles(payload),
   }, authorization);
 }
 
 function registerWorkspacePtyIpcHandlers(ipcMainLike, workspacePtyService, authorization = {}) {
   registerIpcInvokeHandlers(ipcMainLike, {
     'workspacePty.spawn': (_, payload) => workspacePtyService.spawn(payload),
+    // Ids and labels only; executable paths and arguments never leave main.
+    'workspacePty.listProfiles': () => workspacePtyService.listProfiles(),
     'workspacePty.write': (_, payload) => workspacePtyService.write(payload),
     'workspacePty.resize': (_, payload) => workspacePtyService.resize(payload),
     // A renderer kill names one session. kill() without an id terminates EVERY

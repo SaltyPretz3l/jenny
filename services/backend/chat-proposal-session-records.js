@@ -9,6 +9,7 @@
 
 const crypto = require('crypto');
 const R = require('./chat-proposal-records');
+const { normalizeReasoningEffort } = require('../../reasoning-effort-profiles');
 
 const {
   isPlainObject, isHex64, isNonEmptyString, nullOr, validText, checkKeys, fail, INVISIBLE_RE, wellFormed, validCommonBinding,
@@ -27,6 +28,7 @@ const SESSION_LIMITS = Object.freeze({
   task_bytes: 16 * 1024,
   background_bytes: 32 * 1024,
   group_max: 10,
+  model_chars: 200,
   active_grants_max: 20,
   grant_prune_ms: 30 * 24 * 60 * 60 * 1000,
 });
@@ -61,8 +63,20 @@ const FIRST_TURN_DISPATCH_KEY = (proposalId) => `proposal:${proposalId}:first_tu
 
 // ---------- input, options, handoff ----------
 
+// The primary's destination project (row 76): a short id with no control or invisible characters.
+const validProjectId = (value) => typeof value === 'string' && value.length >= 1 && value.length <= 128
+  && !/\p{Cc}/u.test(value) && !INVISIBLE_RE.test(value);
+
+// The model the offer card is pre-filled with: one trimmed line, no control or invisible characters.
+const validModelName = (value) => validText(value, SESSION_LIMITS.model_chars) && !/\p{Cc}/u.test(value) && !INVISIBLE_RE.test(value);
+
+const SESSION_INPUT_KEYS = Object.freeze([
+  'schema_version', 'initiation', 'title', 'description', 'group_key', 'authorization_ref', 'project_id',
+  'preferred_model', 'reasoning_effort',
+]);
+
 function normalizeSessionProposalInput(args) {
-  const bad = checkKeys(args, ['schema_version', 'initiation', 'title', 'description', 'group_key', 'authorization_ref']);
+  const bad = checkKeys(args, SESSION_INPUT_KEYS);
   if (bad) return bad;
   const { initiation, title } = args;
   if (!INITIATIONS.includes(initiation)) return fail('field_initiation');
@@ -77,9 +91,22 @@ function normalizeSessionProposalInput(args) {
   }
   const ref = absent(args.authorization_ref) ? null : args.authorization_ref;
   if (ref !== null && (initiation !== 'user_asked' || !isUuid(ref))) return fail('field_authorization_ref');
+  const projectId = absent(args.project_id) ? null : args.project_id;
+  if (projectId !== null && !validProjectId(projectId)) return fail('field_project_id');
+  // A blank model keeps the source chat's seeding; an invalid effort is ignored ('default' reads as no pre-fill).
+  const model = typeof args.preferred_model === 'string' && !args.preferred_model.trim() ? null : args.preferred_model;
+  if (!absent(model) && !validModelName(model)) return fail('field_preferred_model');
+  const preferredModel = absent(model) ? null : model.trim();
+  const effort = typeof args.reasoning_effort === 'string' ? normalizeReasoningEffort(args.reasoning_effort) : 'default';
+  // project_id and the pre-fills are carried only when set, so inputs stored before them normalize to themselves.
   return {
     ok: true,
-    value: { schema_version: 1, initiation, title, description, group_key: groupKey, authorization_ref: ref },
+    value: {
+      schema_version: 1, initiation, title, description, group_key: groupKey, authorization_ref: ref,
+      ...(projectId === null ? {} : { project_id: projectId }),
+      ...(preferredModel === null ? {} : { preferred_model: preferredModel }),
+      ...(effort === 'default' ? {} : { reasoning_effort: effort }),
+    },
   };
 }
 
@@ -205,10 +232,18 @@ function validSessionRecord(raw) {
   return validAcceptedProgress(raw);
 }
 
-// Fields createProposalRecord adds for a session proposal: the options and the derived group id.
+// Fields createProposalRecord adds for a session proposal: the options and the derived group id. The
+// model's pre-fill replaces the source seeding of the card's model and effort; nothing else.
 function sessionCreateFields({ options, input, incarnation, turnId }) {
   const grouped = input?.initiation === 'own_initiative' && typeof input.group_key === 'string';
-  return { options: structuredClone(options), group_id: grouped ? computeGroupId(incarnation, turnId, input.group_key) : null };
+  return {
+    options: {
+      ...structuredClone(options),
+      ...(typeof input?.preferred_model === 'string' ? { preferred_model: input.preferred_model } : {}),
+      ...(typeof input?.reasoning_effort === 'string' ? { reasoning_effort: input.reasoning_effort } : {}),
+    },
+    group_id: grouped ? computeGroupId(incarnation, turnId, input.group_key) : null,
+  };
 }
 
 // ---------- transitions ----------

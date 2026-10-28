@@ -10,6 +10,7 @@ const {
   cleanupTrackedResources,
   createTrackedTempDir,
 } = require('./helpers/resource-cleanup');
+const { linkDirectory, windowsOnly } = require('./helpers/platform-skips');
 const {
   COPY_ERROR_CODES,
   WorkspaceImportService,
@@ -210,11 +211,9 @@ test('fail collision returns the IDE EXISTS shape without changing either file',
   assert.equal(fs.readFileSync(path.join(root, 'target.txt'), 'utf8'), 'target');
 });
 
-test('Windows trailing-dot aliases cannot bypass collision refusal', async (t) => {
-  if (process.platform !== 'win32') {
-    t.skip('Windows-only filename aliasing');
-    return;
-  }
+test('Windows trailing-dot aliases cannot bypass collision refusal', {
+  skip: windowsOnly('trailing-dot filename aliasing'),
+}, async () => {
   const root = createTrackedTempDir('jenny-import-');
   fs.writeFileSync(path.join(root, 'source.txt'), 'source', 'utf8');
   fs.writeFileSync(path.join(root, 'target'), 'original', 'utf8');
@@ -228,20 +227,14 @@ test('Windows trailing-dot aliases cannot bypass collision refusal', async (t) =
   assert.equal(fs.readFileSync(path.join(root, 'target'), 'utf8'), 'original');
 });
 
-test('skips nested symlinks and refuses a direct symlink source', async (t) => {
+test('skips nested symlinks and refuses a direct symlink source', async () => {
   const root = createTrackedTempDir('jenny-import-');
   fs.mkdirSync(path.join(root, 'source'));
   fs.writeFileSync(path.join(root, 'source', 'kept.txt'), 'kept', 'utf8');
   fs.mkdirSync(path.join(root, 'link-target'));
   fs.writeFileSync(path.join(root, 'link-target', 'linked.txt'), 'linked', 'utf8');
-  try {
-    const linkKind = process.platform === 'win32' ? 'junction' : 'dir';
-    fs.symlinkSync(path.join(root, 'link-target'), path.join(root, 'source', 'nested-link'), linkKind);
-    fs.symlinkSync(path.join(root, 'link-target'), path.join(root, 'direct-link'), linkKind);
-  } catch (error) {
-    t.skip(`symlink creation unavailable: ${error.code || error.message}`);
-    return;
-  }
+  linkDirectory(path.join(root, 'link-target'), path.join(root, 'source', 'nested-link'));
+  linkDirectory(path.join(root, 'link-target'), path.join(root, 'direct-link'));
   const service = createService(root);
 
   const result = await service.copyEntry({ from: 'source', to: 'clone' });

@@ -28,6 +28,7 @@ test('a fresh service exposes the default notifications block under windowUi', (
   assert.deepEqual(service.getWindowUiState(), {
     appZoomPercent: 110,
     notifications: normalizeNotificationSettings(),
+    dictation: { deviceId: '' },
   });
 });
 
@@ -40,6 +41,7 @@ test('a partial notifications patch is filled from defaults and persists beside 
   const expected = {
     appZoomPercent: 125,
     notifications: normalizeNotificationSettings({ sound: false, categories: { failures: false } }),
+    dictation: { deviceId: '' },
   };
   assert.deepEqual(updated, expected);
   assert.deepEqual(service.getWindowUiState(), expected);
@@ -56,6 +58,7 @@ test('a partial notifications patch is filled from defaults and persists beside 
   assert.deepEqual(reloaded.getWindowUiState(), {
     appZoomPercent: 125,
     notifications: normalizeNotificationSettings({ enabled: false }),
+    dictation: { deviceId: '' },
   });
 });
 

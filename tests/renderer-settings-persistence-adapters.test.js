@@ -53,12 +53,6 @@ test('createSettingsAdapter validates the spec', () => {
   );
   assert.throws(
     () => createSettingsAdapter({
-      id: 'x', read: () => {}, write: () => {}, getDefault: () => {}, redact: 'nope',
-    }),
-    /spec\.redact must be a function/
-  );
-  assert.throws(
-    () => createSettingsAdapter({
       id: 'x', read: () => {}, write: () => {}, getDefault: () => {}, apply: 'nope',
     }),
     /spec\.apply must be a function/
@@ -71,7 +65,7 @@ test('createSettingsAdapter validates the spec', () => {
   );
 });
 
-test('createSettingsAdapter defaults normalize/redact to identity and exposes id', () => {
+test('createSettingsAdapter defaults normalize to identity and exposes id', () => {
   const adapter = createSettingsAdapter({
     id: 'plain',
     read: () => ({ a: 1 }),
@@ -80,7 +74,6 @@ test('createSettingsAdapter defaults normalize/redact to identity and exposes id
   });
   assert.equal(adapter.id, 'plain');
   assert.deepEqual(adapter.normalize({ a: 2 }), { a: 2 });
-  assert.equal(adapter.redact('secret'), 'secret');
   assert.deepEqual(adapter.read(), { a: 1 });
   assert.deepEqual(adapter.getDefault(), { a: 0 });
 });
@@ -469,12 +462,6 @@ test('appearance adapter: normalize coerces a garbage palette to the same fallba
   assert.ok(knownPaletteIds.includes(garbage.paletteId), 'coerced palette is a known, valid preset id');
 });
 
-test('appearance adapter: redact is lossless identity', () => {
-  const adapter = createAppearanceAdapter({ storage: createFakeStorage() });
-  const value = adapter.normalize({ paletteId: 'obsidian', motionId: 'expressive' });
-  assert.deepEqual(adapter.redact(value), value);
-});
-
 test('appearance adapter: write() rolls back and logs when the underlying storage write throws', async () => {
   const calls = [];
   const logs = [];
@@ -496,39 +483,6 @@ test('appearance adapter: write() rolls back and logs when the underlying storag
 test('createAppearanceAdapter requires a localStorage-shaped storage dependency', () => {
   assert.throws(() => createAppearanceAdapter({}), /deps\.storage must be a localStorage-shaped object/);
   assert.throws(() => createAppearanceAdapter({ storage: {} }), /deps\.storage must be a localStorage-shaped object/);
-});
-
-// ── listEditableKeys() (JSON-editor allowlist capability) ──────────────────
-
-test('createSettingsAdapter: listEditableKeys() defaults to getDefault()\'s own keys', () => {
-  const adapter = createSettingsAdapter({
-    id: 'defaulted',
-    read: () => ({}),
-    write: (value) => value,
-    getDefault: () => ({ a: 1, b: 2, c: 3 }),
-  });
-  assert.deepEqual(adapter.listEditableKeys(), ['a', 'b', 'c']);
-});
-
-test('createSettingsAdapter: listEditableKeys() returns [] when getDefault() is not a plain object', () => {
-  const adapter = createSettingsAdapter({
-    id: 'scalar-default',
-    read: () => 0,
-    write: (value) => value,
-    getDefault: () => 0,
-  });
-  assert.deepEqual(adapter.listEditableKeys(), []);
-});
-
-test('createSettingsAdapter: spec.listEditableKeys overrides the default derivation', () => {
-  const adapter = createSettingsAdapter({
-    id: 'narrowed',
-    read: () => ({}),
-    write: (value) => value,
-    getDefault: () => ({ a: 1, b: 2, secret: 'x' }),
-    listEditableKeys: () => ['a', 'b'],
-  });
-  assert.deepEqual(adapter.listEditableKeys(), ['a', 'b']);
 });
 
 // ── createOfflineAdapter ─────────────────────────────────────────────────
@@ -562,11 +516,6 @@ function createOfflineHarness(overrides) {
 test('offline adapter: getDefault() matches DEFAULT_OFFLINE_INTELLIGENCE (services/shell-config-state.js:70-73)', () => {
   const { adapter } = createOfflineHarness();
   assert.deepEqual(adapter.getDefault(), { mode: 'disabled', preferredLocalModel: '' });
-});
-
-test('offline adapter: listEditableKeys() is exactly [mode, preferredLocalModel]', () => {
-  const { adapter } = createOfflineHarness();
-  assert.deepEqual(adapter.listEditableKeys(), ['mode', 'preferredLocalModel']);
 });
 
 test('offline adapter: normalize projects a full IPC echo (readiness fields included) down to {mode, preferredLocalModel}', () => {
@@ -620,6 +569,19 @@ test('offline adapter: write() rolls back and logs on updateSettings rejection',
   await assert.rejects(() => adapter.write({ mode: 'local_only', preferredLocalModel: 'qwen3' }), /ipc unavailable/);
   assert.equal(logs.length, 1);
   assert.match(logs[0], /offline/);
+});
+
+test('offline adapter: write() rejects and rolls back when the bridge returns no offline state', async () => {
+  const applied = [];
+  const { adapter, logs } = createOfflineHarness({
+    getCurrent: () => ({ mode: 'disabled', preferredLocalModel: '' }),
+    // The production wiring returns undefined when the offline bridge is missing.
+    updateSettings: () => undefined,
+    apply: (value) => applied.push(value.mode),
+  });
+  await assert.rejects(() => adapter.write({ mode: 'local_only', preferredLocalModel: 'qwen3' }), /no offline state/);
+  assert.deepEqual(applied, ['local_only', 'disabled'], 'the optimistic apply is rolled back');
+  assert.equal(logs.length, 1);
 });
 
 test('createOfflineAdapter requires updateSettings and getCurrent dependencies', () => {

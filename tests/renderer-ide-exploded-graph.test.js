@@ -502,7 +502,7 @@ describe('applySymbolCap', () => {
 });
 
 // ---------------------------------------------------------------------------
-// finalizeGraph - prune, degrees, callDepth, importance, zone/rank/layout
+// finalizeGraph - prune, degrees, callDepth, zone/rank/layout
 // ---------------------------------------------------------------------------
 
 describe('finalizeGraph', () => {
@@ -558,28 +558,6 @@ describe('finalizeGraph', () => {
     assert.notEqual(byId.unreachable, undefined);
     assert.equal(byId.unreachable.callDepth, null);
     assert.equal(byId.readOnly.callDepth, null);
-  });
-
-  test('importance: 0 at min degreeIn, 1 at max, correct rounded fraction between (IMPORTANCE_PRECISION=4)', () => {
-    // degreeIn: entry=0 (min, nothing points to it), low=1, mid=2, high=3 (max) -> span 3.
-    const nodes = [fn('entry', { isExported: true }), data('low'), data('mid'), data('high')];
-    const edges = [
-      { from: 'entry', to: 'low', kind: 'read', weight: 1 },
-      { from: 'entry', to: 'mid', kind: 'read', weight: 1 }, { from: 'entry', to: 'mid', kind: 'read', weight: 1 },
-      { from: 'entry', to: 'high', kind: 'read', weight: 1 }, { from: 'entry', to: 'high', kind: 'read', weight: 1 }, { from: 'entry', to: 'high', kind: 'read', weight: 1 },
-    ];
-    const byId = Object.fromEntries(finalizeGraph(nodes, edges).nodes.map((n) => [n.id, n]));
-    assert.equal(byId.entry.importance, 0);
-    assert.equal(byId.high.importance, 1);
-    assert.equal(byId.low.importance, 0.3333);
-    assert.equal(byId.mid.importance, 0.6667);
-  });
-
-  test('importance is 0 for every node when all degreeIn values are equal (zero span)', () => {
-    const nodes = [fn('entry', { isExported: true }), data('a', { isExported: true }), data('b', { isExported: true })];
-    const out = finalizeGraph(nodes, []).nodes;
-    assert.equal(out.length, 3);
-    out.forEach((n) => { assert.equal(n.degreeIn, 0); assert.equal(n.importance, 0); });
   });
 
   test('zones: import -> imports, data -> data, exported fn/method -> entry, else -> functions; rank is zone-local (pixel x/y is the caller\'s concern - see renderer-ide-explode-layout.js)', () => {

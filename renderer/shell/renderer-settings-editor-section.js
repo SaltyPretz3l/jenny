@@ -17,6 +17,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const { escapeHtml } = globalThis.stringUtils || require('../shared/string-utils');
 
   // Section-specific UI option list (not a config concept; the config only
   // bounds fontSize via min/max, which clampFontSize() reuses).
@@ -33,6 +34,28 @@
     { value: '80,120', label: jt('settings.editor.rulers80And120', '80 and 120') },
   ];
 
+  // Terminal shell profiles (row 82 T2): main's workspacePty.listProfiles ids and
+  // labels, fetched once per renderer; until they arrive (or without the bridge) the
+  // select lists the platform default plus the stored id so it never drops a value.
+  let terminalProfiles = null;
+  let terminalProfilesRequested = false;
+  function requestTerminalProfiles(onLoaded) {
+    const api = globalThis.jennyShell && globalThis.jennyShell.workspacePty;
+    if (terminalProfilesRequested || !api || typeof api.listProfiles !== 'function') return;
+    terminalProfilesRequested = true;
+    Promise.resolve().then(() => api.listProfiles()).then((result) => {
+      const list = Array.isArray(result && result.profiles) ? result.profiles : [];
+      terminalProfiles = list.filter((p) => p && typeof p.id === 'string' && p.id)
+        .map((p) => ({ value: p.id, label: String(p.label || p.id) }));
+      onLoaded();
+    }).catch(function ignore() { terminalProfilesRequested = false; });
+  }
+  function terminalProfileOptions(current) {
+    const options = [{ value: '', label: jt('settings.editor.terminalProfileDefault', 'Default') }].concat(terminalProfiles || []);
+    if (current && !options.some((option) => option.value === current)) options.push({ value: current, label: current });
+    return options;
+  }
+
   function ideStateRef() {
     return (typeof globalThis !== 'undefined' && globalThis.rendererIdeState) || null;
   }
@@ -42,6 +65,7 @@
     return {
       descriptors: globalThis.rendererSettingsFieldDescriptors || load('./renderer-settings-field-descriptors'),
       binding: globalThis.rendererSettingsFieldBinding || load('./renderer-settings-field-binding'),
+      surfaces: globalThis.rendererSettingsV2Surfaces || load('./renderer-settings-v2-surfaces'),
     };
   }
 
@@ -92,10 +116,34 @@
       .slice(0, 8);
   }
 
-  function titleCase(value) {
-    const str = String(value || '');
-    return str ? str.charAt(0).toUpperCase() + str.slice(1) : str;
+  // Row 82 E1 keys (plan 5.3). The canonical normalizer is renderer-ide-state's
+  // normalizeEditorPrefs (total over a partial slice); these defaults are only the
+  // isolated-context fallback; NORMALIZED_KEYS are the non-boolean ones it coerces.
+  const E1_DEFAULTS = Object.freeze({
+    fontFamily: '', cursorStyle: 'line', cursorBlinking: 'smooth', cursorSmoothCaretAnimation: true,
+    fontLigatures: true, insertSpaces: true, detectIndentation: true, autoSaveMode: 'off', autoSaveDelayMs: 1000,
+    bracketPairColorization: true, indentGuides: true, stickyScroll: true, folding: true,
+    scrollBeyondLastLine: false, mouseWheelZoom: true, inlineBlame: true, terminalScrollback: 1000, terminalDefaultProfile: '',
+  });
+  const NORMALIZED_KEYS = ['fontFamily', 'cursorStyle', 'cursorBlinking', 'autoSaveMode', 'autoSaveDelayMs', 'terminalScrollback', 'terminalDefaultProfile'];
+  function e1Prefs(source) {
+    const ref = ideStateRef();
+    const normalized = typeof ref?.normalizeEditorPrefs === 'function' ? ref.normalizeEditorPrefs(source) : {};
+    const out = {};
+    Object.keys(E1_DEFAULTS).forEach((key) => {
+      out[key] = Object.prototype.hasOwnProperty.call(normalized, key) ? normalized[key] : E1_DEFAULTS[key];
+    });
+    return out;
   }
+
+  // Render-whitespace option labels; a value without one shows as itself.
+  const WHITESPACE_LABELS = {
+    none: jt('common.none', 'None'),
+    boundary: jt('settings.editor.whitespace.boundary', 'Boundary'),
+    selection: jt('settings.editor.whitespace.selection', 'Selection'),
+    trailing: jt('settings.editor.whitespace.trailing', 'Trailing'),
+    all: jt('settings.editor.whitespace.all', 'All'),
+  };
 
   // The slice <-> the form object the rows edit (descriptor keys, control
   // values). This pair is the one place the persisted shapes are mapped: the
@@ -115,7 +163,7 @@
       formatOnSave: source.formatOnSave === true,
       trimTrailingWhitespace: source.trimTrailingWhitespace === true,
       insertFinalNewline: source.insertFinalNewline === true,
-      autoSaveEnabled: source.autoSaveEnabled === true,
+      ...e1Prefs(source),
     };
   }
   function toSlice(key, value) {
@@ -124,6 +172,7 @@
     if (key === 'renderWhitespace') return String(value);
     if (key === 'rulers') return stringToRulers(value);
     if (key === 'wordWrap' || key === 'lineNumbers') return value ? 'on' : 'off';
+    if (NORMALIZED_KEYS.includes(key)) return e1Prefs({ [key]: value })[key];
     return value === true;
   }
 
@@ -144,8 +193,9 @@
         }));
       },
       editorTabSizes: () => tabSizes().map((n) => ({ value: n, label: jt('settings.editor.tabSizeOption', '{count} spaces', { count: n }) })),
-      editorWhitespace: () => whitespaceValues().map((v) => ({ value: v, label: titleCase(v) })),
+      editorWhitespace: () => whitespaceValues().map((v) => ({ value: v, label: WHITESPACE_LABELS[v] || String(v) })),
       editorRulers: () => RULER_OPTIONS,
+      terminalProfiles: () => terminalProfileOptions(form().terminalDefaultProfile),
     };
     return fieldModules().descriptors.listSettingDescriptors({ adapterId: 'workspaceIde' }).map((d) => {
       const source = typeof d.options === 'string' ? sources[d.options.slice('source:'.length)] : null;
@@ -153,22 +203,42 @@
     });
   }
 
+  // A labelled run of rows (the Settings > Advanced limits-group markup).
+  function subgroup(id, label, rows) {
+    return '<div class="settings-group" role="group" aria-labelledby="settingsEditorGroup-' + id + '" data-editor-group="' + id + '">'
+      + '<h4 class="settings-group-heading" id="settingsEditorGroup-' + id + '">' + escapeHtml(label) + '</h4>' + rows.join('') + '</div>';
+  }
+
   // Builds the rows from their descriptors and injects them into the stable
-  // container. Safe to call repeatedly (re-render on every change).
+  // container. Safe to call repeatedly (re-render on every change): unchanged
+  // markup is not rewritten, and a rewrite keeps the Advanced disclosure as it was.
   function renderEditorSection({ container, status, ide } = {}) {
-    const { binding, descriptors } = fieldModules();
+    const { binding, descriptors, surfaces } = fieldModules();
     if (!container || !binding || !descriptors) { return; }
     const form = readForm(ide);
     const byKey = {};
     editorDescriptors(() => form).forEach((d) => { byKey[d.key] = d; });
     const row = (key) => binding.renderSettingRow(byKey[key], descriptors.normalizeSettingValue(byKey[key], form[key]));
-    const advanced = ['renderWhitespace', 'rulers', 'formatOnSave', 'trimTrailingWhitespace', 'insertFinalNewline'].map(row);
-    const parts = ['fontSize', 'tabSize', 'wordWrap', 'minimap', 'lineNumbers', 'autoSaveEnabled'].map(row).concat([
+    const advanced = ['renderWhitespace', 'rulers', 'formatOnSave', 'trimTrailingWhitespace', 'insertFinalNewline',
+      'bracketPairColorization', 'indentGuides', 'stickyScroll', 'folding', 'scrollBeyondLastLine', 'mouseWheelZoom', 'inlineBlame',
+      'terminalScrollback', 'terminalDefaultProfile'].map(row);
+    // The delay only applies to the after-delay mode: a dependent sub row, off otherwise.
+    const delayRow = binding.renderSettingRow(byKey.autoSaveDelayMs, descriptors.normalizeSettingValue(byKey.autoSaveDelayMs, form.autoSaveDelayMs),
+      { sub: true, parentOff: form.autoSaveMode !== 'afterDelay' });
+    const parts = ['fontSize', 'tabSize', 'wordWrap', 'minimap', 'lineNumbers'].map(row).concat([
+      subgroup('cursor', jt('settings.editor.group.cursorAndText', 'Cursor and text'),
+        ['fontFamily', 'cursorStyle', 'cursorBlinking', 'cursorSmoothCaretAnimation', 'fontLigatures'].map(row)),
+      subgroup('indentation', jt('settings.editor.group.indentation', 'Indentation'), ['insertSpaces', 'detectIndentation'].map(row)),
+      subgroup('autosave', jt('settings.editor.group.autoSave', 'Auto save'), [row('autoSaveMode'), delayRow]),
       '<details class="settings-group settings-group--wide settings-editor-advanced">'
-        + '<summary>Advanced</summary><div class="settings-editor-advanced-fields">'
+        + '<summary>' + escapeHtml(jt('settings.appearance.advanced.heading', 'Advanced')) + '</summary><div class="settings-editor-advanced-fields">'
         + advanced.join('') + '</div></details>',
     ]);
-    container.innerHTML = parts.join('');
+    requestTerminalProfiles(() => renderEditorSection({ container, status, ide }));
+    const advancedOpen = container.querySelector('details.settings-editor-advanced')?.open === true;
+    if (surfaces.paintSlot(container, parts.join('')) && advancedOpen) {
+      container.querySelector('details.settings-editor-advanced').open = true;
+    }
     // The section status line only ever carried completion-model feedback;
     // with inline suggestions removed it stays empty and hidden.
     if (status) {

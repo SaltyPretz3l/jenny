@@ -7,6 +7,9 @@ from typing import Any
 MAX_CONTRACT_TEXT_LENGTH = 4000
 MAX_CONTRACT_LIST_ITEMS = 20
 MAX_CONTRACT_LIST_ITEM_LENGTH = 1000
+# Parent-facing clip of each child's answer; lives here so the contract text
+# that tells the child its budget shares the number without importing delegate_contracts.
+MAX_DELEGATE_ANSWER_CHARS = 2_500
 
 DELEGATION_CONTRACT_FIELDS: tuple[str, ...] = (
     "goal",

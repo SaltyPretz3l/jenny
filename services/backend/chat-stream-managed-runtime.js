@@ -53,6 +53,7 @@ const {
   settleUnfinishedToolRows: settleUnfinishedToolRowsImpl,
 } = require('./chat-stream-managed-runtime-failure');
 const { CanonicalTurnMetrics } = require('./canonical-turn-metrics');
+const { attachMidTurnMail } = require('./session-mail-mid-turn');
 const {
   settleManagedAssistantCompletion,
   settleManagedFailureTerminal,
@@ -63,7 +64,7 @@ const {
   applyAuthoritativeTerminalText: applyAuthoritativeTerminalTextImpl,
   emitDeterministicCompletion: emitDeterministicCompletionImpl,
   logThinkingOnlyCompletion: logThinkingOnlyCompletionImpl,
-  recoverToolworkOnlyCompletion: recoverToolworkOnlyCompletionImpl,
+  recoverToolworkOnlyCompletion: recoverToolworkOnlyCompletionImpl, rendererCompleteContent,
 } = require('./chat-stream-managed-runtime-completion');
 
 function createManagedChatStreamRuntime({
@@ -76,7 +77,7 @@ function createManagedChatStreamRuntime({
   normalizedAttachments,
   transcriptPrompt,
   userMessageId,
-  skillInvocation = null,
+  skillInvocation = null, applicationTurn = '',
   reuseExistingUserMessage = false,
   failureRetry,
   exchangeTitle = '',
@@ -405,7 +406,7 @@ function createManagedChatStreamRuntime({
       messageId: userMessageId,
       content: transcriptPrompt,
       attachments: normalizedAttachments,
-      skill_invocation: skillInvocation,
+      skill_invocation: skillInvocation, ...(applicationTurn ? { application_turn: applicationTurn } : {}),
       model,
     };
     const persistEditedTurn = () => service.sessionStore.truncateAfterMessage(
@@ -517,7 +518,7 @@ function createManagedChatStreamRuntime({
     visibleCompletionEmitted = true;
     emitChatStream({
       type: 'complete',
-      content: assistantText,
+      content: rendererCompleteContent(ctx),
       ...(turnUsage ? { usage: turnUsage } : {}),
       ...(resumableStop ? { resumableStop } : {}), ...completionEventFields(ctx.completion),
       ...(discardedDrafts ? { discardedDrafts } : {}),
@@ -959,6 +960,7 @@ function createManagedChatStreamRuntime({
     get diagnosticToolEvents() { return diagnosticToolEvents; },
     get diagnosticToolNamesByCallId() { return diagnosticToolNamesByCallId; },
   };
+  attachMidTurnMail(ctx); // row 70 W2a: ctx.midTurnMail; this chat's live stream for mid-turn mail
 
   return {
     adapter,

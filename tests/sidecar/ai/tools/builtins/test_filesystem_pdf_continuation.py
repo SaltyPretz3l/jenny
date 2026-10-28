@@ -8,6 +8,7 @@ import re
 from dataclasses import replace
 from pathlib import Path
 
+import fitz
 import pytest
 
 from sidecar.ai.error_codes import CMP_TOOL_EXECUTION_FAILED
@@ -19,8 +20,6 @@ from sidecar.ai.tools.builtins.filesystem import (
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.sanitization import sanitize_tool_output_no_truncate
 from sidecar.ai.tools.workspace import WorkspaceGuard
-
-fitz = pytest.importorskip("fitz")
 
 
 def _guard(tmp_path: Path) -> WorkspaceGuard:

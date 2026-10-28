@@ -11,6 +11,7 @@ const {
   cleanupTrackedResources,
   createTrackedTempDir,
 } = require('./helpers/resource-cleanup');
+const { linkDirectory } = require('./helpers/platform-skips');
 
 test.afterEach(async () => {
   await cleanupTrackedResources();
@@ -45,21 +46,13 @@ test('ToolPathPolicy allows descendants when the workspace is a drive root', asy
   assert.equal(resolved, 'C:\\temp\\file.txt');
 });
 
-test('ToolPathPolicy rejects new paths below symlinked parents outside the workspace root', async (t) => {
+test('ToolPathPolicy rejects new paths below symlinked parents outside the workspace root', async () => {
   const root = createTrackedTempDir('jenny-tool-path-root-');
   const outside = createTrackedTempDir('jenny-tool-path-outside-');
   const linkPath = path.join(root, 'escape-link');
   const policy = createPolicy();
 
-  try {
-    await fsp.symlink(outside, linkPath, process.platform === 'win32' ? 'junction' : 'dir');
-  } catch (error) {
-    if (error && (error.code === 'EPERM' || error.code === 'EACCES')) {
-      t.skip(`symlink creation unavailable: ${error.code}`);
-      return;
-    }
-    throw error;
-  }
+  linkDirectory(outside, linkPath);
 
   const requested = path.join(linkPath, 'new-file.txt');
   await assert.rejects(

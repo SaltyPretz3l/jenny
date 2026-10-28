@@ -113,6 +113,8 @@ def derive_import_facts(  # noqa: PLR0913 - keyword-only facts of one suggestion
     file_dir = posixpath.dirname(relative_path.replace("\\", "/"))
     creates = {path_key(item.path) for item in live if item.kind == "create"}
     for spec in dict.fromkeys(after):
+        if len(facts) >= MAX_FACTS:
+            break  # Only MAX_FACTS are kept: stop resolving imports on disk.
         if spec in before:
             continue
         target = _python_target(file_dir, spec) if python else _js_target(file_dir, spec)
@@ -121,8 +123,8 @@ def derive_import_facts(  # noqa: PLR0913 - keyword-only facts of one suggestion
         candidates = _candidates(target, python)
         if any(path_key(candidate) in creates for candidate in candidates):
             continue
-        found = [_exists(workspace, candidate) for candidate in candidates]
-        if any(found) or None in found:
+        # Present (True) or unprovable (None) for any candidate: not missing.
+        if any(_exists(workspace, candidate) is not False for candidate in candidates):
             continue
         facts.append({"kind": "import_missing", "name": spec, "target": target})
     return facts[:MAX_FACTS]

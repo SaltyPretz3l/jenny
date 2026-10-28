@@ -453,6 +453,17 @@ test('the context estimate counts a Background row with its preamble', () => {
   assert.ok(recent.includes('ctxh-last'), 'the Background row before the final prompt is in the window');
 });
 
+test('"Continued from {source}" comes from the summary branch_origin (a /handoff or a branch)', () => {
+  const origin = { source_session_id: 'sess_src', source_message_id: 'msg_9', source_title: 'Parser work (old title)', created_at: '2026-10-18T10:00:00.000Z' };
+  const child = { id: 'sess_child', title: 'Parser work (continued)', branch_origin: origin };
+  assert.equal(rows.buildContinuedFromLabel(child, [{ id: 'sess_src', title: 'Parser work' }]), 'Continued from Parser work', 'the live title wins');
+  assert.equal(rows.buildContinuedFromLabel(child, []), 'Continued from Parser work (old title)', 'a deleted source keeps its recorded title');
+  assert.equal(rows.buildContinuedFromLabel({ ...child, branch_origin: { ...origin, source_title: '' } }, []), 'Continued from an earlier chat');
+  assert.equal(rows.buildContinuedFromLabel({ id: 'x', title: 'Plain' }, []), '');
+  assert.equal(rows.buildStartedFromLabel(child, [{ id: 'sess_src', title: 'Parser work' }]), 'Continued from Parser work', 'the origin chip falls back to branch_origin');
+  assert.equal(rows.buildStartedFromLabel({ id: 'x', title: 'Plain' }, []), '');
+});
+
 test('"Started from {parent}" comes from the summary spawned_from and degrades quietly', () => {
   const child = { id: 'session-child', spawned_from: { parent_session_id: PARENT_ID, parent_session_incarnation: 'inc-source', proposal_id: `proposal_${'b'.repeat(64)}`, created_at: '2026-10-15T16:00:00.000Z' } };
   assert.equal(rows.buildStartedFromLabel(child, PARENT_SESSIONS), 'Started from Benchmark the 128k setting');

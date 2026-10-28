@@ -1,0 +1,262 @@
+/* Inline code-review findings (row 64): the chat list under a report_findings row and the comment
+ * the Changes > Working tree diff shows under a finding's line. One soft tray, the shared status
+ * dots, .btn primitives and the chat path chip; no side bars or nested cards. */
+
+.review-findings {
+  margin-block: var(--space-2) var(--space-3);
+  margin-inline-start: var(--tl-detail-indent);
+  padding-block: var(--space-1) var(--space-2);
+  border-radius: var(--tl-radius-panel);
+  background: color-mix(in srgb, var(--tl-panel-border) 22%, transparent);
+  color: var(--text-primary);
+}
+
+.review-findings-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  padding-block: var(--space-1);
+  padding-inline: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--tl-font-meta);
+}
+
+.review-findings-count {
+  color: var(--text-primary);
+  font-size: var(--tl-font-ui);
+  font-weight: var(--tl-weight-emphasis);
+}
+
+.review-findings-fix-all {
+  margin-inline-start: auto;
+}
+
+.review-findings-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.review-finding-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-inline-end: var(--space-3);
+  border-radius: var(--tl-radius-control);
+}
+
+.review-finding-row:hover {
+  background: var(--tl-row-hover);
+}
+
+.review-finding-toggle {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  min-block-size: var(--tl-row-h);
+  padding-block: var(--space-1);
+  padding-inline: var(--space-3) 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--tl-font-ui);
+  text-align: start;
+  cursor: pointer;
+}
+
+.review-finding-toggle:focus-visible,
+.review-finding-loc:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: var(--tl-radius-control);
+}
+
+.review-finding-severity {
+  flex: 0 0 auto;
+  min-inline-size: 4.5em;
+  color: var(--text-muted);
+  font-size: var(--tl-font-meta);
+}
+
+.review-finding-title {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-finding[data-open="true"] .review-finding-title {
+  white-space: normal;
+}
+
+.review-finding[data-sent="true"] .review-finding-title {
+  color: var(--text-muted);
+}
+
+.review-finding-chevron {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  transition: transform var(--motion-duration-fast) ease;
+}
+
+.review-finding[data-open="true"] .review-finding-chevron {
+  transform: rotate(90deg);
+}
+
+.review-finding-loc {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font: var(--tl-font-meta)/1.4 var(--font-family-mono);
+  cursor: pointer;
+}
+
+.review-finding-loc:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.review-finding-body {
+  padding-block: 0 var(--space-3);
+  padding-inline: calc(var(--space-3) + 6px + var(--space-2)) var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--tl-font-ui);
+  line-height: 1.55;
+}
+
+.review-finding-body[hidden] {
+  display: none;
+}
+
+.review-finding-text {
+  margin: 0 0 var(--space-2);
+  white-space: pre-wrap;
+}
+
+.review-finding-excerpt {
+  margin-block-end: var(--space-2);
+  padding-block: var(--space-1);
+  overflow-x: auto;
+  border-radius: var(--tl-radius-control);
+  background: var(--tl-code-bg);
+  font: var(--tl-font-code)/1.5 var(--font-family-mono);
+}
+
+.review-finding-excerpt-line {
+  display: flex;
+  gap: var(--space-3);
+  padding-inline: var(--space-3);
+  white-space: pre;
+}
+
+.review-finding-excerpt-line code {
+  font: inherit;
+  background: none;
+}
+
+.review-finding-excerpt-number {
+  flex: 0 0 auto;
+  min-inline-size: 3ch;
+  color: var(--text-muted);
+  text-align: end;
+}
+
+.review-finding-excerpt[data-severity="high"] .is-target {
+  background: color-mix(in srgb, var(--tl-status-error) 14%, transparent);
+}
+
+.review-finding-excerpt[data-severity="medium"] .is-target {
+  background: color-mix(in srgb, var(--tl-status-warn) 14%, transparent);
+}
+
+.review-finding-excerpt[data-severity="low"] .is-target {
+  background: color-mix(in srgb, var(--tl-status-muted) 16%, transparent);
+}
+
+.review-finding-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.review-finding-sent {
+  color: var(--text-muted);
+  font-size: var(--tl-font-meta);
+}
+
+/* ── The diff comment (Changes > Working tree) ── */
+
+.review-diff-comment {
+  margin-block: var(--space-1) var(--space-2);
+  margin-inline: var(--space-6) var(--space-3);
+  padding-block: var(--space-2);
+  padding-inline: var(--space-3);
+  border-radius: var(--tl-radius-panel);
+  background: var(--bg-surface);
+  box-shadow: 0 0 0 1px var(--tl-panel-border);
+  color: var(--text-secondary);
+  font-family: var(--font-family-body);
+  font-size: var(--tl-font-ui);
+  line-height: 1.5;
+  white-space: normal;
+}
+
+.review-diff-comment[data-review-focus="true"] {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+.review-diff-comment-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-primary);
+}
+
+.review-diff-comment-head .review-finding-title {
+  font-weight: var(--tl-weight-emphasis);
+  white-space: normal;
+}
+
+.review-diff-comment-head .review-finding-severity {
+  min-inline-size: 0;
+}
+
+.review-diff-comment-where {
+  display: block;
+  margin-block-start: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--tl-font-meta);
+}
+
+.review-diff-comment .review-finding-text {
+  margin-block: var(--space-1) var(--space-2);
+}
+
+.diff-line[data-review-severity] .diff-gutter {
+  position: relative;
+}
+
+.diff-line[data-review-severity] .diff-gutter::before {
+  content: "";
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: 2px;
+  inline-size: 6px;
+  block-size: 6px;
+  margin-block-start: -3px;
+  border-radius: 50%;
+  background: var(--tl-status-muted);
+}
+
+.diff-line[data-review-severity="high"] .diff-gutter::before {
+  background: var(--tl-status-error);
+}
+
+.diff-line[data-review-severity="medium"] .diff-gutter::before {
+  background: var(--tl-status-warn);
+}

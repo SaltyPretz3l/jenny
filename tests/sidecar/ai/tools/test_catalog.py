@@ -193,7 +193,12 @@ def test_tool_catalog_includes_default_off_automation_bridge_descriptors() -> No
     assert listed.surfaces == ("managed_sidecar",)
     assert listed.availability.config_flag == "tools_automations_enabled"
     assert listed.availability.workspace_required is True
-    assert listed.input_schema == {"type": "object", "properties": {}, "required": []}
+    assert listed.input_schema == {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {},
+        "required": [],
+    }
 
     assert read.read_only is True
     assert read.side_effecting is False

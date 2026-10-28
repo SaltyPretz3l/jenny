@@ -27,6 +27,7 @@ const { RuntimeChildOperations } = require('./child-operations');
 const { recoverRuntimeCancellationTrees } = require('./subtree-cancellation');
 const { RuntimeEligibilityCoordinator } = require('./eligibility');
 const { createRuntimeWaitNotices } = require('../backend/runtime-wait-notices');
+const { isPrimarySession, primaryChatEnabled } = require('../backend/primary-session');
 
 function initializeSessionRuntimeComposition(service) {
   if (!Object.hasOwn(service?.featureFlags || {}, 'session_runtime')) return null;
@@ -77,6 +78,10 @@ function initializeSessionRuntimeComposition(service) {
     store,
     lanes,
     enabled: service.featureFlags.session_runtime === true,
+    // The primary Jenny chat's chat turns take the lane's priority slot (plan Q13): it can answer,
+    // stop or message a worker chat while that chat streams or waits on an approval.
+    isPriorityTurn: work => primaryChatEnabled(service.featureFlags) && work?.purpose === 'chat'
+      && isPrimarySession(service.sessionStore, work.session_id),
     resolveRoute: work => adapterFor(work).resolveRoute(work),
     validateWork: (work, route) => adapterFor(work).validateWork(work, route),
     prepareCanonical: (work, route) => adapterFor(work).prepareCanonical(work, route),

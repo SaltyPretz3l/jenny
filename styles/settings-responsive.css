@@ -4,15 +4,6 @@
     max-width: calc(100vw - 20px);
     padding: var(--space-5);
   }
-
-  .composer-command-item {
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: var(--space-2);
-  }
-
-  .composer-command-action-badge {
-    min-width: 44px;
-  }
 }
 
 @media (max-width: 1280px) {

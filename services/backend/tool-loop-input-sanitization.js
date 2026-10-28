@@ -1,4 +1,5 @@
 const { LOOP_PROTOCOL_ERROR_CODES } = require('./error-codes');
+const { redactExactSecrets } = require('./exact-secret-redaction');
 
 // Pure tool-input redaction and sanitization helpers with no service or session state.
 
@@ -70,7 +71,7 @@ function redactPathLikeText(value) {
 }
 
 function redactSecretLikeText(value) {
-  return String(value || '')
+  return redactExactSecrets(String(value || ''))
     .replace(SENSITIVE_ASSIGNMENT_RE, `$1"${REDACTED_VALUE_TOKEN}"`)
     .replace(BEARER_TOKEN_RE, REDACTED_VALUE_TOKEN)
     .replace(SENSITIVE_VALUE_RE, REDACTED_VALUE_TOKEN);
@@ -221,8 +222,6 @@ function normalizeGeneratedArtifactsFromToolResult(result) {
   return entries
     .filter((entry) => entry && typeof entry === 'object' && !Array.isArray(entry))
     .map((entry) => {
-      const hasLocalTrusted = Object.prototype.hasOwnProperty.call(entry, 'local_trusted');
-      const hasTrustedLocalPath = Object.prototype.hasOwnProperty.call(entry, 'trusted_local_path');
       return {
         artifact_id: String(entry.artifact_id || '').trim(),
         artifact_kind: String(entry.artifact_kind || '').trim(),
@@ -236,8 +235,6 @@ function normalizeGeneratedArtifactsFromToolResult(result) {
         height: Math.max(Number(entry.height || 0), 0),
         editable: entry.editable !== false,
         status: String(entry.status || 'available').trim(),
-        ...(hasLocalTrusted ? { local_trusted: entry.local_trusted === true } : {}),
-        ...(hasTrustedLocalPath ? { trusted_local_path: entry.trusted_local_path === true } : {}),
       };
     })
     .filter((entry) => (

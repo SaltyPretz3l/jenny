@@ -26,6 +26,18 @@ test('group follow-up: closed-tabs stack keeps only path, view state and a strin
   }
 });
 
+test('closed-tabs stack keeps a valid pdfView only, and leaves other entries unchanged', () => {
+  const stack = createIdeClosedTabsStack();
+  stack.push({ path: 'a.pdf', pdfView: { page: 3, zoom: 'page-fit' }, extra: 1 });
+  assert.deepEqual(stack.pop(), { path: 'a.pdf', viewState: null, group: '', pdfView: { page: 3, zoom: 'page-fit' } });
+  stack.push({ path: 'b.pdf', pdfView: { page: 2.5, zoom: 'huge' } });
+  assert.deepEqual(stack.pop(), { path: 'b.pdf', viewState: null, group: '' });
+  stack.push({ path: 'c.pdf', pdfView: { page: 0, zoom: 2 } });
+  assert.deepEqual(stack.pop(), { path: 'c.pdf', viewState: null, group: '', pdfView: { zoom: 2 } });
+  stack.push({ path: 'd.pdf', pdfView: 'nope' });
+  assert.deepEqual(stack.pop(), { path: 'd.pdf', viewState: null, group: '' });
+});
+
 // ── Pure stack ──────────────────────────────────────────────────────────────
 
 test('closed-tabs stack pops most-recent first (LIFO)', () => {

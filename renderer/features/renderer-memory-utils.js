@@ -225,7 +225,8 @@
           state.memoryManager.statusSnapshot = status;
           state.memoryManager.statusLoaded = true;
           state.memoryManager.statusUnavailable = !status.available;
-          appendClientLog(status.available ? 'INFO' : 'WARN', 'memory.status_loaded', {
+          // INFO either way: main already logged why the status is unavailable.
+          appendClientLog('INFO', 'memory.status_loaded', {
             available: status.available,
             degradedReasonCount: status.degradedReasons.length,
           });

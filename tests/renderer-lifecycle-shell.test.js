@@ -50,7 +50,7 @@ test('renderer dispose unsubscribes shell listeners and re-init does not duplica
 
   assert.deepEqual(shell.__getListenerCounts(), {
     auth: 1,
-    backend: 1,
+    backend: 2, // shell status + the row 62 backend-start send queue
     chat: 1,
     features: 3,
     logs: 1,
@@ -71,7 +71,7 @@ test('renderer dispose unsubscribes shell listeners and re-init does not duplica
 
   assert.deepEqual(shell.__getListenerCounts(), {
     auth: 1,
-    backend: 1,
+    backend: 2, // shell status + the row 62 backend-start send queue
     chat: 1,
     features: 4,
     logs: 1,
@@ -102,7 +102,7 @@ test('renderer dispose unsubscribes shell listeners and re-init does not duplica
   // Settings was already loaded, so re-init also restores its feature listener.
   assert.deepEqual(shell.__getListenerCounts(), {
     auth: 1,
-    backend: 1,
+    backend: 2, // shell status + the row 62 backend-start send queue
     chat: 1,
     features: 4,
     logs: 1,
@@ -122,7 +122,7 @@ test('renderer dispose unsubscribes shell listeners and re-init does not duplica
 
   assert.deepEqual(shell.__getListenerCounts(), {
     auth: 1,
-    backend: 1,
+    backend: 2, // shell status + the row 62 backend-start send queue
     chat: 1,
     features: 4,
     logs: 1,

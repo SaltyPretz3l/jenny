@@ -1,13 +1,15 @@
 'use strict';
 
 const { HOME_CALENDAR_COLOR_IDS } = require('../home-config-schema');
+const {
+  MAX_METADATA_INSTANCES,
+  MAX_METADATA_TITLE_CHARS,
+  MAX_OVERLAPS_PER_INSTANCE,
+} = require('../tools/builtin/home-calendar-result-shape');
 
 const MAX_RESULT_FIELD_CHARS = 64;
 const MAX_ID_CHARS = 512;
-const MAX_TITLE_CHARS = 120;
 const MAX_WHEN_CHARS = 32;
-const MAX_INSTANCES = 40;
-const MAX_OVERLAPS = 8;
 const DATETIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
 const CALENDAR_CATEGORIES = new Set(HOME_CALENDAR_COLOR_IDS);
 const CALENDAR_SOURCES = new Set(['local', 'feed']);
@@ -75,7 +77,7 @@ function normalizeOverlap(value) {
   if (!instanceId || !start) return null;
   return {
     instance_id: instanceId,
-    title: safeString(value.title, MAX_TITLE_CHARS),
+    title: safeString(value.title, MAX_METADATA_TITLE_CHARS),
     start,
   };
 }
@@ -83,7 +85,7 @@ function normalizeOverlap(value) {
 function normalizeOverlaps(value) {
   if (!Array.isArray(value)) return [];
   const overlaps = [];
-  for (const entry of value.slice(0, MAX_OVERLAPS)) {
+  for (const entry of value.slice(0, MAX_OVERLAPS_PER_INSTANCE)) {
     const overlap = normalizeOverlap(entry);
     if (overlap) overlaps.push(overlap);
   }
@@ -100,7 +102,7 @@ function normalizeCalendarInstance(value) {
   const normalized = {
     instance_id: instanceId,
     event_id: eventId,
-    title: safeString(value.title, MAX_TITLE_CHARS),
+    title: safeString(value.title, MAX_METADATA_TITLE_CHARS),
     start,
     end,
     all_day: value.all_day === true,
@@ -131,7 +133,7 @@ function normalizeCalendar(value) {
   if (!rangeStart || !rangeEnd) return null;
   const instances = [];
   if (Array.isArray(value.instances)) {
-    for (const entry of value.instances.slice(0, MAX_INSTANCES)) {
+    for (const entry of value.instances.slice(0, MAX_METADATA_INSTANCES)) {
       const instance = normalizeCalendarInstance(entry);
       if (instance) instances.push(instance);
     }
@@ -175,7 +177,7 @@ function normalizeCalendarReceipt(value) {
     kind,
     op,
     id,
-    title: safeString(value.title, MAX_TITLE_CHARS),
+    title: safeString(value.title, MAX_METADATA_TITLE_CHARS),
   };
   if (kind === 'event') assignEventReceiptFields(normalized, value);
   if (kind === 'reminder') assignReminderReceiptFields(normalized, value);

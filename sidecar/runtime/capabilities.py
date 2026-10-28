@@ -41,6 +41,7 @@ from sidecar.runtime.local_engine.snapshot import (
 )
 from sidecar.runtime.provider_capabilities import (
     ProviderCapability,
+    api_provider_models,
     available_engine_types,
     build_provider_capabilities,
     is_engine_available,
@@ -52,7 +53,7 @@ from sidecar.runtime.provider_capability_profile import (
 from sidecar.runtime.schema_versions import get_all_schema_versions
 from sidecar.runtime.worker_secrets import BROKERED_SECRET_KEYS, SECRET_CONFIG_KEYS
 
-SERVER_VERSION = "1.5.0"
+SERVER_VERSION = "1.6.0"
 
 _ARCHIVED_CLOUD_ENGINE_TYPES = frozenset({"anthropic", "openai", "gemini"})
 _INSPECTABLE_ENGINE_TYPES = frozenset({"ollama", "openai-compatible"})
@@ -393,6 +394,8 @@ def models_list_result(
                 else "provider 'chatgpt' is unavailable"
             ),
         }, model_inspection)
+    if engine_type == "api-provider":
+        return _attach_model_inspection(api_provider_models(runtime_config), model_inspection)
     if isinstance(params, dict):
         if runtime_config is not None:
             capabilities = build_provider_capabilities(runtime_config)
@@ -591,7 +594,7 @@ def initialize_secrets(params: Any) -> dict[str, Any]:
             continue
         secrets[key] = (
             str(value)
-            if key in {"chatgpt_access_token", "openai_compatible_api_key"}
+            if key in {"chatgpt_access_token", "openai_compatible_api_key", "api_provider_key"}
             else value
         )
     return secrets

@@ -179,6 +179,47 @@
       gridEl.insertBefore(card, reference);
     }
 
+    // Renders one card's body; on a throw it shows the retry notice instead.
+    // Returns false when the widget failed.
+    function renderCardBody(card, widget, ctx) {
+      const body = card.querySelector('.dashboard-card__body');
+      try {
+        widget.render(body, ctx);
+        delete card.dataset.widgetState;
+        return true;
+      } catch (error) {
+        card.dataset.widgetState = 'error';
+        if (body) {
+          body.textContent = jt('dashboard.widgets.renderError', 'This widget hit an error; it will retry on the next refresh.');
+          // Widgets store render-key skips on the body; a surviving key would
+          // make an identical next paint skip the promised retry.
+          for (const key of Object.keys(body.dataset)) {
+            if (key.endsWith('RenderKey')) {
+              delete body.dataset[key];
+            }
+          }
+        }
+        appendClientLog('WARN', 'home.dashboard_widget_render_failed', {
+          widgetId: widget.id,
+          message: String(error?.message || error || ''),
+        });
+        return false;
+      }
+    }
+
+    // Repaints a single already-placed card (a change only that widget reads).
+    // Returns false when the card is not on the page, so the caller can fall
+    // back to a full renderInto().
+    function renderOne(gridEl, widgetId, ctx = {}) {
+      const widget = widgets.find((entry) => entry.id === widgetId);
+      const card = widget && gridEl && documentRef ? findCard(collectHosts(gridEl, ctx), widgetId) : null;
+      if (!card) {
+        return false;
+      }
+      renderCardBody(card, widget, ctx);
+      return true;
+    }
+
     function renderInto(gridEl, ctx = {}) {
       const counts = { rendered: 0, skipped: 0, failed: 0 };
       if (!gridEl || !documentRef) {
@@ -201,28 +242,10 @@
         placeCard(host, card, anchors.get(host) || null);
         anchors.set(host, card);
         syncEditToolbar(card, widget, ctx);
-        const body = card.querySelector('.dashboard-card__body');
-        try {
-          widget.render(body, ctx);
-          delete card.dataset.widgetState;
+        if (renderCardBody(card, widget, ctx)) {
           counts.rendered += 1;
-        } catch (error) {
-          card.dataset.widgetState = 'error';
-          if (body) {
-            body.textContent = jt('dashboard.widgets.renderError', 'This widget hit an error; it will retry on the next refresh.');
-            // Widgets store render-key skips on the body; a surviving key would
-            // make an identical next paint skip the promised retry.
-            for (const key of Object.keys(body.dataset)) {
-              if (key.endsWith('RenderKey')) {
-                delete body.dataset[key];
-              }
-            }
-          }
+        } else {
           counts.failed += 1;
-          appendClientLog('WARN', 'home.dashboard_widget_render_failed', {
-            widgetId: widget.id,
-            message: String(error?.message || error || ''),
-          });
         }
       }
       for (const host of hosts) {
@@ -235,7 +258,7 @@
       return counts;
     }
 
-    return { register, list, listRenderableIds, renderInto };
+    return { register, list, listRenderableIds, renderInto, renderOne };
   }
 
   return { createDashboardRegistry };

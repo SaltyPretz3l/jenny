@@ -115,6 +115,11 @@ function supportsSessionMessageContext(client) {
   return negotiatedChatWorkspaceCapabilities(client).session_messages === true;
 }
 
+// Mid-turn mail (row 70 W2a): `session.mail_arrived` into a live turn of this process.
+function supportsMidTurnMail(client) {
+  return negotiatedChatWorkspaceCapabilities(client).mid_turn_mail === true;
+}
+
 // The first-turn handoff context kind (cp5a): without it the handoff turn fails closed.
 function supportsSessionHandoffContext(client) {
   return negotiatedChatWorkspaceCapabilities(client).context_kinds.includes(SESSION_HANDOFF_CONTEXT_KIND);
@@ -135,4 +140,4 @@ module.exports = { RUNTIME_INFERENCE_ADMISSION_VERSION, beginRuntimeInferenceIni
   assertRuntimeBudgetProtocol, assertCommandProposalProtocol, supportsCommandProposalProtocol,
   supportsInferencePerformanceProtocol,
   negotiatedChatWorkspaceCapabilities, supportsSessionMessageContext, supportsSessionHandoffContext,
-  supportsProducerTool };
+  supportsProducerTool, supportsMidTurnMail };

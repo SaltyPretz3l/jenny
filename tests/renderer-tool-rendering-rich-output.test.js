@@ -591,17 +591,18 @@ test('tool shell fallback logs throttled warn diagnostics on renderer exception'
   });
   assert.ok(renderer && typeof renderer.renderToolShell === 'function');
 
+  // Mermaid is the one remaining shell; a broken toolCallUtils makes its header throw.
   const model = {
-    toolKind: 'Bash',
+    toolKind: 'mermaid_generate',
     callId: 'call-debug-1',
-    displayToolName: 'Bash',
+    displayToolName: 'Mermaid',
     summary: 'debug',
     status: 'completed',
     statusLabel: 'Completed',
     isRunning: false,
     durationLabel: '',
     metadata: {},
-    outputText: '',
+    outputText: 'graph TD\nA-->B',
   };
 
   assert.equal(renderer.renderToolShell(model), null);

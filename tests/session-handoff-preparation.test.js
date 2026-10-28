@@ -256,7 +256,7 @@ test('deadline start and clear are idempotent and successful reservation clears 
   let callback; let starts = 0; let clears = 0; let expired = 0;
   f.ports.setTimer = (fn, delay) => { callback = fn; starts += 1; assert.equal(delay, 60000); return 7; };
   f.ports.clearTimer = (handle) => { clears += 1; assert.equal(handle, 7); };
-  const args = { ...f.args, onExpire: () => { expired += 1; } };
+  const args = { ...f.args, stage: 'output', onExpire: () => { expired += 1; } };
   H.startPreparationDeadline(f.ports, args);
   H.startPreparationDeadline(f.ports, args);
   assert.equal(starts, 1);
@@ -270,6 +270,25 @@ test('deadline start and clear are idempotent and successful reservation clears 
   H.startPreparationDeadline(f.ports, args);
   await H.completeSessionHandoff(f.ports, f.args);
   assert.equal(clears, 2);
+  assert.equal(f.ports.deadlines.size, 0);
+});
+
+test('admission arms the first-output limit; the first output swaps it for the 60 s deadline exactly once', () => {
+  const f = fixture();
+  const timers = [];
+  f.ports.setTimer = (fn, delay) => { const timer = { fn, delay, cleared: false }; timers.push(timer); return timer; };
+  f.ports.clearTimer = (timer) => { timer.cleared = true; };
+  const args = { ...f.args, onExpire() {} };
+  H.startPreparationDeadline(f.ports, { ...args, stage: 'admitted' });
+  assert.deepEqual(timers.map((timer) => [timer.delay, timer.cleared]), [[H.PREPARATION_FIRST_OUTPUT_LIMIT_MS, false]]);
+  H.startPreparationDeadline(f.ports, { ...args, stage: 'output' });
+  H.startPreparationDeadline(f.ports, { ...args, stage: 'output' });
+  H.startPreparationDeadline(f.ports, { ...args, stage: 'admitted' });
+  assert.deepEqual(timers.map((timer) => [timer.delay, timer.cleared]),
+    [[H.PREPARATION_FIRST_OUTPUT_LIMIT_MS, true], [H.PREPARATION_DEADLINE_MS, false]],
+    'a late admission event never re-arms the first-output limit');
+  H.clearPreparationDeadline(f.ports, args);
+  assert.equal(timers[1].cleared, true);
   assert.equal(f.ports.deadlines.size, 0);
 });
 

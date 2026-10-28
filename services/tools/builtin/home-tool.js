@@ -26,107 +26,22 @@
 
 const { TOOL_ERROR_CODES } = require('../../backend/error-codes');
 const { normalizeString } = require('../../shared/normalize');
-const { HOME_CALENDAR_COLOR_IDS } = require('../../home-config-schema');
-const {
-  HOME_CALENDAR_RECURRENCE_PRESETS,
-  MAX_CALENDAR_EVENT_NOTES_CHARS,
-  MAX_CALENDAR_EVENT_TITLE_CHARS,
-} = require('../../home-calendar-schema');
-const {
-  MAX_PROACTIVE_REMINDER_LABEL_CHARS,
-  MAX_PROACTIVE_REMINDER_PROMPT_CHARS,
-} = require('../../shell-config-followups-schema');
 const { HOME_ACTIONS, failure } = require('./home-tool-actions');
+const { manifestSchema } = require('./tool-result');
 
 const HOME_TOOL_ACTIONS = Object.freeze(Object.keys(HOME_ACTIONS));
 
-const homeToolParameters = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    action: {
-      type: 'string',
-      enum: [...HOME_TOOL_ACTIONS],
-      description: 'Which Home operation to perform.',
-    },
-    id: {
-      type: 'string',
-      maxLength: 128,
-      description: 'Existing event or reminder id. Omit on an upsert to create a new record.',
-    },
-    title: {
-      type: 'string',
-      maxLength: MAX_CALENDAR_EVENT_TITLE_CHARS,
-      description: 'Calendar event title.',
-    },
-    start: {
-      type: 'string',
-      description: 'Event start as a local wall-clock "YYYY-MM-DDTHH:MM" string (no timezone).',
-    },
-    end: {
-      type: 'string',
-      description: 'Event end as a local wall-clock "YYYY-MM-DDTHH:MM" string. Defaults to 30 minutes after start.',
-    },
-    all_day: {
-      type: 'boolean',
-      description: 'True for an all-day event.',
-    },
-    category: {
-      type: 'string',
-      enum: [...HOME_CALENDAR_COLOR_IDS],
-      description: 'Calendar category, which also selects the event color.',
-    },
-    notes: {
-      type: 'string',
-      maxLength: MAX_CALENDAR_EVENT_NOTES_CHARS,
-      description: 'Free-form event notes.',
-    },
-    recurrence: {
-      type: 'string',
-      enum: [...HOME_CALENDAR_RECURRENCE_PRESETS],
-      description: 'Event recurrence preset.',
-    },
-    label: {
-      type: 'string',
-      maxLength: MAX_PROACTIVE_REMINDER_LABEL_CHARS,
-      description: 'Reminder label shown on Home.',
-    },
-    prompt: {
-      type: 'string',
-      maxLength: MAX_PROACTIVE_REMINDER_PROMPT_CHARS,
-      description: 'Optional text to raise with the user when the reminder is surfaced.',
-    },
-    remind_at: {
-      type: 'string',
-      description: 'Reminder time: "YYYY-MM-DDTHH:MM" for a one-shot, or "HH:MM" for a daily reminder.',
-    },
-    range_start: {
-      type: 'string',
-      description: 'Optional local "YYYY-MM-DDTHH:MM" lower bound for calendar_list.',
-    },
-    range_end: {
-      type: 'string',
-      description: 'Optional local "YYYY-MM-DDTHH:MM" upper bound for calendar_list.',
-    },
-    confirm: {
-      type: 'boolean',
-      description: 'Required true to actually perform a delete. Without it the tool only reports what would be deleted.',
-    },
-  },
-  required: ['action'],
-};
-
 const homeTool = {
   name: 'home',
-  description: 'Read and update the user\'s Home surfaces: list calendar events, create/update/delete events and reminders, and read the Home scratchpad. Every write is attributed to Jenny and one-click undoable; deletes require a confirm round-trip.',
+  // The manifest owns the description and the schema (action enum, field caps).
+  ...manifestSchema('home'),
   category: 'builtin',
   readOnly: false,
   workspaceRequired: false,
-  parameters: homeToolParameters,
 
   summarize(input) {
-    const action = normalizeString(input?.action);
-    return `Home: ${action || 'action'}`;
+    const action = typeof input?.action === 'string' ? input.action.trim() : '';
+    return `Home: ${Object.hasOwn(HOME_ACTIONS, action) ? action : 'action'}`;
   },
 
   async execute(input, context) {
@@ -140,7 +55,9 @@ const homeTool = {
       });
     }
     const action = normalizeString(input?.action);
-    const handler = HOME_ACTIONS[action];
+    // Own keys only: a plain-object lookup would hand back Object.prototype
+    // members such as 'constructor'.
+    const handler = Object.hasOwn(HOME_ACTIONS, action) ? HOME_ACTIONS[action] : null;
     if (!handler) {
       return failure({
         reason: 'unsupported_action',
@@ -170,5 +87,4 @@ const homeTool = {
 
 module.exports = Object.assign(homeTool, {
   HOME_TOOL_ACTIONS,
-  homeToolParameters,
 });

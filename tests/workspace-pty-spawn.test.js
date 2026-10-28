@@ -13,6 +13,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const pty = require('@lydell/node-pty');
+const { windowsOnly } = require('./helpers/platform-skips');
 
 const SETTLE_MS = 300;
 const POLL_INTERVAL_MS = 100;
@@ -62,7 +63,7 @@ function spawnShell() {
 // job runs `npm run test:safe`, which does not pass --parallel-only, so the
 // stable-lane exclusion list does not keep this file out of it.
 test('real ConPTY spawn: onData carries shell output with VT escapes', {
-  skip: process.platform !== 'win32' ? 'ConPTY smoke: Windows only' : false,
+  skip: windowsOnly('ConPTY smoke'),
 }, async () => {
   const { proc } = spawnShell();
   let collected = '';

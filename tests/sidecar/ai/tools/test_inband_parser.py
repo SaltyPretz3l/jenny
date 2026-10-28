@@ -365,6 +365,52 @@ def test_wrapped_truncated_call_carries_structural_argument_repairs() -> None:
     assert "closed_string" in calls[0].argument_repairs
 
 
+@pytest.mark.parametrize("healing", [False, True])
+def test_string_arguments_are_parsed_and_tagged(healing: bool) -> None:
+    configure_tool_call_healing({"tool_call_reliability_net_enabled": healing})
+    text = r'<tool_call>{"name":"edit_file","arguments":"{\"path\":\"a\"}"}</tool_call>'
+
+    result = extract_inband_tool_calls_detailed(text, KNOWN_TOOLS)
+
+    (call,) = result.calls
+    assert call.arguments == {"path": "a"}
+    assert call.argument_repairs == ("parsed_string_arguments",)
+
+
+@pytest.mark.parametrize("healing", [False, True])
+def test_unparseable_string_arguments_are_a_failed_attempt(healing: bool) -> None:
+    configure_tool_call_healing({"tool_call_reliability_net_enabled": healing})
+    text = '<tool_call>{"name":"edit_file","arguments":"path is a.txt"}</tool_call>'
+
+    result = extract_inband_tool_calls_detailed(text, KNOWN_TOOLS)
+
+    assert result.calls == ()
+    assert result.failed_attempt is True
+
+
+@pytest.mark.parametrize("key", ["parameters", "args", "input"])
+def test_declared_argument_aliases_are_read(key: str) -> None:
+    text = f'<tool_call>{{"name":"read_file","{key}":{{"path":"a.txt"}}}}</tool_call>'
+
+    calls, _remaining = extract_inband_tool_calls(text, KNOWN_TOOLS)
+
+    assert [(call.tool_id, call.arguments) for call in calls] == [("read_file", {"path": "a.txt"})]
+
+
+def test_missing_or_blank_arguments_are_an_argument_free_call() -> None:
+    text = (
+        '<tool_call>{"name":"glob_files"}</tool_call>\n'
+        '<tool_call>{"name":"read_file","arguments":""}</tool_call>'
+    )
+
+    calls, _remaining = extract_inband_tool_calls(text, KNOWN_TOOLS)
+
+    assert [(call.tool_id, call.arguments, call.argument_repairs) for call in calls] == [
+        ("glob_files", {}, ()),
+        ("read_file", {}, ()),
+    ]
+
+
 def test_wrapped_clean_call_has_no_argument_repairs() -> None:
     configure_tool_call_healing({"tool_call_reliability_net_enabled": True})
     text = '<tool_call>{"name":"read_file","arguments":{"path":"a"}}</tool_call>'
@@ -500,3 +546,15 @@ def test_backticks_inside_balanced_json_arguments_are_file_content():
     result = extract_inband_tool_calls_detailed(text, WRITE_TOOLS)
     assert [call.arguments["content"] for call in result.calls] == ["Run `npm test` first."]
     assert result.remaining_text.strip() == "Here it is."
+
+
+def test_null_arguments_key_does_not_hide_populated_parameters() -> None:
+    text = (
+        '<tool_call>{"name": "write_file", "arguments": null, '
+        '"parameters": {"path": "a.txt", "content": "x"}}</tool_call>'
+    )
+
+    result = extract_inband_tool_calls_detailed(text, frozenset({"write_file"}))
+
+    assert len(result.calls) == 1
+    assert result.calls[0].arguments == {"path": "a.txt", "content": "x"}

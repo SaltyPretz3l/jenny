@@ -1,14 +1,13 @@
 """WIDE-044 tests for ``.jenny/trash`` retention and maintenance primitives.
 
-The trash previously had NO lifecycle at all. These pin: count/age/byte
-quotas each tripped separately (injectable clock), the newest entry never
+The trash previously had NO lifecycle at all. These pin: count and byte
+quotas each tripped separately (wall-clock age never evicts), the newest entry never
 being evicted (a just-made delete stays reversible), list/purge primitives,
 and delete_file applying retention automatically after every delete.
 """
 
 from __future__ import annotations
 
-import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,8 +21,6 @@ from sidecar.ai.tools.builtins.delete_file import delete_file_tool
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
 from sidecar.ai.tools.workspace_store import GuardedWorkspaceStore, WorkspaceStoreKind
-
-_NS_PER_DAY = 24 * 60 * 60 * 1_000_000_000
 
 
 def _guard(tmp_path: Path) -> WorkspaceGuard:
@@ -83,8 +80,7 @@ def test_wall_clock_age_alone_never_evicts(tmp_path: Path) -> None:
     old = _seed_trash_entry(store, _stamp(now, seconds_ago=500), b"old")
     newer = _seed_trash_entry(store, _stamp(now, seconds_ago=100), b"new")
 
-    injected_now = time.time_ns() + 60 * _NS_PER_DAY
-    outcome = trash_module.apply_trash_retention(store, now_ns=injected_now)
+    outcome = trash_module.apply_trash_retention(store)
 
     remaining = [entry.name for entry in trash_module.list_trash_entries(store)]
     assert remaining == [newer, old], "wall time alone never makes trash eligible"
@@ -108,7 +104,7 @@ def test_byte_quota_trips_separately(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert oldest not in remaining
 
 
-def test_size_walk_cap_returns_over_quota_sentinel_and_logs_diagnostic(
+def test_size_walk_cap_returns_partial_total_and_logs_diagnostic(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     children = [
@@ -132,11 +128,39 @@ def test_size_walk_cap_returns_over_quota_sentinel_and_logs_diagnostic(
         size_bytes=0,
     )
 
-    assert measured == trash_module.MAX_TRASH_TOTAL_BYTES + 1
+    assert measured == trash_module.SizeWalk(
+        total_bytes=trash_module.MAX_SIZE_WALK_ENTRIES, truncated=True
+    ), "the partial count stands in for the size, never an over-quota sentinel"
     assert diagnostics[-1]["event"] == "ai.tools.trash_maintenance.size_walk_bounded"
     assert diagnostics[-1]["data"] == {
         "max_entries": trash_module.MAX_SIZE_WALK_ENTRIES
     }
+
+
+def test_capped_size_walk_on_newest_entry_does_not_evict_small_old_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(trash_module, "MAX_SIZE_WALK_ENTRIES", 3)
+    store = GuardedWorkspaceStore(tmp_path)
+    now = datetime.now(UTC)
+    oldest = _seed_trash_entry(store, _stamp(now, seconds_ago=300), b"a")
+    middle = _seed_trash_entry(store, _stamp(now, seconds_ago=200), b"b")
+    newest = _stamp(now, seconds_ago=10)
+    for index in range(5):
+        ref = store.resolve(WorkspaceStoreKind.TRASH, (newest, f"file-{index}.txt"))
+        store.write_bytes_atomic(ref, b"c")
+
+    outcome = trash_module.apply_trash_retention(
+        store, active_use_age_source=_EligibleAgeSource()
+    )
+
+    entries = trash_module.list_trash_entries(store)
+    assert [entry.name for entry in entries] == [newest, middle, oldest]
+    assert outcome.evicted_names == ()
+    by_name = {entry.name: entry for entry in entries}
+    assert by_name[newest].size_truncated is True
+    assert by_name[newest].size_bytes == 3
+    assert by_name[oldest].size_truncated is False
 
 
 def test_newest_entry_is_never_evicted_even_when_all_quotas_are_violated(
@@ -148,9 +172,8 @@ def test_newest_entry_is_never_evicted_even_when_all_quotas_are_violated(
     now = datetime.now(UTC)
     only = _seed_trash_entry(store, _stamp(now, seconds_ago=5), b"x" * 100)
 
-    injected_now = time.time_ns() + (trash_module.MAX_TRASH_AGE_DAYS + 10) * _NS_PER_DAY
     outcome = trash_module.apply_trash_retention(
-        store, now_ns=injected_now, active_use_age_source=_EligibleAgeSource()
+        store, active_use_age_source=_EligibleAgeSource()
     )
 
     assert outcome.evicted_names == ()

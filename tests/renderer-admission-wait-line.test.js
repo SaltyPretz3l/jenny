@@ -82,3 +82,21 @@ test('the queue strip reads the same words', () => {
   const state = { sessions: [{ id: 'session_a', title: 'Draft' }], pendingToolApprovals: new Map([['c', { sessionId: 'session_a' }]]) };
   assert.equal(waitText(state, 'session_a'), 'Waiting for another chat: "Draft" is paused on your approval.');
 });
+
+test('Q13: a known blocker gets "Stop it", which stops that chat once; an unknown one has none without a handler', (t) => {
+  const { timeline, state, dom } = harness(t);
+  const stopped = [];
+  const sync = (rows, onStopChat) => syncAdmissionWaitLine({ timeline, state, rows, onOpenChat() {}, onStopChat });
+  const line = sync(held(), (id) => stopped.push(id));
+  assert.equal(line.textContent, 'Waiting for "Use the run_command" to finish its reply. Stop it');
+  const stop = line.querySelector('[data-wait-stop]');
+  assert.ok(stop.classList.contains('turn-activity-wait-action'));
+  stop.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  stop.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  assert.deepEqual(stopped, ['session_a']);
+  assert.equal(stop.disabled, true);
+  // An untitled blocker can still be stopped; no blocker id, no Stop.
+  assert.ok(sync(held('session_gone'), () => {}).querySelector('[data-wait-stop]'));
+  assert.equal(sync(held(''), () => {}).querySelector('[data-wait-stop]'), null);
+  assert.equal(sync(held('session_b')).querySelector('[data-wait-stop]'), null);
+});

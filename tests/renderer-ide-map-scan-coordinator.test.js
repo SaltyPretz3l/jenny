@@ -20,9 +20,7 @@ const { JSDOM } = require('jsdom');
 const {
   createMapScanCoordinator,
   createRootBindingTracker,
-  bindingsMatch,
   classifyWorkspaceInvalidation,
-  normalizeBinding,
 } = require('../renderer/features/renderer-ide-map-scan-coordinator');
 const ctrlUtils = require('../renderer/features/renderer-ide-map-controller-utils');
 const { createIdeMapController } = require('../renderer/features/renderer-ide-map-controller');
@@ -39,16 +37,6 @@ function tick() {
 }
 
 // ── binding primitives ───────────────────────────────────────────────────────
-
-test('normalizeBinding + bindingsMatch compare rootId, generation, and revision exactly', () => {
-  const a = normalizeBinding({ rootId: 'root_a', generation: 1, revision: 2 });
-  assert.deepEqual(a, { rootId: 'root_a', generation: 1, revision: 2 });
-  assert.equal(bindingsMatch(a, normalizeBinding({ rootId: 'root_a', generation: 1, revision: 2 })), true);
-  assert.equal(bindingsMatch(a, normalizeBinding({ rootId: 'root_b', generation: 1, revision: 2 })), false);
-  assert.equal(bindingsMatch(a, normalizeBinding({ rootId: 'root_a', generation: 2, revision: 2 })), false);
-  assert.equal(bindingsMatch(a, normalizeBinding({ rootId: 'root_a', generation: 1, revision: 3 })), false);
-  assert.equal(bindingsMatch(a, null), false);
-});
 
 test('createRootBindingTracker: noteMutation bumps revision; noteRootCommitted adopts context and bumps', () => {
   let stateCtx = { rootId: 'root_a', generation: 1 };
@@ -249,6 +237,8 @@ test('production script graph loads controller-utils + scan-coordinator before t
   const evalFile = (name) => dom.window.eval(fs.readFileSync(path.join(root, 'renderer', 'features', name), 'utf8'));
   // Production loads string-utils (index.html) before the lazy IDE group.
   dom.window.eval(fs.readFileSync(path.join(root, 'renderer', 'shared', 'string-utils.js'), 'utf8'));
+  // The manifest's first map script; controller-utils resolves it by global.
+  evalFile('renderer-ide-map-event-ownership.js');
   evalFile('renderer-ide-map-controller-utils.js');
   evalFile('renderer-ide-map-scan-coordinator.js');
   assert.equal(typeof dom.window.rendererIdeMapControllerUtils?.createFileMapBridge, 'function');
@@ -352,7 +342,6 @@ function stubSiblings(globalRef, spies, overrides = {}) {
       getBounds: () => ({ minX: 0, minY: 0, maxX: 10, maxY: 10 }), getTier: () => 'regions',
       dispose: () => {},
     }),
-    renderBucketStrip: () => {},
   };
   globalRef.rendererIdeMapStates = {
     createMapStates: () => ({

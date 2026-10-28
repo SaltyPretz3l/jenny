@@ -6,7 +6,7 @@
  *
  *   createToolbarFit({ target, measure, apply, requestFrame, cancelFrame,
  *                      ResizeObserverCtor, getHost })
- *     -> { recheck(), isCompact(), dispose() }
+ *     -> { recheck(), flush(), isCompact(), dispose() }
  *
  * `measure()` does the ONE layout read and returns `{ available, needed }`:
  * the toolbar's width and, while expanded, the width its one-line content
@@ -17,7 +17,9 @@
  * (a folded pane, display: none) decides nothing.
  *
  * Evaluation runs only from the ResizeObserver and `recheck()` (a rail label
- * changed), coalesced into one frame; never per stream frame. `apply(compact)`
+ * changed), coalesced into one frame; never per stream frame. `flush()` runs a
+ * pending or fresh evaluation now, for a caller that must measure the settled
+ * layout in the same task (side-panel motion). `apply(compact)`
  * is the only writer of the caller's attributes and runs only on a change.
  */
 (function (root, factory) {
@@ -107,8 +109,15 @@
     }
     schedule();
 
+    function flush() {
+      if (disposed) return;
+      if (scheduled) cancelFrame(frame);
+      evaluate();
+    }
+
     return {
       recheck: schedule,
+      flush: flush,
       isCompact: function isCompact() { return compact; },
       dispose: function dispose() {
         if (disposed) return;

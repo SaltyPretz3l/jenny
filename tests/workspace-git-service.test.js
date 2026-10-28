@@ -16,6 +16,7 @@ const {
   cleanupTrackedResources,
   createTrackedTempDir,
 } = require('./helpers/resource-cleanup');
+const { linkDirectory } = require('./helpers/platform-skips');
 
 const execFileAsync = promisify(execFile);
 
@@ -422,17 +423,12 @@ describe('WorkspaceGitService — graceful degradation & security', () => {
     await assert.rejects(() => svc.blameRange({ path: '-rf', startLine: 1, endLine: 1 }), /must not start with a dash/);
   });
 
-  test('a realpath escape via a symlink/junction is rejected', async (t) => {
+  test('a realpath escape via a symlink/junction is rejected', async () => {
     const repo = await createGitRepo();
     const outside = createTrackedTempDir('jenny-workspace-git-outside-');
     await fs.writeFile(path.join(outside, 'secret.txt'), 'secret\n', 'utf8');
     const linkPath = path.join(repo, 'link');
-    try {
-      await fs.symlink(outside, linkPath, process.platform === 'win32' ? 'junction' : 'dir');
-    } catch (error) {
-      t.skip(`symlink/junction unavailable in this environment: ${error.message}`);
-      return;
-    }
+    linkDirectory(outside, linkPath);
     const svc = createService(repo);
     await assert.rejects(
       () => svc.getFileAtHead({ path: 'link/secret.txt' }),
@@ -483,10 +479,10 @@ describe('WorkspaceGitService — graceful degradation & security', () => {
 
 describe('WorkspaceGitService — destructive guard', () => {
   test('assertWriteVerb only accepts the write allowlist', () => {
-    for (const verb of ['add', 'restore', 'commit', 'checkout', 'stash', 'reset', 'update-ref']) {
+    for (const verb of ['add', 'restore', 'commit', 'checkout', 'stash', 'reset', 'update-ref', 'branch', 'apply']) {
       assert.doesNotThrow(() => assertWriteVerb(verb));
     }
-    for (const verb of ['rm', 'push', 'clean', 'fetch', 'config', '']) {
+    for (const verb of ['rm', 'push', 'pull', 'clean', 'fetch', 'config', '']) {
       assert.throws(() => assertWriteVerb(verb), /unexpected git verb/);
     }
   });
@@ -500,7 +496,7 @@ describe('WorkspaceGitService — destructive guard', () => {
       // checks, then writes
       if (args[0] === 'rev-parse') {
         if (args.includes('--is-inside-work-tree')) {
-          return { success: true, stdout: 'true', stderr: '', message: '', reason: '' };
+          return { success: true, stdout: `true\n${repo}`, stderr: '', message: '', reason: '' };
         }
         if (args.includes('--show-toplevel')) {
           return { success: true, stdout: repo, stderr: '', message: '', reason: '' };
@@ -658,7 +654,7 @@ describe('WorkspaceGitService - immutable root operation context', () => {
 
     assert.equal(result.ok, false);
     assert.equal(result.reason, 'root_changed');
-    assert.deepEqual(calls, [['G:/root-a', ['rev-parse', '--is-inside-work-tree']]]);
+    assert.deepEqual(calls, [['G:/root-a', ['rev-parse', '--is-inside-work-tree', '--show-toplevel']]]);
   });
 
   test('write verbs serialize per repository before validation and spawn', async () => {
@@ -685,10 +681,7 @@ describe('WorkspaceGitService - immutable root operation context', () => {
       exec: async (cwd, args) => {
         calls.push([cwd, [...args]]);
         if (args[0] === 'rev-parse' && args[1] === '--is-inside-work-tree') {
-          return { success: true, stdout: 'true\n', stderr: '', message: '' };
-        }
-        if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') {
-          return { success: true, stdout: `${root}\n`, stderr: '', message: '' };
+          return { success: true, stdout: `true\n${root}\n`, stderr: '', message: '' };
         }
         if (args[0] === 'add') {
           addCalls += 1;

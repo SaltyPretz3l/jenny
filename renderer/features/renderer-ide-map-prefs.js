@@ -2,13 +2,15 @@
  * the Workspace File Map, extracted from renderer-ide-map-controller.js to keep
  * that orchestrator under the file-size ceiling. Owns the one localStorage seam
  * the controller used to inline:
- *   jenny.fileMap.prefs.<wsId>  { hideTests, layers: {activity,health,deps} }
+ *   jenny.fileMap.prefs.<wsId>  { hideTests, layers: {activity,health,deps}, lens }
  *
  * Node dragging (and the per-node position overrides it produced) is retired
  * by the Living Atlas rework — positions are baked layout, not user state — so
- * this module no longer owns a positions store. Stale legacy fields (`lens`,
- * `clusterExpand`) that may still be sitting in an existing stored blob from
- * before this rework are silently ignored on read and never written back.
+ * this module no longer owns a positions store. A stale `clusterExpand`
+ * field from before this rework is ignored on read and never written back.
+ * `lens` is the row 77 Atlas | Components switch: 'atlas' or 'components';
+ * anything else (including the retired 'architecture'/'size' lens values
+ * of older blobs) reads as 'atlas'.
  *
  * Reads and writes are best-effort so corrupt storage entries, throwing
  * storage, or opaque-origin windows cannot break a scan. */
@@ -26,7 +28,8 @@
   // Defaults mirrored by renderer-ide-map-controls.js's DEFAULT_LAYERS so the
   // bar and the persisted shape never disagree about what "no prefs yet"
   // means.
-  const DEFAULT_PREFS = { hideTests: false, layers: { activity: true, health: false, deps: true } };
+  const DEFAULT_PREFS = { hideTests: false, layers: { activity: true, health: false, deps: true }, lens: 'atlas' };
+  const LENSES = new Set(['atlas', 'components']);
 
   // Reads localStorage off the INJECTED windowRef only (never the ambient
   // global) — the controller may be constructed many times per test process
@@ -65,12 +68,11 @@
       return PREFS_KEY_PREFIX + getWorkspaceId();
     }
 
-    // Returns { hideTests, layers: {activity,health,deps} } — always the full
-    // shape, with defaults filled in for any field that's missing, invalid,
-    // or belongs to a pre-rework blob (stale `lens`/`clusterExpand` fields are
-    // ignored, not surfaced).
+    // Returns { hideTests, layers: {activity,health,deps}, lens } — always the
+    // full shape, with defaults filled in for any field that's missing,
+    // invalid, or belongs to a pre-rework blob.
     function restore() {
-      const out = { hideTests: DEFAULT_PREFS.hideTests, layers: { ...DEFAULT_PREFS.layers } };
+      const out = { hideTests: DEFAULT_PREFS.hideTests, layers: { ...DEFAULT_PREFS.layers }, lens: DEFAULT_PREFS.lens };
       const store = activeStorage();
       if (!store) return out;
       let raw = null;
@@ -86,6 +88,7 @@
       if (typeof layers.activity === 'boolean') out.layers.activity = layers.activity;
       if (typeof layers.health === 'boolean') out.layers.health = layers.health;
       if (typeof layers.deps === 'boolean') out.layers.deps = layers.deps;
+      if (LENSES.has(parsed.lens)) out.lens = parsed.lens;
       return out;
     }
 
@@ -102,6 +105,7 @@
             health: layers.health === true,
             deps: layers.deps === true,
           },
+          lens: LENSES.has(p.lens) ? p.lens : DEFAULT_PREFS.lens,
         }));
       } catch (_error) { /* persistence is best-effort */ }
     }

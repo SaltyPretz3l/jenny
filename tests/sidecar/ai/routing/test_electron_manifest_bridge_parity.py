@@ -58,6 +58,15 @@ EXPECTED_ELECTRON_BRIDGE_TOOLS = frozenset(
         "propose_git_action",
         "propose_session",
         "session_message",
+        # Added deliberately (row 69 W2): the session directory. `sessions_list` and
+        # `session_status` are read-only and reach the plan-mode schema;
+        # `session_stop` is side-effecting (policy ask), so plan mode withholds it.
+        "sessions_list",
+        "session_status",
+        "session_transcript",
+        "session_stop",
+        # Added deliberately (row 69 W4b): flag-less read-only app guide search/read.
+        "jenny_help",
         # Added deliberately (WO-10): `task_board` writes durable agent_task
         # follow-ups into the Open Loops store through Electron; side-effecting,
         # so it is withheld from the plan-mode schema like `verify`.
@@ -120,6 +129,7 @@ def _kernel(workspace_root: str, **overrides: bool) -> SimpleNamespace:
         "tools_task_board_enabled": True,
         "tools_project_notes_enabled": True,
         "tools_conversations_enabled": True,
+        "tools_session_directory_enabled": True,
         "tools_workspace_root": workspace_root,
         "mode": "assist",
     }
@@ -212,6 +222,7 @@ def test_electron_owned_read_only_tools_reach_the_plan_mode_schema(tmp_path) -> 
         ("tools_task_board_enabled", {"task_board"}),
         ("tools_project_notes_enabled", {"project_notes"}),
         ("tools_conversations_enabled", {"conversations_recent", "conversation_open", "conversations_search"}),
+        ("tools_session_directory_enabled", {"sessions_list", "session_status", "session_transcript", "session_stop"}),
     ],
 )
 def test_manifest_config_flags_still_gate_their_bridge_groups(

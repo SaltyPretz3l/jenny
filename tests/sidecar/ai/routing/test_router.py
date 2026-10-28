@@ -12,7 +12,11 @@ from sidecar.ai.context.builder import ContextBuilder, RuntimeToolStatus
 from sidecar.ai.context.compaction import CompactionResult
 from sidecar.ai.context.prompt_cache import StructuredSystemPrompt
 from sidecar.ai.context.runtime_message_markers import PLAN_MODE_OVERLAY_HEADING
-from sidecar.ai.context.token_budget import apply_budget_check
+from sidecar.ai.context.token_budget import (
+    apply_budget_check,
+    estimate_tool_schema_tokens,
+    resolve_tokenizer_backend,
+)
 from sidecar.ai.context.turn_context import TURN_CONTEXT_HEADER
 from sidecar.ai.engines.factory import EngineSelection
 from sidecar.ai.engines.provider_http import ProviderHttpError
@@ -3021,6 +3025,11 @@ def test_router_budget_warning_filters_tool_schemas_and_status_consistently(
     assert decision.tool_schema_count == len(first_call_tools)
 
 
+def _sent_schema_tokens(router: Any, tools: list[dict[str, Any]]) -> int:
+    """The full tool schemas a request sent, counted with the request's tokenizer."""
+    return estimate_tool_schema_tokens(tools, resolve_tokenizer_backend(router._config))
+
+
 def test_router_budget_filter_caps_oversized_request_allowlist() -> None:
     engine = _StubEngine(
         plans=[_ToolPlan(result=GenerationResult(content="filtered", finish_reason="stop"))]
@@ -3054,9 +3063,12 @@ def test_router_budget_filter_caps_oversized_request_allowlist() -> None:
     assert {f"mcp__budget__tool_{index:02d}" for index in range(11, 15)}.isdisjoint(
         full_schema_names
     )
-    # Whole-prompt meter units: the 47,700 trigger plus 12 schemas x 500 reserve.
-    assert decision.compact_threshold_tokens == 47_700 + 12 * 500
-    assert decision.context_tool_overhead_tokens == 12 * 500
+    # Whole-prompt meter units: the 47,700 trigger plus the 12 schemas the request sent,
+    # counted the way context.preview counts them (the 500/tool reserve stays budgeting).
+    schema_tokens = _sent_schema_tokens(router, engine.calls[0]["tools"])
+    assert 0 < schema_tokens != 12 * 500
+    assert decision.compact_threshold_tokens == 47_700 + schema_tokens
+    assert decision.context_tool_overhead_tokens == schema_tokens
 
 
 @pytest.mark.parametrize(
@@ -3199,10 +3211,13 @@ def test_router_tool_search_expands_budget_filtered_tool_schema() -> None:
         outcome for outcome in decision.tool_results if outcome.tool_name == "tool_search"
     )
     assert tool_search_outcome.metadata["discovered_tools"] == ["mcp__budget__tool_14"]
-    # Whole-prompt meter units: the trigger plus 14 schemas x 500 reserve (13 plus the
-    # row 60 recall tool, outside the cap); the extra schema lowers the 90% trigger by 450.
-    assert decision.compact_threshold_tokens == (47_250 - 450) + 14 * 500
-    assert decision.context_tool_overhead_tokens == 14 * 500
+    # Whole-prompt meter units: the trigger plus the 14 schemas of the expanded request (13
+    # plus the row 60 recall tool, outside the cap); the extra schema lowers the 90% trigger
+    # by 450 through the 500/tool budget reserve.
+    schema_tokens = _sent_schema_tokens(router, second_call_tools)
+    assert schema_tokens > _sent_schema_tokens(router, first_call_tools)
+    assert decision.compact_threshold_tokens == (47_250 - 450) + schema_tokens
+    assert decision.context_tool_overhead_tokens == schema_tokens
 
 
 def test_router_unavailable_tool_search_reports_plain_unavailable_result() -> None:

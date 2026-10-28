@@ -17,6 +17,7 @@ PLAN_MODE_OVERLAY_HEADING = "## Plan Mode"
 APPROVED_PLAN_OVERLAY_HEADING = "## Approved Plan"
 PLAN_REVISION_OVERLAY_HEADING = "## Plan Revision Requested"
 PROPOSE_MODE_OVERLAY_HEADING = "## Propose Mode"
+DELEGATION_CONTRACT_HEADING = "## Sub-agent Delegation Contract"
 RESTORED_TOOL_CONTRACT_HEADING = "## Restored Tool Contract"
 # Repo-delta uses an XML-style tag rather than a "## " heading; the recognizer
 # is a plain ``startswith(tuple)`` so any stable literal prefix works, and the
@@ -25,6 +26,8 @@ REPOSITORY_DELTA_HEADING = "<repository-delta>"
 MODEL_IDENTITY_HEADING = "## Runtime Model Identity"
 INTERRUPTED_TURN_HEADING = "## Previous Turn Interruption"
 SESSION_ENVIRONMENT_HEADING = "## Session Environment"
+# Row 69: static identity overlay for the profile's primary Jenny chat.
+PRIMARY_CHAT_OVERLAY_HEADING = "## Primary Chat"
 
 RUNTIME_SYSTEM_MESSAGE_HEADINGS: tuple[str, ...] = (
     MEMORY_RECALL_HEADING,
@@ -34,9 +37,11 @@ RUNTIME_SYSTEM_MESSAGE_HEADINGS: tuple[str, ...] = (
     APPROVED_PLAN_OVERLAY_HEADING,
     PLAN_REVISION_OVERLAY_HEADING,
     PROPOSE_MODE_OVERLAY_HEADING,
+    DELEGATION_CONTRACT_HEADING,
     RESTORED_TOOL_CONTRACT_HEADING,
     REPOSITORY_DELTA_HEADING,
     MODEL_IDENTITY_HEADING,
     INTERRUPTED_TURN_HEADING,
     SESSION_ENVIRONMENT_HEADING,
+    PRIMARY_CHAT_OVERLAY_HEADING,
 )

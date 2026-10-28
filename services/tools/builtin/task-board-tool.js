@@ -14,6 +14,7 @@ const {
   MAX_FOLLOW_UP_BODY_CHARS,
   MAX_FOLLOW_UP_LABEL_CHARS,
 } = require('../../shell-config-followups-schema');
+const { manifestSchema } = require('./tool-result');
 
 const TASK_SOURCE_KIND = 'agent_task';
 const MAX_AGENT_TASKS = 200;
@@ -22,6 +23,7 @@ const MAX_RESOLVED_AGENT_TASKS = 200;
 const TASK_STATUSES = Object.freeze(['active', 'resolved']);
 const OPEN_TASK_STATUSES = Object.freeze(['active', 'deferred']);
 const TASK_BOARD_ACTIONS = Object.freeze(['add', 'update', 'complete', 'list']);
+const NOTES_EXCERPT_CHARS = 120;
 
 function failure(reason, content, summary, errorCode = TOOL_ERROR_CODES.EXECUTION_FAILED) {
   return {
@@ -48,8 +50,8 @@ function oneLine(value) {
 
 /* Tasks are scoped to the request's trusted project. A task whose stored
  * projectId is empty (not yet backfilled) belongs to no project and is hidden. */
-function readTasks(configService, projectId) {
-  const followUps = configService?.getState?.()?.followUps;
+function tasksIn(state, projectId) {
+  const followUps = state?.followUps;
   return Array.isArray(followUps)
     ? followUps.filter((entry) => (
       entry?.sourceKind === TASK_SOURCE_KIND && entry.projectId === projectId
@@ -57,11 +59,20 @@ function readTasks(configService, projectId) {
     : [];
 }
 
-function findTask(configService, projectId, id) {
-  const normalizedId = normalizeString(id);
-  return normalizedId
-    ? readTasks(configService, projectId).find((entry) => entry.id === normalizedId) || null
-    : null;
+// getState() clones the whole config, so each call reads it once and then
+// works from the snapshot every store mutator already returns.
+function readTasks(configService, projectId) {
+  return tasksIn(configService.getState(), projectId);
+}
+
+function tasksAfterWrite(configService, returnedState, projectId) {
+  return Array.isArray(returnedState?.followUps)
+    ? tasksIn(returnedState, projectId)
+    : readTasks(configService, projectId);
+}
+
+function findIn(tasks, id) {
+  return tasks.find((entry) => entry.id === id) || null;
 }
 
 function requiredId(input, action) {
@@ -101,9 +112,17 @@ function validateText(value, field, limit, { required = false } = {}) {
   return { present: true, text };
 }
 
+// The excerpt lets the model see existing notes before an update replaces them.
+function notesExcerpt(body) {
+  const text = oneLine(body);
+  if (!text) return '';
+  const clipped = text.length > NOTES_EXCERPT_CHARS ? `${text.slice(0, NOTES_EXCERPT_CHARS - 1)}…` : text;
+  return ` | notes=${clipped}`;
+}
+
 function renderTask(task) {
   return `- id=${task.id} | title=${oneLine(task.label)} | status=${task.status}`
-    + ` | sourceKind=${TASK_SOURCE_KIND}`;
+    + `${notesExcerpt(task.body)} | sourceKind=${TASK_SOURCE_KIND}`;
 }
 
 // Resolution order, not creation order: the store stamps resolvedAt when a task
@@ -120,9 +139,8 @@ function orderForList(tasks) {
 }
 
 // The project's open-task cap, shared by add and by reopening a resolved task.
-function openTaskLimitFailure(configService, projectId) {
-  const openCount = readTasks(configService, projectId)
-    .filter((task) => OPEN_TASK_STATUSES.includes(task.status)).length;
+function openTaskLimitFailure(tasks) {
+  const openCount = tasks.filter((task) => OPEN_TASK_STATUSES.includes(task.status)).length;
   if (openCount < MAX_AGENT_TASKS) return null;
   return failure(
     'task_limit_reached',
@@ -135,9 +153,9 @@ function openTaskLimitFailure(configService, projectId) {
 // tasks of the project and delete the older ones. The 200 open-task cap plus
 // this bound keeps a project's agent tasks finite. `keepId` is the task this
 // very call resolved: it is never the one pruned, whatever its stamps say.
-function pruneResolvedTasks(configService, projectId, keepId) {
+function pruneResolvedTasks(configService, tasks, keepId) {
   if (typeof configService?.deleteFollowUp !== 'function') return 0;
-  const resolved = readTasks(configService, projectId)
+  const resolved = tasks
     .filter((task) => task.status === 'resolved' && task.id !== keepId).sort(byResolvedAsc);
   const excess = resolved.slice(0, Math.max(0, resolved.length + 1 - MAX_RESOLVED_AGENT_TASKS));
   for (const task of excess) configService.deleteFollowUp(task.id);
@@ -162,7 +180,8 @@ function addTask(configService, projectId, input, sessionId) {
   if (normalizeString(input?.id)) {
     return failure('id_not_allowed', 'add generates the task id; omit id.', 'Task add rejected');
   }
-  const limit = openTaskLimitFailure(configService, projectId);
+  const tasks = readTasks(configService, projectId);
+  const limit = openTaskLimitFailure(tasks);
   if (limit) return limit;
   const title = validateText(input?.title, 'title', MAX_FOLLOW_UP_LABEL_CHARS, { required: true });
   if (title.error) return title.error;
@@ -173,7 +192,7 @@ function addTask(configService, projectId, input, sessionId) {
     return failure('invalid_status', 'status must be active or resolved.', 'Invalid task status');
   }
 
-  const beforeIds = new Set(readTasks(configService, projectId).map((task) => task.id));
+  const beforeIds = new Set(tasks.map((task) => task.id));
   const state = configService.upsertFollowUp({
     label: title.text,
     body: notes.text,
@@ -182,16 +201,13 @@ function addTask(configService, projectId, input, sessionId) {
     projectId,
     sourceKind: TASK_SOURCE_KIND,
   });
-  const created = Array.isArray(state?.followUps)
-    ? state.followUps.find((entry) => (
-      entry?.sourceKind === TASK_SOURCE_KIND
-      && entry.projectId === projectId
-      && !beforeIds.has(entry.id)
-    )) || null
-    : null;
+  const after = tasksIn(state, projectId);
+  const created = after.find((entry) => !beforeIds.has(entry.id)) || null;
   if (!created) {
     return failure('persistence_failed', 'The task could not be persisted.', 'Task add failed');
   }
+  // A task added already resolved is held to the same retained-history bound.
+  if (created.status === 'resolved') pruneResolvedTasks(configService, after, created.id);
   return success(
     'add',
     `Added task "${oneLine(created.label)}" with id ${created.id}.`,
@@ -207,7 +223,8 @@ function addTask(configService, projectId, input, sessionId) {
 function updateTask(configService, projectId, input) {
   const identity = requiredId(input, 'update');
   if (identity.error) return identity.error;
-  const existing = findTask(configService, projectId, identity.id);
+  const tasks = readTasks(configService, projectId);
+  const existing = findIn(tasks, identity.id);
   if (!existing) {
     return failure('not_found', `No agent task with id "${identity.id}" exists.`, 'Task not found');
   }
@@ -227,9 +244,17 @@ function updateTask(configService, projectId, input) {
   if (!title.present && !notes.present && !statusPresent) {
     return failure('empty_update', 'update requires title, notes, or status.', 'Empty task update');
   }
+  // A deferral is the user's call; the model may edit the task but not undo it.
+  if (status === 'active' && existing.status === 'deferred') {
+    return failure(
+      'deferred_by_user',
+      'The user deferred this task. Leave it deferred, or ask the user before reactivating it.',
+      'Task is deferred'
+    );
+  }
   // Reopening a resolved task is an open task more: the same cap as add, before any write.
   if (status === 'active' && !OPEN_TASK_STATUSES.includes(existing.status)) {
-    const limit = openTaskLimitFailure(configService, projectId);
+    const limit = openTaskLimitFailure(tasks);
     if (limit) return limit;
   }
 
@@ -237,13 +262,13 @@ function updateTask(configService, projectId, input) {
     ...(title.present ? { label: title.text } : {}),
     ...(notes.present ? { body: notes.text } : {}),
   };
-  if (Object.keys(patch).length) configService.updateFollowUp(identity.id, patch);
-  if (status === 'active') configService.activateFollowUp(identity.id);
-  if (status === 'resolved') {
-    configService.resolveFollowUp(identity.id);
-    pruneResolvedTasks(configService, projectId, identity.id);
-  }
-  const updated = findTask(configService, projectId, identity.id);
+  let state = null;
+  if (Object.keys(patch).length) state = configService.updateFollowUp(identity.id, patch);
+  if (status === 'active') state = configService.activateFollowUp(identity.id);
+  if (status === 'resolved') state = configService.resolveFollowUp(identity.id);
+  const after = tasksAfterWrite(configService, state, projectId);
+  if (status === 'resolved') pruneResolvedTasks(configService, after, identity.id);
+  const updated = findIn(after, identity.id);
   if (!updated
     || (title.present && updated.label !== title.text)
     || (notes.present && updated.body !== notes.text)
@@ -261,13 +286,13 @@ function updateTask(configService, projectId, input) {
 function completeTask(configService, projectId, input) {
   const identity = requiredId(input, 'complete');
   if (identity.error) return identity.error;
-  const existing = findTask(configService, projectId, identity.id);
+  const existing = findIn(readTasks(configService, projectId), identity.id);
   if (!existing) {
     return failure('not_found', `No agent task with id "${identity.id}" exists.`, 'Task not found');
   }
-  configService.resolveFollowUp(identity.id);
-  pruneResolvedTasks(configService, projectId, identity.id);
-  const completed = findTask(configService, projectId, identity.id);
+  const after = tasksAfterWrite(configService, configService.resolveFollowUp(identity.id), projectId);
+  pruneResolvedTasks(configService, after, identity.id);
+  const completed = findIn(after, identity.id);
   if (completed?.status !== 'resolved') {
     return failure('persistence_failed', 'The task could not be completed.', 'Task completion failed');
   }
@@ -283,15 +308,14 @@ const ACTION_HANDLERS = Object.freeze({ add: addTask, update: updateTask, comple
 
 module.exports = {
   name: 'task_board',
-  description: "Add, update, complete, or list durable model-authored tasks in the persisted Open Loops store. Mutations target one task id; add generates and returns a new id. The list action returns only agent_task records. When you finish work that a task tracks — including a session started from a task, whose brief names its task id — call complete with that id. Do not leave a finished task open. Tasks are scoped to the current chat's project; list, update and complete only see that project's tasks.",
+  ...manifestSchema('task_board'),
   category: 'builtin',
   readOnly: false,
   workspaceRequired: false,
-  parameters: { type: 'object', properties: {}, required: ['action'] },
 
   summarize(input) {
-    const action = normalizeString(input?.action);
-    return `Task board: ${action || 'action'}`;
+    const action = typeof input?.action === 'string' ? input.action.trim().toLowerCase() : '';
+    return `Task board: ${TASK_BOARD_ACTIONS.includes(action) ? action : 'action'}`;
   },
 
   async execute(input, context) {
@@ -308,7 +332,8 @@ module.exports = {
     const action = normalizeString(input?.action).toLowerCase();
     try {
       if (action === 'list') return listTasks(configService, projectId);
-      const handler = ACTION_HANDLERS[action];
+      // Own keys only: 'constructor' must not resolve to Object.prototype.
+      const handler = Object.hasOwn(ACTION_HANDLERS, action) ? ACTION_HANDLERS[action] : null;
       if (!handler) {
         return failure(
           'unsupported_action',

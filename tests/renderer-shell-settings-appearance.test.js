@@ -247,6 +247,9 @@ test('Circuit Trace remains the rendered surface when it is the selected effect'
     },
   });
   const doc = window.document;
+  // The effect preview mounts only while Appearance is the section on screen.
+  doc.querySelector('.settings-nav-item[data-settings-section="appearance"]').click();
+  await waitForUi(window, 30);
   const homeView = doc.getElementById('homeView');
   const chatSurfaceEffectLeft = doc.getElementById('chatSurfaceEffectLeft');
   const surfaceEffectSelect = doc.getElementById('appearanceSurfaceEffectSelect');

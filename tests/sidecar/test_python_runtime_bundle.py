@@ -16,23 +16,23 @@ from sidecar.ai.tools.builtins.python_runtime import interpreter, pip_bootstrap
 
 ROOT = Path(__file__).resolve().parents[2]
 WHEEL_FILENAMES = (
-    "contourpy-1.3.3-cp313-cp313-win_amd64.whl",
+    "contourpy-1.4.0-cp313-cp313-win_amd64.whl",
     "cycler-0.12.1-py3-none-any.whl",
-    "fonttools-4.63.0-cp313-cp313-win_amd64.whl",
-    "kiwisolver-1.5.0-cp313-cp313-win_amd64.whl",
+    "fonttools-4.67.0-cp313-cp313-win_amd64.whl",
+    "kiwisolver-1.5.1-cp313-cp313-win_amd64.whl",
     "matplotlib-3.10.8-cp313-cp313-win_amd64.whl",
     "numpy-2.4.3-cp313-cp313-win_amd64.whl",
-    "packaging-26.2-py3-none-any.whl",
+    "packaging-26.3-py3-none-any.whl",
     "pandas-3.0.1-cp313-cp313-win_amd64.whl",
-    "pillow-12.3.0-cp313-cp313-win_amd64.whl",
+    "pillow-13.0.0-cp313-cp313-win_amd64.whl",
     "pip-26.2-py3-none-any.whl",
-    "pyparsing-3.3.2-py3-none-any.whl",
+    "pyparsing-3.3.3-py3-none-any.whl",
     "python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
     "scipy-1.17.1-cp313-cp313-win_amd64.whl",
     "seaborn-0.13.2-py3-none-any.whl",
     "six-1.17.0-py2.py3-none-any.whl",
     "tabulate-0.10.0-py3-none-any.whl",
-    "tzdata-2026.3-py2.py3-none-any.whl",
+    "tzdata-2026.5-py2.py3-none-any.whl",
 )
 
 

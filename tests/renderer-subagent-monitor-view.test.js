@@ -173,13 +173,13 @@ test('a report with no step log lists its tools and step count, never "not recor
   assert.doesNotMatch(parts.body, /not recorded/);
 });
 
-test('more than eight steps collapse behind "+ N more"; unrecorded steps are noted', () => {
-  const steps = Array.from({ length: 11 }, (_, index) => ({ tool: 'grep', display: `Step ${index}`, ok: true }));
+test('more than five step rows collapse behind "+ N more"; unrecorded steps are noted', () => {
+  const steps = Array.from({ length: 11 }, (_, index) => ({ tool: 'grep', display: `Step ${index}`, ok: true, target: `file${index}.js` }));
   const parts = view.renderMonitor(batchModel([{
     ...CHILDREN[0], steps, budget: { tool_results_used: 14, elapsed_ms: 1_000 },
   }]), { page: 'detail' });
-  assert.match(parts.body, /\+ 3 more/);
-  assert.equal((parts.body.match(/subagent-step subagent-step--ok/g) || []).length, 11, 'every recorded step renders (three inside the collapsible)');
+  assert.match(parts.body, /\+ 6 more/);
+  assert.equal((parts.body.match(/subagent-step subagent-step--ok/g) || []).length, 11, 'every recorded step renders (six inside the collapsible)');
   assert.match(parts.body, /class="inv-collapsible-content subagent-more-detail"[^>]*hidden/);
   assert.match(parts.body, /\+ 3 steps not recorded/);
 });
@@ -228,4 +228,147 @@ test('a child with unreported usage never shows the batch subtotal as its own', 
   assert.doesNotMatch(parts.footer, /subagent-usage-grid/);
   const tree = view.renderMonitor(model, { page: 'tree' });
   assert.match(tree.footer, /1\.2k tokens · partially reported/, 'the aggregate stays in the tree footer');
+});
+
+test('the drill-in reads Task, Answer, Steps in that order; the task is escaped plain text', () => {
+  const prompt = 'Read the quarterly <script>x</script> statement.\nFind Schedule D Part 3.\nQuote the last common-stock row.\nCite the page.';
+  const parts = view.renderMonitor(batchModel([{
+    ...CHILDREN[0], prompt, answer: 'Found it.', steps: [{ tool: 'read_file', display: 'Read File', ok: true, target: 'a.pdf' }],
+  }]), { page: 'detail' });
+  const task = parts.body.indexOf('>Task<');
+  const answer = parts.body.indexOf('>Answer<');
+  const steps = parts.body.indexOf('>Steps<');
+  assert.ok(task > 0 && task < answer && answer < steps, 'Task, then Answer, then Steps');
+  assert.doesNotMatch(parts.body, /<script>x/);
+  assert.match(parts.body, /&lt;script&gt;x&lt;\/script&gt;/);
+  assert.match(parts.body, /subagent-task-preview/, 'four lines get the clamp and Show all');
+  assert.match(parts.body, />Show all</);
+});
+
+test('a short task the title already says, or an old report without one, adds no Task section', () => {
+  const same = view.renderMonitor(batchModel([{ ...CHILDREN[0], prompt: 'Survey <renderer>' }]), { page: 'detail' });
+  assert.doesNotMatch(same.body, />Task</);
+  const old = view.renderMonitor(batchModel([CHILDREN[0]]), { page: 'detail' });
+  assert.doesNotMatch(old.body, />Task</);
+  const short = view.renderMonitor(batchModel([{ ...CHILDREN[0], prompt: 'Survey the renderer for dead code.' }]), { page: 'detail' });
+  assert.match(short.body, />Task</);
+  assert.doesNotMatch(short.body, />Show all</, 'a short task shows whole');
+});
+
+test('the answer has a Copy button; the cut note shows only when the answer was cut', () => {
+  const whole = view.renderMonitor(batchModel([{ ...CHILDREN[0], answer: 'Full answer.' }]), { page: 'detail' });
+  assert.match(whole.body, /data-subagent-copy="a"/);
+  assert.match(whole.body, /data-subagent-copy-status/);
+  assert.doesNotMatch(whole.body, /Cut at 4,000 characters/);
+  const cut = view.renderMonitor(batchModel([{ ...CHILDREN[0], answer: 'Long answer.', answer_truncated: true }]), { page: 'detail' });
+  assert.match(cut.body, /Cut at 4,000 characters\./);
+});
+
+test('a child that spent every turn says so under its status, unless its reason already does', () => {
+  const hit = view.renderMonitor(batchModel([{ ...CHILDREN[0], budget: { max_steps: 10, iterations_used: 10, elapsed_ms: 1_000 } }]), { page: 'detail' });
+  assert.match(hit.body, /Reached its step limit \(10 of 10\)\. The answer may be incomplete\./);
+  const under = view.renderMonitor(batchModel([{ ...CHILDREN[0], budget: { max_steps: 10, iterations_used: 8, elapsed_ms: 1_000 } }]), { page: 'detail' });
+  assert.doesNotMatch(under.body, /step limit/);
+  const reason = view.renderMonitor(batchModel([{ ...CHILDREN[1], budget: { max_steps: 10, iterations_used: 10 } }]), { page: 'detail' });
+  assert.doesNotMatch(reason.body, /step limit \(/, 'budget_exhausted already reads "Reached its work limit"');
+});
+
+test('repeated calls on one file group into one row with xN and their ranges; a failure stands alone', () => {
+  const read = (range) => ({ tool: 'read_file', display: 'Read File', ok: true, target: 'docs/a.pdf', path: 'docs/a.pdf', range });
+  const steps = [read('p1–3'), read('p4–6'), read('p4–6'), read('cont.'),
+    { tool: 'read_file', display: 'Read File', ok: false, detail: "missing required argument 'path'" },
+    { tool: 'grep_search', display: 'Grep Search', ok: true, target: '"Schedule D" in docs/a.pdf' }];
+  const parts = view.renderMonitor(batchModel([{ ...CHILDREN[0], steps }]), { page: 'detail' });
+  assert.match(parts.body, /subagent-step--group/);
+  assert.match(parts.body, /×4/);
+  assert.match(parts.body, /p1–3 · p4–6 · cont\./, 'distinct ranges, in order');
+  assert.match(parts.body, /class="inv-collapsible-content subagent-step-group-calls"[^>]*hidden/, 'the calls sit behind the group');
+  const trigger = parts.body.match(/<div class="inv-collapsible-trigger subagent-step-group-trigger"[\s\S]*?<\/div>/)[0];
+  assert.doesNotMatch(trigger, /data-chat-path-open/, 'the group trigger holds no link');
+  assert.match(parts.body, /data-chat-path-open="docs\/a.pdf"/, 'each call inside opens its file');
+  assert.match(parts.body, /subagent-step--error[\s\S]*missing required argument/);
+  assert.doesNotMatch(parts.body, /data-chat-path-open="&quot;Schedule/, 'a pattern target is plain text');
+  assert.match(parts.body, /<span class="subagent-section-meta">7 steps<\/span>/, 'the heading counts the reported tool results');
+});
+
+test('a step group disclosure is keyed on its first call, not its position', () => {
+  const read = { tool: 'read_file', display: 'Read File', ok: true, target: 'a.pdf' };
+  const steps = [{ tool: 'glob', display: 'Glob', ok: true }, { tool: 'glob', display: 'Glob', ok: true, target: 'x' }, read, read];
+  const parts = view.renderMonitor(batchModel([{ ...CHILDREN[0], steps }]), { page: 'detail' });
+  const ids = [...parts.body.matchAll(/id="([^"]*step-group[^"]*)"/g)].map((match) => match[1]);
+  assert.ok(ids.length && ids.every((id) => /-2(?:-|$)/.test(id)), ids.join(','));
+});
+
+const TRANSCRIPT = [
+  { kind: 'thought', text: 'Find the file first. Then the contents.', ms: 3_100 },
+  { kind: 'tool', call_id: 'c1', tool: 'glob_files', display: 'Glob Files', status: 'completed', input: '{"pattern":"docs/*.pdf"}', output: 'docs/a.pdf', ms: 40 },
+  { kind: 'text', text: 'Found it. Reading the <b>contents</b>.' },
+  { kind: 'tool', call_id: 'c2', tool: 'read_file', display: 'Read File', status: 'completed', input: '{"path":"docs/a.pdf","pages":"1-3"}', output: 'page 1 <script>x</script>', output_chars: 9_412, ms: 820 },
+  { kind: 'tool', call_id: 'c3', tool: 'read_file', display: 'Read File', status: 'failed', input: '{}', output: "missing required argument 'path'", error_code: 'CMP-TOOL-0001' },
+  { kind: 'thought', text: 'The last row is Zebra.', ms: 1_800, truncated: true },
+];
+
+test('a child with a transcript gets the Overview | Transcript switch; Overview stays the default', () => {
+  const parts = view.renderMonitor(batchModel([{ ...CHILDREN[0], prompt: 'Find the figure.', answer: 'Zebra.', transcript: TRANSCRIPT }]), { page: 'detail' });
+  assert.match(parts.body, /class="inv-segmented subagent-view-switch"[^>]*data-subagent-view="a"/);
+  assert.match(parts.body, /aria-checked="true"[^>]*data-value="overview"|data-value="overview"[^>]*aria-checked="true"/);
+  assert.match(parts.body, />Steps</, 'Overview is today\'s drill-in');
+  const old = view.renderMonitor(batchModel([CHILDREN[0]]), { page: 'detail' });
+  assert.doesNotMatch(old.body, /subagent-view-switch/, 'no transcript, no switch');
+});
+
+test('the Transcript reads: what Jenny asked, notes open, work folded into chat-style runs, then the answer and evidence', () => {
+  const child = { ...CHILDREN[0], prompt: 'Find the figure.', answer: 'Zebra.', transcript: TRANSCRIPT,
+    evidence: [{ relative_path: 'docs/a.pdf', summary: 'Row.' }] };
+  const parts = view.renderMonitor(batchModel([child]), { page: 'detail', transcriptKeys: new Set(['a']) });
+  const body = parts.body;
+  assert.doesNotMatch(body, />Steps</, 'the Overview sections give way');
+  const order = ['>Jenny asked<', 'Searched once, thought once', 'Found it.', 'Read 2 files, thought once', '>Answer<', '>Evidence<'].map((needle) => body.indexOf(needle));
+  assert.ok(order.every((index, i) => index > 0 && (i === 0 || index > order[i - 1])), JSON.stringify(order));
+  assert.match(body, /subagent-transcript-note[^>]*>[\s\S]*?Found it\. Reading the/, 'a note shows openly, in its own row');
+  assert.doesNotMatch(body, /<script>x/, 'tool output is escaped');
+  assert.match(body, /page 1 &lt;script&gt;x&lt;\/script&gt;/);
+  assert.match(body, /Output cut: 25 of 9,412 characters kept\./);
+  assert.match(body, /class="inv-collapsible-content subagent-transcript-run"[^>]*hidden/, 'runs start folded');
+  assert.match(body, /tool-run-failed/, 'a failed call marks its run');
+  assert.match(body, /Cut to keep the chat light\./, 'a cut thought says so');
+  assert.match(body, /data-chat-path-open="docs\/a.pdf"/, 'evidence keeps its file link');
+  assert.doesNotMatch(body, /data-tool-run-toggle|data-reasoning-toggle/, 'the chat\'s own toggles stay out of the monitor');
+});
+
+test('a running child\'s transcript shimmers its live thought and shows no answer yet', () => {
+  const model = modelUtils.buildMonitorViewModel({ steps: [{
+    source: 'delegate', toolCallId: 'call-live', childTaskId: 'child-live', childOrdinal: 1, childCount: 1, status: 'running',
+    childActivity: { sequence: 3, steps: [], step_count: 1, text: '', transcript_version: 2, transcript: [
+      { kind: 'tool', call_id: 'c1', tool: 'glob_files', display: 'Glob Files', status: 'completed', input: '{"pattern":"*.md"}', output: 'a.md' },
+      { kind: 'thought', text: '', live: true },
+    ] },
+  }], key: 'call-live' });
+  const parts = view.renderMonitor(model, { page: 'detail', transcriptKeys: new Set(['child-live']) });
+  assert.match(parts.body, /shimmer-active[^>]*>Thinking…/);
+  assert.doesNotMatch(parts.body, />Answer</);
+});
+
+test('later transcript entries that were not kept are counted', () => {
+  const parts = view.renderMonitor(batchModel([{ ...CHILDREN[0], transcript: TRANSCRIPT, transcript_dropped: 4 }]), { page: 'detail', transcriptKeys: new Set(['a']) });
+  assert.match(parts.body, /4 later steps were not kept\./);
+});
+
+test('transcript call bodies stay out of the chat\'s shared Show more / copy registry', () => {
+  const detailBody = require('../renderer/chat/renderer-tool-detail-body');
+  const long = Array.from({ length: 30 }, (_, i) => `line ${i}`).join('\n');
+  const transcript = [{ kind: 'tool', call_id: 'c1', tool: 'grep_search', display: 'Grep Search', status: 'completed', input: '{"pattern":"x"}', output: long }];
+  const parts = view.renderMonitor(batchModel([{ ...CHILDREN[0], transcript }]), { page: 'detail', transcriptKeys: new Set(['a']) });
+  const copyId = /<code id="(subagent-call-[^"]+)"/.exec(parts.body)?.[1];
+  assert.ok(copyId, 'the call body renders');
+  assert.match(parts.body, /data-detail-clamped="true"/, 'a long output still clamps behind Show more');
+  assert.equal(detailBody.getFullText(copyId), null, 'nothing was registered');
+});
+
+test('a running child shows the switch before its first transcript entry', () => {
+  const model = modelUtils.buildMonitorViewModel({ steps: [{
+    source: 'delegate', toolCallId: 'call-new', childTaskId: 'child-new', childOrdinal: 1, childCount: 1, status: 'running',
+    childActivity: { sequence: 1, steps: [], step_count: 0, text: '' },
+  }], key: 'call-new' });
+  assert.match(view.renderMonitor(model, { page: 'detail' }).body, /subagent-view-switch/);
 });

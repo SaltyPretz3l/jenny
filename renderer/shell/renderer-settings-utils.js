@@ -8,58 +8,27 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const appearanceUtils = (typeof globalThis !== 'undefined' && globalThis.appearanceUtils)
     || (typeof require === 'function' ? require('../shared/appearance-utils') : null);
-  const settingsSupport = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsSupport)
-    || (typeof require === 'function' ? require('./renderer-settings-support') : null)
-    || {};
-  const settingsControlTowerUtils = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsControlTowerUtils)
-    || (typeof require === 'function' ? require('./renderer-settings-control-tower-utils') : null)
-    || {};
-  const settingsCoreRenderers = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsCoreRenderers)
-    || (typeof require === 'function' ? require('./renderer-settings-core-renderers') : null)
-    || {};
-  const settingsLazyRenderers = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsLazyRenderers)
-    || (typeof require === 'function' ? require('./renderer-settings-lazy-renderers') : null)
-    || {};
-  const settingsV2Surfaces = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsV2Surfaces)
-    || (typeof require === 'function' ? require('./renderer-settings-v2-surfaces') : null)
-    || {};
-  const settingsFoundation = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsFoundation)
-    || (typeof require === 'function' ? require('./renderer-settings-foundation') : null)
-    || {};
-  const { applyBadgeState = function noopBadge() {}, applyNote = function noopNote() { return ''; } } = settingsFoundation;
+  // The Settings script manifest loads these before this module (the page
+  // shell loads support, foundation and the section registry); Node requires them.
+  const load = (globalName, path) => globalThis[globalName] || require(path);
+  const settingsSupport = load('rendererSettingsSupport', './renderer-settings-support');
+  const settingsCoreRenderers = load('rendererSettingsCoreRenderers', './renderer-settings-core-renderers');
+  const sectionRegistry = load('rendererSettingsSectionRegistry', './renderer-settings-section-registry');
+  const { applyBadgeState, applyNote } = load('rendererSettingsFoundation', './renderer-settings-foundation');
   const {
-    resolveReasoningEffortSupport = function fallbackResolveReasoningEffortSupport() { return 'unknown'; },
-    resolveModelBadge = function fallbackResolveModelBadge() { return {}; },
-    normalizeFeatureState = function fallbackNormalizeFeatureState(payload) { return payload || {}; },
-    normalizeWorkspaceRootState = function fallbackNormalizeWorkspaceRootState(payload) { return payload || {}; },
-    getToolConfigFieldsForRender = function fallbackGetToolConfigFieldsForRender() { return []; },
-    buildToolConfigFieldListMarkup = function fallbackBuildToolConfigFieldListMarkup() { return ''; },
-    buildUiLanguageFieldMarkup = function fallbackBuildUiLanguageFieldMarkup() { return ''; },
-    buildContextToggleListsMarkup = function fallbackBuildContextToggleListsMarkup() { return { sources: '', runtime: '' }; },
-    buildSettingsToggleListMarkup = function fallbackBuildSettingsToggleListMarkup() { return ''; },
-    renderStatusRowContainer = function fallbackRenderStatusRowContainer() {},
-    buildSettingsSummaryModel = function fallbackBuildSettingsSummaryModel() { return {}; },
-    buildWebSearchSectionMarkup = function fallbackBuildWebSearchSectionMarkup() { return ''; },
-    buildCompactionTuningMarkup = function fallbackBuildCompactionTuningMarkup() { return ''; },
+    resolveModelBadge, normalizeFeatureState, normalizeWorkspaceRootState, getToolConfigFieldsForRender,
+    buildToolConfigFieldListMarkup, buildUiLanguageFieldMarkup, buildContextToggleListsMarkup,
+    buildSettingsToggleListMarkup, renderStatusRowContainer, buildSettingsSummaryModel,
+    buildWebSearchSectionMarkup, buildCompactionTuningMarkup,
   } = settingsSupport;
   const {
-    buildSettingsControlTowerModel = function fallbackBuildSettingsControlTowerModel() { return null; },
-    renderSettingsControlTowerMarkup = function fallbackRenderSettingsControlTowerMarkup() { return ''; },
-    syncSettingsControlTowerIndicators = function fallbackSyncSettingsControlTowerIndicators() {},
-  } = settingsControlTowerUtils;
+    buildSettingsControlTowerModel, renderSettingsControlTowerMarkup, syncSettingsControlTowerIndicators,
+  } = load('rendererSettingsControlTowerUtils', './renderer-settings-control-tower-utils');
+  const { renderSetupSettingsRow } = settingsCoreRenderers;
   const {
-    renderSetupSettingsRow = function fallbackRenderSetupSettingsRow() {},
-  } = settingsCoreRenderers;
-  const {
-    renderLazyManagers = function fallbackRenderLazyManagers() {},
-    renderLazySummaries = function fallbackRenderLazySummaries() {},
-    renderSurfaceEffectCopy = function fallbackRenderSurfaceEffectCopy() {},
-    renderSurfaceEffectPreview = function fallbackRenderSurfaceEffectPreview() { return null; },
-    disposeSurfaceEffectPreview = function fallbackDisposeSurfaceEffectPreview() {},
-  } = settingsLazyRenderers;
-  const {
-    renderSettingsV2Surfaces = function fallbackRenderSettingsV2Surfaces() {},
-  } = settingsV2Surfaces;
+    renderLazyManagers, renderLazySummaries, renderSurfaceEffectCopy, renderSurfaceEffectPreview, disposeSurfaceEffectPreview,
+  } = load('rendererSettingsLazyRenderers', './renderer-settings-lazy-renderers');
+  const { renderSettingsV2Surfaces, paintSlot } = load('rendererSettingsV2Surfaces', './renderer-settings-v2-surfaces');
 
   function createSettingsRenderer(deps) {
     const { state, shouldPatchSection = () => true } = deps;
@@ -73,11 +42,10 @@
       accountSummary, localProfileSettingsMount, backendSummary,
       setupSettingsSummary, setupSettingsActions, setupProgressContainer,
       settingsControlTowerHost,
-      skillsSettingsNavItem,
       contextStatus, contextSettingsSection,
       contextSourcesList, contextRuntimeList, contextCompactionTuning,
       toolsConfigFieldList, toolsPermissionsList, toolsFilesList, toolsWebList, toolsTerminalList, toolsCodeList,
-      toolsCommandSandboxHost, toolsWorkspaceLine, toolsApprovalRulesList, toolsWorkspacePath, toolsWorkspaceStatus,
+      toolsWorkspaceLine, toolsApprovalRulesList, toolsWorkspacePath, toolsWorkspaceStatus,
       toolsWorkspaceProject, toolsWorkspaceChooseButton,
       editorStatus, editorSettingsFieldList,
       homeStatus, homeSettingsFieldList, notificationsSettingsSection,
@@ -98,7 +66,7 @@
       getActivitySnapshot, getMostRecentActivity, isActivityBusy,
       applyActivityAttributes,
       isDefaultAppearancePreferences,
-      renderApprovedMemoryManager, renderPersonalityEditor, renderSkillsManager, renderOfflineManager, escapeHtml,
+      renderPersonalityEditor, renderSkillsManager, renderOfflineManager, escapeHtml,
       getSectionDom = function noopGetSectionDom() { return {}; },
       isSectionInitialized = function alwaysReady() { return true; },
     } = deps.callbacks;
@@ -142,6 +110,11 @@
      * initial render can still reflect toggle/state values. Event-handler
      * registration remains gated by ensureSettingsSectionReady. */
     function getLazySectionDom(sectionId) { return getSectionDom(sectionId) || {}; }
+    // The section on screen, or '' while Settings is not the active view.
+    function activeSettingsSection() {
+      return state.ui?.activeView === 'settings'
+        ? sectionRegistry.normalizeSettingsSectionId(state.ui.activeSettingsSection) : '';
+    }
 
     function renderSupportingSurfaces() {
       renderSettingsV2Surfaces({
@@ -190,19 +163,16 @@
       };
       const workspaceRootStatus = workspaceRootState.status || featureWorkspaceRootStatus;
       const backendMode = String(state.backend?.mode || '').trim().toLowerCase();
-      const managedMode = String(state.offline?.managedSidecar?.mode || state.backend?.mode || '').trim().toLowerCase();
       const contextUnavailable = backendMode === 'external';
       const offlineState = state.offline && typeof state.offline === 'object' ? state.offline : {};
-      const personalityState = state.personality && typeof state.personality === 'object' ? state.personality : {};
-      const memoryManagerState = state.memoryManager && typeof state.memoryManager === 'object' ? state.memoryManager : {};
-      const memoriesDom = getLazySectionDom('memories');
       const offlineDom = getLazySectionDom('offline');
-      const personalityDom = getLazySectionDom('personality');
+      const activeSection = activeSettingsSection();
+      const toggleSwitch = globalThis.inventory?.toggleSwitch || null;
       if (settingsControlTowerHost) {
         const controlTowerModel = buildSettingsControlTowerModel({
           state,
         });
-        settingsControlTowerHost.innerHTML = renderSettingsControlTowerMarkup(controlTowerModel, { escapeHtml });
+        paintSlot(settingsControlTowerHost, renderSettingsControlTowerMarkup(controlTowerModel, { escapeHtml }));
         syncSettingsControlTowerIndicators(controlTowerModel, { documentRef: settingsControlTowerHost.ownerDocument });
       }
 
@@ -226,21 +196,20 @@
         });
       }
       if (appearanceHoloList) {
-        appearanceHoloList.innerHTML = buildSettingsToggleListMarkup({
+        paintSlot(appearanceHoloList, buildSettingsToggleListMarkup({
           escapeHtml,
-          toggleSwitch: typeof globalThis !== 'undefined' ? globalThis.inventory?.toggleSwitch : null,
+          toggleSwitch,
           fields: appearanceUtils.getAppearanceToggleFields({ jt, composerHoloOption, appearancePreferences, startupAnimationFlagOff: state.features?.featureFlags?.startup_animation === false }),
-        });
+        }));
       }
       if (appearanceSpellcheckList) {
-        const spellcheckToggleSwitch = typeof globalThis !== 'undefined' ? globalThis.inventory?.toggleSwitch : null;
-        appearanceSpellcheckList.innerHTML = buildSettingsToggleListMarkup({
+        paintSlot(appearanceSpellcheckList, buildSettingsToggleListMarkup({
           escapeHtml,
-          toggleSwitch: spellcheckToggleSwitch,
+          toggleSwitch,
           fields: [
             { id: 'appearanceSpellcheckToggle', checked: state.features?.featureFlags?.text_spellcheck !== false },
           ],
-        });
+        }));
       }
       const modelBadgeState = resolveModelBadge({
         busy: runtimeModelBusy, loadingModel, errored: runtimeModelActivity?.state === 'error',
@@ -299,33 +268,27 @@
       mountSettingRow(contextSettingsSection, 'contextHistoryScopeSelect', contextPreferences.historyScope,
         { disabled: !canEditSessionRuntime || contextUnavailable || isActivityBusy(settingsContextActivity) });
       if (modelStartupLoadList) {
-        modelStartupLoadList.innerHTML = buildSettingsToggleListMarkup({
-          toggleSwitch: typeof globalThis !== 'undefined' ? globalThis.inventory?.toggleSwitch : null,
+        paintSlot(modelStartupLoadList, buildSettingsToggleListMarkup({
+          toggleSwitch,
           escapeHtml,
           fields: [{
             id: 'modelStartupLoadToggle',
             checked: state.localEngines?.startupModelLoad !== false,
             disabled: !state.auth.authenticated,
           }],
-        });
+        }));
       }
       if (contextSourcesList || contextRuntimeList) {
-        const toggleSwitchRenderer =
-          typeof globalThis !== 'undefined' ? globalThis.inventory?.toggleSwitch : null;
         const contextToggleLists = buildContextToggleListsMarkup({
           contextPreferences,
           featureFlags,
           prefsDisabled: !canEditSessionRuntime || contextUnavailable || isActivityBusy(settingsContextActivity),
           flagsDisabled: contextUnavailable,
           escapeHtml,
-          toggleSwitch: toggleSwitchRenderer,
+          toggleSwitch,
         });
-        if (contextSourcesList) {
-          contextSourcesList.innerHTML = contextToggleLists.sources;
-        }
-        if (contextRuntimeList) {
-          contextRuntimeList.innerHTML = contextToggleLists.runtime;
-        }
+        paintSlot(contextSourcesList, contextToggleLists.sources);
+        paintSlot(contextRuntimeList, contextToggleLists.runtime);
       }
       if (contextCompactionTuning && shouldPatchSection('compactionPrompt')) {
         const compactionTuning = state.compactionTuning && typeof state.compactionTuning === 'object' ? state.compactionTuning : {};
@@ -335,7 +298,7 @@
           statusMessage: state.compactionTuningActivity?.message || '',
           statusTone: state.compactionTuningActivity?.tone || 'info',
           escapeHtml,
-          actionButton: typeof globalThis !== 'undefined' ? globalThis.inventory?.actionButton : null,
+          actionButton: globalThis.inventory?.actionButton || null,
         });
       }
       const toolOn = (key) => (Object.prototype.hasOwnProperty.call(featureTools, key)
@@ -374,8 +337,8 @@
       }
       // Dependent rows follow their parent on every render: the guard above holds the lists
       // while one of them has focus or an unsaved key, and a held row must not stay writable.
-      settingsSupport.syncToolDependents?.(toolsConfigFieldList, {
-        toolOn, availability: toolAvailability, inventory: typeof globalThis !== 'undefined' ? globalThis.inventory : null,
+      settingsSupport.syncToolDependents(toolsConfigFieldList, {
+        toolOn, availability: toolAvailability, inventory: globalThis.inventory || null,
       });
       const setStatusText = (node, text) => { if (node && node.textContent !== text) node.textContent = text; };
       if (toolsWorkspaceLine) toolsWorkspaceLine.dataset.state = workspaceRootStatus.state === 'ready' ? 'ready' : 'blocked';
@@ -388,43 +351,39 @@
       if (toolsWorkspaceChooseButton) {
         toolsWorkspaceChooseButton.textContent = jt('settings.tools.openWorkspace', 'Open Workspace');
       }
-      settingsCoreRenderers?.paintToolsWorkspaceProject?.(toolsWorkspaceProject, workspaceRootState.path, workspaceRootStatus.state);
+      settingsCoreRenderers.paintToolsWorkspaceProject(toolsWorkspaceProject, workspaceRootState.path, workspaceRootStatus.state);
       if (editorSettingsFieldList) {
-        const editorSection = typeof globalThis !== 'undefined' ? globalThis.rendererSettingsEditorSection : null;
-        editorSection?.renderEditorSection?.({
+        globalThis.rendererSettingsEditorSection?.renderEditorSection?.({
           container: editorSettingsFieldList,
           status: editorStatus,
           ide: state.ui?.ide || null,
         });
       }
       if (homeSettingsFieldList) {
-        const homeSection = typeof globalThis !== 'undefined' ? globalThis.rendererSettingsHomeSection : null;
-        homeSection?.renderHomeSection?.({ container: homeSettingsFieldList, status: homeStatus, state });
+        globalThis.rendererSettingsHomeSection?.renderHomeSection?.({ container: homeSettingsFieldList, status: homeStatus, state });
       }
       if (notificationsSettingsSection) {
-        const notificationsSection = typeof globalThis !== 'undefined' ? globalThis.rendererSettingsNotificationsSection : null;
-        notificationsSection?.renderNotificationsSection?.({ container: notificationsSettingsSection, state });
+        globalThis.rendererSettingsNotificationsSection?.renderNotificationsSection?.({ container: notificationsSettingsSection, state });
+      }
+      const dictationSettingsSection = typeof document !== 'undefined' ? document.getElementById('dictationSettingsSection') : null;
+      if (dictationSettingsSection) {
+        globalThis.rendererSettingsDictationSection?.renderDictationSection?.({ container: dictationSettingsSection, state });
       }
       if (toolsApprovalRulesList) {
-        settingsCoreRenderers?.renderApprovalRules?.({
+        // Read over IPC, so only while Tools is the section on screen.
+        settingsCoreRenderers.renderApprovalRules({
           container: toolsApprovalRulesList,
           api: (typeof window !== 'undefined' && window.jennyShell?.tools) || null,
           projectsApi: (typeof window !== 'undefined' && window.jennyShell?.projects) || null,
           permissionReviewApi: (typeof window !== 'undefined' && window.jennyShell?.permissionReview) || null,
           escapeHtml,
+          active: activeSection === 'tools',
         });
       }
       renderSupportingSurfaces();
       renderLazySummaries({
-        memoriesDom,
         offlineDom,
-        personalityDom,
-        featureFlags,
-        featureAvailability,
-        memoryManagerState,
         offlineState,
-        personalityState,
-        state,
         renderStatusRowContainer,
         buildSettingsSummaryModel,
         escapeHtml,
@@ -437,8 +396,9 @@
       renderSurfaceEffectPreview({
         host: appearanceSurfaceEffectPreview,
         effectId: appearancePreferences.surfaceEffectId,
-        // Tear down the preview outside Settings so its rAF cannot continue behind a closed panel.
-        visible: state.ui?.activeView === 'settings',
+        // Tear down the preview outside Settings > Appearance so its rAF and
+        // listeners cannot continue behind a closed panel or another section.
+        visible: activeSection === 'appearance',
         windowRef: typeof globalThis !== 'undefined' ? globalThis : undefined,
       });
       applyActivityAttributes(settingsModelCard, runtimeModelActivity);
@@ -449,7 +409,6 @@
         shouldRenderLazySection,
         renderOfflineManager,
         renderSkillsManager,
-        renderApprovedMemoryManager,
         renderPersonalityEditor,
       });
     }

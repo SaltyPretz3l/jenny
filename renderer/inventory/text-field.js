@@ -122,6 +122,9 @@
         + ' rows="' + rows + '"'
         + dataset
         + '>'
+        // The HTML parser drops one line feed right after <textarea>, so a value
+        // that starts with one needs a sacrificial LF to keep it.
+        + (/^\r?\n/.test(value) ? '\n' : '')
         + escapeHtml(value)
         + '</textarea>';
     } else {

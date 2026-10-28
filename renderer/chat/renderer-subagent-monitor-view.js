@@ -2,17 +2,21 @@
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(
       require('./renderer-subagent-monitor-model'),
+      require('./renderer-subagent-monitor-activity'),
       require('../inventory/action-button'),
-      require('../inventory/collapsible')
+      require('../inventory/collapsible'),
+      require('../inventory/segmented-control')
     );
     return;
   }
   root.rendererSubagentMonitorView = factory(
     root.rendererSubagentMonitorModel || {},
+    root.rendererSubagentMonitorActivity || {},
     root.inventoryActionButton,
-    root.inventoryCollapsible || {}
+    root.inventoryCollapsible || {},
+    root.inventorySegmentedControl || null
   );
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (modelUtils, actionButton, collapsible) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (modelUtils, activity, actionButton, collapsible, segmentedControl) {
   'use strict';
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
@@ -20,7 +24,6 @@
   const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
     || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
-  const VISIBLE_STEP_ROWS = 8;
   const ICON_CLOSE = '<svg class="subagent-monitor-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
   const ICON_CHEVRON = '<svg class="subagent-monitor-icon subagent-monitor-icon--muted" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>';
   const ICON_BACK = '<svg class="subagent-monitor-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M10 4L6 8l4 4"/></svg>';
@@ -104,14 +107,18 @@
     return typeof utils?.renderMarkdown === 'function' ? utils.renderMarkdown : null;
   }
 
-  // The answer goes through the sanitized markdown pipeline; if it is
-  // unavailable the text is escaped, never injected.
+  // Text goes through the sanitized markdown pipeline; if it is unavailable
+  // the text is escaped, never injected.
+  function markdownHtml(text) {
+    const render = markdownRenderer();
+    const html = render ? render(text, { mermaid: 'plain' }) : '';
+    return typeof html === 'string' && html ? html : `<p>${escapeHtml(text)}</p>`;
+  }
+
   const answerCache = new Map();
   function renderAnswerHtml(text) {
     if (answerCache.has(text)) return answerCache.get(text);
-    const render = markdownRenderer();
-    const html = render ? render(text, { mermaid: 'plain' }) : '';
-    const result = typeof html === 'string' && html ? html : `<p>${escapeHtml(text)}</p>`;
+    const result = markdownHtml(text);
     if (answerCache.size >= 3) answerCache.delete(answerCache.keys().next().value);
     answerCache.set(text, result);
     return result;
@@ -137,9 +144,7 @@
       + escapeHtml(jt('chat.subagentMonitor.detailsUnavailable', 'Details unavailable.')) + '</div></div>';
   }
 
-  function stepCountLabel(count) {
-    return jtn('chat.subagentMonitor.stepCount', count, { count }, '{count} step', '{count} steps');
-  }
+  const stepCountLabel = (count) => activity.stepCountLabel(count);
 
   function tokenLabel(count) {
     return Number.isSafeInteger(count)
@@ -238,10 +243,13 @@
     return `<div class="subagent-monitor-footer"><span>${escapeHtml(parts.join(' · '))}</span></div>`;
   }
 
-  function section(title, body) {
+  // `aside` (trusted markup: a count, the Copy button) shares the heading's row.
+  function section(title, body, aside = '') {
     if (!body) return '';
+    const heading = `<h3 class="subagent-section-heading">${escapeHtml(title)}</h3>`;
     return '<section class="subagent-detail-section">'
-      + `<h3 class="subagent-section-heading">${escapeHtml(title)}</h3>${body}</section>`;
+      + (aside ? `<div class="subagent-section-head">${heading}${aside}</div>` : heading)
+      + `${body}</section>`;
   }
 
   function renderEvidence(child) {
@@ -266,48 +274,6 @@
     }).join('') + '</ul>';
   }
 
-  function stepRow(step) {
-    const failed = step.ok === false;
-    const pending = step.status === 'running';
-    const interrupted = step.status === 'interrupted';
-    return `<li class="subagent-step subagent-step--${pending || interrupted ? 'pending' : failed ? 'error' : 'ok'}">`
-      + stateDot(pending ? 'pending' : interrupted ? 'muted' : failed ? 'danger' : 'success')
-      + '<span class="subagent-step-copy">'
-      + `<span class="subagent-step-name">${escapeHtml(step.display || step.tool)}</span>`
-      + (step.target ? `<span class="subagent-step-target">${escapeHtml(step.target)}</span>` : '')
-      + (failed && step.detail ? `<span class="subagent-step-detail">${escapeHtml(step.detail)}</span>` : '')
-      + '</span></li>';
-  }
-
-  function renderSteps(child, idSuffix) {
-    if (!child.terminal && !child.steps?.length) {
-      return `<p class="subagent-live-summary">${escapeHtml(child.summary)}</p>`
-        + `<p class="subagent-step-note">${escapeHtml(jt('chat.subagentMonitor.liveStepsPending', 'Tool steps appear here as they run.'))}</p>`;
-    }
-    const steps = child.steps || [];
-    if (!steps.length) {
-      // Reports written before the step log carry only the tool names and a count.
-      const note = [...(child.tools || []), child.stepCount ? stepCountLabel(child.stepCount) : ''].filter(Boolean).join(' · ');
-      return note ? `<p class="subagent-step-note">${escapeHtml(note)}</p>` : '';
-    }
-    const unrecorded = Math.max(0, (child.stepCount || 0) - steps.length);
-    const rest = steps.slice(VISIBLE_STEP_ROWS);
-    let html = `<ol class="subagent-step-list">${steps.slice(0, VISIBLE_STEP_ROWS).map(stepRow).join('')}</ol>`;
-    if (rest.length) {
-      html += disclosure('steps-more', child, idSuffix, {
-        className: 'subagent-more-trigger',
-        children: `<span>${escapeHtml(jt('chat.subagentMonitor.stepsMore', '+ {count} more', { count: rest.length }))}</span>`,
-      }, {
-        className: 'subagent-more-detail',
-        children: `<ol class="subagent-step-list">${rest.map(stepRow).join('')}</ol>`,
-      });
-    }
-    if (unrecorded) {
-      html += `<p class="subagent-step-note">${escapeHtml(jtn('chat.subagentMonitor.stepsNotRecorded', unrecorded, { count: unrecorded }, '+ {count} step not recorded', '+ {count} steps not recorded'))}</p>`;
-    }
-    return html;
-  }
-
   // Without an answer the section falls back to the summary (cut and flattened
   // to one line by persistence), titled Summary. A completed child always
   // answers, so its missing answer means a report written before the monitor
@@ -320,13 +286,78 @@
         + (child.activity.text_truncated ? `<p class="subagent-step-note">${escapeHtml(jt('chat.subagentMonitor.liveTextTruncated', 'Live text limit reached. The final answer appears when this task finishes.'))}</p>` : ''));
     }
     if (child.answer) {
-      return section(jt('chat.subagentMonitor.sectionAnswer', 'Answer'), `<div class="subagent-answer">${renderAnswerHtml(child.answer)}</div>`);
+      const cut = child.answerTruncated
+        ? `<p class="subagent-step-note">${escapeHtml(jt('chat.subagentMonitor.answerTruncated', 'Cut at 4,000 characters.'))}</p>`
+        : '';
+      return section(jt('chat.subagentMonitor.sectionAnswer', 'Answer'),
+        `<div class="subagent-answer">${renderAnswerHtml(child.answer)}</div>${cut}`, copyButton(child));
     }
     if (!child.summary) return '';
     const notSaved = child.success
       ? `<p class="subagent-step-note">${escapeHtml(jt('chat.subagentMonitor.answerNotSaved', "The full answer wasn't saved for this run."))}</p>`
       : '';
     return section(jt('chat.subagentMonitor.sectionSummary', 'Summary'), `<div class="subagent-answer">${renderAnswerHtml(child.summary)}</div>${notSaved}`);
+  }
+
+  // Copies the saved answer (the controller writes it; the status span
+  // announces the result).
+  function copyButton(child) {
+    const label = jt('chat.subagentMonitor.copyAnswer', 'Copy answer');
+    return actionButton({
+      id: 'subagent-copy', plain: true, className: 'subagent-monitor-icon-button subagent-copy-button',
+      ariaLabel: label, title: label, dataset: { 'subagent-copy': child.key },
+      trustedHtml: `<span>${escapeHtml(jt('chat.subagentMonitor.copy', 'Copy'))}</span>`,
+    }) + '<span class="sr-only" role="status" data-subagent-copy-status></span>';
+  }
+
+  // The Copy click: writes the saved answer through the shell clipboard and
+  // says so in the button's status span; the word reverts after a moment.
+  function copyAnswer(button, text, windowRef) {
+    const clipboard = windowRef?.jennyShell?.clipboard || windowRef?.navigator?.clipboard;
+    if (!text || typeof clipboard?.writeText !== 'function') return;
+    const status = button.parentElement?.querySelector?.('[data-subagent-copy-status]');
+    const label = button.querySelector?.('span');
+    const show = (statusText, labelText) => {
+      if (status?.isConnected) status.textContent = statusText;
+      if (label?.isConnected) label.textContent = labelText;
+    };
+    const copyWord = jt('chat.subagentMonitor.copy', 'Copy');
+    Promise.resolve().then(() => clipboard.writeText(text)).then(() => {
+      const copied = jt('chat.subagentMonitor.copied', 'Copied');
+      show(copied, copied);
+      windowRef.setTimeout?.(() => show('', copyWord), 1600);
+    }, () => show(jt('chat.subagentMonitor.copyFailed', 'Could not copy the answer.'), copyWord));
+  }
+
+  // The full task the parent wrote; one the title already says in full is not repeated.
+  function renderTask(child, idSuffix) {
+    if (child.prompt === child.label) return '';
+    return section(jt('chat.subagentMonitor.sectionTask', 'Task'), activity.taskBody(child, idSuffix, helpers, 'task'));
+  }
+
+  // The pieces the activity module (Steps, Transcript) shares with this view.
+  const helpers = { stateDot, disclosure, section, renderEvidence, renderMarkdown: markdownHtml, renderAnswer: renderAnswerSection };
+
+  // Overview | Transcript, for a child that recorded a transcript.
+  function viewSwitch(child, transcript) {
+    return segmentedControl?.({
+      id: 'subagent-view',
+      ariaLabel: jt('chat.subagentMonitor.viewAriaLabel', 'Subagent view'),
+      value: transcript ? 'transcript' : 'overview',
+      className: 'subagent-view-switch',
+      dataset: { 'subagent-view': child.key },
+      options: [
+        { value: 'overview', label: jt('chat.subagentMonitor.viewOverview', 'Overview') },
+        { value: 'transcript', label: jt('chat.subagentMonitor.viewTranscript', 'Transcript') },
+      ],
+    }) || '';
+  }
+
+  // "Reached its step limit (10 of 10)": the child spent every model turn.
+  function stepLimitNote(child) {
+    if (!child.stepLimit) return '';
+    return `<p class="subagent-detail-note">${stateDot('warning')}<span>${escapeHtml(jt('chat.subagentMonitor.stepLimitReached',
+      'Reached its step limit ({used} of {max}). The answer may be incomplete.', child.stepLimit))}</span></p>`;
   }
 
   function renderTechnicalDetails(child, idSuffix) {
@@ -346,9 +377,12 @@
     return `<div class="subagent-monitor-header">${backButton()}${headerActions()}</div>`;
   }
 
-  function renderDetailBody(viewModel, idSuffix) {
+  function renderDetailBody(viewModel, idSuffix, transcriptKeys) {
     const child = viewModel.selected;
     if (!child) return emptyBody();
+    // A running child gets the switch before its first entry, so it does not appear mid-run.
+    const hasTranscript = child.transcript?.length > 0 || !child.terminal;
+    const showTranscript = hasTranscript && transcriptKeys?.has?.(child.key) === true;
     const status = statusParts(child, [child.model, child.reasoningEffort].filter(Boolean).join(' · '));
     const uncertainties = child.uncertainties?.length
       ? `<ul class="subagent-uncertainty-list">${child.uncertainties.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
@@ -357,11 +391,15 @@
       + '<div class="subagent-detail-head">'
       + `<h2 class="subagent-detail-title" id="subagentInspectorTitle${escapeHtml(idSuffix)}">${escapeHtml(child.label)}</h2>`
       + `<div class="subagent-detail-status">${stateDot(child.tone)}<span>${status.join(' · ')}</span></div>`
+      + stepLimitNote(child)
+      + (hasTranscript ? viewSwitch(child, showTranscript) : '')
       + '</div>'
-      + section(jt('chat.subagentMonitor.sectionSteps', 'Steps'), renderSteps(child, idSuffix))
-      + renderAnswerSection(child)
-      + section(jt('chat.subagentMonitor.sectionEvidence', 'Evidence'), renderEvidence(child))
-      + section(jt('chat.subagentMonitor.sectionUncertainties', 'Uncertainties'), uncertainties)
+      + (showTranscript ? activity.renderTranscript(child, idSuffix, helpers) : renderTask(child, idSuffix)
+        + renderAnswerSection(child)
+        + section(jt('chat.subagentMonitor.sectionSteps', 'Steps'), activity.renderSteps(child, idSuffix, helpers),
+          child.stepCount ? `<span class="subagent-section-meta">${escapeHtml(stepCountLabel(child.stepCount))}</span>` : '')
+        + section(jt('chat.subagentMonitor.sectionEvidence', 'Evidence'), renderEvidence(child))
+        + section(jt('chat.subagentMonitor.sectionUncertainties', 'Uncertainties'), uncertainties))
       + renderTechnicalDetails(child, idSuffix)
       + '</div>';
   }
@@ -413,7 +451,7 @@
     }
     const idSuffix = String(options.idSuffix || '');
     return options.page === 'detail'
-      ? { header: renderDetailHeader(), body: renderDetailBody(viewModel, idSuffix), footer: renderDetailFooter(viewModel, idSuffix) }
+      ? { header: renderDetailHeader(), body: renderDetailBody(viewModel, idSuffix, options.transcriptKeys), footer: renderDetailFooter(viewModel, idSuffix) }
       : { header: renderTreeHeader(viewModel, idSuffix), body: renderTreeBody(viewModel), footer: renderTreeFooter(viewModel) };
   }
 
@@ -451,7 +489,7 @@
     const page = body?.getAttribute?.('data-subagent-page');
     const scrollTop = Number(body?.scrollTop || 0);
     const active = host?.ownerDocument?.activeElement;
-    const focusAttribute = ['data-inv-collapsible', 'data-subagent-select', 'data-subagent-back', 'data-subagent-close'].find((name) => host?.contains?.(active) && active?.hasAttribute?.(name));
+    const focusAttribute = ['data-inv-collapsible', 'data-subagent-select', 'data-subagent-back', 'data-subagent-close', 'data-subagent-copy'].find((name) => host?.contains?.(active) && active?.hasAttribute?.(name));
     const focusedId = focusAttribute ? active.getAttribute(focusAttribute) : null;
     const open = new Set([...(host?.querySelectorAll?.('[data-inv-collapsible][aria-expanded="true"]') || [])]
       .map((el) => el.getAttribute('data-inv-collapsible')));
@@ -476,6 +514,7 @@
   }
 
   return {
+    copyAnswer,
     inlineSummaryMarkup,
     renderLiveSummary,
     renderMonitor,

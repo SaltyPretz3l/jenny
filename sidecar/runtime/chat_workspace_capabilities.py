@@ -22,7 +22,9 @@ SUPPORTED_CONTEXT_KINDS: tuple[str, ...] = ("session_message", "session_handoff"
 SESSION_MESSAGE_CONTEXT_KIND = "session_message"
 SESSION_HANDOFF_CONTEXT_KIND = "session_handoff"
 
-_REQUEST_KEYS = frozenset({"schema_version", "producer_tools", "context_kinds", "session_messages"})
+_REQUEST_KEYS = frozenset(
+    {"schema_version", "producer_tools", "context_kinds", "session_messages", "mid_turn_mail"}
+)
 
 
 def empty_chat_workspace_capabilities() -> dict[str, Any]:
@@ -31,6 +33,7 @@ def empty_chat_workspace_capabilities() -> dict[str, Any]:
         "producer_tools": [],
         "context_kinds": [],
         "session_messages": False,
+        "mid_turn_mail": False,
     }
 
 
@@ -48,21 +51,26 @@ def negotiate(requested: Any, *, hosted: bool) -> dict[str, Any]:
     producer_tools = _string_list(requested.get("producer_tools"))
     context_kinds = _string_list(requested.get("context_kinds"))
     session_messages = requested.get("session_messages")
+    mid_turn_mail = requested.get("mid_turn_mail")
     if (
         isinstance(version, bool)
         or version != 1
         or producer_tools is None
         or context_kinds is None
         or not isinstance(session_messages, bool)
+        or not isinstance(mid_turn_mail, bool)
     ):
         return empty_chat_workspace_capabilities()
     negotiated_tools = [tool for tool in SUPPORTED_PRODUCER_TOOLS if tool in producer_tools]
     negotiated_kinds = [kind for kind in SUPPORTED_CONTEXT_KINDS if kind in context_kinds]
+    negotiated_messages = session_messages and SESSION_MESSAGE_CONTEXT_KIND in negotiated_kinds
     return {
         "schema_version": 1,
         "producer_tools": negotiated_tools,
         "context_kinds": negotiated_kinds,
-        "session_messages": session_messages and SESSION_MESSAGE_CONTEXT_KIND in negotiated_kinds,
+        "session_messages": negotiated_messages,
+        # Mid-turn mail (row 70 W2a, session.mail_arrived) needs negotiated session messages.
+        "mid_turn_mail": mid_turn_mail and negotiated_messages,
     }
 
 

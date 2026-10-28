@@ -1,4 +1,4 @@
-/* Home hero: clock, greeting, digest, Ask Jenny line, model trigger, and page menu. */
+/* Home hero: clock, greeting, digest, Ask Jenny line, and page menu. */
 
 /* Hero band: the repainted chrome takes the row and the ask block rides at its
  * right edge. Flex (not grid) so it can wrap onto its own line instead of
@@ -113,85 +113,19 @@
   border-bottom-color: color-mix(in srgb, var(--accent) 55%, var(--text-primary));
 }
 
-/* Meta row: model trigger left, hint and send right. Its height is RESERVED at
- * every state, so revealing either control never shifts Home. */
+/* Meta row: the hint and the send button. Its height is RESERVED at every
+ * state, so revealing either control never shifts Home. */
 .home-ask__meta {
   position: relative;
   display: flex;
   align-items: center;
-  gap: var(--space-4);
   min-height: 20px;
   padding-top: var(--space-2);
 }
 
-/* The trigger's host and the panel's anchor. NO transform: a transformed
- * anchor becomes a stacking context and TRAPS the panel's z-index at the host's
- * auto level - which is how the sticky rail once painted its scratchpad card
- * through the open panel (W11.1). Centering is flex, on purpose. */
-.home-ask-config {
-  position: relative;
-  flex: 0 1 auto;
-  min-width: 0;
-  margin-inline-end: auto;
-  display: flex;
-  align-items: center;
-}
-
-/* Information, not a control: legible at rest, with no capsule around it. */
-.home-ask__model {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  max-width: 100%;
-  min-width: 0;
-  padding: 1px var(--space-3);
-  border: 0;
-  border-radius: var(--radius-base);
-  background: transparent;
-  color: var(--text-muted);
-  font-family: var(--font-family-body);
-  font-size: var(--font-size-xs);
-  letter-spacing: var(--tracking-ui);
-  cursor: pointer;
-  transition:
-    color var(--motion-duration-fast) var(--motion-ease-standard),
-    background var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.home-info-strip__ask:focus-within .home-ask__model {
-  color: var(--text-secondary);
-}
-
-.home-ask__model:hover {
-  color: var(--text-primary);
-}
-
-/* Open takes the menu rows' 7% wash, so trigger and panel read as one. */
-.home-ask__model[aria-expanded="true"] {
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
-}
-
-.home-ask__model:focus-visible {
-  outline: 2px solid var(--focus-outline, var(--accent-a-50));
-  outline-offset: 1px;
-}
-
-.home-ask__model-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.home-ask__model-caret {
-  flex: none;
-  font-size: var(--font-size-caption);
-  line-height: 1;
-}
-
 /* The hint and the send share the row's right end. The hint is absolutely
- * placed so it reserves NO width at rest - the old chip lane's mistake -
- * leaving the send button as the only in-flow item there. */
+ * placed so it reserves NO width at rest, leaving the send button as the only
+ * in-flow item there. */
 .home-ask__hint {
   position: absolute;
   inset-inline-end: 0;
@@ -284,134 +218,8 @@
   pointer-events: none;
 }
 
-/* The settings menu - the ONE box in this feature. It hangs below the trigger,
- * left-aligned to it; nothing inside it is boxed or ruled. */
-.home-ask__panel {
-  inset-inline-start: 0;
-  top: calc(100% + var(--space-3));
-  /* DEFINITE, not a min/max pair. A native <select> is as wide as its WIDEST
-   * option - here full model ids, plus an unbounded "(unavailable: reason)"
-   * tail - and an indefinite panel width let the rows' min-content floor blow
-   * straight past a max-width, which clamps only the PAINTED box: the controls
-   * ended up drawn outside the panel's own border. A real width caps the grid
-   * track and lets the percentages below resolve against something. */
-  width: 320px;
-}
-
-/* minmax(0, 1fr), never a bare auto track: grid items floor at min-content, and
- * the model select's min-content is its longest option. The min-width: 0 chain
- * from here down to the control is what lets that select ellipsize inside the
- * panel instead of overflowing it. */
-.home-ask-config__row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--space-2);
-}
-
-/* A grid item in its own right, so it needs the floor released too. */
-.home-ask-config__effort {
-  min-width: 0;
-}
-
-.home-ask-config__effort[hidden] {
-  display: none;
-}
-
-.home-ask-config__tools {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 2px;
-  margin-top: var(--space-5);
-}
-
-/* Panel interior: flat label-left / control-right rows - no boxed fields
- * inside an already-boxed panel. The generic field chrome comes from UNSCOPED
- * setup-wizard rules in views-home-setup.css; these higher-specificity rules
- * restate every declaration that look sets, on purpose. */
-.home-ask__panel .inv-select-field {
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  min-height: 32px;
-  min-width: 0;
-}
-
-.home-ask__panel .inv-select-field-label {
-  flex: none;
-  padding-inline-start: var(--space-3);
-  font-size: var(--font-size-body);
-  font-weight: 500;
-  text-transform: none;
-  color: var(--text-secondary);
-}
-
-.home-ask__panel .inv-select-field-control {
-  flex: 0 1 auto;
-  width: auto;
-  /* max-width is the CAP; min-width: 0 is what actually lets flex shrink the
-   * select, and overflow/white-space are what make the ellipsis below fire at
-   * all - text-overflow alone is inert without them. */
-  min-width: 0;
-  max-width: 62%;
-  overflow: hidden;
-  white-space: nowrap;
-  padding: 4px var(--space-3);
-  border: 1px solid transparent;
-  border-radius: var(--radius-base);
-  background: transparent;
-  color: var(--text-primary);
-  font-size: var(--font-size-body);
-  text-align: end;
-  text-overflow: ellipsis;
-  cursor: pointer;
-}
-
-.home-ask__panel .inv-select-field-control:hover {
-  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
-}
-
-.home-ask__panel .inv-select-field-control:focus,
-.home-ask__panel .inv-select-field-control:focus-visible {
-  outline: 2px solid var(--focus-outline, var(--accent-a-50));
-  outline-offset: 1px;
-}
-
-/* Toggle rows flip to label-left / switch-right (row-reverse: the primitive
- * emits the track first) and take the selects' hover wash, so the panel reads
- * as one column of quiet rows. */
-.home-ask-config__toggle {
-  display: flex;
-  flex-direction: row-reverse;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  width: 100%;
-  min-height: 28px;
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-base);
-}
-
-.home-ask-config__toggle:hover {
-  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
-}
-
-.home-ask-config__toggle .inv-toggle-label {
-  color: var(--text-primary);
-  font-size: var(--font-size-body);
-}
-
-/* No hairline over the caption: the panel draws exactly one border, its own. */
-.home-ask__panel .inv-popover-footer {
-  margin-top: var(--space-5);
-  padding-top: 0;
-  border-top: 0;
-  line-height: 1.5;
-}
-
 /* Narrow shells: the ask block drops to its own full-width line under the
- * chrome. The panel keeps `left: 0` at every width - its trigger sits at the
- * block's LEFT edge now, so there is nothing to override. */
+ * chrome. */
 @media (max-width: 720px) {
   .home-info-strip__ask {
     flex-basis: 100%;

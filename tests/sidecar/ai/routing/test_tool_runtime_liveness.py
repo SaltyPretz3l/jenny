@@ -14,6 +14,7 @@ def test_liveness_snapshot_reports_each_active_runtime_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(tool_runtime_liveness, "active_job_ids", lambda **_kwargs: ("job-1",))
+    monkeypatch.setattr(tool_runtime_liveness, "owned_job_running", lambda _job_id: True)
     monkeypatch.setattr(
         tool_runtime_liveness,
         "current_operation_ledger",
@@ -47,6 +48,7 @@ def test_liveness_scopes_background_jobs_to_the_request_workspace(
         return ["job-1"] if store_key == key_a else []
 
     monkeypatch.setattr(tool_runtime_liveness, "active_job_ids", _active_job_ids)
+    monkeypatch.setattr(tool_runtime_liveness, "owned_job_running", lambda _job_id: True)
     monkeypatch.setattr(tool_runtime_liveness, "current_operation_ledger", lambda: None)
 
     def _kernel(root: Path | None) -> SimpleNamespace:

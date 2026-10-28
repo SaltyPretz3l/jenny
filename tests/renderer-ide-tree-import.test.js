@@ -27,6 +27,7 @@ function buildHarness({
   confirm = true,
   subscribeError = false,
   rootEpoch = 1,
+  mutationContext = { rootId: 'root-test', generation: 7, phase: 'ready' },
 } = {}) {
   const domHarness = buildIdeDom();
   const panel = domHarness.getDom().ideRailPanel;
@@ -87,7 +88,7 @@ function buildHarness({
     getRootEpoch: () => currentRootEpoch,
     getAttachmentsApi: () => attachmentsApi,
     getWorkspaceFsApi: () => workspaceFs,
-    getMutationContext: async () => ({ rootId: 'root-test', generation: 7, phase: 'ready' }),
+    getMutationContext: async () => mutationContext,
     confirmImport: async (options) => {
       calls.confirms.push(options);
       return typeof confirm === 'function' ? confirm() : confirm;
@@ -454,4 +455,16 @@ test('dispose mid-import unsubscribes, removes the strip, and fences late progre
   assert.equal(harness.panel.querySelector('.ide-tree-import-strip'), null);
   assert.deepEqual(harness.calls.refreshes, []);
   assert.deepEqual(harness.calls.toasts, []);
+});
+
+test('an import without a ready root context is refused instead of sent unfenced', async (t) => {
+  const harness = buildHarness({ mutationContext: null });
+  t.after(() => harness.dispose());
+  dispatchDrag(harness, harness.row('docs'), 'drop', createTransfer([{ path: 'C:/outside/a.txt' }]));
+  await settle(40);
+
+  assert.deepEqual(harness.calls.imports, []);
+  assert.equal(harness.calls.errors.length, 1);
+  assert.match(harness.calls.errors[0].message, /workspace root changed or is unavailable/);
+  assert.equal(harness.panel.querySelector('.ide-tree-import-strip'), null);
 });

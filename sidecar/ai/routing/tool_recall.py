@@ -61,6 +61,7 @@ def execute_recall_tool(  # noqa: PLR0913 -- uniform synthetic-handler dispatch
     **_unused: Any,
 ) -> Any:
     from sidecar.ai.routing import tool_execution as hub
+    from sidecar.ai.routing import tool_execution_tool_handlers as handlers
 
     if not recall_tool_enabled(getattr(kernel, "_config", None)):
         reason = hub._tools_assembly.CONFIG_DISABLED_REASON
@@ -84,7 +85,8 @@ def execute_recall_tool(  # noqa: PLR0913 -- uniform synthetic-handler dispatch
             break
     if original is None:
         original = getattr(runtime, "recall_history", {}).get(call_id)
-    metadata: dict[str, object] = {}
+    # Read-only either way; the derived-effects fallback cannot see this tool.
+    metadata: dict[str, object] = {"effects": "none"}
     if original is None:
         output = (
             f"Cannot recall tool output {call_id!r}; "
@@ -95,21 +97,17 @@ def execute_recall_tool(  # noqa: PLR0913 -- uniform synthetic-handler dispatch
         )
     else:
         output, tool_name, is_error = original
-        metadata = {"recalled_call_id": call_id, "source": source, "original_tool": tool_name}
+        metadata.update(
+            {"recalled_call_id": call_id, "source": source, "original_tool": tool_name}
+        )
         if is_error:
             metadata["original_is_error"] = True
         output, _truncated = hub.bounded_tool_output(output, tool_name=call.tool_id)
         error_code = None
-    if runtime is not None:
-        runtime.audit(
-            hub.KIND_TOOL_EXECUTION_OBSERVED
-            if original is not None
-            else hub.KIND_TOOL_EXECUTION_FAILED,
-            tool_call_id=call.call_id,
-            tool_name=call.tool_id,
-            error_code=error_code,
-            summary=f"tool_recall {'found' if original is not None else 'missing'}",
-        )
+    handlers.audit_settled(
+        runtime, call, call.tool_id, succeeded=original is not None, error_code=error_code,
+        summary=f"tool_recall {'found' if original is not None else 'missing'}",
+    )
     return outcome_type(
         tool_name=call.tool_id,
         call_id=call.call_id,

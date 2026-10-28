@@ -21,8 +21,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
 _NO_PIL_PROBE = r"""
@@ -72,7 +70,8 @@ def test_boot_and_refusals_without_pil():
 
 
 def test_decode_still_works_with_pil():
-    pil_image = pytest.importorskip("PIL.Image")
+    import PIL.Image as pil_image
+
     from sidecar.ai.engines import vision_input
 
     buffer = io.BytesIO()

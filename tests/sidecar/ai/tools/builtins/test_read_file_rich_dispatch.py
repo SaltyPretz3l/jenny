@@ -276,3 +276,52 @@ def test_read_file_forwards_cursor_to_pdf_adapter(
     assert len(seen) == 1
     assert seen[0].get("cursor") == "pdf:0123456789abcdef:2:17"
     assert "create_preview" not in seen[0]
+
+
+def test_read_file_forwards_cursor_to_document_adapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sidecar.ai.tools.builtins.rich_files import document as document_module
+
+    _configure(rich=True)
+    (tmp_path / "memo.docx").write_bytes(b"PK")
+    seen: list[dict[str, object]] = []
+
+    def _recorder(arguments: dict[str, object], workspace: WorkspaceGuard) -> ToolHandlerResult:
+        seen.append(dict(arguments))
+        return ToolHandlerResult(output="{}", success=True, metadata={})
+
+    monkeypatch.setattr(document_module, "document_inspect_tool", _recorder)
+
+    read_file_tool({"path": "memo.docx", "cursor": "docx:0123456789abcdef:21"}, _guard(tmp_path))
+
+    assert seen == [{"path": "memo.docx", "cursor": "docx:0123456789abcdef:21"}]
+
+
+@pytest.mark.parametrize(
+    ("name", "arguments", "hint"),
+    [
+        ("memo.docx", {"offset": 1}, "cursor"),
+        ("report.pdf", {"limit": 5}, "'pages'"),
+        ("memo.docx", {"headings": ["Intro"]}, "cursor"),
+    ],
+)
+def test_rich_file_argument_errors_name_the_supported_paging(
+    tmp_path: Path, name: str, arguments: dict[str, object], hint: str
+) -> None:
+    _configure(rich=True)
+    (tmp_path / name).write_bytes(b"PK")
+
+    with pytest.raises(ToolExecutionFailure) as failure:
+        read_file_tool({"path": name, **arguments}, _guard(tmp_path))
+
+    assert hint in failure.value.message
+
+
+def test_headings_error_on_plain_text_points_at_line_windows(tmp_path: Path) -> None:
+    (tmp_path / "notes.txt").write_text("one\ntwo\n", encoding="utf-8")
+
+    with pytest.raises(ToolExecutionFailure) as failure:
+        read_file_tool({"path": "notes.txt", "headings": ["Intro"]}, _guard(tmp_path))
+
+    assert "'offset' and 'limit'" in failure.value.message

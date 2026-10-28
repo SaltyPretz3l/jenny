@@ -147,7 +147,9 @@
     function applyProjection(entry, proposal) {
       const current = entry.proposal;
       if (current && proposal.revision < current.revision) return false;
-      const same = current && current.revision === proposal.revision && entry.status === 'ready';
+      // F3b: a New session card's child state changes without a record revision; its key repaints it.
+      const same = current && current.revision === proposal.revision && entry.status === 'ready'
+        && ((current.child && current.child.key) || '') === ((proposal.child && proposal.child.key) || '');
       entry.proposal = proposal;
       entry.status = 'ready';
       mergeGroupMember(entry.sessionId, proposal);

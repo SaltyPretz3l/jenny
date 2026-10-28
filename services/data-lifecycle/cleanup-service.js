@@ -26,6 +26,8 @@ const KNOWN_USER_DATA_CHILDREN = Object.freeze([
   'blob_storage',
   'Cache',
   'Code Cache',
+  // V8 compile cache for the main-process module graph (main.js).
+  'compile-cache',
   'Cookies',
   'Cookies-journal',
   'cost-tracker.json',
@@ -98,6 +100,8 @@ const KNOWN_USER_DATA_CHILDREN = Object.freeze([
   'vllm-process.json',
   'WebStorage',
   'window-state.json',
+  // Hot-exit backups of unsaved IDE buffers (workspace-backup-service.js, row 82 D3).
+  'workspace-backups',
   'workspace-snapshots',
   // Rebuildable sidecar indexes and their WAL siblings (derived-indexes.js).
   ...DERIVED_INDEX_CHILDREN,

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from sidecar.ai.error_codes import CMP_TOOL_BACKGROUND_NOT_FOUND
 from sidecar.ai.routing.tool_loop_calls import _ToolCallPhasesMixin
 from sidecar.ai.routing.tool_loop_cycle_recovery import (
+    MissingStatusCounter,
     discovery_generation_payload,
     next_recovery_payload,
     repeated_missing_status_tools,
@@ -121,6 +122,7 @@ def test_retiring_a_status_tool_also_removes_it_from_the_searchable_set() -> Non
         ],
         request_id="req-1",
         session_id="session-1",
+        missing_status_counter=MissingStatusCounter(),
     )
 
     retired = _ToolCallPhasesMixin._retire_repeated_missing_status_tools(stub)

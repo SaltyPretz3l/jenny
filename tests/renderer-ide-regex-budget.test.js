@@ -382,3 +382,25 @@ test('worker task preserves valid lookbehind and capture-group replacement seman
   assert.equal(replaced.newRaw, '1:a\n2:b\n');
   assert.equal(replaced.count, 2);
 });
+
+test('cancel with nothing pending keeps the idle worker for the next search', async (t) => {
+  const workers = [];
+  const evaluator = createRegexWorkerEvaluator({
+    createWorker: () => { const worker = new FakeWorker(); workers.push(worker); return worker; },
+    setTimeoutImpl: () => 1,
+    clearTimeoutImpl: () => {},
+  });
+  t.after(() => evaluator.dispose());
+
+  const first = evaluator.evaluate({ op: 'find', text: 'a', query: 'a' });
+  workers[0].emit('message', { id: workers[0].messages[0].id, ok: true, result: { results: [] } });
+  await first;
+  evaluator.cancel();
+  assert.equal(workers[0].terminateCalls, 0, 'an idle worker survives cancel');
+
+  const second = evaluator.evaluate({ op: 'find', text: 'a', query: 'a' });
+  assert.equal(workers.length, 1, 'the next search reuses the idle worker');
+  evaluator.cancel();
+  await assert.rejects(second, (error) => error?.code === 'REGEX_CANCELLED');
+  assert.equal(workers[0].terminateCalls, 1, 'a pending request still terminates its worker');
+});

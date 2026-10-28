@@ -6,6 +6,28 @@
   }
   root.rendererIdeEditorHostGroupDiff = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  // Scrolls a diff editor's first change (its first changed character) into view
+  // once its next diff is computed; later recomputes never yank the view back.
+  // Only the modified pane reveals: Monaco syncs the original pane's scroll to
+  // it, so a second reveal there would be undone. Returns the subscription.
+  function revealFirstChangeOnce(diffEditor) {
+    if (typeof diffEditor?.onDidUpdateDiff !== 'function') return null;
+    let fired = false;
+    let subscription = null;
+    subscription = diffEditor.onDidUpdateDiff(() => {
+      if (fired) return;
+      fired = true;
+      subscription?.dispose?.();
+      const change = (diffEditor.getLineChanges?.() || [])[0];
+      if (!change) return;
+      const chars = change.charChanges?.[0];
+      const lineNumber = chars?.modifiedStartLineNumber || change.modifiedStartLineNumber || 1;
+      diffEditor.getModifiedEditor?.()?.revealPositionInCenter?.({ lineNumber, column: chars?.modifiedStartColumn || 1 });
+    }) || null;
+    if (fired) subscription?.dispose?.();
+    return subscription;
+  }
+
   function createGroupDiffHost(deps) {
     const editors = new Map();
 
@@ -65,5 +87,5 @@
     return { createGroupDiffEditor, releaseGroupDiffEditor, getDiffSurface, detach, updateOptions, dispose };
   }
 
-  return { createGroupDiffHost };
+  return { createGroupDiffHost, revealFirstChangeOnce };
 });

@@ -271,9 +271,14 @@
       }
     }
 
+    function refreshComposerSoon() {
+      if (!disposed) Promise.resolve().then(refreshComposerModels).catch(() => {});
+    }
+
+    // True when the reply carried a state to show.
     function adopt(result) {
       const next = result?.state && typeof result.state === 'object' ? result.state : result;
-      if (!next || typeof next !== 'object' || !next.chatgpt) return;
+      if (!next || typeof next !== 'object' || !next.chatgpt) return false;
       state = normalizeState(next);
       syncPaste();
       // ChatGPT models are listed only while signed in with the switch on; the
@@ -281,9 +286,8 @@
       const key = `${state.chatgpt.enabled}|${state.chatgpt.auth.state === 'signed_in'}`;
       const changed = visibilityKey !== '' && key !== visibilityKey;
       visibilityKey = key;
-      if (changed && !disposed) {
-        Promise.resolve().then(refreshComposerModels).catch(() => {});
-      }
+      if (changed) refreshComposerSoon();
+      return true;
     }
 
     // Codex CLI models are listed only while its login is ready, and no push
@@ -294,9 +298,7 @@
       const changed = codexSeeded && next.status !== codex.status;
       codexSeeded = true;
       codex = next;
-      if (changed && !disposed) {
-        Promise.resolve().then(refreshComposerModels).catch(() => {});
-      }
+      if (changed) refreshComposerSoon();
       if (raw?.code !== 'auth_unchecked') codexRechecks = 0;
       scheduleCodexRecheck(raw?.code === 'auth_unchecked');
     }
@@ -429,10 +431,23 @@
       if (action === 'cloudModelsChatgptSignIn') {
         // Sign-in stays open until the browser flow ends; pushes repaint meanwhile.
         void run('sign-in', async () => {
-          state.chatgpt.auth = { ...state.chatgpt.auth, state: 'connecting', error: '' };
+          const previous = state.chatgpt.auth;
+          state.chatgpt.auth = { ...previous, state: 'connecting', error: '' };
           syncPaste();
           render();
-          adopt(await bridge.chatgptSignIn());
+          // A rejected call or a reply without a state ends the attempt: the
+          // optimistic "connecting" row (and its countdown) goes back.
+          const revert = () => {
+            if (disposed || state.chatgpt.auth.state !== 'connecting') return;
+            state.chatgpt.auth = previous;
+            syncPaste();
+          };
+          let adopted = false;
+          try {
+            adopted = adopt(await bridge.chatgptSignIn());
+          } finally {
+            if (!adopted) revert();
+          }
         });
       } else if (action === 'cloudModelsChatgptCancel') {
         // Cancel must work while the sign-in call is still pending.

@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 
 const { createBackendServiceWithDeps } = require('../services/main/backend-service-wiring');
 const { ShellConfigService } = require('../services/shell-config-service');
+const { applyFeatureSettingsPatch } = require('../services/feature-settings-service');
 const { WorkspaceActiveUseTracker } = require('../services/workspace-active-use-tracker');
 const { ModelLoadDurationStore } = require('../services/model-load-duration-store');
 const { createFakeSafeStorage } = require('./helpers/fake-safe-storage');
@@ -762,6 +763,63 @@ test('companionService uses effective task-board overrides for Start a session a
     const taskRow = state.openLoopsBoard.active.find((entry) => entry.title === 'Owner task');
     assert.ok(taskRow);
     assert.equal(taskRow.actions.some((action) => action.type === 'start_task_session'), false);
+  } finally {
+    created.backendService.dispose?.();
+  }
+});
+
+test('a feature-settings transaction broadcasts features.onChanged once, after its refresh', async () => {
+  const { created, shellConfigService, bridgeEvents } = createRecordingFixture();
+  try {
+    const sent = [];
+    await applyFeatureSettingsPatch({
+      patch: { tools: { web: !shellConfigService.getState().tools.web } },
+      shellConfigService,
+      backendService: { setFeatureFlags() {}, async refreshManagedConfig() {} },
+      sendToWindow: (channel, payload) => sent.push({ channel, payload }),
+      env: {},
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(sent.length, 1, 'the transaction sends the single post-refresh payload');
+    assert.equal(bridgeEvents.filter((event) => event.name === 'features.onChanged').length, 0,
+      'the shell-config listener stays quiet during an awaited commit');
+  } finally {
+    created.backendService.dispose?.();
+  }
+});
+
+test('a feature-settings commit outside a transaction still broadcasts features.onChanged', async () => {
+  const { created, shellConfigService, bridgeEvents } = createRecordingFixture();
+  try {
+    shellConfigService.updateFeatureSettings({ tools: { web: !shellConfigService.getState().tools.web } });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(bridgeEvents.filter((event) => event.name === 'features.onChanged').length, 1);
+  } finally {
+    created.backendService.dispose?.();
+  }
+});
+
+test('a rolled-back feature-settings transaction still broadcasts the reverted state', async () => {
+  const { created, shellConfigService, bridgeEvents } = createRecordingFixture();
+  try {
+    const sent = [];
+    const backendService = {
+      setFeatureFlags() {},
+      async refreshManagedConfig(reason) {
+        if (reason === 'feature_settings_updated') throw new Error('refresh failed');
+      },
+    };
+    await assert.rejects(applyFeatureSettingsPatch({
+      patch: { tools: { web: !shellConfigService.getState().tools.web } },
+      shellConfigService,
+      backendService,
+      sendToWindow: (channel, payload) => sent.push({ channel, payload }),
+      env: {},
+    }), /refresh failed/);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(sent.length, 1, 'the failed transaction sends its restored payload');
+    assert.equal(bridgeEvents.filter((event) => event.name === 'features.onChanged').length, 1,
+      'the revert write broadcasts through the listener');
   } finally {
     created.backendService.dispose?.();
   }

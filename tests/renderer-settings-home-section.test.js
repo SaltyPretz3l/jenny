@@ -150,7 +150,7 @@ test('failed Home preference write restores state and the control and leaves a v
   });
 });
 
-test('partial Home acknowledgement is rejected without replacing the prior snapshot', async () => {
+test('an acknowledgement that drops a written Scratchpad setting is rejected without replacing the prior snapshot', async () => {
   await withGlobals(async () => {
     const { dom, container, status } = harness();
     globalThis.window = dom.window;
@@ -160,7 +160,9 @@ test('partial Home acknowledgement is rejected without replacing the prior snaps
     });
     const state = { homeConfig: prior };
     dom.window.jennyShell = { home: { async updateConfig(patch) {
-      return { ...prior, links: [], scratchpad: { ...prior.scratchpad, ...patch.scratchpad } };
+      const { captureMode, ...partial } = patch.scratchpad.settings;
+      assert.equal(captureMode, 'overwrite');
+      return { ...prior, scratchpad: { ...prior.scratchpad, settings: partial } };
     } } };
     const render = () => homeSection.renderHomeSection({ container, status, state });
     render();
@@ -172,6 +174,42 @@ test('partial Home acknowledgement is rejected without replacing the prior snaps
     assert.equal(status.dataset.state, 'error');
     assert.match(status.textContent, /previous setting was restored/i);
     assert.equal(status.hidden, false);
+  });
+});
+
+test('a Home write adopts an echo whose other sections moved under a concurrent write', async () => {
+  await withGlobals(async () => {
+    const { dom, container, status } = harness();
+    globalThis.window = dom.window;
+    const prior = completeHome({ links: [{ id: 'docs', name: 'Docs', tiles: [] }] });
+    const state = { homeConfig: prior };
+    const concurrent = { links: [], calendar: { view: 'week' }, scratchpad: { ...prior.scratchpad, notes: [{ id: 'n1', text: 'new' }], activeNoteId: 'n1' } };
+    dom.window.jennyShell = { home: { async updateConfig(patch) {
+      return { ...prior, ...concurrent, scratchpad: { ...concurrent.scratchpad, settings: patch.scratchpad.settings } };
+    } } };
+    const render = () => homeSection.renderHomeSection({ container, status, state });
+    render();
+    homeSection.bindHomeSection({ container, status, state, renderSettings: render, registerListener });
+    pickCaptureMode(dom, container, 'overwrite');
+    await flush();
+    assert.equal(state.homeConfig.scratchpad.settings.captureMode, 'overwrite');
+    assert.deepEqual(state.homeConfig.links, [], 'the concurrent change is adopted with the acknowledgement');
+    assert.equal(state.homeConfig.scratchpad.activeNoteId, 'n1');
+    assert.equal(captureOption(container, 'overwrite').getAttribute('aria-checked'), 'true');
+    assert.notEqual(status.dataset.state, 'error');
+  });
+});
+
+test('an unchanged Home render keeps its rows instead of rewriting them', () => {
+  return withGlobals(() => {
+    const { container, status } = harness();
+    const state = { homeConfig: completeHome() };
+    homeSection.renderHomeSection({ container, status, state });
+    const row = container.querySelector('[data-settings-field="homeScratchpadGlobalCaptureToggle"]');
+    homeSection.renderHomeSection({ container, status, state: { homeConfig: completeHome() } });
+    assert.equal(container.querySelector('[data-settings-field="homeScratchpadGlobalCaptureToggle"]'), row);
+    homeSection.renderHomeSection({ container, status, state: { homeConfig: completeHome({ scratchpad: { notes: [], activeNoteId: '', pins: [], settings: { globalCapture: false } } }) } });
+    assert.notEqual(container.querySelector('[data-settings-field="homeScratchpadGlobalCaptureToggle"]'), row);
   });
 });
 

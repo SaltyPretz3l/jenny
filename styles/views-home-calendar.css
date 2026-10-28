@@ -2,6 +2,9 @@
  * derived from semantic palette tokens so the contract holds across themes. */
 
 .home-view {
+  --cal-hairline: color-mix(in srgb, var(--border-subtle) 85%, transparent);
+  --cal-tint-weekend: color-mix(in srgb, var(--bg-base) 22%, transparent);
+  --cal-tint-offhours: color-mix(in srgb, var(--bg-base) 45%, transparent);
   --cal-cat-default-hue: var(--state-muted);
   --cal-cat-work-hue: var(--accent);
   --cal-cat-personal-hue: var(--state-info);

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from typing import Any
 
@@ -9,10 +10,12 @@ from sidecar.ai.context.preview import preview_context
 from sidecar.ai.context.prompt_cache import resolve_current_date
 from sidecar.ai.error_codes import CMP_PROTO_VERSION_MISMATCH
 from sidecar.protocol import CONTEXT_PREVIEW_METHOD
+from sidecar.runtime.chat_helpers import context_calibration_from_params
 from sidecar.runtime.chat_models import ChatRequestContext
 from sidecar.runtime.chat_normalization import (
     normalize_context_blocks,
     normalize_tool_preferences,
+    session_role_from_params,
     session_start_date_from_params,
 )
 from sidecar.runtime.execution_context import execution_context_from_params
@@ -32,6 +35,8 @@ _FIELDS = {
     "run_mode",
     "session_start_date",
     "preferred_model",
+    "context_calibration",
+    "session_role",
 }
 
 
@@ -66,6 +71,7 @@ def process_context_preview(
         mode = params.get("run_mode")
         if mode not in {"ask", "auto", "plan", "propose"}:
             raise ValueError("invalid preview mode")
+        calibration = context_calibration_from_params(params)
         kernel = container.stack.router
         requested_model = params.get("preferred_model")
         request = None
@@ -82,10 +88,13 @@ def process_context_preview(
                 read_only=mode in {"plan", "propose"},
                 approval_mode="auto_run" if mode == "auto" else "prompt",
                 session_start_date=session_start_date_from_params(params),
+                session_role=session_role_from_params(params),
                 current_date=resolve_current_date(),
                 tool_preferences=normalize_tool_preferences(params.get("tool_preferences")),
                 context_blocks=tuple(normalize_context_blocks(params.get("context_blocks"))),
                 workspace_root_present=execution.workspace_root_present,
+                # The tool-budget probe reads it here, like a send's.
+                context_calibration=calibration,
             )
     except (ValueError, TypeError):
         response = error_response(
@@ -95,7 +104,14 @@ def process_context_preview(
     # Assembly errors are internal, not invalid params: they take the worker's
     # standard internal-error path.
     result = (
-        preview_context(kernel, request, history)
+        preview_context(
+            kernel,
+            request,
+            history,
+            context_calibration=(
+                None if calibration is None else dataclasses.asdict(calibration)
+            ),
+        )
         if request is not None
         else {"status": "unavailable", "reason": "model_not_active"}
     )

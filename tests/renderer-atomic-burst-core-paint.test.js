@@ -120,22 +120,23 @@ test('links go to at most link-max sparkles inside link-radius, 1px, alpha 0.55 
   assert.ok(fading[0].globalAlpha < links[0].globalAlpha && fading[0].globalAlpha > 0);
 });
 
-test('ring crossing tests the drawn (parallaxed) position and a crossed sparkle flares for 520ms', () => {
-  function run(offsetX) {
-    const entry = makeCoreEntry({ sparkles: [{ x: 88, y: 0, depth: 2 }] });
+test('ring crossing tests the drawn position, which a hovering pointer never shifts, and a crossed sparkle flares for 520ms', () => {
+  function run(x, hover) {
+    const entry = makeCoreEntry({ sparkles: [{ x, y: 0, depth: 2 }] });
     const sparkle = entry.simulation.sparkles[0];
+    if (hover) { atomicBurstCore.updatePointer(entry.simulation, entry.w, entry.h); }
     atomicBurstCore.spawnWave(entry.simulation, { x: 0, y: 0, startTime: 0, config: entry.config });
     step(entry, 1, { dtMs: 1 });
-    entry.simulation.parallaxOffset[2].x = offsetX;
     step(entry, 60);
     return { entry, sparkle };
   }
-  const control = run(0);
-  assert.equal(control.sparkle.flareStart, -1, 'the base position (88) is outside the ring front at t=60');
-  const parallaxed = run(-18);
-  assert.equal(parallaxed.sparkle.flareStart, 60, 'the drawn position (~72) is inside it');
+  const outside = run(88, true);
+  assert.equal(outside.sparkle.flareStart, -1, 'the sparkle at 88 is outside the ring front at t=60');
+  assert.equal(outside.entry.simulation.drawX[0], 88, 'a corner pointer does not shift the drawn position');
+  const inside = run(72, false);
+  assert.equal(inside.sparkle.flareStart, 60, 'the sparkle at 72 is inside it');
 
-  const { entry, sparkle } = parallaxed;
+  const { entry, sparkle } = inside;
   for (let t = 76; t <= 200; t += 16) { step(entry, t); }
   const start = sparkle.flareStart;
   assert.ok(start >= 60 && start <= 200);

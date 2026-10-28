@@ -8,7 +8,8 @@ const { createWorkspaceStateController } = require('../renderer/shell/renderer-w
 // shows only the strip, so the evicted row is mounted but cannot take focus
 // until the panel opens the way the strip's own expand opens it.
 
-function createRevealRig({ collapsed }) {
+function createRevealRig({ collapsed, mountedAtStart = true, revealMounts = true }) {
+  let mounted = mountedAtStart;
   let stored = { activeSessionId: '', openSessionIds: [] };
   const wsc = createWorkspaceStateController({
     jennyShell: { workspace: { getState: async () => stored, updateState: async (next) => { stored = next; return next; } } },
@@ -22,8 +23,8 @@ function createRevealRig({ collapsed }) {
   };
   const chatsPanel = {
     prepareForStripExpansion: () => calls.push(['prepareForStripExpansion']),
-    setProjectFilter: (id) => calls.push(['setProjectFilter', id]),
     renderNow: () => calls.push(['renderNow']),
+    revealSession: (sessionId) => { calls.push(['revealSession', sessionId]); mounted = revealMounts; return revealMounts; },
   };
   let panelCollapsed = collapsed;
   const state = {
@@ -39,7 +40,9 @@ function createRevealRig({ collapsed }) {
     constants: { TOAST_SOURCE: {} },
     dom: {
       workspaceRailShell: {
-        ownerDocument: { querySelectorAll: (selector) => (selector.includes('#conversationGroups') ? [row] : []) },
+        ownerDocument: {
+          querySelectorAll: (selector) => (selector.includes('#conversationGroups') && mounted ? [row] : []),
+        },
       },
     },
     callbacks: {
@@ -70,13 +73,7 @@ test('Show in Chats opens a collapsed chats panel, filters cleared, before focus
   const rig = createRevealRig({ collapsed: true });
   await evictFirstTab(rig);
   rig.toasts[0].actions[0].onClick();
-  assert.deepEqual(rig.calls, [
-    ['prepareForStripExpansion'],
-    ['setProjectFilter', ''],
-    ['expandChatsPanel'],
-    ['renderNow'],
-    ['focus', 's1'],
-  ]);
+  assert.deepEqual(rig.calls, [['prepareForStripExpansion'], ['expandChatsPanel'], ['renderNow'], ['focus', 's1']]);
 });
 
 test('Show in Chats leaves an open chats panel as it is when the row is already mounted', async () => {
@@ -84,4 +81,26 @@ test('Show in Chats leaves an open chats panel as it is when the row is already 
   await evictFirstTab(rig);
   rig.toasts[0].actions[0].onClick();
   assert.deepEqual(rig.calls, [['focus', 's1']]);
+});
+
+// Project grouping (the default) ignores the flat page limit, so a chat in a
+// collapsed project or past its project's first rows never mounts by paging:
+// the panel's own revealSession widens exactly what hides it.
+test('Show in Chats asks the panel to reveal an unmounted row, expanding a collapsed panel first', async () => {
+  const open = createRevealRig({ collapsed: false, mountedAtStart: false });
+  await evictFirstTab(open);
+  open.toasts[0].actions[0].onClick();
+  assert.deepEqual(open.calls, [['revealSession', 's1'], ['focus', 's1']]);
+
+  const collapsed = createRevealRig({ collapsed: true, mountedAtStart: false });
+  await evictFirstTab(collapsed);
+  collapsed.toasts[0].actions[0].onClick();
+  assert.deepEqual(collapsed.calls, [['prepareForStripExpansion'], ['expandChatsPanel'], ['renderNow'], ['revealSession', 's1'], ['focus', 's1']]);
+});
+
+test('Show in Chats focuses nothing when the panel cannot reveal the session', async () => {
+  const rig = createRevealRig({ collapsed: false, mountedAtStart: false, revealMounts: false });
+  await evictFirstTab(rig);
+  assert.doesNotThrow(() => rig.toasts[0].actions[0].onClick());
+  assert.deepEqual(rig.calls, [['revealSession', 's1']]);
 });

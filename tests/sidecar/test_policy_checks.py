@@ -1369,3 +1369,97 @@ def test_run_all_gives_every_check_a_ceiling(monkeypatch) -> None:
     # Locale-native decoding, as this driver has always read its checks: reading
     # a cp1252 byte as UTF-8 would corrupt the FAIL text an operator relies on.
     assert recorded["encoding"] is None
+
+
+def test_dead_code_launcher_targets_cover_bin_shebang_launchers_and_recipes(
+    tmp_path, monkeypatch
+) -> None:
+    module = _load_script_module("check_dead_code_candidates.py")
+    _write_text(tmp_path / "package.json", json.dumps({"bin": {"tool": "cli/tool.js"}}))
+    _write_text(tmp_path / "cli" / "tool.js", "module.exports = {};\n")
+    _write_text(tmp_path / "scripts" / "shebang.js", "#!/usr/bin/env node\nconsole.log(1);\n")
+    _write_text(tmp_path / "scripts" / "guarded.js", "if (require.main === module) main();\n")
+    _write_text(tmp_path / "scripts" / "plain.js", "module.exports = {};\n")
+    _write_text(tmp_path / "scripts" / "eval" / "seed.js", "module.exports = {};\n")
+    _write_text(tmp_path / "scripts" / "launch.ps1", "node scripts\\eval\\seed.js\n")
+    _write_text(tmp_path / "scripts" / "doc-run.js", "module.exports = {};\n")
+    _write_text(tmp_path / "docs" / "plans" / "plan.md", "Run `node --trace scripts/doc-run.js`.\n")
+    _write_text(tmp_path / "scripts" / "archived-run.js", "module.exports = {};\n")
+    _write_text(tmp_path / "docs" / "archive" / "old.md", "node scripts/archived-run.js\n")
+    _write_text(tmp_path / "scripts" / "tested.js", "module.exports = {};\n")
+    _write_text(
+        tmp_path / "tests" / "scripts" / "tested.test.js",
+        "path.resolve(__dirname, '../../scripts/tested.js');\n",
+    )
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    files = [p for p in tmp_path.rglob("*") if p.is_file()]
+
+    got = {p.relative_to(tmp_path).as_posix() for p in module.launcher_targets(files)}
+
+    assert got == {
+        "cli/tool.js",
+        "scripts/shebang.js",
+        "scripts/guarded.js",
+        "scripts/eval/seed.js",
+        "scripts/doc-run.js",
+        "scripts/tested.js",
+    }
+
+
+def test_dead_code_launcher_targets_cover_doc_links_and_mounted_siblings(
+    tmp_path, monkeypatch
+) -> None:
+    module = _load_script_module("check_dead_code_candidates.py")
+    for rel in (
+        "scripts/eval/linked.js",
+        "scripts/archived-link.js",
+        "scripts/history-recipe.js",
+        "scripts/packaging/probe.js",
+        "scripts/packaging/lonely.js",
+        "renderer/sibling.js",
+    ):
+        _write_text(tmp_path / rel, "module.exports = {};\n")
+    _write_text(
+        tmp_path / "docs" / "plans" / "plan.md",
+        "Reproduce with the [probe](../../scripts/eval/linked.js#L3).\n",
+    )
+    _write_text(tmp_path / "docs" / "archive" / "old.md", "[old](../../scripts/archived-link.js)\n")
+    _write_text(tmp_path / "docs" / "history" / "log.md", "node scripts/history-recipe.js\n")
+    # A tool that mounts its own directory names siblings by basename.
+    _write_text(
+        tmp_path / "scripts" / "packaging" / "setup.js",
+        "exec(['node', '/proof/probe.js']);\n// usage: node lonely-not.js\n",
+    )
+    _write_text(tmp_path / "scripts" / "packaging" / "lonely.js", "// usage: node lonely.js\n")
+    _write_text(tmp_path / "renderer" / "host.js", "load('/x/sibling.js');\n")
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    files = [p for p in tmp_path.rglob("*") if p.is_file()]
+
+    got = {p.relative_to(tmp_path).as_posix() for p in module.launcher_targets(files)}
+
+    assert got == {"scripts/eval/linked.js", "scripts/packaging/probe.js"}
+
+
+def test_dead_code_limits_candidates_to_tracked_files_and_record_dirs(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    module = _load_script_module("check_dead_code_candidates.py")
+    for rel in ("src/tracked.js", "src/ignored.bundle.js", "docs/plans/probe.js"):
+        _write_text(tmp_path / rel, "module.exports = {};\n")
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    monkeypatch.setattr(module, "ENTRYPOINTS", [])
+    monkeypatch.setattr(module, "DYNAMIC_ENTRY_GLOBS", ())
+
+    # Outside git every file is considered and docs/ stays excluded.
+    monkeypatch.setattr(module, "tracked_files", lambda: None)
+    assert module.main([]) == 0
+    out = capsys.readouterr().out.replace("\\", "/")
+    assert "src/tracked.js" in out and "src/ignored.bundle.js" in out
+    assert "docs/plans/probe.js" not in out
+
+    # With a tracked list, untracked build outputs are not candidates.
+    monkeypatch.setattr(module, "tracked_files", lambda: [tmp_path / "src" / "tracked.js"])
+    assert module.main([]) == 0
+    out = capsys.readouterr().out.replace("\\", "/")
+    assert "src/tracked.js" in out
+    assert "src/ignored.bundle.js" not in out

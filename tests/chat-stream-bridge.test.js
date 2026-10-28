@@ -860,3 +860,24 @@ test('chat stream bridge hands the stream terminal inference summaries to the us
   assert.equal(Object.hasOwn(recorded[1], 'inferencePerformance'), false, 'no summaries, no field');
   assert.equal(Object.hasOwn(recorded[2], 'inferencePerformance'), false);
 });
+
+test('chat stream bridge logs a user-denied or cancelled terminal summary at INFO, a failure at ERROR', () => {
+  const logs = [];
+  const bridge = createChatStreamBridge({
+    sendBridgeEvent() {},
+    log(level, event, details) { logs.push({ level, event, details }); },
+    now: () => 1_000,
+  });
+  bridge.handleEvent({ type: 'started', sessionId: 's', streamId: 'denied-1', model: 'm' });
+  bridge.handleEvent({ type: 'error', sessionId: 's', streamId: 'denied-1', model: 'm',
+    message: 'User rejected approval for write_file', terminal_status: 'denied' });
+  bridge.handleEvent({ type: 'started', sessionId: 's', streamId: 'cancel-1', model: 'm' });
+  bridge.handleEvent({ type: 'error', sessionId: 's', streamId: 'cancel-1', model: 'm',
+    message: 'Stopped', status: 'cancelled' });
+  bridge.handleEvent({ type: 'started', sessionId: 's', streamId: 'fail-1', model: 'm' });
+  bridge.handleEvent({ type: 'error', sessionId: 's', streamId: 'fail-1', model: 'm', message: 'boom' });
+  const summaries = logs.filter((entry) => entry.event === 'chat.stream_summary');
+  assert.deepEqual(summaries.map((entry) => [entry.details.streamId, entry.level]), [
+    ['denied-1', 'INFO'], ['cancel-1', 'INFO'], ['fail-1', 'ERROR'],
+  ]);
+});

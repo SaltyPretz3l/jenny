@@ -453,3 +453,55 @@ test('the panel has no History section when onGetLog is not wired (graceful degr
   assert.equal(panelEl.querySelector('[data-ide-scm-history]'), null, 'no history container');
   assert.match(panelEl.textContent, /Nothing to commit/, 'rest of the panel still renders');
 });
+
+// Row 82 G1: with the git actions wired, a card expands to its files; each file opens
+// its own diff, and the expanded card offers the full diff and Copy hash.
+test('an expanded card lists its files; a file, View full diff and Copy hash route out', async () => {
+  const dom = new JSDOM('<!doctype html><body><div id="host"></div></body>');
+  const host = dom.window.document.getElementById('host');
+  const calls = { files: [], open: [], diff: [], copy: [] };
+  const sha = commit().sha;
+  const panel = createIdeSourceControlPanel({
+    getMountEl: () => host, isActivePanel: () => true, actionButton, textField,
+    store: { getSnapshot: () => ({ available: true, isRepo: true, branch: 'main', files: [] }) },
+    onGetLog: async () => ({ ok: true, available: true, isRepo: true, commits: [commit()] }),
+    onGetCommitDiff: (payload) => calls.diff.push(payload.hash),
+    createCommitHistory: createIdeCommitHistory,
+    gitActions: {
+      getCommitFiles: async (hash) => {
+        calls.files.push(hash);
+        return { ok: true, files: [{ status: 'M', path: 'src/a.js', origPath: '' }, { status: 'R', path: 'b.js', origPath: 'old-b.js' }] };
+      },
+      openCommitFileDiff: (entry) => calls.open.push(entry),
+      copyText: (text) => calls.copy.push(text),
+    },
+  });
+  panel.bindEvents();
+  panel.renderSourceControlPanel();
+  await settle();
+  const card = host.querySelector('[data-ide-scm-action="history-open"]');
+  assert.equal(card.getAttribute('aria-expanded'), 'false');
+  card.click();
+  await settle();
+  assert.deepEqual(calls.files, [sha]);
+  assert.equal(host.querySelector('[data-ide-scm-action="history-open"]').getAttribute('aria-expanded'), 'true');
+  const fileRows = host.querySelectorAll('[data-ide-scm-action="history-file"]');
+  assert.deepEqual([...fileRows].map((row) => row.querySelector('.ide-scm-row-name').textContent), ['a.js', 'b.js']);
+  fileRows[1].click();
+  host.querySelector('[data-ide-scm-action="history-commit-diff"]').click();
+  host.querySelector('[data-ide-scm-action="history-copy-hash"]').click();
+  assert.deepEqual(calls.open, [{ hash: sha, path: 'b.js', origPath: 'old-b.js', status: 'R' }]);
+  assert.deepEqual(calls.diff, [sha]);
+  assert.deepEqual(calls.copy, [sha]);
+  // A second click collapses; re-expanding reuses the cached list.
+  host.querySelector('[data-ide-scm-action="history-open"]').click();
+  assert.equal(host.querySelectorAll('[data-ide-scm-action="history-file"]').length, 0);
+  host.querySelector('[data-ide-scm-action="history-open"]').click();
+  await settle();
+  assert.deepEqual(calls.files, [sha]);
+  // A root switch forgets the expansion and the cached lists.
+  panel.resetForRoot();
+  panel.renderSourceControlPanel();
+  await settle();
+  assert.equal(host.querySelectorAll('[data-ide-scm-action="history-file"]').length, 0);
+});

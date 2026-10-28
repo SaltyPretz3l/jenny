@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 import json
-from functools import lru_cache
-from typing import TYPE_CHECKING, Any
+from functools import lru_cache, partial
+from typing import TYPE_CHECKING, Any, Callable
 
 from sidecar.ai.error_codes import CMP_TOOL_EXECUTION_FAILED
 from sidecar.ai.routing.harness_helpers import MAX_RESPONSE_CHARS
 from sidecar.ai.tools.failure_taxonomy import FAILURE_CLASSES, classify
 from sidecar.ai.tools.registry import build_default_registry
 from sidecar.ai.tools.result_envelope import render_tool_result_envelope
-from sidecar.ai.tools.sanitization import sanitize_tool_output_no_truncate
+from sidecar.ai.tools.sanitization import sanitize_tool_output_no_truncate, truncate_text
 from sidecar.runtime.tool_execution_support import (
     GenerationResult,
     ToolCallRequest,
-    sanitize_tool_output,
+    strip_private_arguments,
     wrap_untrusted_tool_output,
 )
 
@@ -62,34 +62,18 @@ def bounded_tool_output(
     try:
         parsed = json.loads(str(output or ""))
     except (TypeError, ValueError, RecursionError):
-        return _bounded_plain_output(
-            output,
-            max_chars=max_chars,
-            tool_name=tool_name,
-            keep_edges=keep_edges,
-        ), True
-    if not isinstance(parsed, dict):
-        return _bounded_plain_output(
-            output,
-            max_chars=max_chars,
-            tool_name=tool_name,
-            keep_edges=keep_edges,
-        ), True
-    try:
-        compacted = _bounded_json_object(
-            parsed,
-            tool_name=tool_name,
-            max_chars=max_chars,
-            keep_edges=keep_edges,
-        )
-    except RecursionError:
-        compacted = _bounded_plain_output(
-            output,
-            max_chars=max_chars,
-            tool_name=tool_name,
-            keep_edges=keep_edges,
-        )
-    return compacted, True
+        parsed = None
+    if isinstance(parsed, dict):
+        try:
+            # JSON values are sanitized one by one (as decoded text, not in their
+            # escaped form inside the serialized payload), so they cannot reuse
+            # ``sanitized``; the plain fallback below does.
+            return _bounded_json_object(
+                parsed, tool_name=tool_name, max_chars=max_chars, keep_edges=keep_edges,
+            ), True
+        except RecursionError:
+            pass
+    return _bounded_plain_text(sanitized, max_chars=max_chars, keep_edges=keep_edges), True
 
 
 def _edge_text(text: str, *, max_chars: int) -> str:
@@ -102,13 +86,19 @@ def _edge_text(text: str, *, max_chars: int) -> str:
     return text[:head] + marker[:max_chars] + (text[-tail:] if tail else "")
 
 
-def _bounded_plain_output(
-    output: object, *, tool_name: str, max_chars: int, keep_edges: bool,
-) -> str:
+def _bounded_plain_text(sanitized: str, *, max_chars: int, keep_edges: bool) -> str:
+    """Bound already-sanitized text (same head cut and marker as ``sanitize_tool_output``)."""
     if keep_edges:
-        text = sanitize_tool_output_no_truncate(output, tool_name=tool_name)
-        return _edge_text(text, max_chars=max_chars)
-    return sanitize_tool_output(output, max_chars=max_chars, tool_name=tool_name)
+        return _edge_text(sanitized, max_chars=max_chars)
+    return truncate_text(sanitized, max_chars)
+
+
+def _len_with(payload: dict[str, object], payload_len: int, key: str, value: object) -> int:
+    """Serialized length of ``{**payload, key: value}`` without re-dumping *payload*."""
+    if key in payload:
+        return len(_dump_json({**payload, key: value}))
+    # Compact separators: one ',' before the member and one ':' inside it.
+    return payload_len + 2 + len(_dump_json(key)) + len(_dump_json(value))
 
 
 def _bounded_json_object(
@@ -122,6 +112,7 @@ def _bounded_json_object(
         "truncated": True,
         "truncation_reason": "router_output_chars",
     }
+    payload_len = len(_dump_json(payload))
     omitted: list[str] = []
     ordered_keys = [key for key in _JSON_PRIORITY_KEYS if key in value]
     ordered_keys.extend(key for key in value if key not in ordered_keys)
@@ -134,32 +125,39 @@ def _bounded_json_object(
                 _edge_text(item, max_chars=string_limit) if keep_edges else
                 f"{item[: string_limit - len(_TRUNCATED_TEXT_SUFFIX)]}{_TRUNCATED_TEXT_SUFFIX}"
             )
-        candidate = {**payload, key: item}
-        if len(_dump_json(candidate)) <= max_chars:
+        candidate_len = _len_with(payload, payload_len, key, item)
+        if candidate_len <= max_chars:
             payload[key] = item
+            payload_len = candidate_len
             continue
         # An MCP tool returns its whole answer under one key ("result"); dropping
         # an oversized object would hand the model an empty stub, so keep a
         # bounded prefix of its JSON text instead.
         prefix = (
-            _json_text_prefix(payload, key, item, max_chars=max_chars, keep_edges=keep_edges)
+            _json_text_prefix(
+                item,
+                length_with=partial(_len_with, payload, payload_len, key),
+                max_chars=max_chars,
+                keep_edges=keep_edges,
+            )
             if isinstance(item, (dict, list))
             else None
         )
         if prefix is None:
             omitted.append(key)
         else:
+            payload_len = _len_with(payload, payload_len, key, prefix)
             payload[key] = prefix
 
     if omitted:
-        count_candidate = {**payload, "omitted_field_count": len(omitted)}
-        if len(_dump_json(count_candidate)) <= max_chars:
+        count_len = _len_with(payload, payload_len, "omitted_field_count", len(omitted))
+        if count_len <= max_chars:
             payload["omitted_field_count"] = len(omitted)
+            payload_len = count_len
         omitted_preview: list[str] = []
         for key in omitted[:64]:
             candidate_preview = [*omitted_preview, key]
-            candidate = {**payload, "omitted_fields": candidate_preview}
-            if len(_dump_json(candidate)) > max_chars:
+            if _len_with(payload, payload_len, "omitted_fields", candidate_preview) > max_chars:
                 break
             omitted_preview = candidate_preview
         if omitted_preview:
@@ -173,16 +171,16 @@ def _bounded_json_object(
 
 
 def _json_text_prefix(
-    payload: dict[str, object],
-    key: str,
     item: object,
     *,
+    length_with: Callable[[object], int],
     max_chars: int,
     keep_edges: bool = False,
 ) -> str | None:
+    """Bounded JSON-text prefix of *item*; ``length_with(v)`` sizes the payload holding v."""
     text = _dump_json(item)
     limit = max_chars - _JSON_TEXT_RESERVE_CHARS
-    budget = limit - len(_dump_json({**payload, key: ""}))
+    budget = limit - length_with("")
     for _ in range(8):
         if budget < _MIN_JSON_TEXT_PREFIX_CHARS:
             return None
@@ -191,7 +189,7 @@ def _json_text_prefix(
             f"{text[: budget - len(_TRUNCATED_TEXT_SUFFIX)]}{_TRUNCATED_TEXT_SUFFIX}"
         )
         # Quotes and backslashes grow when the prefix is itself JSON-encoded.
-        overflow = len(_dump_json({**payload, key: prefix})) - limit
+        overflow = length_with(prefix) - limit
         if overflow <= 0:
             return prefix
         budget -= overflow
@@ -231,13 +229,17 @@ def assistant_tool_call_message(
     commentary = str(result.content or "") if is_first_call else ""
     if not commentary.strip():
         commentary = ""
+    # A malformed (non-object) payload is echoed as-is for the terminal error path.
+    arguments: object = call.arguments
+    if isinstance(arguments, dict):
+        arguments = strip_private_arguments(arguments)
     return {
         "role": "assistant",
         "content": commentary,
         "tool_calls": [{
             "id": call_id,
             "name": call.tool_id,
-            "arguments": call.arguments,
+            "arguments": arguments,
         }],
     }
 
@@ -249,11 +251,12 @@ def _side_effecting_by_tool() -> dict[str, bool]:
     Built once from the default registry: constructing the registry per tool
     result would be pure waste, and `side_effecting` is a property of the tool
     itself, not of any config. A tool absent from the default set (flag-gated
-    additions) simply renders the conservative `unknown`.
+    additions) simply renders the conservative `unknown`. ``configure=False``:
+    the lookup must not reset the process-global tool settings to defaults.
     """
     return {
         name: definition.side_effecting
-        for name, definition in build_default_registry(config=None).items()
+        for name, definition in build_default_registry(config=None, configure=False).items()
     }
 
 
@@ -361,11 +364,6 @@ def merge_result_metadata(
     if audit_metadata:
         metadata.update(dict(audit_metadata))
     return metadata
-
-
-# ---------------------------------------------------------------------------
-# execute_tool
-# ---------------------------------------------------------------------------
 
 
 # Error-code prefixes the renderer's chat-error-recovery `classifyAssistantError`

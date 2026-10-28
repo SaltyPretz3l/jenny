@@ -9,40 +9,32 @@ const {
 } = require('./worktree-root-config');
 const { normalizeString } = require('../../shared/normalize');
 const { normalizeComparablePath } = require('../../worktree-path-policy');
+const {
+  invalidArguments,
+  manifestSchema,
+  readStringArgument,
+  serviceFailure,
+  serviceUnavailable,
+  summaryArgument,
+} = require('./tool-result');
 
-function serviceUnavailable(message = 'Worktree select is unavailable.') {
-  return {
-    content: message,
-    summary: 'Worktree select unavailable',
-    isError: true,
-    errorCode: TOOL_ERROR_CODES.DISABLED,
-    metadata: {
-      result_kind: 'worktree_select',
-      status: 'failed',
-      reason: 'unavailable',
-    },
-  };
+const RESULT_KIND = 'worktree_select';
+const LABEL = 'Worktree select';
+const MAX_WORKTREE_ID_CHARS = 128;
+
+function unavailable(content) {
+  return serviceUnavailable(RESULT_KIND, { label: LABEL, content, metadata: { status: 'failed' } });
 }
 
 module.exports = {
   name: 'worktree_select',
-  description: 'Select a registered Git worktree as the active tools workspace root after validation.',
+  ...manifestSchema('worktree_select'),
   category: 'builtin',
   readOnly: false,
   workspaceRequired: true,
-  parameters: {
-    type: 'object',
-    properties: {
-      worktree_id: {
-        type: 'string',
-        description: 'Registry id returned by worktree_list or worktree_create.',
-      },
-    },
-    required: ['worktree_id'],
-  },
 
   summarize(input) {
-    return `Select worktree ${normalizeString(input?.worktree_id || input?.worktreeId)}`.trim();
+    return `Select worktree ${summaryArgument(input, 'worktree_id', MAX_WORKTREE_ID_CHARS)}`.trim();
   },
 
   async execute(input, context) {
@@ -50,16 +42,27 @@ module.exports = {
       !context.worktreeService
       || typeof context.worktreeService.resolveSelectableWorktree !== 'function'
     ) {
-      return serviceUnavailable('Worktree service is unavailable.');
+      return unavailable('Worktree service is unavailable.');
     }
     const configService = context.configService || context.backendService?.configService || null;
     const workspaceRootCoordinator = getWorkspaceRootCoordinator(context);
     const workspaceRootTransitionBroker = getWorkspaceRootTransitionBroker(context);
     if (!workspaceRootCoordinator || !workspaceRootTransitionBroker) {
-      return serviceUnavailable('Transactional workspace root switching is unavailable.');
+      return unavailable('Transactional workspace root switching is unavailable.');
     }
 
-    const worktreeId = normalizeString(input?.worktree_id || input?.worktreeId);
+    const idArgument = readStringArgument(input, 'worktree_id', {
+      required: true,
+      maxLength: MAX_WORKTREE_ID_CHARS,
+    });
+    if (idArgument.error) {
+      return invalidArguments(RESULT_KIND, {
+        label: LABEL,
+        content: idArgument.error,
+        metadata: { status: 'failed', active_root_unchanged: true },
+      });
+    }
+    const worktreeId = idArgument.value;
     const request = {
       workspaceRoot: context.workingDirectory,
       worktreeId,
@@ -69,18 +72,10 @@ module.exports = {
     }
     const selected = await context.worktreeService.resolveSelectableWorktree(request);
     if (!selected.success) {
-      return {
-        content: selected.message || 'Worktree select failed.',
-        summary: 'Worktree select failed',
-        isError: true,
-        errorCode: selected.error_code || TOOL_ERROR_CODES.EXECUTION_FAILED,
-        metadata: {
-          result_kind: 'worktree_select',
-          status: 'failed',
-          reason: selected.reason || 'execution_failed',
-          active_root_unchanged: true,
-        },
-      };
+      return serviceFailure(RESULT_KIND, selected, {
+        label: LABEL,
+        metadata: { status: 'failed', active_root_unchanged: true },
+      });
     }
 
     const previousRoot = getToolsWorkspaceRoot(configService, workspaceRootCoordinator);
@@ -100,7 +95,7 @@ module.exports = {
         isError: true,
         errorCode: TOOL_ERROR_CODES.EXECUTION_FAILED,
         metadata: {
-          result_kind: 'worktree_select',
+          result_kind: RESULT_KIND,
           status: 'failed',
           reason: transition?.code || 'root_transition_failed',
           active_root_unchanged: transition?.changed !== true,
@@ -121,7 +116,7 @@ module.exports = {
       summary: 'Selected worktree',
       isError: false,
       metadata: {
-        result_kind: 'worktree_select',
+        result_kind: RESULT_KIND,
         status: 'selected',
         active_root_changed: activeRootChanged,
         worktree: selected.worktree,

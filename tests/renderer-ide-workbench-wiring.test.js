@@ -13,7 +13,7 @@ const ideState = require('../renderer/features/renderer-ide-state');
 const model = require('../renderer/shared/workbench-layout-model');
 const ops = require('../renderer/shared/workbench-layout-ops');
 const wiringModule = require('../renderer/features/renderer-ide-workbench-wiring');
-const { createIdeCommands } = require('../renderer/features/renderer-ide-commands');
+const { createIdeCommands, createViewKeydownHandler } = require('../renderer/features/renderer-ide-commands');
 
 const { createIdeWorkbenchWiring, VIEW_LABELS, ICONS } = wiringModule;
 const ALL_VIEWS = Object.keys(VIEW_LABELS);
@@ -72,9 +72,9 @@ test('view registry covers every catalog view with a label function and a strip 
   const h = setup(t);
   assert.deepEqual(Object.keys(h.wiring.views).sort(), [...ALL_VIEWS].sort());
   const instances = [...[2, 3, 4].map((n) => model.terminalViewId(n)), 'chat-2', 'changes-2'];
-  assert.deepEqual([...ALL_VIEWS].sort(), [...Object.keys(model.VIEW_CATALOG), ...instances].sort(), 'wiring registry matches the layout catalog plus the terminal and chat instances');
+  assert.deepEqual([...ALL_VIEWS].sort(), [...Object.keys(model.VIEW_CATALOG), ...model.OPTIONAL_VIEW_IDS, ...instances].sort(), 'wiring registry matches the layout catalog plus the optional views and the terminal and chat instances');
   const expected = {
-    explorer: 'Files', search: 'Search', 'source-control': 'Git', terminal: 'Terminal',
+    explorer: 'Files', search: 'Search', 'source-control': 'Git', outline: 'Outline', terminal: 'Terminal',
     problems: 'Problems', run: 'Run', 'test-runner': 'Tests', 'test-output': 'Test output', activity: 'Activity', chat: 'Chat', changes: 'Changes',
     'terminal-2': 'Terminal 2', 'terminal-3': 'Terminal 3', 'terminal-4': 'Terminal 4', 'chat-2': 'Chat 2', 'changes-2': 'Changes 2',
   };
@@ -318,12 +318,16 @@ test('palette layout rows appear only for the wired actions and run them', () =>
   const ran = [];
   const wired = createIdeCommands({
     getActiveView: () => 'ide',
-    layoutActions: {
-      togglePrimarySide: () => ran.push('side'),
-      togglePanel: () => ran.push('panel'),
-      toggleChat: () => ran.push('chat'),
-      resetLayout: () => ran.push('reset'),
-    },
+    layoutActions: { resetLayout: () => ran.push('reset') },
+  });
+  // Row 82: the chorded layout rows register from the keymap into the same registry.
+  createViewKeydownHandler({
+    state: { ui: { activeView: 'ide' } },
+    ideCommands: wired,
+    workbenchWiring: { togglePrimarySide: () => ran.push('side') },
+    bottomPanel: { toggle: () => ran.push('panel') },
+    chatDock: { toggle: () => ran.push('chat') },
+    isChatDockEnabled: () => true,
   });
   const byId = Object.fromEntries(wired.getCommandItems().map((item) => [item.id, item]));
   for (const id of ['ide:toggle-primary-side', 'ide:toggle-panel', 'ide:toggle-chat', 'ide:reset-layout']) {

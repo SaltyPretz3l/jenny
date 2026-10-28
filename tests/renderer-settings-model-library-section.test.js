@@ -464,7 +464,7 @@ test('row menu enables Ollama removal, opens the existing modal, and confirms de
   assert.equal(remove.danger, true);
   assert.equal(remove.disabled, false);
   remove.action();
-  const modal = h.card.querySelector('[data-step-modal="model-library-section-confirm-delete"]');
+  const modal = h.document.querySelector('[data-step-modal="model-library-section-confirm-delete"]');
   assert.ok(modal);
   click(h.windowRef, modal.querySelector('[data-step-modal-action="confirm"]'));
   await flush();
@@ -474,6 +474,7 @@ test('row menu enables Ollama removal, opens the existing modal, and confirms de
     ['delete', { model: 'installed:1b' }]
   );
   assert.ok(h.calls.some((entry) => entry[0] === 'refreshModelPickers'));
+  assert.equal(h.card.querySelector('.model-library-section-status').textContent, '"installed:1b" removed.', 'the refresh keeps the result');
 });
 
 test('row menu disables removal for the loaded model', async (t) => {
@@ -826,15 +827,12 @@ test('document-level Escape dismisses the section delete modal', async (t) => {
     '[data-model-key="installed:1b"] [data-model-card-action="menu"]'
   ));
   contextMenuItem(h, 'Remove…').action();
-  assert.ok(h.card.querySelector('[data-step-modal="model-library-section-confirm-delete"]'));
+  assert.ok(h.document.querySelector('[data-step-modal="model-library-section-confirm-delete"]'));
   h.document.dispatchEvent(new h.windowRef.KeyboardEvent('keydown', {
     key: 'Escape',
     bubbles: true,
   }));
-  assert.equal(
-    h.card.querySelector('[data-step-modal="model-library-section-confirm-delete"]'),
-    null
-  );
+  assert.equal(h.document.querySelector('[data-step-modal="model-library-section-confirm-delete"]'), null);
 });
 
 test('a backdrop click dismisses the section delete modal; a click inside the panel keeps it', async (t) => {
@@ -845,14 +843,39 @@ test('a backdrop click dismisses the section delete modal; a click inside the pa
   const openModal = () => {
     click(h.windowRef, h.card.querySelector('[data-model-key="installed:1b"] [data-model-card-action="menu"]'));
     contextMenuItem(h, 'Remove…').action();
-    const modal = h.card.querySelector(modalSelector);
+    const modal = h.document.querySelector(modalSelector);
     assert.ok(modal, 'modal opens');
     return modal;
   };
   click(h.windowRef, openModal());
-  assert.equal(h.card.querySelector(modalSelector), null, 'backdrop click dismisses');
+  assert.equal(h.document.querySelector(modalSelector), null, 'backdrop click dismisses');
   click(h.windowRef, openModal().querySelector('.inv-step-modal'));
-  assert.ok(h.card.querySelector(modalSelector), 'panel click keeps the modal');
+  assert.ok(h.document.querySelector(modalSelector), 'panel click keeps the modal');
+});
+
+test('a row re-render keeps the open delete modal and the focus inside it', async (t) => {
+  const h = harness(t);
+  h.controller.bind();
+  await flush();
+  const modalSelector = '[data-step-modal="model-library-section-confirm-delete"]';
+  const menu = () => h.card.querySelector('[data-model-key="installed:1b"] [data-model-card-action="menu"]');
+  const openRemove = () => { click(h.windowRef, menu()); contextMenuItem(h, 'Remove…').action(); };
+  openRemove();
+  const modal = h.document.querySelector(modalSelector);
+  assert.equal(modal.parentNode, h.document.body, 'mounted on the body, so the backdrop covers the window');
+  await flush();
+  assert.equal(h.document.activeElement, modal.querySelector('[data-step-modal-action="cancel"]'), 'Cancel takes focus first');
+  const confirm = modal.querySelector('[data-step-modal-action="confirm"]');
+  confirm.focus();
+  click(h.windowRef, h.card.querySelector('[data-inv-chip="all"]')); // a full render (toolbar + rows)
+  assert.equal(h.document.querySelectorAll(modalSelector).length, 1);
+  assert.equal(h.document.querySelector(modalSelector), modal, 'the same dialog node stays');
+  assert.equal(h.document.activeElement, confirm);
+  click(h.windowRef, modal.querySelector('[data-step-modal-action="cancel"]'));
+  assert.equal(h.document.querySelector(modalSelector), null);
+  assert.equal(h.document.activeElement, menu(), 'Cancel returns focus to the row ⋯ that opened it');
+  openRemove();
+  assert.ok(h.document.querySelector(modalSelector), 'a cancelled dialog opens again');
 });
 
 test('pull completion performs no stale-card repaint before the terminal refresh', async (t) => {
@@ -930,14 +953,11 @@ test('in-flight activation and deletion latches surface bounded status instead o
   const menuSelector = '[data-model-key="installed:1b"] [data-model-card-action="menu"]';
   click(deletion.windowRef, deletion.card.querySelector(menuSelector));
   contextMenuItem(deletion, 'Remove…').action();
-  click(deletion.windowRef, deletion.card.querySelector('[data-step-modal-action="confirm"]'));
+  click(deletion.windowRef, deletion.document.querySelector('[data-step-modal-action="confirm"]'));
   click(deletion.windowRef, deletion.card.querySelector(menuSelector));
   contextMenuItem(deletion, 'Remove…').action();
-  click(deletion.windowRef, deletion.card.querySelector('[data-step-modal-action="confirm"]'));
-  assert.equal(
-    deletion.card.querySelector('.model-library-section-status').textContent,
-    'Still removing the previous model.'
-  );
+  click(deletion.windowRef, deletion.document.querySelector('[data-step-modal-action="confirm"]'));
+  assert.equal(deletion.card.querySelector('.model-library-section-status').textContent, 'Still removing the previous model.');
 });
 
 test('a feature broadcast with unchanged flags does not reload the sources', async (t) => {

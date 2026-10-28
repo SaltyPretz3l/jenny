@@ -17,6 +17,10 @@
   }
   root.rendererIdeReplaceTextUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  // The one escapeRegExp (renderer/shared/string-utils.js, an eager script).
+  const { escapeRegExp } = (typeof module === 'object' && module.exports)
+    ? require('../shared/string-utils')
+    : globalThis.stringUtils;
 
   /* ------------------------------------------------------------------ */
   /* EOL utilities                                                         */
@@ -45,8 +49,11 @@
     return s;
   }
 
+  // LF text plus a map from LF offsets back to raw offsets. A source without
+  // '\r' is already LF: rawOffsets is null and offsets are the identity.
   function toLfWithRawOffsets(raw) {
     const source = String(raw ?? '');
+    if (!source.includes('\r')) return { text: source, rawOffsets: null, source };
     const chars = [];
     const rawOffsets = [0];
     let rawIndex = 0;
@@ -63,15 +70,14 @@
     return { text: chars.join(''), rawOffsets, source };
   }
 
+  function rawOffsetOf(normalized, lfOffset) {
+    return normalized.rawOffsets ? normalized.rawOffsets[lfOffset] : lfOffset;
+  }
+
   /* ------------------------------------------------------------------ */
   /* Regex helpers                                                         */
   /* ------------------------------------------------------------------ */
 
-  /** Escape every regex metacharacter so a literal string can be used as a
-   *  pattern without unintended matching behaviour. */
-  function escapeRegExp(s) {
-    return String(s).replace(/[.*+?^$()|[\]\\{}]/g, '\\$&');
-  }
 
   /**
    * Build a RegExp from a raw query string with the requested flags.
@@ -135,16 +141,31 @@
     return false;
   }
 
+  // Conservative: an escape or negated class that can match '\n'. The preview
+  // is one line, so such a pattern's expansion would not reflect the real
+  // (cross-line) match. False positives only cost the expanded preview.
+  function canMatchNewline(source) {
+    return /\\[nrsWDvfpPuxc0]|\[\^/.test(String(source || ''));
+  }
+
   let previewMatcher = null;
   let previewMatcherKey = '';
 
+  // Preview-only, on the main thread: unsafe or newline-capable patterns fall
+  // back to the plain hit, and `options.budget` ({ remaining }) caps how many
+  // rows one render may expand.
   function computeRegexPreviewReplacement(match, options) {
     const preview = match?.preview || {};
     const text = String(preview.text || '');
     const start = Math.max(0, Math.min(Number(preview.matchStart) || 0, text.length));
     const end = Math.max(start, Math.min(Number(preview.matchEnd) || 0, text.length));
     const query = String(options?.query || '');
-    if (isPotentiallyUnsafeRegexSource(query)) return text.slice(start, end);
+    if (isPotentiallyUnsafeRegexSource(query) || canMatchNewline(query)) return text.slice(start, end);
+    const budget = options?.budget;
+    if (budget) {
+      if (!(budget.remaining > 0)) return text.slice(start, end);
+      budget.remaining -= 1;
+    }
     try {
       const key = (options?.caseSensitive ? '1\n' : '0\n') + query;
       if (key !== previewMatcherKey) {
@@ -401,8 +422,8 @@
       }
       const expanded = useRegex ? expandReplacement(m, literalReplacement) : literalReplacement;
       const replacement = restoreEol(toLf(expanded), eolMode);
-      const rawStart = normalized.rawOffsets[m.index];
-      const rawEnd = normalized.rawOffsets[m.index + m[0].length];
+      const rawStart = rawOffsetOf(normalized, m.index);
+      const rawEnd = rawOffsetOf(normalized, m.index + m[0].length);
       out += normalized.source.slice(lastRawIndex, rawStart) + replacement;
       lastRawIndex = rawEnd;
       count += 1;
@@ -415,6 +436,18 @@
   /* ------------------------------------------------------------------ */
   /* Single-position replace                                               */
   /* ------------------------------------------------------------------ */
+
+  // True when the line around `absStart` still reads exactly as the result
+  // row's preview showed it (the preview is a raw slice of that line). Search
+  // coordinates come from disk; an edited buffer can hold another occurrence
+  // at the same line/column, which must not be replaced in its place.
+  function previewMatchesAt(lf, lineStart, absStart, preview) {
+    const text = String(preview?.text ?? '');
+    const matchStart = Number(preview?.matchStart);
+    if (!Number.isSafeInteger(matchStart) || matchStart < 0 || matchStart > text.length) return false;
+    const windowStart = absStart - matchStart;
+    return windowStart >= lineStart && lf.slice(windowStart, windowStart + text.length) === text;
+  }
 
   /**
    * Replace a single occurrence of query at an exact line/column position.
@@ -430,7 +463,7 @@
    * Returns { newRaw, ok: true } on success, { newRaw: rawText, ok: false }
    * when there is no (non-empty) match at that position.
    */
-  function applyReplaceAtPosition(rawText, { line, column, query, replaceText, useRegex = false, caseSensitive = false, eol } = {}) {
+  function applyReplaceAtPosition(rawText, { line, column, query, replaceText, useRegex = false, caseSensitive = false, eol, expectedPreview = null } = {}) {
     if (query === '') return { newRaw: rawText, ok: false };
 
     const normalized = toLfWithRawOffsets(rawText);
@@ -457,10 +490,14 @@
       return { newRaw: rawText, ok: false };
     }
 
+    if (expectedPreview && !previewMatchesAt(lf, lineStarts[line - 1], absStart, expectedPreview)) {
+      return { newRaw: rawText, ok: false };
+    }
+
     const expanded = useRegex ? expandReplacement(m, String(replaceText)) : String(replaceText);
     const replacement = restoreEol(toLf(expanded), eolMode);
-    const rawStart = normalized.rawOffsets[absStart];
-    const rawEnd = normalized.rawOffsets[absStart + m[0].length];
+    const rawStart = rawOffsetOf(normalized, absStart);
+    const rawEnd = rawOffsetOf(normalized, absStart + m[0].length);
     return {
       newRaw: normalized.source.slice(0, rawStart) + replacement + normalized.source.slice(rawEnd),
       ok: true,

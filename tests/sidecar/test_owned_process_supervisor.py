@@ -19,8 +19,9 @@ import pytest
 
 from sidecar import _owned_process_supervisor as supervisor
 from sidecar._owned_process_bootstrap import encode_windows_bootstrap_payload
+from tests.sidecar._platform_skips import posix_only
 
-posix_only = pytest.mark.skipif(os.name == "nt", reason="POSIX supervisor")
+_POSIX_SUPERVISOR = posix_only("POSIX supervisor")
 
 _ESCAPING_PARENT = (
     "import pathlib, subprocess, sys\n"
@@ -111,7 +112,7 @@ def test_entrypoint_flag_matches_the_supervisor_module() -> None:
     assert entry._OWNED_PROCESS_SUPERVISOR_FLAG == supervisor.SUPERVISOR_FLAG
 
 
-@posix_only
+@_POSIX_SUPERVISOR
 @pytest.mark.parametrize("force_lineage", [False, True])
 def test_supervisor_mirrors_exit_code_and_delivers_input(
     tmp_path: Path, force_lineage: bool
@@ -131,7 +132,7 @@ def test_supervisor_mirrors_exit_code_and_delivers_input(
     assert completed.stdout.strip() == b"70000"
 
 
-@posix_only
+@_POSIX_SUPERVISOR
 def test_supervisor_reports_a_signalled_target_as_128_plus_signal(tmp_path: Path) -> None:
     completed = _run_supervisor(
         [sys.executable, "-c", "import os, signal; os.kill(os.getpid(), signal.SIGKILL)"],
@@ -142,7 +143,7 @@ def test_supervisor_reports_a_signalled_target_as_128_plus_signal(tmp_path: Path
     assert completed.returncode == 128 + int(signal.SIGKILL)
 
 
-@posix_only
+@_POSIX_SUPERVISOR
 @pytest.mark.parametrize("force_lineage", [False, True])
 def test_supervisor_sweeps_a_descendant_that_left_the_session(
     tmp_path: Path, force_lineage: bool
@@ -174,7 +175,7 @@ def test_supervisor_sweeps_a_descendant_that_left_the_session(
                 pass
 
 
-@posix_only
+@_POSIX_SUPERVISOR
 def test_supervisor_does_not_leak_its_ready_descriptor_to_the_target(
     tmp_path: Path,
 ) -> None:
@@ -194,7 +195,7 @@ def test_supervisor_does_not_leak_its_ready_descriptor_to_the_target(
     assert result.stdout.strip() == "absent"
 
 
-@posix_only
+@_POSIX_SUPERVISOR
 def test_terminating_a_supervisor_sweeps_the_tree_and_still_proves_cleanup(
     tmp_path: Path,
 ) -> None:
@@ -262,7 +263,7 @@ def _read_report(read_fd: int) -> bytes:
         return b""
 
 
-@posix_only
+@_POSIX_SUPERVISOR
 @pytest.mark.parametrize("force_lineage", [False, True])
 def test_repeated_termination_signals_still_end_in_a_proven_sweep(
     tmp_path: Path, force_lineage: bool
@@ -304,7 +305,7 @@ def test_repeated_termination_signals_still_end_in_a_proven_sweep(
             pass
 
 
-@posix_only
+@_POSIX_SUPERVISOR
 def test_supervisor_that_dies_unexpectedly_reports_no_proof(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -333,7 +334,7 @@ def test_supervisor_that_dies_unexpectedly_reports_no_proof(
             pass
 
 
-@posix_only
+@_POSIX_SUPERVISOR
 def test_missing_program_and_directory_still_raise_from_spawn(tmp_path: Path) -> None:
     from sidecar.ai.tools.builtins.owned_process import OwnedProcessService
 
@@ -346,7 +347,7 @@ def test_missing_program_and_directory_still_raise_from_spawn(tmp_path: Path) ->
     assert service.snapshot().active == 0
 
 
-@posix_only
+@_POSIX_SUPERVISOR
 def test_lineage_mode_finds_a_descendant_orphaned_between_two_samples(
     tmp_path: Path,
 ) -> None:
@@ -375,7 +376,7 @@ def test_lineage_mode_finds_a_descendant_orphaned_between_two_samples(
                 pass
 
 
-@posix_only
+@_POSIX_SUPERVISOR
 def test_owner_names_the_sampled_mechanism_on_a_confirmed_verdict(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -404,7 +405,7 @@ def test_owner_names_the_sampled_mechanism_on_a_confirmed_verdict(
     assert service.snapshot().active == 0
 
 
-@posix_only
+@_POSIX_SUPERVISOR
 def test_owner_reports_no_reason_for_the_kernel_backed_proof(tmp_path: Path) -> None:
     from sidecar.ai.tools.builtins.owned_process import OwnedProcessService
 

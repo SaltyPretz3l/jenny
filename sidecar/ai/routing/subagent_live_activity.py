@@ -2,6 +2,7 @@
 
 Snapshots replace prior snapshots; they never enter the parent model context.
 The delegate coordinator owns transport and flushes before terminal settlement.
+A frame carries the transcript only when it changed since the previous frame.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from sidecar.ai.routing.delegate_child_steps import (
 )
 from sidecar.ai.routing.subagent_telemetry import usage_from_decision
 from sidecar.ai.tools.catalog import tool_display_name
+from sidecar.protocol import CHAT_THINKING_KIND_REASONING
 
 _UPDATE_INTERVAL_SECONDS = 0.25
 
@@ -46,6 +48,11 @@ class SubagentLiveActivity:
         self._usage: dict[str, Any] | None = None
         self._usage_incomplete = False
         self._summary = 'Starting research'
+        # Loads with the first child run, not at sidecar startup.
+        from sidecar.ai.routing.subagent_transcript import ChildTranscript
+
+        self._transcript = ChildTranscript(clock=clock)
+        self._published_version = 0
 
     def __call__(self, event: events.LoopEvent) -> None:
         with self._lock:
@@ -54,9 +61,16 @@ class SubagentLiveActivity:
             immediate = True
             if isinstance(event, events.ToolExecutingEvent):
                 self._tool_started(event)
+                self._transcript.tool_started(event.call_id, event.tool_name, event.arguments)
             elif isinstance(event, events.ToolResultEvent):
                 self._tool_finished(event)
+                self._transcript.tool_finished(
+                    event.call_id, tool_name=event.tool_name, success=event.success,
+                    content=event.content, tool_input=event.tool_input,
+                    error_code=event.error_code, duration_ms=event.duration_ms,
+                )
             elif isinstance(event, events.TokenDeltaEvent):
+                self._transcript.text_delta(event.delta)
                 self._current_chars += len(event.delta)
                 self._estimate_pending = True
                 remaining = MAX_CHILD_ANSWER_CHARS - len(self._commentary) - len(self._current)
@@ -65,6 +79,7 @@ class SubagentLiveActivity:
                 self._summary = 'Responding'
                 immediate = False
             elif isinstance(event, events.StreamResetEvent):
+                self._transcript.reset(keep_text=event.reason == 'tool_continuation')
                 if event.reason == 'tool_continuation':
                     text = self._commentary + self._current + '\n\n'
                     self._commentary = text[:MAX_CHILD_ANSWER_CHARS]
@@ -84,9 +99,21 @@ class SubagentLiveActivity:
                     self._estimate_pending = False
             elif isinstance(event, events.IterationStartEvent):
                 self._summary = 'Working on it'
-            else:
-                return  # Reasoning, raw output, arguments and other events stay private.
+            elif not self._thought_opened(event):
+                # Status thinking, raw output and other events stay private.
+                return
             self._flush(immediate)
+
+    def _thought_opened(self, event: events.LoopEvent) -> bool:
+        # Reasoning feeds only the transcript. Its text lands when the thought
+        # closes, so only opening a thought sends a frame.
+        if not isinstance(event, events.ThinkingEvent):
+            return False
+        if event.kind != CHAT_THINKING_KIND_REASONING:
+            return False
+        version = self._transcript.version
+        self._transcript.reasoning(event.thinking_id, event.delta)
+        return self._transcript.version != version
 
     def _tool_started(self, event: events.ToolExecutingEvent) -> None:
         self._summary = _step_text(tool_display_name(event.tool_name), 64)
@@ -116,20 +143,29 @@ class SubagentLiveActivity:
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
-            return {
-                'sequence': self._sequence,
-                'steps': [dict(step) for step in self._steps.values()],
-                'step_count': self._step_count,
-                'result_count': self._result_count,
-                'text': _step_text(self._commentary + self._current, MAX_CHILD_ANSWER_CHARS),
-                'text_truncated': self._text_truncated,
-                'visible_output_tokens_estimate': (
-                    min(2_147_483_647, math.ceil(self._current_chars / 4))
-                    if self._estimate_pending else None
-                ),
-                'usage': dict(self._usage) if self._usage else None,
-                'summary': self._summary,
-            }
+            return self._snapshot(transcript=True)
+
+    def _snapshot(self, *, transcript: bool) -> dict[str, Any]:
+        snapshot: dict[str, Any] = {
+            'sequence': self._sequence,
+            'steps': [dict(step) for step in self._steps.values()],
+            'step_count': self._step_count,
+            'result_count': self._result_count,
+            'text': _step_text(self._commentary + self._current, MAX_CHILD_ANSWER_CHARS),
+            'text_truncated': self._text_truncated,
+            'visible_output_tokens_estimate': (
+                min(2_147_483_647, math.ceil(self._current_chars / 4))
+                if self._estimate_pending else None
+            ),
+            'usage': dict(self._usage) if self._usage else None,
+            'summary': self._summary,
+        }
+        if transcript:
+            snapshot['transcript'] = self._transcript.entries()
+            snapshot['transcript_version'] = self._transcript.version
+            if self._transcript.dropped:
+                snapshot['transcript_dropped'] = self._transcript.dropped
+        return snapshot
 
     def finish(self) -> dict[str, Any]:
         with self._lock:
@@ -139,6 +175,7 @@ class SubagentLiveActivity:
                 for step in self._steps.values():
                     if step['status'] == 'running':
                         step['status'] = 'interrupted'
+                self._transcript.finish()
                 self._flush(True)
                 self._closed = True
             return self.snapshot()
@@ -149,8 +186,10 @@ class SubagentLiveActivity:
             return
         self._sequence += 1
         self._last_sent = now
+        version = self._transcript.version
+        changed, self._published_version = version != self._published_version, version
         # A closed/broken UI must not change a child's execution outcome.
         try:
-            self._publish(self.snapshot())
+            self._publish(self._snapshot(transcript=changed))
         except Exception:  # noqa: BLE001 - advisory, same boundary as agent.progress.
             pass

@@ -184,6 +184,9 @@ _SESSION = VALID_PARAMS[CONVERSATIONS_INDEX_SESSION_METHOD]
         (CONVERSATIONS_SEARCH_METHOD, {"query": "x"}),
         (CONVERSATIONS_SEARCH_METHOD, {"query": "x", "project_id": "p", "limit": 11}),
         (CONVERSATIONS_SEARCH_METHOD, {"query": "x", "project_id": "p", "limit": 0}),
+        (CONVERSATIONS_SEARCH_METHOD, {"query": "x", "project_id": "p", "all_projects": "yes"}),
+        (CONVERSATIONS_SEARCH_METHOD, {"query": "x", "project_id": "p", "all_projects": None}),
+        (CONVERSATIONS_SEARCH_METHOD, {"query": "x", "all_projects": True}),
         (CONVERSATIONS_SEARCH_METHOD,
          {"query": "x", "project_id": "p", "exclude_session_ids": ["s"] * 51}),
         (CONVERSATIONS_EMBED_STEP_METHOD, {"budget_seconds": 0.05}),
@@ -220,6 +223,15 @@ def test_index_state_search_purge_round_trip(tmp_path: Path) -> None:
                   container=container).response["result"]
     assert search["mode"] == "lexical"
     assert [hit["session_id"] for hit in search["hits"]] == ["s1"]
+    # Row 69: all_projects (the primary chat) drops the project filter only.
+    wide = _run(CONVERSATIONS_SEARCH_METHOD, _params(
+        query="postgres", project_id="p1", all_projects=True, exclude_session_ids=["s1"],
+    ), container=container).response["result"]
+    assert [hit["session_id"] for hit in wide["hits"]] == ["s2"]
+    narrow = _run(CONVERSATIONS_SEARCH_METHOD, _params(
+        query="postgres", project_id="p1", all_projects=False,
+    ), container=container).response["result"]
+    assert [hit["session_id"] for hit in narrow["hits"]] == ["s1"]
 
     purge = _run(CONVERSATIONS_PURGE_METHOD, _params(session_ids=["s1"]),
                  container=container).response["result"]

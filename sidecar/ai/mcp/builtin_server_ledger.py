@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -22,37 +23,86 @@ from sidecar.runtime.operation_ledger import (
     reconcile_content_addressed_pending,
     recorded_operation_outcome,
     render_operation_status,
+    workspace_evidence_marker,
 )
 
 logger = logging.getLogger(__name__)
 _IDEMPOTENCY_KEY_RE = re.compile(r"idem_[0-9a-f]{24}")
 _OPERATION_LEDGER_ROOT: list[Path | None] = [None]
+# One ledger per configured root: building one captures the trusted root and
+# creates its directory, so every bracketed call reusing it skips that work.
+_LEDGER_CACHE: list[tuple[Path, OperationLedger] | None] = [None]
+_LEDGER_CACHE_LOCK = threading.Lock()
 _MAX_EVIDENCE_SESSION_ID = 200
 
 
 def configure_operation_ledger(root: Path | str | None) -> None:
     _OPERATION_LEDGER_ROOT[0] = None if root is None else Path(root).expanduser()
+    with _LEDGER_CACHE_LOCK:
+        _LEDGER_CACHE[0] = None
 
 
 def current_operation_ledger() -> OperationLedger | None:
     root = _OPERATION_LEDGER_ROOT[0]
     if root is None:
         return None
+    with _LEDGER_CACHE_LOCK:
+        cached = _LEDGER_CACHE[0]
+    if cached is not None and cached[0] == root and cached[1].still_bound():
+        return cached[1]
     try:
-        return OperationLedger(root)
+        ledger = OperationLedger(root)
     except OperationLedgerUnavailable:
         logger.warning("operation ledger is unavailable; executing without certainty")
         return None
+    with _LEDGER_CACHE_LOCK:
+        if _OPERATION_LEDGER_ROOT[0] == root:
+            _LEDGER_CACHE[0] = (root, ledger)
+    return ledger
+
+
+def start_background_compaction() -> threading.Thread | None:
+    """Compact the ledger beside the serving loop instead of before it.
+
+    Non-daemon, so a normal exit lets the sweep finish and release its lock.
+    """
+    ledger = current_operation_ledger()
+    if ledger is None:
+        return None
+
+    def run() -> None:
+        try:
+            ledger.compact(now_iso=operation_timestamp())
+        except Exception:  # noqa: BLE001 - maintenance must never break serving
+            logger.warning("operation ledger compaction failed", exc_info=True)
+
+    thread = threading.Thread(target=run, name="operation-ledger-compact", daemon=False)
+    thread.start()
+    return thread
+
+
+def _session_receipts(receipts: list[dict], arguments: object) -> list[dict]:
+    """Only the calling session's receipts when the call carries a session id."""
+    raw = arguments.get("_jenny_session_id") if isinstance(arguments, dict) else None
+    session_id = raw.strip()[:_MAX_EVIDENCE_SESSION_ID] if isinstance(raw, str) else ""
+    if not session_id:
+        return receipts
+    return [
+        receipt for receipt in receipts
+        if isinstance(receipt.get("evidence"), dict)
+        and receipt["evidence"].get("session_id") == session_id
+    ]
 
 
 def operation_status_tool(
-    _arguments: dict[str, object],
+    arguments: dict[str, object],
     workspace: WorkspaceGuard,
     *,
     generation_id: str,
 ) -> ToolHandlerResult:
     ledger = current_operation_ledger()
     receipts, corrupt_count = ledger.pending_receipts() if ledger is not None else ([], 0)
+    receipts = _session_receipts(receipts, arguments)
     if ledger is not None and workspace.root is not None:
         pending: list[dict] = []
         for receipt in receipts:
@@ -112,8 +162,10 @@ def _pending_evidence(
     content = arguments.get("content")
     if isinstance(path, str) and isinstance(content, str):
         resolved = workspace.resolve_write_path(path)
-        evidence["relative_path"] = resolved.relative_to(workspace.require_root()).as_posix()
+        root = workspace.require_root()
+        evidence["relative_path"] = resolved.relative_to(root).as_posix()
         evidence["content_sha256"] = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        evidence["workspace_sha256"] = workspace_evidence_marker(root)
     return evidence
 
 

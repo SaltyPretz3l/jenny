@@ -524,6 +524,12 @@ def test_context_budget_stop_uses_deterministic_summary_without_regeneration(
     assert engine.call_count == 1, "no regeneration once the context is over threshold"
     assert "Let me check the file." not in decision.response_text
     assert decision.response_text.endswith(_CONTEXT_BUDGET_FOOTER)
+    # The reply leads with why it stopped, not with a model-failure sentence
+    # (a parent chat reads the head of a child's report, 2026-10-27).
+    assert decision.response_text.startswith(
+        "I stopped because this turn's context budget is used up. Here is what I gathered so far."
+    )
+    assert "did not produce a visible final response" not in decision.response_text
     # The already-streamed pre-tool text must be reset and the replacement
     # streamed, or the live row and the persisted answer diverge.
     assert any(

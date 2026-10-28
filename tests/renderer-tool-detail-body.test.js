@@ -21,15 +21,16 @@ function captions(markup) {
   return Array.from(markup.matchAll(/tool-call-section-kicker(?:--error)?">([^<]+)/g), (match) => match[1]);
 }
 
-test('detail text registries enforce FIFO entry and UTF-8 byte bounds', () => {
+test('detail text registries enforce LRU entry and UTF-8 byte bounds', () => {
   const entryBoundedDetailBody = loadDetailBody();
   for (let index = 0; index < 200; index += 1) {
     entryBoundedDetailBody.registerFullText(`entry-${index}`, `value-${index}`);
   }
+  // A re-rendered section is recently used: the next oldest leaves instead.
   entryBoundedDetailBody.registerFullText('entry-0', 'value-0');
   entryBoundedDetailBody.registerFullText('entry-200', 'value-200');
-  assert.equal(entryBoundedDetailBody.getFullText('entry-0'), null);
-  assert.equal(entryBoundedDetailBody.getFullText('entry-1'), 'value-1');
+  assert.equal(entryBoundedDetailBody.getFullText('entry-1'), null);
+  assert.equal(entryBoundedDetailBody.getFullText('entry-0'), 'value-0');
   assert.equal(entryBoundedDetailBody.getFullText('entry-200'), 'value-200');
 
   const oversizedDetailBody = loadDetailBody();
@@ -234,7 +235,8 @@ test('pretty JSON memoization invalidates when a live row reuses its copy id wit
   const updated = builder.buildDetailBodyMarkup({ toolName: 'Tool', outputText: '{"value":2}', domToken: 'live-json' });
   assert.match(updated, /&quot;value&quot;: 2/);
   assert.doesNotMatch(updated, /&quot;value&quot;: 1/);
-  assert.match(isolatedDetailBody.getFullText('live-json-output'), /"value": 2/);
+  // A short section copies its own DOM text: nothing enters the copy registry.
+  assert.equal(isolatedDetailBody.getFullText('live-json-output'), null);
 });
 
 test('a JSON output is parsed once per build: the pretty print decides the json language, a cached build parses nothing', () => {
@@ -529,4 +531,69 @@ test('command and content input fields render as their own shell and file-langua
   assert.equal(content.code.dataset.languageId, 'javascript');
   const receipt = write.find((section) => section.caption === 'Output').code;
   assert.equal(receipt.hasAttribute('data-language-id'), false, 'the receipt stays prose');
+});
+
+test('only clamped or capped sections enter the copy registry', () => {
+  const isolatedDetailBody = loadDetailBody();
+  const builder = createBuilder(isolatedDetailBody);
+  builder.buildDetailBodyMarkup({ toolName: 'Tool', outputText: 'one line', domToken: 'short' });
+  assert.equal(isolatedDetailBody.getFullText('short-output'), null);
+  const twelveLines = Array.from({ length: 12 }, (_, index) => `line ${index}`).join('\n');
+  builder.buildDetailBodyMarkup({ toolName: 'Tool', outputText: twelveLines, domToken: 'clamped' });
+  assert.equal(isolatedDetailBody.getFullText('clamped-output'), twelveLines);
+});
+
+test('the open session keeps its capped sections when other chats fill the budget, and an evicted Copy all hides', () => {
+  const isolatedDetailBody = loadDetailBody();
+  const builder = createBuilder(isolatedDetailBody);
+  const token = (sessionId, callId) => toolCallUtils.buildToolRowDomToken(toolCallUtils.buildToolRowKey({ sessionId, turnId: 't', callId }));
+  const big = 'x'.repeat(isolatedDetailBody.TOOL_DETAIL_PREVIEW_MAX_CHARS + 10);
+  const dom = new JSDOM('<body></body>');
+  const previousDocument = globalThis.document;
+  globalThis.document = dom.window.document;
+  try {
+    const oldMarkup = builder.buildDetailBodyMarkup({ toolName: 'Tool', outputText: big, domToken: token('chat-a', 'old') });
+    dom.window.document.body.innerHTML = oldMarkup;
+    // Session B renders one capped section, then session A fills the budget.
+    builder.buildDetailBodyMarkup({ toolName: 'Tool', outputText: big, domToken: token('chat-b', 'keep') });
+    for (let index = 0; index < 200; index += 1) {
+      builder.buildDetailBodyMarkup({ toolName: 'Tool', outputText: big, domToken: token('chat-a', `fill-${index}`) });
+    }
+    // Back in B: its section outlives A's older ones.
+    builder.buildDetailBodyMarkup({ toolName: 'Tool', outputText: big, domToken: token('chat-b', 'keep') });
+    for (let index = 0; index < 5; index += 1) {
+      builder.buildDetailBodyMarkup({ toolName: 'Tool', outputText: big, domToken: token('chat-b', `more-${index}`) });
+    }
+    assert.equal(isolatedDetailBody.getFullText(`${token('chat-b', 'keep')}-output`), big);
+    assert.equal(isolatedDetailBody.getFullText(`${token('chat-a', 'old')}-output`), null);
+    const copyAll = dom.window.document.querySelector('.tool-detail-copy-all');
+    assert.ok(copyAll, 'the capped section rendered Copy all');
+    assert.equal(copyAll.hidden, true, 'an evicted entry cannot copy the full text, so its Copy all leaves');
+  } finally {
+    globalThis.document = previousDocument;
+    dom.window.close();
+  }
+});
+
+test('a failed python_execute shows its parsed error once, with the error chip', () => {
+  const builder = createBuilder();
+  const outputText = JSON.stringify({
+    stdout: '', error: { type: 'ZeroDivisionError', message: 'division by zero', traceback: 'Traceback...\nZeroDivisionError: division by zero' },
+  });
+  const markup = builder.buildDetailBodyMarkup({
+    toolName: 'python_execute', toolKind: 'python_execute', isError: true, status: 'errored',
+    errorCode: 'CMP-TOOL-0031', outputText, domToken: 'py-fail', input: { code: '1/0' },
+  });
+  assert.deepEqual(captions(markup).filter((caption) => caption === 'Error'), ['Error']);
+  assert.equal((markup.match(/division by zero/g) || []).length, 1, 'the traceback text appears once');
+  assert.doesNotMatch(markup, /&quot;traceback&quot;/, 'the raw JSON payload is not repeated as an Error section');
+  assert.match(markup, /CMP-TOOL-0031/, 'the error chip rides the parsed error section');
+
+  // A failure with no parsed error still gets the generic Error section.
+  const plain = builder.buildDetailBodyMarkup({
+    toolName: 'python_execute', toolKind: 'python_execute', isError: true, status: 'errored',
+    outputText: 'Python runtime unavailable', domToken: 'py-plain',
+  });
+  assert.deepEqual(captions(plain).filter((caption) => caption === 'Error'), ['Error']);
+  assert.match(plain, /Python runtime unavailable/);
 });

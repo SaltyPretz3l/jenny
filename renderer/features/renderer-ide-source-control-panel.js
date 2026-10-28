@@ -1,7 +1,8 @@
 /* renderer/features/renderer-ide-source-control-panel.js - the Source Control
  * rail panel (the IDE's 5th rail panel) for the Tier-2 git slice. Reads the git
- * status store snapshot and renders two friendly groups - "Changed" (working-
- * tree edits + untracked) and "Ready to commit" (staged) - with per-row open-
+ * status store snapshot and renders friendly groups - "Needs resolving"
+ * (unmerged files, row 75: renderer-ide-scm-conflicts.js), "Ready to commit"
+ * (staged) and "Changed" (working-tree edits + untracked) - with per-row open-
  * diff / stage / unstage / discard, a Stage All action, a commit-message field,
  * and one Commit button. No index/working-tree jargon. Mirrors the changes-panel
  * delegation pattern: markup strings + a click/keydown/input listener on the
@@ -18,6 +19,11 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   function noop() {}
+  const conflictUtils = globalThis.rendererIdeScmConflicts
+    || (typeof require === 'function' ? require('./renderer-ide-scm-conflicts') : {});
+  // Row 82 G1: row hover actions, group header actions and the commit options.
+  const rowActionsUtils = globalThis.rendererIdeScmRowActions
+    || (typeof require === 'function' ? require('./renderer-ide-scm-row-actions') : {});
 
   const STATE_BADGE = {
     modified: 'M',
@@ -47,6 +53,34 @@
     return index === -1 ? '' : String(path).slice(0, index);
   }
 
+  // One file row's badge, name and folder hint: the panel rows and the History card
+  // file lists (fed git status letters; T, a type change, reads as modified) share it.
+  function rowInnerMarkup(escapeHtml, path, state, badge) {
+    const dir = parentDirOf(path);
+    return `<span class="ide-scm-badge" data-git-state="${escapeHtml(state)}" aria-hidden="true">${escapeHtml(badge)}</span>`
+      + `<span class="ide-scm-row-name">${escapeHtml(fileNameOf(path))}</span>`
+      + (dir ? `<span class="ide-scm-row-dir">${escapeHtml(dir)}</span>` : '');
+  }
+  const stateOfLetter = (letter) => Object.keys(STATE_BADGE).find((state) => state !== 'untracked' && STATE_BADGE[state] === letter) || 'modified';
+
+  // A worktree column other than ' ' is an edit not yet in the index. A
+  // partially staged file (e.g. MM) has both, so it belongs to both groups:
+  // otherwise Stage All and a commit silently leave its newer edits behind.
+  function hasWorktreeChange(file) {
+    const worktree = String((file && file.worktree) || '');
+    return worktree !== '' && worktree !== ' ';
+  }
+
+  function isChanged(file) {
+    return !file.staged || hasWorktreeChange(file);
+  }
+
+  // An unmerged file belongs to "Needs resolving" only: its index column is
+  // non-space, so it would otherwise land in both of the other groups.
+  function isConflicted(file) {
+    return file.state === 'conflicted';
+  }
+
   function createIdeSourceControlPanel(deps) {
     const options = deps || {};
     const getDom = typeof options.getDom === 'function' ? options.getDom : () => ({});
@@ -71,6 +105,12 @@
     const onDiscard = typeof options.onDiscard === 'function' ? options.onDiscard : noop;
     const onDelete = typeof options.onDelete === 'function' ? options.onDelete : noop;
     const onOpenDiff = typeof options.onOpenDiff === 'function' ? options.onOpenDiff : noop;
+    // Row 75 conflicts: onResolve(path) stages unless markers remain (then it
+    // resolves { needsConfirm, count }); onResolveDelete(path) resolves by
+    // deleting (confirm-gated); onOpenFile opens the file itself in the editor.
+    const onResolve = typeof options.onResolve === 'function' ? options.onResolve : async () => null;
+    const onResolveDelete = typeof options.onResolveDelete === 'function' ? options.onResolveDelete : noop;
+    const onOpenFile = typeof options.onOpenFile === 'function' ? options.onOpenFile : noop;
     // Jenny marker: getJennyChange(path) -> { turnId, fileKey } | null (her latest
     // ledger change to that workspace-relative path); onOpenJennyChange opens it.
     const getJennyChange = typeof options.getJennyChange === 'function' ? options.getJennyChange : null;
@@ -101,6 +141,11 @@
       ? createCommitHistory({
         onGetLog,
         onGetCommitDiff,
+        // Row 82 G1: a card expands to its files; a file opens its own diff.
+        onGetCommitFiles: options.gitActions?.getCommitFiles,
+        onOpenCommitFile: options.gitActions?.openCommitFileDiff,
+        onCopyText: options.gitActions?.copyText,
+        fileRowInner: (entry) => rowInnerMarkup(escapeHtml, String(entry.path || ''), stateOfLetter(entry.status), String(entry.status || 'M')),
         getMount: () => {
           const host = getMountEl();
           return host ? host.querySelector('[data-ide-scm-history]') : null;
@@ -111,7 +156,7 @@
       })
       : null;
 
-    let boundHosts = [];
+    let boundHost = null;
     // Commit message lives in panel state so a store-driven re-render (after a
     // stage/commit) repopulates it; typing does NOT re-render (no focus loss).
     let commitMessage = '';
@@ -128,9 +173,18 @@
     let committing = false;
     // An open IME composition in the commit textarea: a re-render never writes it.
     let composing = false;
+    // The one open "conflict blocks still in this file" line: { path, count }.
+    let resolveConfirm = null;
     // The repo panel root this instance last painted in full + its list markup.
     let paintedRoot = null;
     let paintedList = '';
+    const rowActions = rowActionsUtils.createScmRowActions({
+      actionBtn, gitActions: options.gitActions, onOpenFile, appendClientLog,
+      getCommitMessage: () => commitMessage,
+      setCommitMessage: (message) => { commitMessage = message; commitHint = ''; },
+      rerender: () => renderSourceControlPanel(),
+      getFile: (path) => snapshotFiles().find((file) => file && file.path === path) || null,
+    });
 
     function actionBtn(label, action, title, extraClass) {
       if (!actionButton) {
@@ -173,11 +227,12 @@
       });
     }
 
-    function buildRowMarkup(file) {
+    // inStagedGroup picks the row's role: a partially staged file renders once
+    // per group (Unstage in "Ready to commit", Stage/Discard in "Changed"). The
+    // actions slot stays empty until the row is hovered or focused (row actions).
+    function buildRowMarkup(file, inStagedGroup) {
       const path = String(file.path || '');
-      const dirHint = parentDirOf(path);
-      const badge = STATE_BADGE[file.state] || 'M';
-      const stateAttr = file.staged ? 'staged' : (file.state || 'modified');
+      const stateAttr = inStagedGroup ? 'staged' : (file.state || 'modified');
       const origHint = file.origPath
         ? `<span class="ide-scm-row-orig" title="${escapeHtml(jt('ide.sourceControl.renamedFrom', 'renamed from {path}', { path: file.origPath }))}">← ${escapeHtml(fileNameOf(file.origPath))}</span>`
         : '';
@@ -185,23 +240,17 @@
         ? actionButton({
           plain: true,
           className: 'ide-scm-file',
-          title: jt('ide.sourceControl.compareWithLastCommit', 'Compare {path} with the last commit', { path }),
+          title: inStagedGroup
+            ? jt('ide.scmRowActions.openStagedTitle', 'Open Staged Changes: {path} (last commit vs staged)', { path })
+            : jt('ide.scmRowActions.openChangesTitle', 'Open Changes: {path} (staged vs working tree)', { path }),
           dataset: { 'ide-scm-action': 'diff' },
-          trustedHtml: `<span class="ide-scm-badge" data-git-state="${escapeHtml(stateAttr)}" aria-hidden="true">${badge}</span>`
-            + `<span class="ide-scm-row-name">${escapeHtml(fileNameOf(path))}</span>`
-            + (dirHint ? `<span class="ide-scm-row-dir">${escapeHtml(dirHint)}</span>` : '')
-            + origHint,
+          trustedHtml: rowInnerMarkup(escapeHtml, path, stateAttr, STATE_BADGE[file.state] || 'M') + origHint,
         })
         : '';
-      const actions = file.staged
-        ? actionBtn(jt('ide.sourceControl.unstage', 'Unstage'), 'unstage', jt('ide.sourceControl.unstageFileTitle', 'Remove this file from the next commit'))
-        : actionBtn(jt('ide.sourceControl.stage', 'Stage'), 'stage', jt('ide.sourceControl.stageFileTitle', 'Stage this file for commit')) + (file.state === 'untracked'
-          ? actionBtn(jt('ide.sourceControl.delete', 'Delete'), 'delete', jt('ide.sourceControl.deleteUntrackedTitle', 'Move this untracked file to the recycle bin'), 'ide-scm-danger')
-          : actionBtn(jt('ide.sourceControl.discard', 'Discard'), 'discard', jt('ide.sourceControl.discardEditsTitle', 'Discard all edits since the last commit (cannot be undone)'), 'ide-scm-danger'));
       return `<div class="ide-scm-row" data-ide-scm-path="${escapeHtml(path)}" title="${escapeHtml(path)}">`
         + fileButton
         + buildJennyMarker(path)
-        + `<span class="ide-scm-row-actions">${actions}</span>`
+        + '<span class="ide-scm-row-actions"></span>'
         + '</div>';
     }
 
@@ -209,16 +258,16 @@
       if (!files.length) {
         return '';
       }
-      const headExtra = options2 && options2.stageAll
-        ? actionBtn(jt('ide.sourceControl.stageAll', 'Stage All'), 'stage-all')
-        : '';
-      return '<div class="ide-scm-group">'
+      const kind = (options2 && options2.kind) || 'conflicts';
+      const headExtra = rowActions.groupHeadMarkup(kind);
+      const rowMarkup = (options2 && options2.rowMarkup) || ((file) => buildRowMarkup(file, kind === 'staged'));
+      return `<div class="ide-scm-group" data-ide-scm-group="${kind}">`
         + '<div class="ide-scm-group-head">'
         + `<span class="ide-scm-group-title">${escapeHtml(title)}</span>`
         + `<span class="ide-scm-group-count">${files.length}</span>`
         + headExtra
         + '</div>'
-        + files.map((file) => buildRowMarkup(file)).join('')
+        + files.map(rowMarkup).join('')
         + '</div>';
     }
 
@@ -227,7 +276,12 @@
       return writingMessage ? 'Writing…' : jt('ide.sourceControl.writeMessage', 'Write message');
     }
 
-    function buildCommitMarkup(stagedCount) {
+    // A transient commit hint wins; otherwise conflicts show a derived one.
+    function effectiveHint(conflictCount) {
+      return commitHint || (conflictCount > 0 ? conflictUtils.conflictHint(conflictCount) : '');
+    }
+
+    function buildCommitMarkup(stagedCount, conflictCount) {
       if (!textField || !actionButton) {
         return '';
       }
@@ -245,7 +299,7 @@
         label: jt('ide.sourceControl.commit', 'Commit'),
         variant: 'primary',
         className: 'ide-scm-commit-button',
-        disabled: stagedCount === 0 || committing,
+        disabled: commitDisabled(stagedCount, conflictCount),
         dataset: { 'ide-scm-action': 'commit' },
       });
       const writeButton = writeMessageEnabled
@@ -262,10 +316,16 @@
             + `<span class="ide-scm-write-label">${escapeHtml(writeLabelText())}</span>`,
         })
         : '';
-      const hint = commitHint
-        ? `<div class="ide-scm-commit-hint" role="status">${escapeHtml(commitHint)}</div>`
+      const hintText = effectiveHint(conflictCount);
+      const hint = hintText
+        ? `<div class="ide-scm-commit-hint" role="status">${escapeHtml(hintText)}</div>`
         : '';
-      return `<div class="ide-scm-commit">${field}${hint}<div class="ide-scm-commit-actions">${writeButton}${commitButton}</div></div>`;
+      return `<div class="ide-scm-commit">${field}${rowActions.commitOptionsMarkup()}${hint}<div class="ide-scm-commit-actions">${writeButton}${commitButton}</div></div>`;
+    }
+
+    // An amend may reword with nothing staged (row 82 G1).
+    function commitDisabled(stagedCount, conflictCount) {
+      return (stagedCount === 0 && !rowActions.allowsEmptyCommit()) || conflictCount > 0 || committing;
     }
 
     // The branch header distinguishes three HEAD states the status store already
@@ -331,27 +391,35 @@
       // caller that skips the store) falls back to the full list untouched.
       const renderFiles = Array.isArray(snapshot.panelFiles) ? snapshot.panelFiles : files;
       const omitted = Math.max(0, Number(snapshot.panelFilesOmitted) || 0);
-      const staged = renderFiles.filter((file) => file.staged);
-      const changed = renderFiles.filter((file) => !file.staged);
+      const conflicts = renderFiles.filter(isConflicted);
+      const staged = renderFiles.filter((file) => file.staged && !isConflicted(file));
+      const changed = renderFiles.filter((file) => !isConflicted(file) && isChanged(file));
+      if (resolveConfirm && !conflicts.some((file) => file.path === resolveConfirm.path)) {
+        resolveConfirm = null;
+      }
+      const conflictRow = (file) => conflictUtils.buildConflictRowMarkup(file, { escapeHtml, actionButton, actionBtn },
+        resolveConfirm && resolveConfirm.path === file.path ? resolveConfirm.count : 0);
       const branchLine = buildBranchLine(snapshot);
       const notices = buildTruncationNotice(snapshot) + buildOmittedNotice(omitted);
       let body;
       if (!files.length) {
         body = '<div class="ide-scm-empty">' + escapeHtml(jt('ide.sourceControl.workingTreeClean', 'Nothing to commit — your working tree is clean.')) + '</div>';
       } else {
-        body = buildGroupMarkup(jt('ide.sourceControl.readyToCommit', 'Ready to commit'), staged)
-          + buildGroupMarkup(jt('ide.sourceControl.changedGroup', 'Changed'), changed, { stageAll: changed.length > 0 });
+        body = buildGroupMarkup(jt('ide.sourceControl.needsResolving', 'Needs resolving'), conflicts, { rowMarkup: conflictRow })
+          + buildGroupMarkup(jt('ide.sourceControl.readyToCommit', 'Ready to commit'), staged, { kind: 'staged' })
+          + buildGroupMarkup(jt('ide.sourceControl.changedGroup', 'Changed'), changed, { kind: 'changed' });
       }
       // The History section's container; the commit-history module paints into
       // it after this markup is written (kept empty here so a panel re-render
       // and a History refresh stay independent).
       const historyMount = history ? '<div class="ide-scm-history" data-ide-scm-history></div>' : '';
       const listMarkup = `${branchLine}${notices}${body}`;
-      const commitMarkup = buildCommitMarkup(staged.length);
+      const commitMarkup = buildCommitMarkup(staged.length, conflicts.length);
       return {
         markup: `<div class="ide-scm">${listMarkup}${commitMarkup}${historyMount}</div>`,
         listMarkup: commitMarkup ? listMarkup : null,
         stagedCount: staged.length,
+        conflictCount: conflicts.length,
       };
     }
 
@@ -359,18 +427,20 @@
     // value is written only when it differs from the draft (generated message,
     // commit clear, root reset) and never mid-composition; typing keeps them
     // equal, so the caret is untouched.
-    function patchCommitBox(commitEl, stagedCount) {
+    function patchCommitBox(commitEl, stagedCount, conflictCount) {
       const input = commitEl.querySelector('[data-ide-scm-input="commit"]');
       if (input && !composing && input.value !== commitMessage) input.value = commitMessage;
+      const hintText = effectiveHint(conflictCount);
       let hintEl = commitEl.querySelector('.ide-scm-commit-hint');
-      if (commitHint && !hintEl) {
+      if (hintText && !hintEl) {
         commitEl.querySelector('.ide-scm-commit-actions')?.insertAdjacentHTML('beforebegin', '<div class="ide-scm-commit-hint" role="status"></div>');
         hintEl = commitEl.querySelector('.ide-scm-commit-hint');
       }
-      if (hintEl && !commitHint) hintEl.remove();
-      else if (hintEl && hintEl.textContent !== commitHint) hintEl.textContent = commitHint;
+      if (hintEl && !hintText) hintEl.remove();
+      else if (hintEl && hintEl.textContent !== hintText) hintEl.textContent = hintText;
       const commitButton = commitEl.querySelector('[data-ide-scm-action="commit"]');
-      if (commitButton) commitButton.disabled = stagedCount === 0 || committing;
+      if (commitButton) commitButton.disabled = commitDisabled(stagedCount, conflictCount);
+      rowActions.syncCommitOptions(commitEl);
       const writeButton = commitEl.querySelector('[data-ide-scm-action="write-message"]');
       if (!writeButton) return;
       writeButton.disabled = stagedCount === 0 || writingMessage;
@@ -401,12 +471,13 @@
           commitEl.insertAdjacentHTML('beforebegin', view.listMarkup);
           paintedList = view.listMarkup;
         }
-        patchCommitBox(commitEl, view.stagedCount);
+        patchCommitBox(commitEl, view.stagedCount, view.conflictCount);
       } else {
         panel.innerHTML = markup;
         paintedRoot = typeof view.listMarkup === 'string' ? panel.firstElementChild : null;
         paintedList = view.listMarkup || '';
       }
+      rowActions.reinject(panel);
       panel.__jennyIdeRailMarkup = markup;
       // Repaint cached commits into the fresh (just-replaced) container, then
       // load the log once (first open). Staging/unstaging re-render this panel
@@ -423,9 +494,18 @@
       return row ? String(row.dataset.ideScmPath || '') : '';
     }
 
+    function snapshotFiles() {
+      const snapshot = store ? store.getSnapshot() : null;
+      return (snapshot && Array.isArray(snapshot.files)) ? snapshot.files : [];
+    }
+
+    // Stage All never marks a conflict resolved (that is a per-file decision).
     function collectChangedPaths() {
-      const snapshot = store ? store.getSnapshot() : { files: [] };
-      return (snapshot.files || []).filter((file) => !file.staged).map((file) => file.path);
+      return snapshotFiles().filter((file) => !isConflicted(file) && isChanged(file)).map((file) => file.path);
+    }
+
+    function hasConflicts() {
+      return snapshotFiles().some(isConflicted);
     }
 
     async function runCommit() {
@@ -435,6 +515,11 @@
       const panel = getMountEl();
       const input = panel ? panel.querySelector('[data-ide-scm-input="commit"]') : null;
       const message = String((input && input.value) || commitMessage || '').trim();
+      if (hasConflicts()) {
+        // git refuses a commit with unmerged paths; the derived hint says why.
+        renderSourceControlPanel();
+        return;
+      }
       if (!message) {
         commitHint = jt('ide.sourceControl.enterCommitMessage', 'Enter a commit message first.');
         renderSourceControlPanel();
@@ -447,7 +532,7 @@
       renderSourceControlPanel();
       let result;
       try {
-        result = await onCommit(message);
+        result = await onCommit(message, rowActions.commitOptions());
       } catch (error) {
         try {
           appendClientLog('WARN', 'ide.scm_commit_failed', { message: String((error && error.message) || error || '') });
@@ -475,6 +560,7 @@
       }
       commitMessage = '';
       commitHint = '';
+      rowActions.reset({ keepSignoff: true });
       renderSourceControlPanel();
       // A renderer-driven commit moves HEAD, so re-pull the log to surface the
       // new card (the panel re-render above only repaints cached commits).
@@ -588,6 +674,10 @@
         return;
       }
       const action = actionEl.dataset.ideScmAction;
+      if (rowActions.handleClick(action, actionEl, pathFor(target))
+        || (action.startsWith('history-') && history?.handleAction?.(action, actionEl))) {
+        return;
+      }
       if (action === 'stage-all') {
         const paths = collectChangedPaths();
         if (paths.length) {
@@ -603,22 +693,13 @@
         runWriteMessage();
         return;
       }
-      if (action === 'history-toggle') {
-        if (history) {
-          history.toggle();
-        }
-        return;
-      }
-      if (action === 'history-retry') {
-        if (history) {
-          history.refresh();
-        }
-        return;
-      }
-      if (action === 'history-open') {
-        if (history && typeof history.openCommit === 'function') {
-          history.openCommit(String(actionEl.dataset.ideScmHash || ''));
-        }
+      const confirmLine = actionEl.closest('[data-ide-scm-confirm-path]');
+      if (confirmLine) {
+        const confirmPath = String(confirmLine.dataset.ideScmConfirmPath || '');
+        resolveConfirm = null;
+        if (action === 'confirm-resolve') onStage([confirmPath]);
+        else if (action === 'open-conflict') onOpenFile(confirmPath);
+        renderSourceControlPanel();
         return;
       }
       const path = pathFor(target);
@@ -634,13 +715,41 @@
       } else if (action === 'delete') {
         onDelete(path);
       } else if (action === 'diff') {
-        onOpenDiff(path);
+        // A rename's HEAD copy lives at its original path.
+        const file = snapshotFiles().find((entry) => entry && entry.path === path);
+        onOpenDiff(path, { origPath: (file && file.origPath) || undefined, staged: actionEl.closest('[data-ide-scm-group]')?.dataset.ideScmGroup === 'staged' });
+      } else if (action === 'open-conflict') {
+        onOpenFile(path);
+      } else if (action === 'keep') {
+        onStage([path]);
+      } else if (action === 'delete-resolve') {
+        onResolveDelete(path);
+      } else if (action === 'resolve') {
+        runResolve(path);
       } else if (action === 'jenny-change') {
         const change = jennyChangeFor(path);
         if (change) {
           onOpenJennyChange({ turnId: change.turnId, fileKey: change.fileKey, path });
         }
       }
+    }
+
+    // Mark resolved asks the feature, which stages unless conflict markers
+    // remain, in which case the row's confirm opens. A both-deleted entry
+    // takes the same path: `git add` clears it without deleting anything.
+    async function runResolve(path) {
+      const generation = operationGeneration;
+      let result = null;
+      try {
+        result = await onResolve(path);
+      } catch (error) {
+        appendClientLog('WARN', 'ide.scm_resolve_failed', { message: String((error && error.message) || error || '') });
+      }
+      if (generation !== operationGeneration || !result || result.needsConfirm !== true) {
+        return;
+      }
+      resolveConfirm = { path, count: Math.max(1, Number(result.count) || 1) };
+      renderSourceControlPanel();
     }
 
     function handleInput(event) {
@@ -678,49 +787,43 @@
         return;
       }
       event.preventDefault();
-      if (history && typeof history.openCommit === 'function') {
-        history.openCommit(String(card.dataset.ideScmHash || ''));
-      }
+      history?.openCommit(String(card.dataset.ideScmHash || ''));
     }
 
     // Bind the panel's own persistent view host once (row 40 W3: the workbench
     // re-parents the host when the view moves, so delegation stays live with no
     // rebind and survives innerHTML swaps). Handlers self-filter (closest).
+    // pointerenter does not bubble: its row-action delegation listens in capture.
+    const HOST_EVENTS = [['click', handleClick], ['input', handleInput], ['keydown', handleKeydown],
+      ['compositionstart', handleComposition], ['compositionend', handleComposition],
+      ['pointerenter', rowActions.revealRow, true], ['focusin', rowActions.revealRow]];
+
     function bindEvents() {
-      const hosts = [getMountEl()].filter(Boolean);
-      if (!hosts.length || boundHosts.length) {
+      const host = getMountEl();
+      if (!host || boundHost) {
         return;
       }
-      boundHosts = hosts;
-      for (const host of hosts) {
-        host.addEventListener('click', handleClick);
-        host.addEventListener('input', handleInput);
-        host.addEventListener('keydown', handleKeydown);
-        host.addEventListener('compositionstart', handleComposition);
-        host.addEventListener('compositionend', handleComposition);
-      }
+      boundHost = host;
+      for (const [type, handler, capture] of HOST_EVENTS) host.addEventListener(type, handler, capture === true);
     }
 
     function dispose() {
       history?.dispose?.();
-      for (const host of boundHosts) {
-        host.removeEventListener('click', handleClick);
-        host.removeEventListener('input', handleInput);
-        host.removeEventListener('keydown', handleKeydown);
-        host.removeEventListener('compositionstart', handleComposition);
-        host.removeEventListener('compositionend', handleComposition);
+      if (boundHost) {
+        for (const [type, handler, capture] of HOST_EVENTS) boundHost.removeEventListener(type, handler, capture === true);
       }
-      boundHosts = [];
+      boundHost = null;
     }
 
-    // Re-pull the commit History out-of-band (only when this panel is the active
-    // one). Used by the git feature on external HEAD moves (terminal/Jenny
-    // commits) that move refs without touching the working tree, which the
-    // status store's change-signature wouldn't notify on.
+    // Re-pull the commit History out-of-band. Used by the git feature on
+    // external HEAD moves (terminal/Jenny commits) that move refs without
+    // touching the working tree, which the status store's change-signature
+    // wouldn't notify on. While the panel is hidden the log is only marked
+    // stale, so the next activation's ensureLoaded() re-pulls it.
     function refreshHistory() {
-      if (history && isActivePanel()) {
-        history.refresh();
-      }
+      if (!history) return;
+      if (isActivePanel()) history.refresh();
+      else history.markStale();
     }
 
     // Root switch (JCA-002): invalidate the cached commit log even while the
@@ -745,7 +848,19 @@
       committing = false;
       writingMessage = false;
       composing = false;
+      resolveConfirm = null;
+      rowActions.reset();
       resetHistory();
+    }
+
+    // Palette "Git: Commit" / "Git: Commit (Amend)": an amend ticks the option (and
+    // prefills); a typed message commits, otherwise the message box takes focus.
+    function commitFromPalette({ amend = false } = {}) {
+      if (amend) rowActions.setAmend(true);
+      const input = getMountEl()?.querySelector('[data-ide-scm-input="commit"]');
+      if (!amend && String(commitMessage || '').trim()) return runCommit();
+      input?.focus?.();
+      return Promise.resolve();
     }
 
     return {
@@ -753,8 +868,8 @@
       dispose,
       renderSourceControlPanel,
       refreshHistory,
-      resetHistory,
       resetForRoot,
+      commitFromPalette,
     };
   }
 

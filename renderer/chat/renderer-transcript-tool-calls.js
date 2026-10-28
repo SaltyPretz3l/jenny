@@ -80,6 +80,8 @@
   // Resolved per render: index.html loads the notes entry after this module.
   const _projectNotesEntry = () => (typeof globalThis !== 'undefined' && globalThis.rendererProjectNotesEntry)
     || (typeof require === 'function' ? require('../features/renderer-project-notes-entry') : null);
+  const _reviewFindings = () => (typeof globalThis !== 'undefined' && globalThis.rendererReviewFindings)
+    || (typeof require === 'function' ? require('./renderer-review-findings') : null);
   const _memoryChatEntry = () => (typeof globalThis !== 'undefined' && globalThis.rendererMemoryChatEntry)
     || (typeof require === 'function' ? require('../features/renderer-memory-chat-entry') : null);
   const _monitorToolUtils = typeof globalThis !== 'undefined' && globalThis.rendererMonitorToolUtils
@@ -116,11 +118,7 @@
     if (!purify || typeof purify.sanitize !== 'function') {
       return '';
     }
-    return purify.sanitize(String(html || ''), {
-      ALLOWED_TAGS: ['div', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'caption'],
-      ALLOWED_ATTR: ['class'],
-      ALLOW_DATA_ATTR: false,
-    });
+    return purify.sanitize(String(html || ''), toolDetailBody.sanitizeConfig());
   }
 
   /*
@@ -530,7 +528,7 @@
         ? (typeof toolCallUtils.formatToolElapsedLabel === 'function'
             ? toolCallUtils.formatToolElapsedLabel(Date.now() - runningStartedAtMs)
             : '')
-        : (durationMs > 0 ? `${(durationMs / 1000).toFixed(1)}s` : '');
+        : toolCallUtils.formatToolDurationMs(durationMs);
       const callId = normalizeId(source.callId);
       const rowKey = typeof toolCallUtils.buildToolRowKey === 'function'
         ? toolCallUtils.buildToolRowKey({
@@ -858,7 +856,7 @@
         ? _artifactCardUtils.renderArtifactCards(viewModel.generatedArtifacts, viewModel.callId, { seed: viewModel.metadata?.provenance?.seed, prompt: viewModel.metadata?.provenance?.image_prompt, negativePrompt: viewModel.metadata?.provenance?.image_negative_prompt, sessionId: viewModel.sessionId })
         : '';
       const pendingFigure = viewModel.toolName === 'image_generate' && viewModel.isRunning && !viewModel.generatedArtifacts.length
-        ? (_artifactCardUtils?.renderImagePendingFigure?.({ width: viewModel.input.width, height: viewModel.input.height }) || '') : '';
+        ? (_artifactCardUtils?.renderImagePendingFigure?.(viewModel.callId, viewModel.input) || '') : '';
       const calendarMarkup = Object.keys(viewModel.metadata).length && _calendarChatBlock
         && typeof _calendarChatBlock.buildHomeResultBlockMarkup === 'function'
         ? _calendarChatBlock.buildHomeResultBlockMarkup(viewModel.metadata, {
@@ -869,11 +867,15 @@
         ? _projectNotesEntry()?.buildProjectNotesResultBlockMarkup?.(viewModel.metadata, { escapeHtml }) || ''
         : viewModel.metadata?.result_kind === 'memory' // the memory chip shares the notes row slot
           ? _memoryChatEntry()?.buildMemoryResultBlockMarkup?.(viewModel.metadata, { escapeHtml, sessionId: viewModel.sessionId }) || '' : '';
+      const findings = viewModel.toolName === 'report_findings' && !viewModel.isError ? _reviewFindings() : null;
+      const findingsMarkup = findings
+        ? findings.buildReviewFindingsBlockMarkup(findings.parseReviewFindings(viewModel.outputText), { escapeHtml, toolCallId: viewModel.callId, sessionId: viewModel.sessionId })
+        : '';
       if (!viewModel.detailsMaterialized) {
         return renderToolDisclosureShell(
           viewModel,
           `${renderToolHeader(viewModel)}${renderDeferredToolDetails(viewModel)}`,
-          calendarMarkup + notesMarkup + artifactCards + pendingFigure
+          calendarMarkup + notesMarkup + findingsMarkup + artifactCards + pendingFigure
         );
       }
       // Mermaid's asynchronous preview requires its specialized shell; ordinary detail bodies use renderer-tool-detail-body.
@@ -889,7 +891,7 @@
       return renderToolDisclosureShell(
         viewModel,
         `${renderToolHeader(viewModel)}${renderToolDetails(viewModel)}`,
-        calendarMarkup + notesMarkup + artifactCards + pendingFigure
+        calendarMarkup + notesMarkup + findingsMarkup + artifactCards + pendingFigure
       );
     }
 

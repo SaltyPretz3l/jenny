@@ -2,19 +2,41 @@
  * document model. Callers own package extraction and inject the XML DOM APIs. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./renderer-ide-docx-image-model'));
+    module.exports = factory(require('./renderer-ide-docx-image-model'), require('./renderer-ide-docx-ooxml'));
     return;
   }
-  root.rendererIdeDocxModel = factory(root.rendererIdeDocxImageModel);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (imageUtils) {
+  root.rendererIdeDocxModel = factory(root.rendererIdeDocxImageModel, root.rendererIdeDocxOoxml);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (imageUtils, ooxml) {
   'use strict';
 
-  const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
-  const R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
-  const WP_NS = 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing';
-  const A_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main';
-  const REL_NS = 'http://schemas.openxmlformats.org/package/2006/relationships';
-  const XML_NS = 'http://www.w3.org/XML/1998/namespace';
+  const {
+    W_NS, R_NS, WP_NS, A_NS, REL_NS,
+    elementChildren,
+    isW,
+    directChild,
+    wAttr,
+    makeW,
+    declarationOf,
+    invalidError,
+    hasDoctype,
+    hasParserError,
+    nearestParagraph,
+    directRunProperty,
+    enabledValue,
+    runText,
+    fieldCharType,
+    paragraphRuns,
+    runPositions,
+    payloadLength,
+    splitRun,
+    setTextSpace,
+    appendTextPayload,
+    significantSibling,
+    boundaryAfter,
+    boundaryBefore,
+    removeRunSlice,
+  } = ooxml;
+
   const XML_DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
   const PROPERTY_NAMES = { bold: 'b', italic: 'i', underline: 'u', strike: 'strike' };
   const HISTORY_BYTE_BUDGET = 32 * 1024 * 1024;
@@ -25,219 +47,14 @@
     'bdr', 'shd', 'fitText', 'vertAlign', 'rtl', 'cs', 'em', 'lang', 'eastAsianLayout',
     'specVanish', 'oMath',
   ];
-  function elementChildren(node) {
-    return Array.from(node?.childNodes || []).filter((child) => child.nodeType === 1);
-  }
-
-  function isW(node, name) {
-    return Boolean(node && node.namespaceURI === W_NS && node.localName === name);
-  }
-  function directChild(node, name) {
-    return elementChildren(node).find((child) => isW(child, name)) || null;
-  }
-  function wAttr(node, name) {
-    return node?.getAttributeNS(W_NS, name) ?? node?.getAttribute(`w:${name}`) ?? '';
-  }
-  function makeW(doc, name) {
-    return doc.createElementNS(W_NS, `w:${name}`);
-  }
-  function declarationOf(xml) {
-    return String(xml || '').match(/^<\?xml[^\r\n]*\?>(?:\r\n|\n|\r)?/)?.[0] || '';
-  }
-
-  function invalidError() {
-    const error = new Error('Invalid DOCX document XML');
-    error.code = 'docx_invalid';
-    return error;
-  }
-
-  function hasParserError(doc) {
-    return !doc?.documentElement
-      || doc.documentElement.localName === 'parsererror'
-      || doc.getElementsByTagName('parsererror').length > 0;
-  }
-
-  function nearestParagraph(node) {
-    let current = node?.parentNode;
-    while (current) {
-      if (isW(current, 'p')) {
-        return current;
-      }
-      current = current.parentNode;
-    }
-    return null;
-  }
-
-  function directRunProperty(run, name) {
-    const rPr = directChild(run, 'rPr');
-    return rPr ? directChild(rPr, name) : null;
-  }
-
-  function enabledValue(element, underline = false) {
-    if (!element) {
-      return false;
-    }
-    const value = wAttr(element, 'val').toLowerCase();
-    if (underline && value === 'none') {
-      return false;
-    }
-    return !['0', 'false', 'off', 'no'].includes(value);
-  }
-
-  function runText(run) {
-    let text = '';
-    for (const child of elementChildren(run)) {
-      if (isW(child, 't')) {
-        text += child.textContent || '';
-      } else if (isW(child, 'tab')) {
-        text += '\t';
-      } else if (isW(child, 'br')) {
-        text += '\n';
-      } else if (isW(child, 'drawing')) {
-        text += '\uFFFC';
-      }
-    }
-    return text;
-  }
-
-  function paragraphRuns(paragraph) {
-    return Array.from(paragraph.getElementsByTagNameNS(W_NS, 'r'))
-      .filter((run) => nearestParagraph(run) === paragraph);
-  }
-
-  function runPositions(paragraph) {
-    let offset = 0;
-    return paragraphRuns(paragraph).map((run) => {
-      const text = runText(run);
-      const entry = { run, text, start: offset, end: offset + text.length };
-      offset = entry.end;
-      return entry;
-    });
-  }
-
-  function payloadLength(node) {
-    if (isW(node, 't')) {
-      return (node.textContent || '').length;
-    }
-    return isW(node, 'tab') || isW(node, 'br') || isW(node, 'drawing') ? 1 : 0;
-  }
-
-  function cloneRunProperties(run, target) {
-    const rPr = directChild(run, 'rPr');
-    if (rPr) {
-      target.appendChild(rPr.cloneNode(true));
-    }
-  }
-
-  function splitRun(run, offset) {
-    const right = run.cloneNode(false);
-    cloneRunProperties(run, right);
-    let position = 0;
-    for (const child of [...run.childNodes]) {
-      if (isW(child, 'rPr')) {
-        continue;
-      }
-      const length = child.nodeType === 1 ? payloadLength(child) : 0;
-      if (isW(child, 't') && position < offset && offset < position + length) {
-        const value = child.textContent || '';
-        const cut = offset - position;
-        child.textContent = value.slice(0, cut);
-        setTextSpace(child, child.textContent);
-        const rightText = child.cloneNode(false);
-        rightText.textContent = value.slice(cut);
-        setTextSpace(rightText, rightText.textContent);
-        right.appendChild(rightText);
-      } else if (position >= offset) {
-        right.appendChild(child);
-      }
-      position += length;
-    }
-    run.parentNode.insertBefore(right, run.nextSibling);
-    return right;
-  }
-
-  function setTextSpace(textNode, value) {
-    if (/^\s|\s$/.test(value)) {
-      textNode.setAttributeNS(XML_NS, 'xml:space', 'preserve');
-    } else {
-      textNode.removeAttributeNS(XML_NS, 'space');
-    }
-  }
-
-  function appendTextPayload(doc, run, value) {
-    let buffer = '';
-    function flush() {
-      if (!buffer) {
-        return;
-      }
-      const textNode = makeW(doc, 't');
-      textNode.textContent = buffer;
-      setTextSpace(textNode, buffer);
-      run.appendChild(textNode);
-      buffer = '';
-    }
-    for (const character of value) {
-      if (character === '\t' || character === '\n') {
-        flush();
-        run.appendChild(makeW(doc, character === '\t' ? 'tab' : 'br'));
-      } else {
-        buffer += character;
-      }
-    }
-    flush();
-  }
-
-  function significantSibling(node, direction) {
-    let sibling = node?.[direction] || null;
-    while (sibling && sibling.nodeType === 3 && !sibling.nodeValue.trim()) {
-      sibling = sibling[direction];
-    }
-    return sibling;
-  }
-
-  function boundaryAfter(run, paragraph) {
-    let node = run;
-    while (node.parentNode !== paragraph && !significantSibling(node, 'nextSibling')) {
-      node = node.parentNode;
-    }
-    return { parent: node.parentNode, reference: significantSibling(node, 'nextSibling') };
-  }
-
-  function boundaryBefore(run, paragraph) {
-    let node = run;
-    while (node.parentNode !== paragraph && !significantSibling(node, 'previousSibling')) {
-      node = node.parentNode;
-    }
-    return { parent: node.parentNode, reference: node };
-  }
-
-  function removeRunSlice(run, start, end) {
-    let position = 0;
-    for (const child of [...run.childNodes]) {
-      if (child.nodeType !== 1 || isW(child, 'rPr')) {
-        continue;
-      }
-      const length = payloadLength(child);
-      const cutStart = Math.max(start, position);
-      const cutEnd = Math.min(end, position + length);
-      if (cutStart < cutEnd && isW(child, 't')) {
-        const value = child.textContent || '';
-        child.textContent = value.slice(0, cutStart - position) + value.slice(cutEnd - position);
-        if (!child.textContent) {
-          child.remove();
-        } else {
-          setTextSpace(child, child.textContent);
-        }
-      } else if (cutStart < cutEnd && length === 1) {
-        child.remove();
-      }
-      position += length;
-    }
-    if (!elementChildren(run).some((child) => !isW(child, 'rPr'))) {
-      run.remove();
-    }
-  }
-
+  // Characters XML 1.0 cannot carry (C0 controls except tab/newline, lone
+  // surrogates, U+FFFE/U+FFFF): pasted terminal or PDF text often has them.
+  const INVALID_XML_TEXT = /[^\t\n\x20-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/gu;
+  // Revision markers new text never inherits: ins/del/moveFrom/moveTo are
+  // valid only in a paragraph mark's rPr (CT_ParaRPr); rPrChange is a run's
+  // own recorded format change.
+  const REVISION_PROPERTIES = new Set(['ins', 'del', 'moveFrom', 'moveTo', 'rPrChange']);
+  const REVISION_WRAPPERS = new Set(['ins', 'del', 'moveFrom', 'moveTo']);
   function createDocxModel(options) {
     const Parser = options?.DOMParser;
     const Serializer = options?.XMLSerializer;
@@ -256,14 +73,29 @@
     };
     // Per-part XML cache: every DOM mutation path invalidates its parts after the change.
     const xmlCache = new Map();
+    // Derived lookups, rebuilt lazily: the block index (positional ids ->
+    // elements), block snapshots, relationship targets and numbering formats.
+    // Every DOM change goes through recordMutation()/invalidate(), which drop them.
+    let blockIndex = null;
+    let blockSnapshots = null;
+    let relationshipTargets = null;
+    let numberingFormats = null;
+    let notesCache = null;
+    const dropBlockCaches = () => { blockIndex = null; blockSnapshots = null; notesCache = null; };
     const invalidate = (...parts) => {
-      for (const part of parts.length ? parts : ['document', 'numbering', 'rels']) xmlCache.delete(part);
+      const targets = parts.length ? parts : ['document', 'numbering', 'rels'];
+      for (const part of targets) xmlCache.delete(part);
+      dropBlockCaches();
+      if (targets.includes('rels')) relationshipTargets = null;
+      if (targets.includes('numbering')) numberingFormats = null;
     };
     const cachedXml = (part, doc, declaration) => {
       if (doc && !xmlCache.has(part)) xmlCache.set(part, serializeDom(doc, declaration));
       return doc ? xmlCache.get(part) : null;
     };
+    // OOXML parts never carry a DTD; refusing one keeps entity expansion out.
     const parseDocument = (xml) => {
+      if (hasDoctype(xml)) throw invalidError();
       const parsed = parser().parseFromString(String(xml || ''), 'application/xml');
       const body = Array.from(parsed.getElementsByTagNameNS(W_NS, 'body'))[0];
       if (hasParserError(parsed) || !body) {
@@ -271,8 +103,8 @@
       }
       return parsed;
     };
-    const parseNumbering = (xml) => {
-      if (!xml) {
+    const parsePart = (xml) => {
+      if (!xml || hasDoctype(xml)) {
         return null;
       }
       const parsed = parser().parseFromString(String(xml), 'application/xml');
@@ -280,10 +112,13 @@
     };
 
     documentDoc = parseDocument(options.documentXml);
-    numberingDoc = parseNumbering(options.numberingXml);
+    numberingDoc = parsePart(options.numberingXml);
     const hadNumberingPart = options.numberingXml !== null && options.numberingXml !== undefined;
+    // A numbering part that exists but does not parse is never replaced: a
+    // fresh one would drop every list definition the document relies on.
+    const numberingUnreadable = hadNumberingPart && !numberingDoc;
     let relsDeclaration = declarationOf(options.relsXml);
-    let relsDoc = parseNumbering(options.relsXml);
+    let relsDoc = parsePart(options.relsXml);
     const media = options.media instanceof Map ? new Map(options.media) : new Map();
     const resources = options.resources || { stacks: [], sequence: 0, mediaStores: [] };
     const mediaRetention = imageUtils.createMediaRetention(media, resources);
@@ -306,6 +141,11 @@
     let savedNumbering = initialNumbering;
     let savedRels = relsXml();
     let savedMedia = mediaRetention.identities(documentDoc, relsDoc);
+    // stateVersion moves on every edit and every undo/redo restore; isDirty is
+    // free while it equals the saved version and memoized per version otherwise.
+    let stateVersion = 0;
+    let savedStateVersion = 0;
+    let dirtyMemo = null;
     const undoStack = [];
     const redoStack = [];
     resources.stacks.push(undoStack, redoStack);
@@ -345,6 +185,8 @@
 
     function recordMutation() {
       mutationVersion += 1;
+      stateVersion += 1;
+      dropBlockCaches();
       if (!transactionDepth || !transactionRecorded) {
         undoStack.push(snapshot());
         if (undoStack.length > 200) {
@@ -366,9 +208,10 @@
       documentDeclaration = declarationOf(state.documentXml);
       numberingDeclaration = declarationOf(state.numberingXml);
       documentDoc = parseDocument(state.documentXml);
-      numberingDoc = parseNumbering(state.numberingXml);
+      numberingDoc = parsePart(state.numberingXml);
       relsDeclaration = declarationOf(state.relsXml);
-      relsDoc = parseNumbering(state.relsXml);
+      relsDoc = parsePart(state.relsXml);
+      stateVersion += 1;
       invalidate();
     }
 
@@ -376,21 +219,9 @@
       if (!relsDoc || !id) {
         return '';
       }
-      const relationship = Array.from(relsDoc.getElementsByTagNameNS('*', 'Relationship'))
-        .find((item) => item.getAttribute('Id') === id);
-      if (!relationship || relationship.getAttribute('TargetMode') === 'External') {
-        return '';
-      }
-      const segments = `word/${relationship.getAttribute('Target') || ''}`.split('/');
-      const normalized = [];
-      for (const segment of segments) {
-        if (segment === '..') {
-          normalized.pop();
-        } else if (segment && segment !== '.') {
-          normalized.push(segment);
-        }
-      }
-      return normalized.join('/');
+      relationshipTargets ||= new Map(Array.from(relsDoc.getElementsByTagNameNS('*', 'Relationship'))
+        .map((item) => [item.getAttribute('Id'), imageUtils.mediaTarget(item)]));
+      return relationshipTargets.get(id) || '';
     }
 
     function ensureRelationships() {
@@ -400,17 +231,26 @@
     }
 
 
-    function imageSnapshot(run, id) {
-      const drawing = directChild(run, 'drawing');
+    // One source per media payload object: the host's object URL when it
+    // provides one (options.mediaUrl), else a data URI built once.
+    const mediaSources = new WeakMap();
+    function mediaSource(item) {
+      if (!item) return '';
+      if (!mediaSources.has(item)) {
+        mediaSources.set(item, options.mediaUrl?.(item) || `data:${item.mime};base64,${item.base64}`);
+      }
+      return mediaSources.get(item);
+    }
+
+    function imageSnapshot(drawing, id) {
       const blip = drawing?.getElementsByTagNameNS(A_NS, 'blip')[0] || null;
       const extent = drawing?.getElementsByTagNameNS(WP_NS, 'extent')[0] || null;
       const docPr = drawing?.getElementsByTagNameNS(WP_NS, 'docPr')[0] || null;
       const target = relationshipTarget(blip?.getAttributeNS(R_NS, 'embed') || '');
-      const source = media.get(target);
       return {
         id,
         kind: 'image',
-        src: source ? `data:${source.mime};base64,${source.base64}` : '',
+        src: mediaSource(media.get(target)),
         alt: docPr?.getAttribute('descr') || docPr?.getAttribute('title') || docPr?.getAttribute('name') || '',
         widthPx: Math.round(Number(extent?.getAttribute('cx') || 0) / 9525),
         heightPx: Math.round(Number(extent?.getAttribute('cy') || 0) / 9525),
@@ -418,21 +258,66 @@
       };
     }
 
-    function runSnapshot(run, id) {
-      if (directChild(run, 'drawing')) {
-        return imageSnapshot(run, id);
-      }
+    function textSnapshot(run, id, text) {
       const vertical = directRunProperty(run, 'vertAlign');
       return {
         id,
         kind: 'text',
-        text: runText(run),
+        text,
         bold: enabledValue(directRunProperty(run, 'b')),
         italic: enabledValue(directRunProperty(run, 'i')),
         underline: enabledValue(directRunProperty(run, 'u'), true),
         strike: enabledValue(directRunProperty(run, 'strike')),
         superscript: wAttr(vertical, 'val') === 'superscript',
       };
+    }
+
+    // A run is one snapshot item unless it mixes drawings with text (python-docx
+    // writes `add_run('Caption ').add_picture(...)`): then each drawing and each
+    // text stretch is its own item, so snapshot offsets match runText() offsets.
+    function runSnapshots(run, id) {
+      if (!directChild(run, 'drawing')) {
+        return [textSnapshot(run, id, runText(run))];
+      }
+      const items = [];
+      let text = '';
+      const flush = () => {
+        if (text) items.push(textSnapshot(run, `${id}.${items.length + 1}`, text));
+        text = '';
+      };
+      for (const child of elementChildren(run)) {
+        if (isW(child, 'drawing')) {
+          flush();
+          items.push(imageSnapshot(child, `${id}.${items.length + 1}`));
+        } else {
+          text += runText({ childNodes: [child] });
+        }
+      }
+      flush();
+      return items.length === 1 && items[0].kind === 'image' ? [{ ...items[0], id }] : items;
+    }
+
+    // `${numId}:${level}` -> { format, start }, built once per numbering revision.
+    function numberingFormat(numId, level) {
+      if (!numberingDoc) return {};
+      if (!numberingFormats) {
+        numberingFormats = new Map();
+        const abstracts = new Map();
+        for (const item of numberingDoc.getElementsByTagNameNS(W_NS, 'abstractNum')) {
+          if (!abstracts.has(wAttr(item, 'abstractNumId'))) abstracts.set(wAttr(item, 'abstractNumId'), item);
+        }
+        for (const num of numberingDoc.getElementsByTagNameNS(W_NS, 'num')) {
+          const abstract = abstracts.get(wAttr(directChild(num, 'abstractNumId'), 'val'));
+          for (const definition of abstract?.getElementsByTagNameNS(W_NS, 'lvl') || []) {
+            const key = `${wAttr(num, 'numId')}:${Number.parseInt(wAttr(definition, 'ilvl') || '0', 10)}`;
+            if (numberingFormats.has(key)) continue;
+            const rawStart = wAttr(directChild(definition, 'start'), 'val');
+            const start = rawStart === '' ? undefined : Number.parseInt(rawStart, 10);
+            numberingFormats.set(key, { format: wAttr(directChild(definition, 'numFmt'), 'val'), start });
+          }
+        }
+      }
+      return numberingFormats.get(`${numId}:${level}`) || {};
     }
 
     function listInfoFor(paragraph) {
@@ -442,22 +327,7 @@
         return null;
       }
       const level = Number.parseInt(wAttr(directChild(numPr, 'ilvl'), 'val') || '0', 10) || 0;
-      let format = '';
-      let start;
-      if (numberingDoc) {
-        const num = Array.from(numberingDoc.getElementsByTagNameNS(W_NS, 'num'))
-          .find((item) => wAttr(item, 'numId') === numId);
-        const abstractId = wAttr(directChild(num, 'abstractNumId'), 'val');
-        const abstract = Array.from(numberingDoc.getElementsByTagNameNS(W_NS, 'abstractNum'))
-          .find((item) => wAttr(item, 'abstractNumId') === abstractId);
-        const definition = Array.from(abstract?.getElementsByTagNameNS(W_NS, 'lvl') || [])
-          .find((item) => Number.parseInt(wAttr(item, 'ilvl') || '0', 10) === level);
-        format = wAttr(directChild(definition, 'numFmt'), 'val');
-        const rawStart = wAttr(directChild(definition, 'start'), 'val');
-        if (rawStart !== '') {
-          start = Number.parseInt(rawStart, 10);
-        }
-      }
+      const { format = '', start } = numberingFormat(numId, level);
       const result = { kind: format === 'bullet' ? 'bullet' : 'number', numId, level };
       if (Number.isFinite(start)) {
         result.start = start;
@@ -470,7 +340,7 @@
       const styleId = wAttr(directChild(pPr, 'pStyle'), 'val');
       const alignment = wAttr(directChild(pPr, 'jc'), 'val');
       const align = ['left', 'center', 'right', 'both'].includes(alignment) ? alignment : '';
-      const runs = paragraphRuns(paragraph).map((run, index) => runSnapshot(run, `${id}.r${index + 1}`));
+      const runs = paragraphRuns(paragraph).flatMap((run, index) => runSnapshots(run, `${id}.r${index + 1}`));
       return {
         id,
         type: 'paragraph',
@@ -482,14 +352,11 @@
       };
     }
 
-    function collectBlocks() {
-      const paragraphById = new Map();
-      const idByParagraph = new Map();
+    // Visits every body block in document order with its positional id.
+    function walkBlocks(visit) {
       function blockFor(element, id) {
         if (isW(element, 'p')) {
-          paragraphById.set(id, element);
-          idByParagraph.set(element, id);
-          return paragraphSnapshot(element, id);
+          return visit.paragraph(element, id);
         }
         if (isW(element, 'tbl')) {
           let rowIndex = 0;
@@ -500,14 +367,14 @@
             const cells = elementChildren(row).filter((child) => isW(child, 'tc')).map((cell) => {
               cellIndex += 1;
               const cellId = `${rowId}.c${cellIndex}`;
-              let blockIndex = 0;
+              let cellBlockIndex = 0;
               const blocks = [];
               for (const child of elementChildren(cell)) {
                 if (isW(child, 'tcPr')) {
                   continue;
                 }
-                blockIndex += 1;
-                blocks.push(blockFor(child, `${cellId}.b${blockIndex}`));
+                cellBlockIndex += 1;
+                blocks.push(blockFor(child, `${cellId}.b${cellBlockIndex}`));
               }
               return { id: cellId, blocks };
             });
@@ -527,11 +394,76 @@
         ordinal += 1;
         blocks.push(blockFor(child, `b${ordinal}`));
       }
-      return { blocks, paragraphById, idByParagraph };
+      return blocks;
+    }
+
+    function indexBlocks() {
+      if (!blockIndex) {
+        const paragraphById = new Map();
+        const idByParagraph = new Map();
+        walkBlocks({
+          paragraph(element, id) {
+            paragraphById.set(id, element);
+            idByParagraph.set(element, id);
+            return null;
+          },
+        });
+        blockIndex = { paragraphById, idByParagraph };
+      }
+      return blockIndex;
+    }
+
+    function collectBlocks() {
+      blockSnapshots ||= walkBlocks({ paragraph: paragraphSnapshot });
+      return blockSnapshots;
     }
 
     function paragraphFor(blockId) {
-      return collectBlocks().paragraphById.get(blockId) || null;
+      return indexBlocks().paragraphById.get(blockId) || null;
+    }
+
+    // Leaves every field the run's text sits in when an insertion lands right
+    // after a field result: text typed at the end of `PAGE`'s "1" must follow
+    // the field's `end` run, or Word's next field update erases it.
+    function afterFieldResults(paragraph, run) {
+      const runs = paragraphRuns(paragraph);
+      let depth = 0;
+      let index = 0;
+      for (; index < runs.length; index += 1) {
+        const type = fieldCharType(runs[index]);
+        if (type === 'begin') depth += 1;
+        else if (type === 'end' && depth) depth -= 1;
+        if (runs[index] === run) break;
+      }
+      let last = run;
+      for (index += 1; depth && index < runs.length && !runText(runs[index]); index += 1) {
+        const type = fieldCharType(runs[index]);
+        if (type === 'begin') break;
+        if (type === 'end') {
+          depth -= 1;
+          last = runs[index];
+        }
+      }
+      return last;
+    }
+
+    // Where new content goes at `offset`, and the run whose properties it takes.
+    function insertionBoundary(paragraph, offset) {
+      const positions = runPositions(paragraph);
+      const inside = positions.find((item) => item.start < offset && offset < item.end);
+      if (inside) {
+        const right = splitRun(inside.run, offset - inside.start);
+        return { parent: right.parentNode, reference: right, source: inside.run };
+      }
+      const previous = positions.findLast((item) => item.end <= offset && item.text.length);
+      if (previous) {
+        return { ...boundaryAfter(afterFieldResults(paragraph, previous.run), paragraph), source: previous.run };
+      }
+      const next = positions.find((item) => item.start >= offset && item.text.length);
+      if (next) {
+        return { ...boundaryBefore(next.run, paragraph), source: next.run };
+      }
+      return { parent: paragraph, reference: null, source: directChild(directChild(paragraph, 'pPr'), 'rPr') };
     }
 
     function validRange(paragraph, start, end = start) {
@@ -541,38 +473,28 @@
 
     function insertText(blockId, offset, text) {
       const paragraph = paragraphFor(blockId);
-      const value = String(text ?? '');
+      const value = String(text ?? '').replace(/\r\n?/g, '\n').replace(INVALID_XML_TEXT, '');
       if (!paragraph || !validRange(paragraph, offset) || !value) {
         return false;
       }
-      const positions = runPositions(paragraph);
-      const inside = positions.find((item) => item.start < offset && offset < item.end);
-      const previous = [...positions].reverse().find((item) => item.end <= offset && item.text.length);
-      const next = positions.find((item) => item.start >= offset && item.text.length);
-      const source = inside?.run || previous?.run || next?.run || directChild(directChild(paragraph, 'pPr'), 'rPr');
       recordMutation();
-      let boundary;
-      if (inside) {
-        const right = splitRun(inside.run, offset - inside.start);
-        boundary = { parent: right.parentNode, reference: right };
-      } else if (previous) {
-        boundary = boundaryAfter(previous.run, paragraph);
-      } else if (next) {
-        boundary = boundaryBefore(next.run, paragraph);
-      } else {
-        boundary = { parent: paragraph, reference: null };
-      }
+      const boundary = insertionBoundary(paragraph, offset);
       const run = makeW(documentDoc, 'r');
-      if (source) {
-        if (isW(source, 'rPr')) {
-          run.appendChild(source.cloneNode(true));
-        } else {
-          cloneRunProperties(source, run);
+      const sourceRPr = isW(boundary.source, 'rPr') ? boundary.source : directChild(boundary.source, 'rPr');
+      if (sourceRPr) {
+        // New text takes the formatting, never a revision: a paragraph mark's
+        // rPr holds markers a run rPr cannot, and a run's rPrChange records
+        // someone else's earlier format change.
+        const rPr = sourceRPr.cloneNode(true);
+        for (const child of elementChildren(rPr)) {
+          if (child.namespaceURI === W_NS && REVISION_PROPERTIES.has(child.localName)) child.remove();
         }
+        run.appendChild(rPr);
       }
       appendTextPayload(documentDoc, run, value);
       boundary.parent.insertBefore(run, boundary.reference);
-      return true;
+      // The caller places the caret by what was inserted, not by what it sent.
+      return value.length;
     }
 
     function deleteRange(blockId, start, end) {
@@ -584,11 +506,14 @@
       // empty runs) carry no visible text, so a text deletion never removes
       // them: they stay in place and the visible slices around them go.
       const affected = runPositions(paragraph).filter((item) => item.text && item.start < end && item.end > start);
+      // Only a removed drawing can orphan media: plain Backspace skips the DOM-wide scan.
+      const removesDrawing = affected.some((item) => directChild(item.run, 'drawing')
+        && item.text.slice(Math.max(start, item.start) - item.start, end - item.start).includes('\uFFFC'));
       recordMutation();
       for (const item of affected) {
         removeRunSlice(item.run, Math.max(start, item.start) - item.start, Math.min(end, item.end) - item.start);
       }
-      mediaRetention.reclaim();
+      if (removesDrawing) mediaRetention.reclaim();
       return true;
     }
 
@@ -611,12 +536,25 @@
       return { container: boundary.parent, reference: boundary.reference };
     }
 
+    // Annotation ids (revisions, comments, bookmarks) share one id space.
+    function nextAnnotationId() {
+      let maximum = 0;
+      for (const element of documentDoc.getElementsByTagNameNS(W_NS, '*')) {
+        const value = Number.parseInt(element.getAttributeNS(W_NS, 'id'), 10);
+        if (Number.isFinite(value) && value > maximum) maximum = value;
+      }
+      return String(maximum + 1);
+    }
+
     function liftBoundary(paragraph, boundary) {
       let { container, reference } = boundary;
       while (container !== paragraph) {
         const wrapper = container;
         const parent = wrapper.parentNode;
         const rightWrapper = wrapper.cloneNode(false);
+        if (wrapper.namespaceURI === W_NS && REVISION_WRAPPERS.has(wrapper.localName) && wrapper.hasAttributeNS(W_NS, 'id')) {
+          rightWrapper.setAttributeNS(W_NS, 'w:id', nextAnnotationId());
+        }
         let moving = reference;
         while (moving) {
           const next = moving.nextSibling;
@@ -657,11 +595,12 @@
         moving = next;
       }
       paragraph.parentNode.insertBefore(newParagraph, paragraph.nextSibling);
-      return collectBlocks().idByParagraph.get(newParagraph) || null;
+      dropBlockCaches();
+      return indexBlocks().idByParagraph.get(newParagraph) || null;
     }
 
     function mergeWithPrevious(blockId) {
-      const index = collectBlocks();
+      const index = indexBlocks();
       const paragraph = index.paragraphById.get(blockId);
       const previous = paragraph?.previousElementSibling;
       let previousPPr = directChild(previous, 'pPr');
@@ -705,9 +644,10 @@
       if (!property) {
         property = makeW(documentDoc, name);
         const order = RPR_ORDER.indexOf(name);
+        // rPrChange must stay the last child (CT_RPr schema order).
         const next = elementChildren(rPr).find((child) => {
           const childOrder = RPR_ORDER.indexOf(child.localName);
-          return childOrder >= 0 && childOrder > order;
+          return (childOrder >= 0 && childOrder > order) || isW(child, 'rPrChange');
         });
         rPr.insertBefore(property, next || null);
       }
@@ -795,6 +735,9 @@
       abstract.setAttributeNS(W_NS, 'w:abstractNumId', abstractId);
       const level = makeW(numberingDoc, 'lvl');
       level.setAttributeNS(W_NS, 'w:ilvl', '0');
+      // w:start defaults to 0 when omitted, so Word would number "0., 1., ...".
+      const start = makeW(numberingDoc, 'start');
+      start.setAttributeNS(W_NS, 'w:val', '1');
       const numFmt = makeW(numberingDoc, 'numFmt');
       numFmt.setAttributeNS(W_NS, 'w:val', kind === 'bullet' ? 'bullet' : 'decimal');
       const lvlText = makeW(numberingDoc, 'lvlText');
@@ -806,15 +749,17 @@
       ind.setAttributeNS(W_NS, 'w:left', '720');
       ind.setAttributeNS(W_NS, 'w:hanging', '360');
       pPr.appendChild(ind);
-      level.append(numFmt, lvlText, lvlJc, pPr);
+      level.append(start, numFmt, lvlText, lvlJc, pPr);
       abstract.appendChild(level);
-      root.insertBefore(abstract, nums[0] || null);
+      // Schema order: numPicBullet*, abstractNum*, num*, numIdMacAtCleanup?.
+      const trailer = directChild(root, 'numIdMacAtCleanup');
+      root.insertBefore(abstract, nums[0] || trailer);
       const num = makeW(numberingDoc, 'num');
       num.setAttributeNS(W_NS, 'w:numId', numId);
       const abstractRef = makeW(numberingDoc, 'abstractNumId');
       abstractRef.setAttributeNS(W_NS, 'w:val', abstractId);
       num.appendChild(abstractRef);
-      root.appendChild(num);
+      root.insertBefore(num, trailer);
       invalidate('numbering');
       return numId;
     }
@@ -836,7 +781,7 @@
 
     function setList(blockId, kind) {
       const paragraph = paragraphFor(blockId);
-      if (!paragraph || !['bullet', 'number', null].includes(kind)) {
+      if (!paragraph || !['bullet', 'number', null].includes(kind) || (kind && numberingUnreadable)) {
         return false;
       }
       const pPr = directChild(paragraph, 'pPr');
@@ -871,6 +816,11 @@
     }
 
     function getUnsupportedNotes() {
+      notesCache ||= unsupportedNotes();
+      return notesCache;
+    }
+
+    function unsupportedNotes() {
       const has = (namespace, name) => documentDoc.getElementsByTagNameNS(namespace, name).length > 0;
       const nestedTable = Array.from(documentDoc.getElementsByTagNameNS(W_NS, 'tbl')).some((table) => {
         let parent = table.parentNode;
@@ -886,7 +836,7 @@
         ['fields', has(W_NS, 'fldSimple') || has(W_NS, 'fldChar')],
         ['footnotes', has(W_NS, 'footnoteReference')],
         ['comments', has(W_NS, 'commentRangeStart')],
-        ['trackedChanges', has(W_NS, 'ins') || has(W_NS, 'del')],
+        ['trackedChanges', ['ins', 'del', 'moveFrom', 'moveTo', 'rPrChange', 'pPrChange'].some((name) => has(W_NS, name))],
         ['contentControls', has(W_NS, 'sdt')],
         ['textBoxes', has(W_NS, 'txbxContent')],
         ['math', has('*', 'oMath')],
@@ -895,7 +845,7 @@
       return checks.filter(([, present]) => present).map(([name]) => name);
     }
 
-    const imageOperations = imageUtils?.createImageOperations?.({
+    const imageOperations = imageUtils.createImageOperations({
       getDocumentDoc: () => documentDoc,
       getRelsDoc: () => relsDoc,
       getMedia: () => media,
@@ -903,15 +853,11 @@
       ensureRelationships,
       paragraphFor,
       validRange,
-      runPositions,
-      splitRun,
-      boundaryAfter,
-      boundaryBefore,
-      directChild,
+      insertionBoundary,
       recordMutation,
       mediaPrefix: options.mediaPrefix,
       occupiedNames: options.occupiedNames,
-    }) || { insertImage: () => false, resizeImage: () => false };
+    });
     // recordMutation() runs before a mutator's DOM change, so invalidate once the public mutator returns.
     const mutating = (method, ...parts) => (...args) => {
       const version = mutationVersion;
@@ -920,7 +866,12 @@
 
     return {
       getBlocks() {
-        return collectBlocks().blocks;
+        return collectBlocks();
+      },
+      // One paragraph's snapshot without snapshotting the whole document.
+      getBlock(blockId) {
+        const paragraph = paragraphFor(blockId);
+        return paragraph ? paragraphSnapshot(paragraph, blockId) : null;
       },
       getParagraphText(blockId) {
         const paragraph = paragraphFor(blockId);
@@ -968,6 +919,9 @@
       getMutationVersion() {
         return mutationVersion;
       },
+      getStateVersion() {
+        return stateVersion;
+      },
       beginTransaction() {
         transactionDepth += 1;
       },
@@ -980,10 +934,19 @@
         }
       },
       isDirty() {
-        return documentXml() !== savedDocument || numberingXml() !== savedNumbering
-          || relsXml() !== savedRels || !mediaRetention.matches(savedMedia, documentDoc, relsDoc);
+        if (stateVersion === savedStateVersion) return false;
+        if (dirtyMemo?.version !== stateVersion) {
+          dirtyMemo = {
+            version: stateVersion,
+            value: documentXml() !== savedDocument || numberingXml() !== savedNumbering
+              || relsXml() !== savedRels || !mediaRetention.matches(savedMedia, documentDoc, relsDoc),
+          };
+        }
+        return dirtyMemo.value;
       },
       markSaved() {
+        savedStateVersion = stateVersion;
+        dirtyMemo = null;
         savedDocument = documentXml();
         savedNumbering = numberingXml();
         savedRels = relsXml();

@@ -12,11 +12,11 @@
      bodyHtml(section)               the rows of the disclosure body */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('../shared/string-utils'), require('../inventory/action-button'));
+    module.exports = factory(require('../shared/string-utils'), require('../inventory/action-button'), require('./renderer-context-preview'));
     return;
   }
-  root.rendererSessionRailRender = factory(root.stringUtils, root.inventoryActionButton);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils, actionButtonRef) {
+  root.rendererSessionRailRender = factory(root.stringUtils, root.inventoryActionButton, root.rendererContextPreview);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (stringUtils, actionButtonRef, contextPreview) {
   'use strict';
 
   const escapeHtml = stringUtils.escapeHtml;
@@ -62,19 +62,8 @@
   }
 
   function rowHtml(row) {
-    if (row.kind === 'bar') {
-      const known = row.capacity > 0;
-      return `<div class="session-context-bar" aria-hidden="true">${row.categories.map((entry) => {
-        const width = known && entry.tokens !== null ? Math.min(100, entry.tokens / row.capacity * 100) : 0;
-        return `<span data-context-category="${escapeHtml(entry.key)}" style="flex-basis:${width}%"></span>`;
-      }).join('')}</div>`;
-    }
-    if (row.kind === 'category') {
-      const percent = row.capacity > 0 && row.tokens !== null ? `${(row.tokens / row.capacity * 100).toFixed(1)}%` : '—';
-      return `<div class="session-context-category" data-row-key="${escapeHtml(row.key)}">`
-        + `<span class="session-context-swatch" data-context-category="${escapeHtml(row.key)}" aria-hidden="true"></span>`
-        + `<span>${escapeHtml(row.text)}</span><span>${escapeHtml(row.meta)}</span><strong>${percent}</strong></div>`;
-    }
+    // The composer ring's details popover renders this same markup (row 63).
+    if (row.kind === 'breakdown') return contextPreview.breakdownHtml(row.projection);
     if (row.kind === 'note') {
       return `<p class="session-rail-note" data-row-key="${escapeHtml(row.key)}">${escapeHtml(row.text)}</p>`;
     }

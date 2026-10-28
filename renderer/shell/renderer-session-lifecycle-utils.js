@@ -383,6 +383,9 @@
 
       const skipOpenCurrent = Boolean(options.skipOpenCurrent);
       if (state.currentSessionId && !skipOpenCurrent && !state.messagesBySession.has(state.currentSessionId)) {
+        // The list is ready before the conversation: paint it first.
+        renderSessions();
+        globalThis.__jennyStartupAudit?.markOnce?.('session-list-painted', { sessionCount: state.sessions.length });
         await openSession(state.currentSessionId, { silent: true });
       }
       if (state.currentSessionId && state.messagesBySession.has(state.currentSessionId)) {
@@ -392,6 +395,8 @@
 
       if (state.currentSessionId) syncRuntimeDraftFromActiveSession();
       renderAll();
+      globalThis.__jennyStartupAudit?.markOnce?.('session-list-painted', { sessionCount: state.sessions.length });
+      if (state.messagesBySession.has(state.currentSessionId)) globalThis.__jennyStartupAudit?.markOnce?.('last-chat-restored', { sessionId: state.currentSessionId, messageCount: state.messagesBySession.get(state.currentSessionId)?.length || 0 });
     }
 
     // Successful hydration returns true; operational failures throw.

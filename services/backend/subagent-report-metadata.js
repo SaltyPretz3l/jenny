@@ -14,9 +14,18 @@ const MAX_BATCH_TASK_CANDIDATES = 12;
 const MAX_TOKEN_COUNT = 2147483647;
 const MAX_ROUTES = 6;
 const MAX_ANSWER_CHARS = 4000;
+const MAX_PROMPT_CHARS = 2000;
 const MAX_STEPS = 40;
 const MAX_STEP_NAME_CHARS = 64;
 const MAX_STEP_TEXT_CHARS = 160;
+const MAX_STEP_RANGE_CHARS = 40;
+// UI-only transcript: caps mirror sidecar/ai/routing/subagent_transcript.py.
+const MAX_TRANSCRIPT_ENTRIES = 80;
+const MAX_TRANSCRIPT_CHARS = 24000;
+const MAX_TRANSCRIPT_NOTE_CHARS = 1500;
+const MAX_TRANSCRIPT_INPUT_CHARS = 1000;
+const MAX_TRANSCRIPT_OUTPUT_CHARS = 2000;
+const TOOL_STATUSES = ['running', 'completed', 'failed', 'interrupted'];
 // Child deadlines derive from the parent turn's wall clock, whose longest
 // supported setting is cloud_max_loop_wall_seconds' 86,400 s ceiling (sidecar/ai/config.py).
 const MAX_RUNTIME_MS = 86400000;
@@ -71,8 +80,15 @@ function normalizeSubagentReport(value) {
   // UI-only monitor fields; absent on older reports and omitted when empty.
   const answer = safeMultilineText(value.answer, MAX_ANSWER_CHARS, KEEP_PATHS);
   if (answer) report.answer = answer;
+  if (value.answer_truncated === true) report.answer_truncated = true;
+  const prompt = safeMultilineText(value.prompt, MAX_PROMPT_CHARS, KEEP_PATHS);
+  if (prompt) report.prompt = prompt;
   const steps = normalizeSteps(value.steps);
   if (steps.length) report.steps = steps;
+  const transcript = normalizeTranscript(value.transcript);
+  if (transcript.length) report.transcript = transcript;
+  const dropped = optionalInteger(value.transcript_dropped, 1, MAX_TOKEN_COUNT);
+  if (dropped != null) report.transcript_dropped = dropped;
   for (const key of ['model', 'provider', 'reasoning_effort']) {
     const text = safeRoute(value[key]);
     if (text) report[key] = text;
@@ -85,7 +101,7 @@ function normalizeChildActivity(value) {
   if (!isRecord(value)) return null;
   const sequence = optionalInteger(value.sequence, 1, MAX_TOKEN_COUNT);
   if (sequence == null) return null;
-  return {
+  const activity = {
     sequence,
     steps: normalizeSteps(value.steps),
     step_count: optionalInteger(value.step_count, 0, MAX_TOKEN_COUNT) || 0,
@@ -93,6 +109,12 @@ function normalizeChildActivity(value) {
     text_truncated: value.text_truncated === true,
     visible_output_tokens_estimate: optionalInteger(value.visible_output_tokens_estimate, 0, MAX_TOKEN_COUNT),
   };
+  // Sent only when its version changed since the previous frame.
+  const transcript = normalizeTranscript(value.transcript);
+  if (transcript.length) activity.transcript = transcript;
+  const version = optionalInteger(value.transcript_version, 0, MAX_TOKEN_COUNT);
+  if (version != null) activity.transcript_version = version;
+  return activity;
 }
 
 function normalizeSubagentBatchReport(value) {
@@ -215,6 +237,12 @@ function normalizeSteps(value) {
       const raw = typeof entry.target === 'string' ? entry.target.replace(INVISIBLE_RE, '') : '';
       const target = raw && !namesOutsidePath(raw) ? safeText(raw, MAX_STEP_TEXT_CHARS) : '';
       if (target) step.target = target;
+      const range = safeText(entry.range, MAX_STEP_RANGE_CHARS);
+      if (range) step.range = range;
+      // A workspace-relative path the monitor can open, only beside a kept target;
+      // absolute, outside, home-relative and redacted paths drop.
+      const path = target ? normalizeRelativePath(entry.path) : '';
+      if (path && !path.startsWith('~') && !path.includes('[redacted]')) step.path = path;
       return step;
     }
     const errorCode = safeText(entry.error_code, MAX_STEP_NAME_CHARS);
@@ -224,6 +252,74 @@ function normalizeSteps(value) {
     if (detail) step.detail = detail;
     return step;
   }).filter(Boolean);
+}
+
+// The child's thoughts, notes and tool calls, re-bounded from the wire. Entries
+// of an unknown kind drop without counting toward the cap; one character budget
+// is shared by every text, input and output field.
+function normalizeTranscript(value) {
+  if (!Array.isArray(value)) return [];
+  const budget = { left: MAX_TRANSCRIPT_CHARS };
+  const entries = [];
+  for (const raw of value) {
+    if (entries.length >= MAX_TRANSCRIPT_ENTRIES) break;
+    const entry = isRecord(raw) ? normalizeTranscriptEntry(raw, budget) : null;
+    if (entry) entries.push(entry);
+  }
+  return entries;
+}
+
+function normalizeTranscriptEntry(raw, budget) {
+  if (raw.kind === 'thought' || raw.kind === 'text') {
+    const note = transcriptField(raw.text, MAX_TRANSCRIPT_NOTE_CHARS, false, budget);
+    if (raw.kind === 'text' && !note.text) return null;
+    const entry = { kind: raw.kind, text: note.text };
+    if (raw.kind === 'thought' && raw.live === true) entry.live = true;
+    if (raw.truncated === true || note.cut) entry.truncated = true;
+    const ms = raw.kind === 'thought' ? optionalInteger(raw.ms, 0, MAX_RUNTIME_MS) : null;
+    if (ms != null) entry.ms = ms;
+    return entry;
+  }
+  if (raw.kind !== 'tool') return null;
+  const tool = safeText(raw.tool, MAX_STEP_NAME_CHARS);
+  if (!tool) return null;
+  const entry = { kind: 'tool' };
+  const callId = safeText(raw.call_id, MAX_ID_CHARS);
+  if (callId) entry.call_id = callId;
+  entry.tool = tool;
+  entry.display = safeText(raw.display, MAX_STEP_NAME_CHARS) || tool;
+  if (TOOL_STATUSES.includes(raw.status)) entry.status = raw.status;
+  // An admitted call keeps real paths (HB-012); a refused one may name a path outside the workspace.
+  const scrub = raw.status !== 'completed' && raw.status !== 'running';
+  const input = transcriptField(raw.input, MAX_TRANSCRIPT_INPUT_CHARS, scrub, budget);
+  if (input.text) entry.input = input.text;
+  if (raw.input_truncated === true || input.cut) entry.input_truncated = true;
+  const output = transcriptField(raw.output, MAX_TRANSCRIPT_OUTPUT_CHARS, scrub, budget);
+  if (output.text) entry.output = output.text;
+  const outputChars = optionalInteger(raw.output_chars, 0, MAX_TOKEN_COUNT)
+    ?? (output.cut ? output.length : null);
+  if (outputChars != null) entry.output_chars = outputChars;
+  const errorCode = safeText(raw.error_code, MAX_STEP_NAME_CHARS);
+  if (errorCode) entry.error_code = errorCode;
+  const ms = optionalInteger(raw.ms, 0, MAX_RUNTIME_MS);
+  if (ms != null) entry.ms = ms;
+  return entry;
+}
+
+// Sanitize, cap, then take from the shared budget; `cut` says either cut the text.
+function transcriptField(value, maxChars, scrub, budget) {
+  // Scrub per line: the step scrub strips line breaks, which a transcript keeps.
+  const source = scrub && typeof value === 'string'
+    ? value.replace(/\r\n?/g, '\n').split('\n').map(scrubStepPaths).join('\n')
+    : value;
+  const chars = Array.from(safeMultilineText(source, Infinity, scrub ? null : KEEP_PATHS));
+  const allowed = Math.min(maxChars, budget.left);
+  budget.left -= Math.min(chars.length, allowed);
+  return {
+    text: chars.slice(0, allowed).join(''),
+    cut: chars.length > allowed,
+    length: chars.length,
+  };
 }
 
 // A target is a relative path, or `"pattern" in <relative path>`; an absolute,
@@ -370,6 +466,7 @@ module.exports = {
   normalizeSubagentBatchReport,
   normalizeSubagentMetadata,
   normalizeSubagentReport,
+  normalizeTranscript,
   normalizeUsage,
   normalizeChildActivity,
 };

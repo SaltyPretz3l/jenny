@@ -245,6 +245,16 @@ function countUnreadInbox(mail) {
   return unread;
 }
 
+// Structural count of RAW outbox records whose delivery failed (the "Needs you" row's source).
+function countFailedOutbox(mail) {
+  const outbox = mail && typeof mail === 'object' && Array.isArray(mail.outbox) ? mail.outbox : [];
+  let failed = 0;
+  for (const record of outbox) {
+    if (isPlainObject(record) && record.state === 'failed') failed += 1;
+  }
+  return failed;
+}
+
 function computeCounts(mail) {
   const counts = {
     unread: 0, queued: 0, reserved: 0, excluded_by_user: 0, included: 0,
@@ -408,7 +418,7 @@ function pruneMail(mail, { now } = {}) {
 
 module.exports = {
   AUTH_KINDS, DEFERRED_REASONS, MAIL_LIMITS, NORMALIZERS, OUTBOX_STATES, REPORT_SLOT_BYTES, STALE_OPERATION_ERROR,
-  UNDELIVERED_STATES, authorizationBlocked, computeCounts, countAgentSendsForTurn, countUnreadInbox,
+  UNDELIVERED_STATES, authorizationBlocked, computeCounts, countAgentSendsForTurn, countFailedOutbox, countUnreadInbox,
   findAgentOperation, inboxCapacity, isLiveGrant, liveGrantCount, normalizeAdmissionSnapshot,
   normalizeAuthorizationRecord, normalizeDiscardReceipt, normalizeInboxRecord, normalizeOutboxRecord,
   normalizeReportReservation, outboxCapacity, partitionList, pruneMail, validPurpose,

@@ -116,8 +116,8 @@ def _resolve_target(path: str, kind: str, workspace: WorkspaceGuard) -> Path:
 
 def _replace_texts(
     resolved: Path, relative_path: str, old_string: str, new_string: str, max_bytes: int
-) -> tuple[str, str] | ToolHandlerResult:
-    """Current and suggested file text for a replace, or the edit_file-style refusal."""
+) -> tuple[str, str, tuple[int, int]] | ToolHandlerResult:
+    """Current and suggested file text plus the matched span, or the edit_file-style refusal."""
     if old_string == new_string:
         return failure_result(
             message="old_string and new_string are identical. Nothing to suggest.",
@@ -131,6 +131,8 @@ def _replace_texts(
             expected_snapshot_value=None,
             action="suggesting a change",
             require_read_snapshot=False,
+            # Nothing is written and no snapshot is validated: skip the digest.
+            compute_digest=False,
         )
     except ToolExecutionFailure as error:
         return failure_result(message=error.message, error_code=error.code)
@@ -139,7 +141,7 @@ def _replace_texts(
     )
     if isinstance(matched, ToolHandlerResult):
         return matched
-    return existing.text, matched
+    return existing.text, matched.new_text, matched.span
 
 
 def propose_change_tool(  # noqa: PLR0911 - one refusal per validation stage.
@@ -172,19 +174,21 @@ def propose_change_tool(  # noqa: PLR0911 - one refusal per validation stage.
     if kind == "create":
         if len(new_string.encode("utf-8", "surrogatepass")) > max_bytes:
             return failure_result(message=TOO_LARGE_TEXT, error_code=CMP_TOOL_CAP_EXCEEDED)
-        texts: tuple[str, str] | ToolHandlerResult = ("", new_string)
+        texts: tuple[str, str, tuple[int, int] | None] | ToolHandlerResult = (
+            "", new_string, None
+        )
     else:
         texts = _replace_texts(resolved, relative_path, old_string, new_string, max_bytes)
     if isinstance(texts, ToolHandlerResult):
         return texts
-    old_text, new_text = texts
+    old_text, new_text, span = texts
     overlap = overlap_refusal(
         live,
         kind=kind,
         relative_path=relative_path,
         revises=revises,
         content=old_text,
-        old_string=old_string,
+        span=span,
     )
     if overlap is not None:
         return failure_result(message=overlap, error_code=CMP_TOOL_EXECUTION_FAILED)

@@ -76,18 +76,38 @@ test('a live reasoning turn writes think and a prose delta writes write', () => 
   close(harness);
 });
 
-test('a running read tool writes search and another running tool writes tool', () => {
-  const toolCallUtils = { ...realToolCallUtils, toolRunVerb: (name) => (name === 'read_file' ? 'read' : 'run') };
-  const harness = createHarness({ messages: liveMessages(), toolCallUtils });
+test('a running tool writes its form: search, make, run, or the generic tool', () => {
+  const harness = createHarness({ messages: liveMessages(), toolCallUtils: realToolCallUtils });
   startTurn(harness);
   harness.state.toolCallsByStream.set('stream-1', [{ callId: 'c1', toolName: 'read_file', status: 'running' }]);
   expectActivity(harness, 'search');
 
-  harness.state.toolCallsByStream.set('stream-1', [{ callId: 'c2', toolName: 'bash', status: 'executing' }]);
+  for (const toolName of ['write_file', 'edit_file', 'create_artifact']) {
+    harness.state.toolCallsByStream.set('stream-1', [{ callId: toolName, toolName, status: 'running' }]);
+    expectActivity(harness, 'make', toolName);
+  }
+
+  for (const toolName of ['run_command', 'run_temp_script', 'python_execute']) {
+    harness.state.toolCallsByStream.set('stream-1', [{ callId: toolName, toolName, status: 'executing' }]);
+    expectActivity(harness, 'run', toolName);
+  }
+
+  harness.state.toolCallsByStream.set('stream-1', [{ callId: 'c2', toolName: 'image_generate', status: 'running' }]);
   expectActivity(harness, 'tool');
 
   harness.state.toolCallsByStream.set('stream-1', [{ callId: 'c3', toolName: 'bash', status: 'requested' }]);
   expectActivity(harness, 'think', 'a requested tool is not proof of execution');
+  close(harness);
+});
+
+test('a tool that settled within a frame still shows its form, and a follow-up pass ends it after the window', async () => {
+  const harness = createHarness({ messages: liveMessages(), toolCallUtils: realToolCallUtils });
+  startTurn(harness);
+  harness.state.toolCallsByStream.set('stream-1', [{ callId: 'w1', toolName: 'write_file', status: 'completed', ranAt: Date.now() }]);
+  expectActivity(harness, 'make', 'a 1 ms write is not lost between pipeline passes');
+  await new Promise((resolve) => setTimeout(resolve, 340));
+  harness.scheduler.flushNext();
+  assert.equal(activityOf(harness), 'think', 'the scheduled pass re-derives once the just-ran window closes');
   close(harness);
 });
 

@@ -13,12 +13,19 @@ async function loadRendererTestApp(t, options) {
   return app;
 }
 
+// Row 63: Commands and Skills live in the + menu, under the files rows.
+async function openFromPlusMenu(window, rowId) {
+  window.document.getElementById('composerAttachShortcut').click();
+  await waitForUi(window, 20);
+  window.document.getElementById(rowId).click();
+  await waitForUi(window, 20);
+}
+
 test('renderer composer shortcut buttons stay wired (command popover + attach)', async (t) => {
   const { window, shell } = await loadRendererTestApp(t);
   const input = window.document.getElementById('chatInput');
   const composer = window.document.querySelector('.composer');
   const attachShortcut = window.document.getElementById('composerAttachShortcut');
-  const terminalShortcut = window.document.getElementById('composerTerminalShortcut');
 
   shell.__state.attachmentPickCalls = [];
   shell.attachments.pick = async () => {
@@ -27,7 +34,7 @@ test('renderer composer shortcut buttons stay wired (command popover + attach)',
   };
 
   assert.ok(attachShortcut);
-  assert.ok(terminalShortcut);
+  assert.equal(window.document.getElementById('composerTerminalShortcut'), null, 'no standing Commands button');
 
   input.value = 'hello';
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
@@ -38,26 +45,27 @@ test('renderer composer shortcut buttons stay wired (command popover + attach)',
   input.dispatchEvent(new window.Event('input', { bubbles: true }));
   await waitForUi(window, 20);
 
-  terminalShortcut.click();
-  await waitForUi(window, 20);
-
+  await openFromPlusMenu(window, 'composerMenuCommandsButton');
+  const attachMenu = window.document.getElementById('composerAttachMenu');
   const commandPopover = window.document.querySelector('.slash-autocomplete-popover');
   assert.ok(commandPopover, 'command popover element exists');
   assert.equal(commandPopover.classList.contains('hidden'), false, 'command popover is visible');
-
-  terminalShortcut.click();
-  await waitForUi(window, 20);
-  assert.equal(commandPopover.classList.contains('hidden'), true, 'command popover closes on second click');
-
-  terminalShortcut.click();
-  await waitForUi(window, 20);
-  assert.equal(commandPopover.classList.contains('hidden'), false, 'command popover reopens');
+  assert.equal(attachMenu.classList.contains('hidden'), true, 'the + menu closes behind it');
+  assert.equal(input.value, '', 'opening the menu leaves the draft alone');
 
   window.document.body.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true }));
   await waitForUi(window, 20);
   assert.equal(commandPopover.classList.contains('hidden'), true, 'command popover closes on outside press');
 
-  // The paperclip opens the attach menu (composer Chat panel, 2026-09-30); Attach files picks.
+  // Skills opens the same searchable menu narrowed to skills.
+  await openFromPlusMenu(window, 'composerMenuSkillsButton');
+  assert.equal(commandPopover.classList.contains('hidden'), false, 'the skills menu is visible');
+  assert.equal(commandPopover.querySelector('input').placeholder, 'Search skills…');
+  assert.equal([...commandPopover.querySelectorAll('.slash-autocomplete-tag')].every((tag) => tag.textContent === 'Skill'), true);
+  window.document.body.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true }));
+  await waitForUi(window, 20);
+
+  // The + opens its menu (composer Chat panel, 2026-09-30; row 63); Attach files picks.
   attachShortcut.click();
   await waitForUi(window, 20);
   assert.equal(window.document.getElementById('composerAttachMenu').classList.contains('hidden'), false, 'attach menu opens');
@@ -71,9 +79,7 @@ test('renderer composer shortcut buttons stay wired (command popover + attach)',
 test('composer command selection completes commands while preserving the draft', async (t) => {
   const { window } = await loadRendererTestApp(t);
   const input = window.document.getElementById('chatInput');
-  const terminalShortcut = window.document.getElementById('composerTerminalShortcut');
-  terminalShortcut.click();
-  await waitForUi(window, 20);
+  await openFromPlusMenu(window, 'composerMenuCommandsButton');
   const commandPopover = window.document.querySelector('.slash-autocomplete-popover');
   const findCommand = (name) => [...commandPopover.querySelectorAll('[role="option"]')].find((row) => row.querySelector('.slash-autocomplete-command').textContent === name);
   const note = findCommand('/note');
@@ -84,8 +90,7 @@ test('composer command selection completes commands while preserving the draft',
 
   input.value = 'remember this';
   input.setSelectionRange(3, 8);
-  terminalShortcut.click();
-  await waitForUi(window, 20);
+  await openFromPlusMenu(window, 'composerMenuCommandsButton');
   findCommand('/note').click();
   await waitForUi(window, 20);
   assert.equal(input.value, '/note remember this', 'Insert preserves and prefixes an ordinary draft');
@@ -93,8 +98,7 @@ test('composer command selection completes commands while preserving the draft',
   assert.equal(input.selectionEnd, 6);
 
   input.value = '';
-  terminalShortcut.click();
-  await waitForUi(window, 20);
+  await openFromPlusMenu(window, 'composerMenuCommandsButton');
   const help = findCommand('/help');
   help.click();
   await waitForUi(window, 20);
@@ -103,8 +107,7 @@ test('composer command selection completes commands while preserving the draft',
 
 test('command menu keeps its search focus through resize and supports active option navigation', async (t) => {
   const { window } = await loadRendererTestApp(t);
-  window.document.getElementById('composerTerminalShortcut').click();
-  await waitForUi(window, 20);
+  await openFromPlusMenu(window, 'composerMenuCommandsButton');
   const popover = window.document.querySelector('.slash-autocomplete-popover');
   const search = popover.querySelector('input');
   const items = [...popover.querySelectorAll('[role="option"]')];
@@ -125,5 +128,5 @@ test('command menu keeps its search focus through resize and supports active opt
     key: 'Escape', bubbles: true, cancelable: true,
   }));
   assert.equal(popover.classList.contains('hidden'), true);
-  assert.equal(window.document.activeElement.id, 'composerTerminalShortcut');
+  assert.equal(window.document.activeElement.id, 'composerAttachShortcut', 'Escape returns to the + button');
 });

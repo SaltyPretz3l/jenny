@@ -19,6 +19,7 @@ const assert = require('node:assert/strict');
 const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
 const { buildFeatureFlags } = require('../services/feature-flags');
 const { waitForUiState } = require('./helpers/wait-for-ui-state');
+const { withExactApproval } = require('./helpers/exact-approval-fixtures');
 
 const REASON_1 = 'ReasonBlockOne unique marker';
 const STATEMENT = 'StatementText I will start the task now unique marker.';
@@ -151,13 +152,20 @@ test('multi-segment turn keeps earlier segments visible while a later segment st
     input: { path: 'notes/narrative-demo.md' },
     status: 'pending_approval',
   });
-  await emit({
+  const approvalNeeded = {
     type: 'tool_approval_needed',
     callId: 'call-write',
     approvalId: 'approval-1',
     toolName: 'write_file',
     input: { path: 'notes/narrative-demo.md' },
+  };
+  // Without the backend's exact presentation (a rehydrated approval's shape) the write has no Allow.
+  await emit(approvalNeeded);
+  await waitForUiState(window, () => doc.getElementById('chatTimeline').querySelector('[data-approval-exact-unavailable="missing"]'), {
+    timeoutMs: 5000, message: 'the approval without an exact presentation never failed closed.',
   });
+  assert.equal(doc.getElementById('chatTimeline').querySelector('.tool-approve-btn'), null);
+  await emit(withExactApproval(approvalNeeded));
   await waitForUiState(window, () => doc.getElementById('chatTimeline').querySelector('.tool-approve-btn'), {
     timeoutMs: 5000, message: 'approval block never rendered an Allow button.',
   });

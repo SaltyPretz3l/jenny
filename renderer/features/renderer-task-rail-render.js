@@ -21,6 +21,7 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const fallbackEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
+  const chatsPanelTree = typeof require === 'function' ? require('../shell/renderer-chats-panel-tree') : null;
 
   function timestampOf(row) {
     for (const value of [row?.updatedAt, row?.resolvedAt, row?.archivedAt, row?.createdAt]) {
@@ -115,22 +116,27 @@
           status: section === 'archived' ? 'archived' : String(entry?.status || '').trim(),
           section,
           isDue: entry?.isDue === true,
-          timingLabel: String(entry?.timingLabel || '').trim(),
+          createdAt: String(entry?.createdAt || '').trim(),
+          deferredUntil: String(entry?.deferredUntil || '').trim(),
+          doneAt: String(entry?.resolvedAt || entry?.archivedAt || '').trim(),
           sessionId: String(entry?.sessionId || '').trim(),
           sessionTitle: String(entry?.sessionTitle || '').trim(),
           projectId: String(entry?.projectId || '').trim(),
           linkedSessionId,
           isCurrentSessionTask: Boolean(linkedSessionId && linkedSessionId === String(state?.currentSessionId || '').trim()),
-          originBadge: String(entry?.sessionId || '').trim() ? jt('tasks.rail.agentTask', 'Agent task') : 'Manual',
           _recency: timestampOf(entry),
           _sourceOrder: order,
         });
       }
     }
+    // Open before finished; then this chat's own task, due, and open before
+    // snoozed; newest first within.
+    const snoozed = (row) => (row.section === 'deferred' ? 1 : 0);
     rows.sort((left, right) => {
+      if (isOpenRow(left) !== isOpenRow(right)) return isOpenRow(left) ? -1 : 1;
       if (left.isCurrentSessionTask !== right.isCurrentSessionTask) return left.isCurrentSessionTask ? -1 : 1;
       if (left.isDue !== right.isDue) return left.isDue ? -1 : 1;
-      return right._recency - left._recency || left._sourceOrder - right._sourceOrder;
+      return snoozed(left) - snoozed(right) || right._recency - left._recency || left._sourceOrder - right._sourceOrder;
     });
     return rows.map(({ _recency, _sourceOrder, ...row }) => row);
   }
@@ -143,13 +149,43 @@
     return typeof inventory.textField === 'function' ? inventory.textField(options) : '';
   }
 
+  function isOpenRow(row) {
+    return row.section === 'active' || row.section === 'deferred';
+  }
+
+  // The chat list's short relative time ("now", "12m", "3h", "Oct 19").
+  function relativeTime(value) {
+    const tree = globalThis.rendererChatsPanelTree || chatsPanelTree;
+    return value && typeof tree?.formatSessionTime === 'function' ? tree.formatSessionTime(value) : '';
+  }
+
+  // When a snoozed task comes back: a time today, Tomorrow, a weekday, or a date.
+  function snoozeLabel(value) {
+    const at = new Date(value || '');
+    if (Number.isNaN(at.valueOf())) return '';
+    const tag = globalThis.jennyI18n?.tag?.();
+    const dayStart = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).valueOf();
+    const days = Math.round((dayStart(at) - dayStart(new Date())) / 86400000);
+    if (days <= 0) return at.toLocaleTimeString(tag, { hour: 'numeric', ...globalThis.jennyI18n?.timeOptions?.(), minute: '2-digit' });
+    if (days === 1) return jt('companion.defer.tomorrow', 'Tomorrow');
+    return at.toLocaleDateString(tag, days < 7 ? { weekday: 'short' } : { month: 'short', day: 'numeric' });
+  }
+
+  // The one fact a row shows beside its title.
+  function rowFact(row) {
+    if (!isOpenRow(row)) return { text: relativeTime(row.doneAt), tone: '' };
+    if (row.section === 'deferred') return { text: snoozeLabel(row.deferredUntil), tone: '' };
+    if (row.isDue) return { text: jt('companion.openLoops.timing.dueNow', 'Due now'), tone: 'due' };
+    if (row.isCurrentSessionTask) return { text: jt('tasks.rail.thisSession', 'This session'), tone: 'here' };
+    return { text: relativeTime(row.createdAt), tone: '' };
+  }
+
   function checkbox(row, busy) {
     return typeof inventory.checkbox === 'function' ? inventory.checkbox({
       id: `taskRailCheck-${row.followUpId}`,
       checked: row.status === 'resolved' || row.status === 'archived',
       disabled: busy,
       ariaLabel: `${row.status === 'resolved' || row.status === 'archived' ? 'Reopen' : 'Complete'} ${row.title}`,
-      className: 'task-rail-checkbox',
       dataset: { 'follow-up-id': row.followUpId },
     }) : '';
   }
@@ -164,38 +200,52 @@
       + '</div></div>';
   }
 
+  // Opened by its title: the notes, where it came from, and the one way into its chat.
+  function renderDetail(row, busy, detailId, escapeHtml) {
+    const origin = row.sessionTitle
+      ? jt('tasks.rail.fromSession', 'from {sessionTitle}', { sessionTitle: row.sessionTitle })
+      : jt('tasks.rail.addedByYou', 'Added by you');
+    return '<div class="task-rail-detail" id="' + escapeHtml(detailId) + '">'
+      + (row.body ? '<div class="task-rail-notes">' + escapeHtml(row.body) + '</div>' : '')
+      + '<div class="task-rail-meta">' + escapeHtml(origin) + '</div>'
+      + '<div class="task-rail-detail-actions">'
+      + action({
+        id: row.linkedSessionId ? 'task-rail-open-session' : 'task-rail-start', size: 'sm', disabled: busy,
+        label: row.linkedSessionId ? jt('tasks.rail.openSession', 'Open session') : jt('tasks.rail.startSession', 'Start a session'),
+        dataset: { 'task-id': row.followUpId },
+      })
+      + action({ id: 'task-rail-edit', label: jt('common.edit', 'Edit'), variant: 'ghost', size: 'sm', disabled: busy, dataset: { 'task-id': row.followUpId } })
+      + '</div></div>';
+  }
+
   function renderRow(row, uiState, escapeHtml) {
     const busy = String(uiState.busyTaskId || '') === row.followUpId;
     if (String(uiState.editTaskId || '') === row.followUpId) return renderEditor(row, escapeHtml);
     const resolved = row.status === 'resolved' || row.status === 'archived';
-    const meta = [
-      row.originBadge,
-      row.timingLabel,
-      row.sessionTitle ? jt('tasks.rail.fromSession', 'from {sessionTitle}', { sessionTitle: row.sessionTitle }) : '',
-      row.isCurrentSessionTask ? jt('tasks.rail.thisSession', 'This session') : '',
-    ].filter(Boolean).map(escapeHtml).join(' &middot; ');
-    return '<article class="task-rail-row' + (resolved ? ' task-rail-row--resolved' : '') + '" data-task-id="'
-      + escapeHtml(row.followUpId) + '"><div class="task-rail-row-main">'
-      + checkbox(row, busy) + '<div class="task-rail-copy"><div class="task-rail-title">'
-      + escapeHtml(row.title) + '</div>'
-      + (row.body ? '<div class="task-rail-notes">' + escapeHtml(row.body) + '</div>' : '')
-      + (meta ? '<div class="task-rail-meta">' + meta + '</div>' : '') + '</div>'
+    const expanded = String(uiState.expandedTaskId || '') === row.followUpId;
+    const detailId = `taskRailDetail-${row.followUpId}`;
+    const fact = rowFact(row);
+    return '<article class="task-rail-row' + (resolved ? ' task-rail-row--resolved' : row.section === 'deferred' ? ' task-rail-row--later' : '')
+      + '" data-task-id="' + escapeHtml(row.followUpId) + '" data-expanded="' + expanded + '"><div class="task-rail-row-main">'
+      + checkbox(row, busy)
+      + action({
+        id: 'task-rail-toggle', plain: true, className: 'task-rail-title', label: row.title, ariaExpanded: expanded,
+        ariaControls: expanded ? detailId : '', title: row.body ? row.body.slice(0, 300) : '', dataset: { 'task-id': row.followUpId },
+      })
+      + '<span class="task-rail-fact' + (fact.tone ? ' task-rail-fact--' + fact.tone : '') + '">' + escapeHtml(fact.text) + '</span>'
       + action({ id: 'task-rail-overflow', plain: true, className: 'task-rail-overflow', ariaLabel: jt('tasks.rail.moreActionsFor', 'More actions for {title}', { title: row.title }), ariaHaspopup: 'menu', disabled: busy, trustedHtml: '<span aria-hidden="true">&#8942;</span>', dataset: { 'task-id': row.followUpId } })
-      + '</div></article>';
+      + '</div>' + (expanded ? renderDetail(row, busy, detailId, escapeHtml) : '') + '</article>';
   }
 
   function rowsForFilter(rows, filter) {
     if (filter === 'done') return rows.filter((row) => row.section === 'recentResolved');
     if (filter === 'all') return rows;
-    return rows.filter((row) => row.section === 'active' || row.section === 'deferred');
+    return rows.filter(isOpenRow);
   }
 
   const GENERAL_PROJECT_ID = 'project_general';
   const SCOPE_CHEVRON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg>';
-
-  function isOpenRow(row) {
-    return row.section === 'active' || row.section === 'deferred';
-  }
+  const ADD_GLYPH = '<svg class="task-rail-add-glyph" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>';
 
   // The controller's scope helper: { mode: 'current'|'all'|'project', projectId,
   // projectName, chatProjectId, projectNames: Map, projectOrder: [] }. Without
@@ -249,6 +299,13 @@
     });
   }
 
+  // A section heading: its name, optional facts beside it, an optional action at the end.
+  function groupHeading(name, details, trailing, escapeHtml) {
+    const facts = details.filter(Boolean).map(escapeHtml).join(' &middot; ');
+    return '<div class="task-rail-group"><b>' + escapeHtml(name) + '</b>'
+      + (facts ? '<span>' + facts + '</span>' : '') + (trailing || '') + '</div>';
+  }
+
   // Chat project first, then the switcher's order, unknown ids, General, and
   // the unstamped rows ("No project") last.
   function groupRowsByProject(rows, scope) {
@@ -268,33 +325,47 @@
     return order.map((id) => ({ id, rows: byId.get(id) }));
   }
 
-  function renderProjectGroup(group, scope, state, escapeHtml) {
-    const open = group.rows.filter(isOpenRow).length;
-    const detail = [jtn('tasks.rail.groupOpen', open, { count: open }, '{count} open', '{count} open')];
-    if (group.id && group.id === scope.chatProjectId) detail.push(jt('tasks.rail.thisChat', 'this chat'));
-    return '<div class="task-rail-group"><b>' + escapeHtml(projectLabel(scope, group.id)) + '</b><span>'
-      + detail.map(escapeHtml).join(' &middot; ') + '</span></div>'
-      + group.rows.map((row) => renderRow(row, state, escapeHtml)).join('');
-  }
-
-  function renderFollowUps(visibleRows, scope, state, escapeHtml) {
+  function renderFollowUps(visibleRows, scope, state, escapeHtml, sendAction) {
     if (!visibleRows.length) return '';
+    const rowsMarkup = (rows) => rows.map((row) => renderRow(row, state, escapeHtml)).join('');
     if (scope && scope.mode === 'all') {
-      return groupRowsByProject(visibleRows, scope).map((group) => renderProjectGroup(group, scope, state, escapeHtml)).join('');
+      const groups = groupRowsByProject(visibleRows, scope);
+      const sendIndex = groups.findIndex((group) => group.rows.some(isOpenRow));
+      return groups.map((group, index) => {
+        const open = group.rows.filter(isOpenRow).length;
+        const detail = [jtn('tasks.rail.groupOpen', open, { count: open }, '{count} open', '{count} open')];
+        if (group.id && group.id === scope.chatProjectId) detail.push(jt('tasks.rail.thisChat', 'this chat'));
+        return groupHeading(projectLabel(scope, group.id), detail, index === sendIndex ? sendAction : '', escapeHtml)
+          + rowsMarkup(group.rows);
+      }).join('');
     }
-    return '<div class="task-rail-group"><b>' + escapeHtml(jt('tasks.rail.followUps', 'Follow-ups'))
-      + '</b></div>' + visibleRows.map((row) => renderRow(row, state, escapeHtml)).join('');
+    const open = visibleRows.filter(isOpenRow);
+    const done = visibleRows.filter((row) => !isOpenRow(row));
+    const followUps = jt('tasks.rail.followUps', 'Follow-ups');
+    return (open.length ? groupHeading(followUps, [], sendAction, escapeHtml) + rowsMarkup(open) : '')
+      + (done.length ? groupHeading(open.length ? jt('common.done', 'Done') : followUps, [], '', escapeHtml) + rowsMarkup(done) : '');
   }
 
-  function renderChecklist(items, escapeHtml) {
+  // Jenny's checklist: the step she is on leads; in Open, finished steps fold into one toggle line.
+  function renderChecklist(items, filter, foldOpen, escapeHtml) {
     if (!items.length) return '';
-    return '<div class="task-rail-group"><b>' + escapeHtml(jt('tasks.rail.thisConversation', 'This conversation'))
-      + '</b><span>' + escapeHtml(jt('tasks.rail.checklistHint', "Jenny's checklist")) + '</span></div>'
-      + items.map((item) => '<div class="task-rail-check" data-check-status="'
+    const done = items.filter((item) => item?.status === 'completed');
+    const foldable = filter === 'open' && done.length > 0;
+    const shown = filter === 'done' ? done
+      : filter === 'all' || foldOpen ? items : items.filter((item) => item?.status !== 'completed');
+    if (!shown.length && !foldable) return '';
+    return groupHeading(jt('tasks.rail.checklistHint', "Jenny's checklist"),
+      [jt('tasks.rail.checklistProgress', '{done} of {total} done', { done: done.length, total: items.length })], '', escapeHtml)
+      + (foldable ? action({
+        id: 'task-rail-checklist-fold', plain: true, className: 'task-rail-check-fold', ariaExpanded: foldOpen,
+        trustedHtml: '<span class="status-dot task-rail-check-dot" aria-hidden="true"></span><span>'
+          + escapeHtml(jt('tasks.rail.checklistDoneFold', '{count} done', { count: done.length })) + '</span>',
+      }) : '')
+      + shown.map((item) => '<div class="task-rail-check" data-check-status="'
         + escapeHtml(item.status) + '"><span class="status-dot task-rail-check-dot" aria-hidden="true"></span>'
         + '<span class="task-rail-check-text">' + escapeHtml(item.content) + '</span>'
         + (item.status === 'in_progress' ? '<span class="task-rail-check-meta">'
-          + escapeHtml(jt('tasks.rail.inProgress', 'in progress')) + '</span>' : '')
+          + escapeHtml(jt('tasks.rail.now', 'now')) + '</span>' : '')
         + '</div>').join('');
   }
 
@@ -307,48 +378,34 @@
       : jt('tasks.rail.noOpenTasks', 'No open tasks. Ask Jenny to file one, or add one above.');
   }
 
-  function followUpSummary(openRows, scope) {
-    const count = openRows.length;
-    const projects = new Set(openRows.map((row) => row.projectId).filter(Boolean)).size; // unstamped rows are not a project
-    if (scope && scope.mode === 'all' && projects > 1) {
-      return jtn('tasks.rail.followUpsOpenAcross', count, { count, projects },
-        '{count} follow-up open in {projects} projects', '{count} follow-ups open in {projects} projects');
-    }
-    return jtn('tasks.rail.followUpsOpen', count, { count }, '{count} follow-up open', '{count} follow-ups open');
-  }
-
   function renderTaskRailSurface(rows, uiState, helpers) {
     const escapeHtml = typeof helpers?.escapeHtml === 'function' ? helpers.escapeHtml : fallbackEscapeHtml;
     const scope = normalizeScope(helpers?.scope);
     const source = scopeRowsFor(Array.isArray(rows) ? rows : [], scope);
     const state = uiState && typeof uiState === 'object' ? uiState : {};
     const addBusy = String(state.busyTaskId || '') === '__add__';
-    const filter = ['open', 'done', 'all'].includes(state.filter) ? state.filter : 'open';
+    // All leads and is the default: open and finished tasks at a glance.
+    const filter = ['open', 'done', 'all'].includes(state.filter) ? state.filter : 'all';
     const visibleRows = rowsForFilter(source, filter);
     const checklist = helpers?.checklist && typeof helpers.checklist === 'object'
       ? helpers.checklist : { items: [], updatedAt: '' };
     const checklistItems = Array.isArray(checklist.items) ? checklist.items : [];
-    const visibleChecklistItems = checklistItems.filter((item) => {
-      if (filter === 'done') return item?.status === 'completed';
-      if (filter === 'all') return true;
-      return item?.status !== 'completed';
-    });
-    const openRows = source.filter(isOpenRow);
-    const openCount = openRows.length;
+    const openCount = source.filter(isOpenRow).length;
     const checklistDone = checklistItems.filter((item) => item?.status === 'completed').length;
+    const openTotal = openCount + checklistItems.length - checklistDone;
+    const doneTotal = source.filter((row) => row.section === 'recentResolved').length + checklistDone;
     const filters = typeof inventory.segmentedControl === 'function' ? inventory.segmentedControl({
-      id: 'task-rail-filter', ariaLabel: jt('tasks.rail.filterLabel', 'Task filter'), value: filter, className: 'task-rail-filters',
+      id: 'task-rail-filter', ariaLabel: jt('tasks.rail.filterLabel', 'Task filter'), value: filter, className: 'task-rail-filters inv-segmented--compact',
       dataset: { action: 'task-rail-filter' },
-      options: [{ value: 'open', label: jt('common.open', 'Open') }, { value: 'done', label: jt('common.done', 'Done') }, { value: 'all', label: jt('tasks.rail.all', 'All') }],
+      options: [
+        { value: 'all', label: jt('tasks.rail.all', 'All') },
+        { value: 'open', label: openTotal ? jt('tasks.rail.filterOpen', 'Open {count}', { count: openTotal }) : jt('common.open', 'Open') },
+        { value: 'done', label: doneTotal ? jt('tasks.rail.filterDone', 'Done {count}', { count: doneTotal }) : jt('common.done', 'Done') },
+      ],
     }) : '';
-    const summary = [
-      checklistItems.length
-        ? jt('tasks.rail.checklistProgress', '{done} of {total} done', { done: checklistDone, total: checklistItems.length })
-        : '',
-      followUpSummary(openRows, scope),
-    ].filter(Boolean).map(escapeHtml).join(' &middot; ');
-    const checklistMarkup = renderChecklist(visibleChecklistItems, escapeHtml);
-    const followUpMarkup = renderFollowUps(visibleRows, scope, state, escapeHtml);
+    const sendAction = openCount ? action({ id: 'task-rail-send-list', plain: true, className: 'task-rail-group-action', label: jt('tasks.rail.sendListToChat', 'Send list to chat') }) : '';
+    const checklistMarkup = renderChecklist(checklistItems, filter, helpers?.checklistFoldOpen === true, escapeHtml);
+    const followUpMarkup = renderFollowUps(visibleRows, scope, state, escapeHtml, sendAction);
     const list = checklistMarkup || followUpMarkup
       ? checklistMarkup + followUpMarkup
       : '<div class="task-rail-empty">' + escapeHtml(emptyCopyFor(filter, scope)) + '</div>';
@@ -356,17 +413,15 @@
     const placeholder = target
       ? jt('tasks.rail.addToProject', 'Add a task to {project}', { project: target })
       : jt('tasks.rail.addFollowUpPlaceholder', 'Add a follow-up');
-    // The panel header carries the "Tasks" title and Close; the rail keeps the summary.
+    // The panel header carries the "Tasks" title and Close; one toolbar row holds
+    // the filter (with counts) and the project scope.
     return '<section class="task-rail-surface" aria-label="' + escapeHtml(jt('artifactPanelV2Render.tasks', 'Tasks')) + '"><header class="task-rail-header">'
-      + '<span class="task-rail-summary">' + summary + '</span>' + (scope ? renderScopeButton(scope, escapeHtml) : '') + '</header>'
-      + filters + '<div class="task-rail-add">'
+      + filters + (scope ? renderScopeButton(scope, escapeHtml) : '') + '</header>'
+      + '<div class="task-rail-add">' + ADD_GLYPH
       + field({ id: 'taskRailDraftTitle', value: String(state.draftTitle || ''), placeholder, ariaLabel: jt('tasks.rail.taskTitle', 'Task title'), multiline: true, rows: 1, maxLength: 200, disabled: addBusy, dataset: { 'task-draft-title': '' } })
       + action({ id: 'task-rail-add', label: jt('tasks.rail.add', 'Add'), variant: 'primary', size: 'sm', disabled: addBusy }) + '</div>'
       + (state.lastError ? '<div class="task-rail-error" role="alert">' + escapeHtml(state.lastError) + '</div>' : '')
-      + '<div class="task-rail-list">' + list + '</div><footer class="task-rail-footer"><span>'
-      + escapeHtml(jt('tasks.rail.autoRefreshNote', 'Refreshes automatically when the model files a task.')) + '</span>'
-      + action({ id: 'task-rail-send-list', label: jt('tasks.rail.sendListToChat', 'Send list to chat'), variant: 'ghost', size: 'sm', disabled: openCount === 0 })
-      + '</footer></section>';
+      + '<div class="task-rail-list">' + list + '</div></section>';
   }
 
   return { buildSessionChecklist, buildTaskRows, renderTaskRailSurface, scopeRows: (rows, scope) => scopeRowsFor(Array.isArray(rows) ? rows : [], normalizeScope(scope)) };

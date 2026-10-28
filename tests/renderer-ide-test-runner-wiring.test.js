@@ -477,3 +477,70 @@ test('wiring: a workspace-root reset drops the old root add-form draft (Astra re
   assert.equal(host.querySelector('#ideTestRunnerFieldId').value, '', 'no id draft carried over');
   assert.equal(host.querySelector('#ideTestRunnerFieldCommand').value, '', 'no command draft carried over');
 });
+
+test('item 4: a termination_failed push re-fetches and shows the run as stop unconfirmed, never idle or running', async () => {
+  const { host, wiring, fake } = setup();
+  wiring.bindEvents();
+  await tick();
+  fake.push({ phase: 'started', configId: 'unit', runId: 'r1' });
+  const before = fake.calls.getState;
+  // Main could not confirm the process tree died: the run stays active and
+  // its finished record carries terminationConfirmed:false.
+  fake.setState({
+    configs: [{ id: 'unit', label: 'Unit', command: 'npm test' }],
+    history: { byConfig: { unit: [{ runId: 'r1', status: 'aborted', terminationConfirmed: false }] } },
+    activeRun: 'r1',
+    activeConfigId: 'unit',
+  });
+  fake.push({ phase: 'termination_failed', configId: 'unit', runId: 'r1' });
+  await tick();
+  assert.ok(fake.calls.getState > before, 'termination_failed triggered a getState refresh');
+  const card = host.querySelector('.ide-test-runner-panel__active-run');
+  assert.ok(card, 'the run is still active (main still holds it)');
+  assert.ok(card.classList.contains('ide-test-runner-panel__active-run--unconfirmed'));
+  assert.match(card.textContent, /stop unconfirmed/);
+  assert.notEqual(statusOf(host), 'running', 'the row is no longer badged as plainly running');
+  assert.ok(host.querySelector('.ide-test-runner-panel__row[data-config-id="unit"] [data-status="unconfirmed"]'), 'the row carries the unconfirmed state');
+});
+
+test('item 4: a later confirmed record drops the unconfirmed state', async () => {
+  const { host, wiring, fake } = setup({ state: {
+    configs: [{ id: 'unit', label: 'Unit', command: 'npm test' }],
+    history: { byConfig: { unit: [{ runId: 'r1', status: 'aborted', terminationConfirmed: true }] } },
+    activeRun: null,
+    activeConfigId: null,
+  } });
+  wiring.bindEvents();
+  await tick();
+  assert.equal(host.querySelector('[data-status="unconfirmed"]'), null);
+  assert.equal(statusOf(host), 'aborted');
+});
+
+test('item 9: a run answer from before a workspace-root switch is dropped', async () => {
+  const { wiring, fake } = setup();
+  let resolveRun;
+  fake.api.run = (payload) => { fake.calls.run.push(payload); return new Promise((resolve) => { resolveRun = resolve; }); };
+  wiring.bindEvents();
+  await tick();
+  const pending = wiring.runConfig('unit');
+  await wiring.resetForRoot();
+  resolveRun({ runId: 'old-root-run', configId: 'unit', status: 'passed', stdoutTail: 'from root A' });
+  await pending;
+  await tick();
+  assert.equal(wiring.getLastRunOutput('unit'), null, 'the old root output never reaches the new root');
+});
+
+test('item 17: saveConfigs with no bridge method still says the runner is unavailable', async () => {
+  const { host, wiring, fake, toasts } = setup();
+  delete fake.api.saveConfigs;
+  wiring.bindEvents();
+  await tick();
+  host.querySelector('#ideTestRunnerFieldId').value = 'lint';
+  host.querySelector('#ideTestRunnerFieldCommand').value = 'npm run lint';
+  clickEl(host.querySelector('[data-test-runner-add]'));
+  await tick();
+  await tick();
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].message, 'Test runner is unavailable.');
+  assert.equal(toasts[0].meta.dedupeKey, 'ide:test-runner:save');
+});

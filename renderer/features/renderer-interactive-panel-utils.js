@@ -383,15 +383,18 @@
 
     var _stalledTimer = 0;
     var STALLED_TIMEOUT_MS = 30000;
+    // The panel the timer marked: only the timer adds the class, so clearing
+    // needs no timeline lookup (this runs on every idle composer render).
+    var _stalledPanel = null;
 
     function clearStalledTimer() {
       if (_stalledTimer) {
         clearTimeout(_stalledTimer);
         _stalledTimer = 0;
       }
-      const panelEl = getActiveInteractivePanelElement();
-      if (panelEl) {
-        panelEl.classList.remove('interactive-stalled');
+      if (_stalledPanel) {
+        _stalledPanel.classList.remove('interactive-stalled');
+        _stalledPanel = null;
       }
     }
 
@@ -401,6 +404,7 @@
         const panelEl = getActiveInteractivePanelElement();
         if (panelEl) {
           panelEl.classList.add('interactive-stalled');
+          _stalledPanel = panelEl;
         }
         _stalledTimer = 0;
       }, STALLED_TIMEOUT_MS);
@@ -410,7 +414,6 @@
       const batch = getPendingQuestionBatch();
       const questions = Array.isArray(batch?.questions) ? batch.questions : [];
       const hasLiveBatch = Boolean(batch) && !hasStalePendingQuestionBatch() && questions.length > 0;
-      const inlineMount = getInlineInteractivePanelMount();
 
       if (!hasLiveBatch) {
         clearStalledTimer();
@@ -437,6 +440,9 @@
         areInteractiveQuestionsAnswered,
         isInteractiveOtherTrigger,
       });
+      // Looked up only with a live batch: the idle branch above runs on every
+      // composer render (each keystroke) and never needs the mount.
+      const inlineMount = getInlineInteractivePanelMount();
       if (inlineMount) {
         // The inline timeline row owns the panel. The row builder already
         // rendered it during the timeline pass; refill in place so the panel

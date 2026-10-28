@@ -1,6 +1,7 @@
 // UI zoom/scaling normalizers and bounds.
 
 const { normalizeNotificationSettings } = require('./shell-config-notifications-schema');
+const { normalizeDictationSettings } = require('./shell-config-dictation-schema');
 
 const CHAT_UI_ZOOM_DEFAULT = 100;
 const CHAT_UI_ZOOM_MIN = 85;
@@ -71,6 +72,7 @@ function normalizeWindowUiSettings(value = {}, legacyState = {}) {
       ?? legacyState.appZoomPercent
     ),
     notifications: normalizeNotificationSettings(source.notifications),
+    dictation: normalizeDictationSettings(source.dictation),
   };
 }
 

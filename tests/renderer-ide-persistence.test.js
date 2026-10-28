@@ -190,6 +190,21 @@ test('debounced writes preserve the snapshot and root token captured at schedule
   assert.equal(harness.writes[0].preferences.fontSize, 14);
 });
 
+test('a debounced flush writes preferences committed after the schedule, not the stale capture', async () => {
+  const harness = createHarness({ states: [persisted(ROOT_A, {}, { fontSize: 14 })] });
+  await harness.persistence.hydratePersistedState();
+  harness.ide.openTabs = [{ path: 'a.txt' }];
+  harness.persistence.schedulePersist();
+  assert.equal((await harness.persistence.commitPreference('fontSize', 20)).updated, true);
+
+  harness.timers.fireAll();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(harness.writes.length, 1);
+  assert.equal(harness.writes[0].preferences.fontSize, 20, 'the root write must not revert the committed preference');
+  assert.deepEqual(harness.writes[0].rootState.openTabs, [{ path: 'a.txt' }]);
+});
+
 test('transition flush suspends old-root writes and cancellation rebinds the new generation', async () => {
   const harness = createHarness({ states: [persisted(ROOT_A)] });
   await harness.persistence.hydratePersistedState();
@@ -437,9 +452,18 @@ test('a retried hydrate falls back only to a primary active tab, or empty', asyn
   }
 });
 
-test('the FIRST hydrate still replaces the live tabs (only a retry keeps them)', async () => {
-  const harness = createHarness({ states: [persisted(ROOT_A, { openTabs: [{ path: 'saved.js' }] })] });
+test('the FIRST hydrate keeps a tab opened while it awaited (a chat path chip), after the saved layout', async () => {
+  const harness = createHarness({ states: [persisted(ROOT_A, { openTabs: [{ path: 'saved.js' }], activeTabPath: 'saved.js' })] });
   harness.ide.openTabs = [{ path: 'early.js' }];
+  harness.ide.activeTabPath = 'early.js';
+  await harness.persistence.hydratePersistedState();
+  assert.deepEqual(harness.ide.openTabs.map((tab) => tab.path), ['saved.js', 'early.js'], 'the loaded document keeps its tab');
+  assert.equal(harness.ide.activeTabPath, 'saved.js', 'the saved active tab still wins');
+  assert.deepEqual(harness.lateHydrated, [], 'a first hydrate is not a late repaint');
+});
+
+test('the FIRST hydrate with no live tabs applies the saved layout unchanged', async () => {
+  const harness = createHarness({ states: [persisted(ROOT_A, { openTabs: [{ path: 'saved.js' }] })] });
   await harness.persistence.hydratePersistedState();
   assert.deepEqual(harness.ide.openTabs.map((tab) => tab.path), ['saved.js']);
 });
@@ -464,7 +488,7 @@ test('a change before the FIRST hydrate does not override the saved layout', asy
   assert.equal(harness.writes.length, 0, 'no write while unhydrated');
   await harness.persistence.hydratePersistedState();
   assert.equal(harness.persistence.getState().hydrated, true);
-  assert.deepEqual(harness.ide.openTabs.map((tab) => tab.path), ['saved.js'], 'the saved layout is applied on a first hydrate');
+  assert.deepEqual(harness.ide.openTabs.map((tab) => tab.path), ['saved.js', 'early.js'], 'the saved layout is applied first; the live tab is kept');
 });
 
 test('after the final retry fails it logs and toasts once, then stops retrying', async () => {
@@ -503,4 +527,34 @@ test('dispose cancels a pending hydrate retry', async () => {
   assert.equal(harness.timers.size, 1);
   harness.persistence.dispose();
   assert.equal(harness.timers.size, 0);
+});
+
+test('searchHistory is a root-bound key: it rides rootState, never preferences, and round-trips', async (t) => {
+  const ideState = require('../renderer/features/renderer-ide-state');
+  const ide = ideState.createIdeUiState();
+  ide.searchHistory = ['alpha', 'beta'];
+  const writes = [];
+  let saved = persisted(ROOT_A);
+  const persistence = createIdePersistence({
+    getIde: () => ide, ideStateUtils: ideState,
+    getWorkspaceIdeApi: () => ({
+      getState: async () => saved,
+      updateState: async (write) => {
+        writes.push(write);
+        saved = persisted(ROOT_A, write.rootState);
+        return { updated: true, context: ROOT_A };
+      },
+    }),
+  });
+  t.after(() => persistence.dispose());
+  await persistence.hydratePersistedState();
+  ide.searchHistory = ['alpha', 'beta'];
+  persistence.schedulePersist();
+  await persistence.flushPersist();
+
+  assert.deepEqual(writes.at(-1).rootState.searchHistory, ['alpha', 'beta']);
+  assert.equal('searchHistory' in (writes.at(-1).preferences || {}), false);
+  const restored = ideState.createIdeUiState();
+  ideState.applyPersistedState(restored, saved);
+  assert.deepEqual(restored.searchHistory, ['alpha', 'beta'], 'the saved root state restores the history');
 });

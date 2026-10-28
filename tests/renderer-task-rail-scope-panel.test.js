@@ -68,7 +68,7 @@ function groupHeadings(panel) {
   return Array.from(panel.querySelectorAll('.task-rail-group')).map((group) => group.querySelector('b').textContent);
 }
 
-test('the rail follows the chat project: scope button, rows, badge and summary', async (t) => {
+test('the rail follows the chat project: scope button, rows, badge and filter count', async (t) => {
   const app = await bootScoped();
   t.after(() => app.dispose());
   const panel = await openTasks(app);
@@ -79,7 +79,7 @@ test('the rail follows the chat project: scope button, rows, badge and summary',
   assert.match(panel.textContent, /Alpha one/);
   assert.match(panel.textContent, /Alpha two/);
   assert.doesNotMatch(panel.textContent, /Beta one|Orphan one/);
-  assert.match(panel.querySelector('.task-rail-summary').textContent, /2 follow-ups open/);
+  assert.equal(panel.querySelector('.inv-segmented-option[data-value="open"]').textContent, 'Open 2');
   assert.equal(panel.querySelector('[data-task-draft-title]').getAttribute('placeholder'), 'Add a task to Alpha');
   // The badge counts the chat's project only, whatever the rail shows.
   assert.equal(app.window.document.querySelector('[data-task-count]').textContent, '2');
@@ -116,7 +116,7 @@ test('picking All projects groups the rail by project; picking another project m
   assert.equal(scopeButton(app).querySelector('.task-rail-scope-name').textContent, 'All projects');
   assert.deepEqual(groupHeadings(panel), ['Alpha', 'Beta', 'No project']);
   assert.match(panel.querySelector('.task-rail-group span').textContent, /2 open . this chat/);
-  assert.match(panel.querySelector('.task-rail-summary').textContent, /4 follow-ups open in 2 projects/);
+  assert.equal(panel.querySelector('.inv-segmented-option[data-value="open"]').textContent, 'Open 4');
   assert.equal(panel.querySelector('[data-task-draft-title]').getAttribute('placeholder'), 'Add a task to Alpha');
 
   rows = await openScopeMenu(app);

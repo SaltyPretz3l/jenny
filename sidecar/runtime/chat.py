@@ -36,6 +36,7 @@ from sidecar.runtime.chat_helpers import (  # noqa: F401
     _fallback_usage_payload,
     attach_context_window,
     chat_error_notification,
+    context_calibration_from_params,
     engine_supports_vision,
     estimate_text_tokens,
     extract_latest_user_content,
@@ -70,6 +71,7 @@ from sidecar.runtime.chat_normalization import (
     plan_mode_from_params,
     propose_request_from_params,
     runtime_policy_flags_from_params,
+    session_role_from_params,
     session_start_date_from_params,
     tool_preferences_require_sub_agent_fail_closed,
 )
@@ -267,6 +269,7 @@ def build_chat_send_response(
          raw_session_offline_lockdown) = runtime_policy_flags_from_params(
             params, execution_context, continuation_context, stack.config, stream_notifications)
         handoff_preparation = handoff_preparation_from_params(params)
+        session_role = session_role_from_params(params)
     except ValueError as error:
         raise ChatRequestError(
             request_id=request_id,
@@ -370,6 +373,7 @@ def build_chat_send_response(
         session_messages_enabled=(
             getattr(brain_container, "chat_workspace_session_messages", False) is True
         ),
+        session_role=session_role,
         mode=mode,
         approvals_pre_granted=approvals_pre_granted,
         logical_turn_id=logical_turn_id,
@@ -405,6 +409,7 @@ def build_chat_send_response(
         debug_options=debug_options,
         interrupted_turn_receipts=interrupted_turn_receipts,
         context_blocks=tuple(context_blocks),
+        context_calibration=context_calibration_from_params(params),
         skill_invocation=skill_invocation,
         vision_images=vision_images,
         vision_anchor_text=vision_anchor_text,

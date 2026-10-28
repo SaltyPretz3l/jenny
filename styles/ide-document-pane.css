@@ -1,0 +1,40 @@
+/* Workspace IDE document panes (PDF, DOCX): the declarations both panes share.
+ * Loaded lazily by editor-host-panes before each format's own stylesheet
+ * (ide-pdf-pane.css, ide-docx-pane.css), which hold everything else. */
+
+.ide-pdf-pane,
+.ide-docx-pane {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  /* The pane sits in the Workspace editor column; anything that does not fit
+   * must stay inside it rather than paint over the chat dock beside it. */
+  overflow: hidden;
+  background: var(--bg-base);
+  color: var(--text-primary);
+}
+
+.ide-pdf-button:hover,
+.ide-pdf-button[aria-pressed="true"],
+.ide-docx-action:hover,
+.ide-docx-action[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-panel));
+  color: var(--text-primary);
+}
+
+.ide-pdf-button:focus-visible,
+.ide-pdf-pane .inv-text-field-control:focus-visible,
+.ide-docx-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ide-pdf-separator,
+.ide-docx-toolbar-separator {
+  width: 1px;
+  background: var(--line);
+}

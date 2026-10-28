@@ -5,7 +5,10 @@ const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 
 const transformModule = require('../renderer/features/renderer-ide-map-transform');
-const { createMapTransform, clamp, SCALE_MIN, SCALE_MAX, MIN_CONTENT_VISIBLE } = transformModule;
+const {
+  createMapTransform, clamp, SCALE_MIN, SCALE_MAX, MIN_CONTENT_VISIBLE, FIT_SCALE_MAX,
+} = transformModule;
+const lodModule = require('../renderer/features/renderer-ide-map-lod');
 
 // Injectable fake timers: rAF flushes synchronously via flushRaf(); setTimeout
 // entries flush via flushTimers(). Mirrors the auto-save makeTimers precedent.
@@ -239,8 +242,9 @@ test('empty-canvas pan drags via pointer events and uses setPointerCapture', (t)
   viewportEl.setPointerCapture = (id) => { captured = id; };
   viewportEl.releasePointerCapture = () => {};
   viewportEl.dispatchEvent(pointer('pointerdown', { clientX: 100, clientY: 100, pointerId: 7 }));
-  assert.equal(captured, 7, 'pointer captured on down');
+  assert.equal(captured, null, 'capture is deferred past the click slop');
   viewportEl.dispatchEvent(pointer('pointermove', { clientX: 130, clientY: 90, pointerId: 7 }));
+  assert.equal(captured, 7, 'pointer captured once the gesture is a pan');
   timers.flushRaf();
   assert.deepEqual(
     { tx: ctrl.getState().tx, ty: ctrl.getState().ty },
@@ -300,14 +304,14 @@ test('wheel zoom preventDefaults and zooms toward the cursor', (t) => {
 // ── fitToContent ────────────────────────────────────────────────────────────
 test('fitToContent frames the bounds centered in the viewport and returns true', (t) => {
   const { ctrl, timers } = makeController(t, { getViewportRect: fixedRect(0, 0, 800, 600) });
-  const applied = ctrl.fitToContent({ minX: 0, minY: 0, maxX: 400, maxY: 300 });
+  const applied = ctrl.fitToContent({ minX: 0, minY: 0, maxX: 1000, maxY: 750 });
   assert.equal(applied, true, 'a computable fit reports success');
   timers.flushRaf();
   const s = ctrl.getState();
-  // scale = min(800/400, 600/300)*0.9 = min(2,2)*0.9 = 1.8
-  assert.equal(Number(s.scale.toFixed(9)), 1.8, 'fit scale');
-  // center (200,150) maps to viewport center (400,300)
-  const center = ctrl.contentToClient({ x: 200, y: 150 });
+  // scale = min(800/1000, 600/750)*0.9 = 0.72 (below FIT_SCALE_MAX, so uncapped)
+  assert.equal(Number(s.scale.toFixed(9)), 0.72, 'fit scale');
+  // center (500,375) maps to viewport center (400,300)
+  const center = ctrl.contentToClient({ x: 500, y: 375 });
   assert.deepEqual(
     { x: Number(center.x.toFixed(9)), y: Number(center.y.toFixed(9)) },
     { x: 400, y: 300 },
@@ -320,13 +324,13 @@ test('fitToContent frames the content below the floating controls (top inset)', 
     getViewportRect: fixedRect(0, 0, 800, 600),
     extra: { getTopInset: () => 140 },
   });
-  ctrl.fitToContent({ minX: 0, minY: 0, maxX: 400, maxY: 300 });
+  ctrl.fitToContent({ minX: 0, minY: 0, maxX: 1000, maxY: 750 });
   timers.flushRaf();
-  // usable height 460: scale = min(800/400, 460/300)*0.9 = 1.38; center at y = 140 + 230
-  assert.equal(Number(ctrl.getState().scale.toFixed(9)), 1.38);
+  // usable height 460: scale = min(800/1000, 460/750)*0.9 = 0.552; center at y = 140 + 230
+  assert.equal(Number(ctrl.getState().scale.toFixed(9)), 0.552);
   const top = ctrl.contentToClient({ x: 0, y: 0 });
   assert.ok(top.y >= 140, `the content top (${top.y}) starts below the controls`);
-  assert.equal(Number(ctrl.contentToClient({ x: 200, y: 150 }).y.toFixed(9)), 370);
+  assert.equal(Number(ctrl.contentToClient({ x: 500, y: 375 }).y.toFixed(9)), 370);
 });
 
 test('fitToContent on a 0×0 viewport returns false and keeps the camera', (t) => {
@@ -342,6 +346,56 @@ test('fitToContent on a 0×0 viewport returns false and keeps the camera', (t) =
 });
 
 // ── dispose no-op behavior ──────────────────────────────────────────────────
+// --- whole-map fit ceiling (FIT_SCALE_MAX) ---
+test('FIT_SCALE_MAX is 1.1 and stays above the LOD tiles boundary plus its hysteresis band', () => {
+  assert.equal(FIT_SCALE_MAX, 1.1);
+  assert.ok(
+    FIT_SCALE_MAX >= lodModule.DOTS_TILES_BOUNDARY + lodModule.HYSTERESIS_BAND,
+    'a small map must still open at the tiles tier',
+  );
+  assert.ok(FIT_SCALE_MAX < SCALE_MAX);
+});
+
+test('with capFit, a whole-map fit of a tiny box in a big viewport is capped at FIT_SCALE_MAX', (t) => {
+  const { ctrl, timers } = makeController(t, { getViewportRect: fixedRect(0, 0, 1600, 1000), extra: { capFit: true } });
+  assert.equal(ctrl.fitToContent({ minX: 0, minY: 0, maxX: 400, maxY: 300 }), true);
+  timers.flushRaf();
+  const s = ctrl.getState();
+  assert.equal(s.scale, FIT_SCALE_MAX);
+  // Still centered at the capped scale: content center (200,150) at the viewport center.
+  const center = ctrl.contentToClient({ x: 200, y: 150 });
+  assert.deepEqual(
+    { x: Number(center.x.toFixed(9)), y: Number(center.y.toFixed(9)) },
+    { x: 800, y: 500 },
+  );
+});
+
+test('without capFit a whole-map fit is uncapped (the Exploded View default)', (t) => {
+  const { ctrl, timers } = makeController(t, { getViewportRect: fixedRect(0, 0, 800, 600) });
+  ctrl.fitToContent({ minX: 0, minY: 0, maxX: 400, maxY: 300 });
+  timers.flushRaf();
+  assert.equal(Number(ctrl.getState().scale.toFixed(9)), 1.8);
+});
+
+test('a district fit stays uncapped under capFit (fitToContent reason "district")', (t) => {
+  const { ctrl, timers } = makeController(t, { getViewportRect: fixedRect(0, 0, 1600, 1000), extra: { capFit: true } });
+  ctrl.fitToContent({ minX: 0, minY: 0, maxX: 400, maxY: 300 }, 'district');
+  timers.flushRaf();
+  // min(1600/400, 1000/300)*0.9 = 3.6 -> clamped to SCALE_MAX by clampScale only
+  assert.equal(ctrl.getState().scale, SCALE_MAX);
+  const mid = makeController(t, { getViewportRect: fixedRect(0, 0, 800, 600), extra: { capFit: true } });
+  mid.ctrl.fitToContent({ minX: 0, minY: 0, maxX: 400, maxY: 300 }, 'district');
+  mid.timers.flushRaf();
+  assert.equal(Number(mid.ctrl.getState().scale.toFixed(9)), 1.8, 'above FIT_SCALE_MAX when uncapped');
+});
+
+test('a big map whose fit is below the cap is unchanged by it', (t) => {
+  const { ctrl, timers } = makeController(t, { getViewportRect: fixedRect(0, 0, 800, 600), extra: { capFit: true } });
+  ctrl.fitToContent({ minX: 0, minY: 0, maxX: 2000, maxY: 1500 });
+  timers.flushRaf();
+  assert.equal(Number(ctrl.getState().scale.toFixed(9)), 0.36);
+});
+
 test('dispose removes listeners, cancels work, and no-ops all methods', (t) => {
   const { ctrl, timers, storage, viewportEl, pointer } = makeController(t);
   const seen = [];
@@ -433,7 +487,7 @@ test('flyToFit reaches the same target fitToContent computes, without narrowing 
   ctrl.setBounds(wide);
 
   // Reference: what an instant fit lands on (then restore state for the flight).
-  ctrl.fitToContent(district, 'ref');
+  ctrl.fitToContent(district, 'district'); // district fits are uncapped, like flyToFit
   timers.flushRaf();
   const ref = ctrl.getState();
   ctrl.setBounds(wide);

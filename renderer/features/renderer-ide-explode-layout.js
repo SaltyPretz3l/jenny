@@ -106,13 +106,5 @@
     return { positions, bands, bounds: { minX, minY, maxX, maxY } };
   }
 
-  return {
-    layout,
-    ZONE_ORDER,
-    ZONE_LABELS,
-    COLUMN_WIDTH,
-    ROW_HEIGHT,
-    NODE_W,
-    NODE_H,
-  };
+  return { layout, ZONE_ORDER };
 });

@@ -12,6 +12,8 @@ const ROOT = path.resolve(__dirname, '..', '..');
 const SH_LAUNCHER = path.join(ROOT, 'docker-setup.sh');
 const PS_LAUNCHER = path.join(ROOT, 'docker-setup.ps1');
 const COMPOSE = path.join(ROOT, 'compose.host.easy.yml');
+const BASH_UNAVAILABLE = 'POSIX bash not available (this lane runs on Linux/macOS; Windows bash may be WSL)';
+const POWERSHELL_UNAVAILABLE = 'PowerShell (powershell.exe or pwsh) not available';
 
 test('manual and guided Compose retain the policy 2 health gate before launcher overrides', () => {
   const easy = yaml.load(fs.readFileSync(COMPOSE, 'utf8'));
@@ -168,7 +170,7 @@ function runWithTerminal(fixture, label, args, env) {
 for (const label of ['Bash', 'PowerShell']) {
   for (const policy of [1, 2]) {
     test(`${label} startup selects the saved execution policy ${policy}`, {
-      skip: label === 'Bash' ? !startupBashAvailable() : !powershellAvailable(),
+      skip: missingLauncherTool(label, startupBashAvailable),
     }, (t) => {
       const { fixture, log, env } = makeFixture(t);
       const result = runWithTerminal(fixture, label, [], { ...env, JENNY_EXECUTION_POLICY: String(policy) });
@@ -195,7 +197,7 @@ for (const label of ['Bash', 'PowerShell']) {
     });
   }
   test(`${label} refuses startup when the saved policy probe fails or is invalid`, {
-    skip: label === 'Bash' ? !startupBashAvailable() : !powershellAvailable(),
+    skip: missingLauncherTool(label, startupBashAvailable),
   }, (t) => {
     for (const setting of [{ JENNY_DOCKER_FAIL: 'policy' }, { JENNY_EXECUTION_POLICY: 'unexpected' }]) {
       const { fixture, log, env } = makeFixture(t);
@@ -205,7 +207,7 @@ for (const label of ['Bash', 'PowerShell']) {
     }
   });
   test(`${label} policy 2 startup preserves a worker health failure`, {
-    skip: label === 'Bash' ? !startupBashAvailable() : !powershellAvailable(),
+    skip: missingLauncherTool(label, startupBashAvailable),
   }, (t) => {
     const { fixture, log, env } = makeFixture(t);
     const result = runWithTerminal(fixture, label, ['configure'], {
@@ -215,6 +217,12 @@ for (const label of ['Bash', 'PowerShell']) {
     assert.match(`${result.stdout}${result.stderr}`, /start failed \(exit 22\)/u);
     assert.equal(readCalls(log).some((args) => args.at(-1) === 'status'), false);
   });
+}
+
+// A node:test skip reason naming the missing tool, or false when the probe finds it.
+function missingLauncherTool(label, bashProbe) {
+  if (label === 'Bash') return !bashProbe() && (bashProbe === bashAvailable ? BASH_UNAVAILABLE : 'bash not on PATH');
+  return !powershellAvailable() && POWERSHELL_UNAVAILABLE;
 }
 
 function powershellAvailable() {
@@ -243,7 +251,7 @@ test('Docker launchers use a fixed, non-destructive command surface', () => {
   assertNoDestructiveLauncherText(fs.readFileSync(PS_LAUNCHER, 'utf8'));
 });
 
-test('Bash launcher help and unknown flags work when Bash is executable', { skip: !bashAvailable() }, (t) => {
+test('Bash launcher help and unknown flags work when Bash is executable', { skip: !bashAvailable() && BASH_UNAVAILABLE }, (t) => {
   const { fixture, env } = makeFixture(t);
   const help = runBash(fixture, ['--help'], env);
   assert.equal(help.status, 0, help.stderr);
@@ -253,7 +261,7 @@ test('Bash launcher help and unknown flags work when Bash is executable', { skip
   assert.match(unknown.stderr, /unknown option/u);
 });
 
-test('PowerShell launcher help and unknown flags work on Windows PowerShell 5.1+', { skip: !powershellAvailable() }, (t) => {
+test('PowerShell launcher help and unknown flags work on Windows PowerShell 5.1+', { skip: !powershellAvailable() && POWERSHELL_UNAVAILABLE }, (t) => {
   const { fixture, env } = makeFixture(t);
   const help = runPowerShell(fixture, ['--help'], env);
   assert.equal(help.status, 0, help.stderr);
@@ -267,7 +275,7 @@ for (const [label, run] of [
   ['Bash', runBash],
   ['PowerShell', runPowerShell],
 ]) {
-  test(`${label} doctor is read only and preserves Docker preflight failures`, { skip: label === 'Bash' ? !bashAvailable() : !powershellAvailable() }, (t) => {
+  test(`${label} doctor is read only and preserves Docker preflight failures`, { skip: missingLauncherTool(label, bashAvailable) }, (t) => {
     const { fixture, log, env, stub } = makeFixture(t);
     const doctor = run(fixture, ['doctor'], env);
     assert.equal(doctor.status, 0, doctor.stderr);
@@ -319,7 +327,7 @@ for (const [label, run] of [
   });
 }
 
-test('Bash PTY exercises stopped, running, configure, and failure paths when script(1) is available', { skip: !bashPtyAvailable() }, (t) => {
+test('Bash PTY exercises stopped, running, configure, and failure paths when script(1) is available', { skip: !bashPtyAvailable() && 'script(1) and POSIX bash not available (Linux only)' }, (t) => {
   const operation = (args) => {
     if (args[0] === 'info') return 'info';
     const fileIndex = args.indexOf('-f');
@@ -370,7 +378,7 @@ test('Bash PTY exercises stopped, running, configure, and failure paths when scr
   assert.match(`${failed.stdout}${failed.stderr}`, /Diagnosis:.*doctor/u);
 });
 
-test('launchers reject setup without a terminal before invoking Docker', { skip: !bashAvailable() && !powershellAvailable() }, (t) => {
+test('launchers reject setup without a terminal before invoking Docker', { skip: !bashAvailable() && !powershellAvailable() && 'neither POSIX bash nor PowerShell available' }, (t) => {
   const { fixture, log, env } = makeFixture(t);
   if (bashAvailable()) {
     const result = runBash(fixture, [], env);

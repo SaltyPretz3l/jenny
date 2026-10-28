@@ -185,15 +185,15 @@ test('managed createSession keeps no-prompt shape and persists one bounded draft
   assert.deepEqual(Object.keys(plain).sort(), [
     'archived_at', 'branch_origin', 'children_expanded', 'compaction_context', 'context_preferences', 'context_usage',
     'conversation_mode', 'coordination_revision', 'created_at', 'diagnostic_mode', 'diagnostic_model', 'diagnostic_provider',
-    'diagnostic_run_id', 'id', 'interactive_round_count', 'interactive_sequence_state',
+    'diagnostic_run_id', 'failed_delivery_count', 'id', 'interactive_round_count', 'interactive_sequence_state',
     'last_message_preview', 'last_model_used', 'linked_session_ids', 'linked_task_id', 'lockdown', 'message_count',
     'messaging_addressable', 'pending_plan_proposal', 'pending_question_batch', 'pinned', 'plan_mode', 'plugin_session',
-    'pre_plan_run_mode', 'preferred_model', 'project_id', 'reasoning_effort', 'reporting_enabled', 'run_mode', 'session_incarnation', 'session_start_date',
+    'pre_plan_run_mode', 'preferred_model', 'project_id', 'reasoning_effort', 'reporting_enabled', 'run_mode', 'session_incarnation', 'session_role', 'session_start_date',
     'session_type', 'spawned_from', 'title', 'tool_category_overrides', 'tool_connection_overrides', 'unread_message_count', 'updated_at',
   ]);
   const plainRecord = store.getSession(plain.id);
   assert.deepEqual(Object.keys(plainRecord).filter(key => key !== 'runtime_continuations').sort(), [
-    'active_turn', 'archived_at', 'branch_origin', 'chat_proposals', 'compaction_snapshot', 'context_preferences', 'context_usage', 'conversation_mode', 'coordination_receipts', 'coordination_revision', 'created_at', 'diagnostic_mode', 'diagnostic_model', 'diagnostic_provider', 'diagnostic_run_id', 'failure_retry_reasoning_snapshots', 'id', 'interactive_round_count', 'interactive_sequence_state', 'last_message_preview', 'last_model_used', 'linked_session_ids', 'linked_task_id', 'lockdown', 'message_count', 'message_seq_counter', 'messages', 'pending_plan_proposal', 'pending_question_batch', 'pinned', 'plan_mode', 'plugin_session', 'pre_plan_run_mode', 'preferred_model', 'project_id', 'reasoning_effort', 'run_mode', 'session_incarnation', 'session_mail', 'session_start_date', 'session_type', 'spawned_from', 'suggested_changes', 'title', 'tool_category_overrides', 'tool_connection_overrides', 'turn_event_log_version', 'turn_event_seq_counter', 'turn_events', 'turn_generation', 'updated_at', 'workspace_view',
+    'active_turn', 'archived_at', 'branch_origin', 'chat_proposals', 'compaction_snapshot', 'context_preferences', 'context_usage', 'conversation_mode', 'coordination_receipts', 'coordination_revision', 'created_at', 'diagnostic_mode', 'diagnostic_model', 'diagnostic_provider', 'diagnostic_run_id', 'failure_retry_reasoning_snapshots', 'id', 'interactive_round_count', 'interactive_sequence_state', 'last_message_preview', 'last_model_used', 'linked_session_ids', 'linked_task_id', 'lockdown', 'message_count', 'message_seq_counter', 'messages', 'pending_plan_proposal', 'pending_question_batch', 'pinned', 'plan_mode', 'plugin_session', 'pre_plan_run_mode', 'preferred_model', 'project_id', 'reasoning_effort', 'run_mode', 'session_incarnation', 'session_mail', 'session_role', 'session_start_date', 'session_type', 'spawned_from', 'suggested_changes', 'title', 'tool_category_overrides', 'tool_connection_overrides', 'turn_event_log_version', 'turn_event_seq_counter', 'turn_events', 'turn_generation', 'updated_at', 'workspace_view',
   ]);
   assert.deepEqual(plainRecord.messages, []);
   assert.deepEqual(plainRecord.runtime_continuations, { schema_version: 1, entries: [] });

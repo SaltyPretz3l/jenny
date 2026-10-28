@@ -359,6 +359,86 @@
   animation: sprite-orbit 1000ms linear infinite;
 }
 
+/* MAKE: a page fills with lines (an artifact or a file being written). The
+ * ring is the page; the three particles are its lines, drawn in turn. */
+.chat-sprite-dot[data-activity="make"] .r {
+  width: 12px;
+  height: 15px;
+  border-radius: 2px;
+  opacity: 1;
+}
+
+.chat-sprite-dot[data-activity="make"] .p {
+  width: 6px;
+  height: 1.7px;
+  border-radius: 1px;
+  opacity: 1;
+}
+
+.chat-sprite-dot[data-activity="make"] .p1 {
+  transform: translate(0px, -3.4px);
+}
+
+.chat-sprite-dot[data-activity="make"] .p3 {
+  transform: translate(0px, 3.4px);
+}
+
+.chat-sprite-dot[data-activity="make"] .q {
+  transform: scaleX(0.18);
+  opacity: 0.5;
+  transform-origin: left center; /* rtl:physical */
+  animation: sprite-draw 1800ms var(--sprite-morph-ease) infinite backwards;
+}
+
+.chat-sprite-dot[data-activity="make"] .p2 .q {
+  animation-delay: 240ms;
+}
+
+.chat-sprite-dot[data-activity="make"] .p3 .q {
+  animation-delay: 480ms;
+}
+
+[dir="rtl"] .chat-sprite-dot[data-activity="make"] .q {
+  transform-origin: right center; /* rtl:physical */
+}
+
+/* RUN: a prompt. Two bars make the chevron and the third is the cursor; the
+ * cursor blinks while the chevron nudges forward, as a running command. */
+.chat-sprite-dot[data-activity="run"] .p1,
+.chat-sprite-dot[data-activity="run"] .p2 {
+  width: 1.9px;
+  height: 6px;
+  border-radius: 1px;
+  opacity: 1;
+}
+
+.chat-sprite-dot[data-activity="run"] .p1 {
+  transform: translate(-4.6px, -2.1px) rotate(-45deg);
+}
+
+.chat-sprite-dot[data-activity="run"] .p2 {
+  transform: translate(-4.6px, 2.1px) rotate(45deg);
+}
+
+.chat-sprite-dot[data-activity="run"] .p1 .q,
+.chat-sprite-dot[data-activity="run"] .p2 .q {
+  transform: translate(0px, 0px);
+  animation: sprite-run-nudge 1200ms var(--sprite-morph-ease) infinite;
+}
+
+.chat-sprite-dot[data-activity="run"] .p3 {
+  width: 6px;
+  height: 2px;
+  border-radius: 1px;
+  opacity: 1;
+  transform: translate(3.6px, 3.4px);
+}
+
+.chat-sprite-dot[data-activity="run"] .p3 .q {
+  opacity: 1;
+  animation: sprite-run-cursor 1200ms steps(1, end) infinite;
+}
+
 /* COMPACT: the outer two dots squeeze inward and release. */
 .chat-sprite-dot[data-activity="compact"] .p {
   width: 4.5px;
@@ -626,6 +706,16 @@
   to { transform: rotate(360deg); }
 }
 
+@keyframes sprite-run-nudge {
+  0%, 100% { transform: translate(0px, 0px); }
+  40% { transform: translate(1.4px, 0px); }
+}
+
+@keyframes sprite-run-cursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.15; }
+}
+
 @keyframes sprite-fold-l {
   0%, 15%, 100% { transform: translateX(0px); opacity: 0.9; }
   55%, 70% { transform: translateX(8px); opacity: 0.25; }
@@ -837,6 +927,18 @@
   /* search: the magnifier centered. */
   .chat-sprite-dot[data-activity="search"] .w {
     transform: translateX(0px) rotate(0deg);
+  }
+
+  /* make: the page filled, its last line short. run keeps its static prompt. */
+  .chat-sprite-dot[data-activity="make"] .p1 .q,
+  .chat-sprite-dot[data-activity="make"] .p2 .q {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+
+  .chat-sprite-dot[data-activity="make"] .p3 .q {
+    transform: scaleX(0.55);
+    opacity: 1;
   }
 
   /* compact: a frozen squeeze, the outer dots at x -5 / +5. */

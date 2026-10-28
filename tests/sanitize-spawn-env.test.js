@@ -137,17 +137,40 @@ test('options.allow extends the keep list with regex patterns', () => {
 });
 
 
-test('options.allow bypasses credential deny for opted-in engine vars', () => {
+// Security review 2026-10-25 item 9: a broad engine pattern such as /^OLLAMA_/
+// must not carry the user's OLLAMA_API_KEY into `ollama serve`. Only an exact
+// allowCredentials name opts a credential back in.
+test('the credential deny wins over options.allow patterns', () => {
   const env = {
     PATH: '/usr/bin',
+    OLLAMA_HOST: '127.0.0.1:11434',
+    OLLAMA_API_KEY: 'ollama-secret',
     HF_TOKEN: 'hf_abc1234567890',
     HF_HOME: '/var/hf',
-    ANTHROPIC_API_KEY: 'leak',
   };
-  const out = sanitizeSpawnEnv(env, { allow: [/^HF_/i] });
-  assert.equal(out.HF_TOKEN, 'hf_abc1234567890');
+  const out = sanitizeSpawnEnv(env, { allow: [/^OLLAMA_/i, /^HF_/i] });
+  assert.equal(out.OLLAMA_HOST, '127.0.0.1:11434');
+  assert.equal(out.OLLAMA_API_KEY, undefined);
+  assert.equal(out.HF_TOKEN, undefined);
   assert.equal(out.HF_HOME, '/var/hf');
+  const strict = sanitizeSpawnEnv(env, { allow: [/^OLLAMA_/i], allowOnly: true });
+  assert.equal(strict.OLLAMA_API_KEY, undefined);
+});
+
+test('options.allowCredentials opts exact credential names back in', () => {
+  const env = { PATH: '/usr/bin', HF_TOKEN: 'hf_abc1234567890', HF_OTHER_TOKEN: 'x', ANTHROPIC_API_KEY: 'leak' };
+  const out = sanitizeSpawnEnv(env, { allow: [/^HF_/i], allowCredentials: ['HF_TOKEN'] });
+  assert.equal(out.HF_TOKEN, 'hf_abc1234567890');
+  assert.equal(out.HF_OTHER_TOKEN, undefined);
   assert.equal(out.ANTHROPIC_API_KEY, undefined);
+  assert.equal(sanitizeSpawnEnv(env, { allowCredentials: ['HF_TOKEN'], extraDeny: [/^HF_/i] }).HF_TOKEN, undefined);
+});
+
+test('JENNY_ENABLE_ kill switches are flags, never credentials', () => {
+  const env = { PATH: '/usr/bin', JENNY_ENABLE_TOKEN_BUDGET: '0', JENNY_ENABLE_CHAT_STREAM_TOKEN_FADE: '0' };
+  assert.equal(sanitizeSpawnEnv(env).JENNY_ENABLE_TOKEN_BUDGET, '0');
+  const strict = sanitizeSpawnEnv(env, { allow: [/^JENNY_/i], allowOnly: true });
+  assert.equal(strict.JENNY_ENABLE_CHAT_STREAM_TOKEN_FADE, '0');
 });
 
 

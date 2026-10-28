@@ -31,50 +31,129 @@ function toolResultAssetPaths(refs) {
 // payload references, and under-counting deletes data. The caller enforces that
 // by asking for payload keys only when the memo is empty; within one such pass
 // no cache hit is possible, because each session id is visited once.
+// One session's references, read (and memoized) unless the memo already holds
+// its current stamp. Throws, failing the whole pass closed, on an incomplete read.
+function collectOneSession(sessionStore, session, stamp, { cache, assetPaths, payloadKeys }) {
+  const cached = cache ? cache.get(session.id) : null;
+  if (cached && cached.stamp === stamp) {
+    assetPaths.push(...cached.paths);
+    return;
+  }
+  const { messages, turnEvents } = readSessionRecordForReferenceScan(sessionStore, session);
+  const paths = [];
+  for (const message of messages) {
+    paths.push(...collectAssetPaths(message?.attachments));
+    paths.push(...toolResultAssetPaths(message?.tool_result?.trusted_attachment_refs));
+  }
+  for (const event of turnEvents) {
+    if (event?.kind === 'tool_result') paths.push(...toolResultAssetPaths(event.payload?.trusted_attachment_refs));
+  }
+  if (payloadKeys) {
+    for (const key of payloadPathsFromMessages(messages)) {
+      payloadKeys.add(key);
+    }
+  }
+  if (cache) {
+    cache.set(session.id, { stamp, paths });
+  }
+  assetPaths.push(...paths);
+}
+
+function dropDeadCacheEntries(cache, liveSessionIds) {
+  if (!cache) return;
+  for (const cachedSessionId of [...cache.keys()]) {
+    if (!liveSessionIds.has(cachedSessionId)) {
+      cache.delete(cachedSessionId);
+    }
+  }
+}
+
+function emptyReferences(collectPayloadKeys) {
+  return { assetPaths: [], payloadKeys: collectPayloadKeys ? new Set() : null };
+}
+
 function collectSessionReferences(sessionStore, { cache = null, collectPayloadKeys = false } = {}) {
   if (!sessionStore || typeof sessionStore.listSessions !== 'function') {
-    return { assetPaths: [], payloadKeys: collectPayloadKeys ? new Set() : null };
+    return emptyReferences(collectPayloadKeys);
   }
   const assetPaths = [];
   const payloadKeys = collectPayloadKeys ? new Set() : null;
-  const liveSessionIds = cache ? new Set() : null;
+  const liveSessionIds = new Set();
   for (const session of sessionStore.listSessions()) {
-    const stamp = sessionAttachmentStamp(session, sessionStore);
-    if (cache) {
-      liveSessionIds.add(session.id);
-      const cached = cache.get(session.id);
-      if (cached && cached.stamp === stamp) {
-        assetPaths.push(...cached.paths);
-        continue;
-      }
-    }
-    const { messages, turnEvents } = readSessionRecordForReferenceScan(sessionStore, session);
-    const paths = [];
-    for (const message of messages) {
-      paths.push(...collectAssetPaths(message?.attachments));
-      paths.push(...toolResultAssetPaths(message?.tool_result?.trusted_attachment_refs));
-    }
-    for (const event of turnEvents) {
-      if (event?.kind === 'tool_result') paths.push(...toolResultAssetPaths(event.payload?.trusted_attachment_refs));
-    }
-    if (payloadKeys) {
-      for (const key of payloadPathsFromMessages(messages)) {
-        payloadKeys.add(key);
-      }
-    }
-    if (cache) {
-      cache.set(session.id, { stamp, paths });
-    }
-    assetPaths.push(...paths);
+    liveSessionIds.add(session.id);
+    collectOneSession(sessionStore, session, sessionAttachmentStamp(session, sessionStore), {
+      cache, assetPaths, payloadKeys,
+    });
   }
-  if (cache) {
-    for (const cachedSessionId of [...cache.keys()]) {
-      if (!liveSessionIds.has(cachedSessionId)) {
-        cache.delete(cachedSessionId);
-      }
-    }
-  }
+  dropDeadCacheEntries(cache, liveSessionIds);
   return { assetPaths, payloadKeys };
+}
+
+// A slice may overrun by one chat read (about 14 ms for a 500-message chat).
+const REFERENCE_SCAN_SLICE_MS = 8;
+const REFERENCE_SCAN_MAX_ROUNDS = 4;
+
+function yieldToEventLoop() {
+  return new Promise((resolve) => { setImmediate(resolve); });
+}
+
+// collectSessionReferences in slices of about REFERENCE_SCAN_SLICE_MS, yielding
+// to the event loop between them so a sweep over a large history never blocks
+// IPC or streaming for the whole walk (about 1 s at 1000 chats).
+//
+// Yielding lets chats change mid-walk, and every deletion behind this result
+// relies on it covering each live chat as it is NOW. So a walk ends with a
+// synchronous check, with no yield between it and the return: every chat
+// listed at that moment must have been read at exactly its current change
+// stamp. A chat that is new or changed since its read is read again in another
+// round (references only accumulate: over-counting keeps a file one more pass,
+// under-counting deletes it). `onCollected(result)` runs in that same
+// synchronous stretch, so a prune there sees exactly the checked state. A walk still unsettled after
+// REFERENCE_SCAN_MAX_ROUNDS rounds throws, which aborts the prunes (fail closed),
+// as does any incomplete read.
+async function collectSessionReferencesAsync(sessionStore, {
+  cache = null,
+  collectPayloadKeys = false,
+  sliceMs = REFERENCE_SCAN_SLICE_MS,
+  maxRounds = REFERENCE_SCAN_MAX_ROUNDS,
+  now = () => performance.now(),
+  yieldFn = yieldToEventLoop,
+  onCollected = null,
+} = {}) {
+  if (!sessionStore || typeof sessionStore.listSessions !== 'function') {
+    const result = emptyReferences(collectPayloadKeys);
+    if (typeof onCollected === 'function') onCollected(result);
+    return result;
+  }
+  const assetPaths = [];
+  const payloadKeys = collectPayloadKeys ? new Set() : null;
+  const readStamps = new Map();
+  let sliceStart = now();
+  for (let round = 0; ; round += 1) {
+    const sessions = sessionStore.listSessions();
+    const pending = [];
+    for (const session of sessions) {
+      const stamp = sessionAttachmentStamp(session, sessionStore);
+      if (readStamps.get(session.id) !== stamp) pending.push({ session, stamp });
+    }
+    if (pending.length === 0) {
+      dropDeadCacheEntries(cache, new Set(sessions.map((session) => session.id)));
+      const result = { assetPaths, payloadKeys };
+      if (typeof onCollected === 'function') onCollected(result);
+      return result;
+    }
+    if (round >= maxRounds) {
+      throw new Error(`reference scan did not settle after ${maxRounds} rounds (${pending.length} chats changed)`);
+    }
+    for (const { session, stamp } of pending) {
+      if (now() - sliceStart >= sliceMs) {
+        await yieldFn();
+        sliceStart = now();
+      }
+      collectOneSession(sessionStore, session, stamp, { cache, assetPaths, payloadKeys });
+      readStamps.set(session.id, stamp);
+    }
+  }
 }
 
 function collectReferencedAttachmentAssetPaths(sessionStore, options = {}) {
@@ -190,22 +269,25 @@ function scheduleStartupRetentionTasks({
     // that pass and then stops.
     const attachmentSweepCache = new Map();
     let payloadSweepPending = ipcPayloadStore !== null;
-    const sweepSessionReferences = () => {
+    let sweepInFlight = null;
+    const runSessionReferenceSweep = async () => {
       // Payload keys are only collectable on a pass that reads every session.
       const collectPayloadKeys = payloadSweepPending && attachmentSweepCache.size === 0;
       let payloadKeys;
       try {
-        const collected = collectSessionReferences(backendService.sessionStore, {
+        const collected = await collectSessionReferencesAsync(backendService.sessionStore, {
           cache: attachmentSweepCache,
           collectPayloadKeys,
+          // Same synchronous stretch as the walk's final settle check.
+          onCollected: ({ assetPaths }) => {
+            if (!attachmentAssetStore) return;
+            const result = attachmentAssetStore.pruneUnreferencedAssets(assetPaths);
+            if (result.deletedCount > 0) {
+              log('INFO', 'attachments.assets_swept', { deletedCount: result.deletedCount });
+            }
+          },
         });
         payloadKeys = collected.payloadKeys;
-        if (attachmentAssetStore) {
-          const result = attachmentAssetStore.pruneUnreferencedAssets(collected.assetPaths);
-          if (result.deletedCount > 0) {
-            log('INFO', 'attachments.assets_swept', { deletedCount: result.deletedCount });
-          }
-        }
       } catch (err) {
         // An incomplete read aborts BOTH prunes for this pass, deliberately:
         // the reference set behind them is the same one. Each affected feature
@@ -239,6 +321,11 @@ function scheduleStartupRetentionTasks({
         log('WARN', 'ipc_payloads.orphan_sweep_failed', { error: String(err?.message || err) });
       }
     };
+    // The walk yields between slices; an interval tick never starts a second one.
+    const sweepSessionReferences = () => {
+      if (!sweepInFlight) sweepInFlight = runSessionReferenceSweep().finally(() => { sweepInFlight = null; });
+      return sweepInFlight;
+    };
     // Heavier disk-walking sweep is staggered after the artifact prune.
     runInitialRetentionTaskWhenReady(backendService, sweepSessionReferences, { setTimeoutRef, staggerMs: 8000 });
     if (attachmentAssetStore) {
@@ -262,6 +349,7 @@ function scheduleStartupRetentionTasks({
 module.exports = {
   collectReferencedAttachmentAssetPaths,
   collectSessionReferences,
+  collectSessionReferencesAsync,
   readSessionMessagesForReferenceScan,
   runInitialRetentionTaskWhenReady,
   scheduleStartupRetentionTasks,

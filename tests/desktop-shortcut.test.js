@@ -20,6 +20,7 @@ const {
   LEGACY_WINDOWS_SHORTCUT_NAME,
   WINDOWS_SHORTCUT_NAME,
 } = require('../services/desktop-shortcut');
+const { windowsOnly } = require('./helpers/platform-skips');
 
 test('desktop shortcut options target the Windows launcher wrapper in development', () => {
   const appRoot = 'C:\\dev\\jenny-test-builds';
@@ -184,6 +185,8 @@ test('development shortcut maintenance never reads or overwrites the public shor
   const result = ensureDesktopShortcut({
     app: { isPackaged: false, getPath: () => desktop },
     platform: 'win32',
+    // A fake root: the default (this checkout) skips when it is a linked worktree.
+    appRoot: 'C:\\dev\\jenny-test-builds',
     shell: {
       readShortcutLink(file) { touched.push(file); return saved; },
       writeShortcutLink(file, _operation, details) {
@@ -277,7 +280,7 @@ test('desktop shortcut skips the rewrite when an existing shortcut already match
   assert.equal(events.includes('shortcut.desktop_unchanged'), true);
 });
 
-test('Windows launcher clears ELECTRON_RUN_AS_NODE before launching Electron', { skip: process.platform !== 'win32' }, () => {
+test('Windows launcher clears ELECTRON_RUN_AS_NODE before launching Electron', { skip: windowsOnly('cmd.exe launch-jenny.cmd') }, () => {
   const cmdPath = process.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe';
   const result = spawnSync(cmdPath, ['/d', '/c', 'launch-jenny.cmd'], {
     cwd: path.resolve(__dirname, '..'),
@@ -479,6 +482,7 @@ test('dev Start Menu link failures are logged, never thrown', () => {
     shell: { writeShortcutLink: () => true },
     logger(_level, event) { events.push(event); },
     platform: 'win32',
+    appRoot: DEV_ROOT,
   });
   assert.equal(threw.ok, false);
   assert.deepEqual(events, ['shortcut.start_menu_create_failed', 'shortcut.start_menu_create_failed']);

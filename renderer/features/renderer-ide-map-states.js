@@ -17,8 +17,6 @@
  *       error     — { message } — {message} interpolated into the copy.
  *       no-root   — {} (no payload needed)
  *   .clear()    Empties hostEl (removes any rendered state markup).
- *   .hide()     Hides hostEl (adds the 'hidden' class) without clearing it.
- *   .show()     Un-hides hostEl (removes the 'hidden' class).
  *   .dispose()  Removes delegated listeners and clears hostEl. Idempotent —
  *     safe to call multiple times or after the host element is gone.
  *
@@ -197,20 +195,6 @@
       }
     }
 
-    function hide() {
-      if (disposed || !hostEl || typeof hostEl.classList === 'undefined') {
-        return;
-      }
-      hostEl.classList.add('hidden');
-    }
-
-    function show() {
-      if (disposed || !hostEl || typeof hostEl.classList === 'undefined') {
-        return;
-      }
-      hostEl.classList.remove('hidden');
-    }
-
     function dispose() {
       if (disposed) {
         return;
@@ -228,8 +212,6 @@
     return {
       render,
       clear,
-      hide,
-      show,
       dispose,
       get currentState() {
         return currentState;

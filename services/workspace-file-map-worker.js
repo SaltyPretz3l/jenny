@@ -19,7 +19,26 @@ function normalizeTimeoutMs(value) {
   return Math.min(parsed, MAX_BUILD_TIMEOUT_MS);
 }
 
+// Row 77 Components view: the component tree rides on the graph when the
+// payload asks for it. A failed draft never fails the map: the graph carries
+// `components: null` and the reason in its meta.
+function attachComponents(graph, payload) {
+  if (payload?.components !== true) return graph;
+  try {
+    const { draftComponents } = require('./workspace-file-map-components');
+    graph.components = draftComponents(graph);
+  } catch (error) {
+    graph.components = null;
+    graph.meta = { ...graph.meta, componentsError: String(error?.message || 'draft failed').slice(0, 256) };
+  }
+  return graph;
+}
+
 function buildGraphFromPayload(payload) {
+  return attachComponents(buildEngineGraph(payload), payload);
+}
+
+function buildEngineGraph(payload) {
   const { buildGraph } = require('./workspace-file-map-engine');
   const contentByPath = new Map(Array.isArray(payload?.contentEntries) ? payload.contentEntries : []);
   return buildGraph({
@@ -148,4 +167,5 @@ class WorkspaceFileMapWorkerBuilder {
 module.exports = {
   WorkspaceFileMapWorkerBuilder,
   DEFAULT_BUILD_TIMEOUT_MS,
+  buildGraphFromPayload,
 };

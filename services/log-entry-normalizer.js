@@ -11,6 +11,7 @@ const {
   redactLogReportValue,
   redactLogText,
 } = require('../renderer/shared/log-contract-utils');
+const { redactExactSecrets, redactExactSecretsInValue } = require('./backend/exact-secret-redaction');
 
 function normalizeLevel(value) {
   const token = String(value || '').trim().toUpperCase();
@@ -62,11 +63,11 @@ function normalizeRedactionPrefixes(entry = {}, defaults = {}) {
 }
 
 function redactText(value, { prefixes = [] } = {}) {
-  return redactLogText(value, { prefixes });
+  return redactLogText(redactExactSecrets(String(value)), { prefixes });
 }
 
 function redactLogValue(value, options = {}, seen = new WeakSet()) {
-  return redactLogReportValue(value, options, seen);
+  return redactLogReportValue(redactExactSecretsInValue(value), options, seen);
 }
 
 function deriveComponent(event, fallbackComponent = '') {

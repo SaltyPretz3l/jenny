@@ -38,14 +38,12 @@ from sidecar.ai.tools.builtins.python_runtime.interpreter import (
 from sidecar.ai.tools.builtins.python_runtime.output import format_python_output
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
+from tests.sidecar._platform_skips import windows_only
 
 # For tests that exercise the real Windows venv layout (Scripts/python.exe) or
 # fake os.name="nt": on POSIX the os.name patch flips pathlib to WindowsPath,
 # which pytest itself then trips over (INTERNALERROR aborting the session).
-windows_only = pytest.mark.skipif(
-    sys.platform != "win32",
-    reason="exercises Windows-only venv layout / sandbox wiring",
-)
+_windows_layout = windows_only("venv layout and sandbox wiring")
 
 
 def test_wrapper_pipe_capture_rejects_output_over_budget(
@@ -69,7 +67,7 @@ def test_wrapper_pipe_capture_rejects_output_over_budget(
         )
 
 
-@windows_only
+@_windows_layout
 def test_windows_python_job_sets_aggregate_and_per_process_memory_limits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -176,7 +174,7 @@ def _write_fresh_marker(venv_dir: Path, config: dict[str, str]) -> None:
     )
 
 
-@windows_only
+@_windows_layout
 def test_ensure_runtime_venv_is_noop_when_marker_exists(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -258,7 +256,7 @@ def test_install_runtime_packages_prefers_configured_offline_wheelhouse(
     ]
 
 
-@windows_only
+@_windows_layout
 def test_ensure_runtime_venv_bootstraps_via_staging_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -304,7 +302,7 @@ def test_ensure_runtime_venv_bootstraps_via_staging_dir(
 # ── Fingerprinted readiness marker ──────────────────────────────────
 
 
-@windows_only
+@_windows_layout
 def test_validation_failure_retains_installed_staging_tree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -349,7 +347,7 @@ def test_validation_failure_retains_installed_staging_tree(
     assert not (venv_root / "venv").exists()
 
 
-@windows_only
+@_windows_layout
 def test_sentinel_staging_revalidates_and_publishes_without_reinstall(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -412,7 +410,7 @@ def test_sentinel_staging_revalidates_and_publishes_without_reinstall(
     )
 
 
-@windows_only
+@_windows_layout
 def test_marker_write_failure_leaves_staging_resumable_without_reinstall(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -468,7 +466,7 @@ def test_marker_write_failure_leaves_staging_resumable_without_reinstall(
     assert marker_calls == 2
 
 
-@windows_only
+@_windows_layout
 def test_install_failure_deletes_staging_tree_without_sentinel(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -499,7 +497,7 @@ def test_install_failure_deletes_staging_tree_without_sentinel(
     assert not (staging_dir / interpreter_module.RUNTIME_INSTALL_SENTINEL).exists()
 
 
-@windows_only
+@_windows_layout
 def test_sentinel_staging_tree_never_satisfies_ready_gate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -578,7 +576,7 @@ def test_venv_is_ready_returns_none_for_corrupted_marker(tmp_path: Path) -> None
     assert interpreter_module._venv_is_ready(venv_dir) is None
 
 
-@windows_only
+@_windows_layout
 def test_ensure_runtime_venv_rebuilds_when_marker_fingerprint_is_stale(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -632,7 +630,7 @@ def test_ensure_runtime_venv_rebuilds_when_marker_fingerprint_is_stale(
     assert marker["requirements_fingerprint"] == expected_fingerprint
 
 
-@windows_only
+@_windows_layout
 def test_ensure_runtime_venv_rebuilds_when_import_validation_fails_on_existing_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -683,7 +681,7 @@ def test_ensure_runtime_venv_rebuilds_when_import_validation_fails_on_existing_e
     assert python_path in validate_calls
 
 
-@windows_only
+@_windows_layout
 def test_ensure_runtime_venv_interrupted_install_produces_no_ready_marker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -714,7 +712,7 @@ def test_ensure_runtime_venv_interrupted_install_produces_no_ready_marker(
     assert not venv_dir.exists()
 
 
-@windows_only
+@_windows_layout
 def test_ensure_runtime_venv_concurrent_first_invocation_builds_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1402,7 +1400,7 @@ def test_python_result_reader_refuses_oversize_before_json_decode(
         sandbox_module._read_result_payload(result_path)
 
 
-@windows_only
+@_windows_layout
 def test_windows_sandbox_starts_process_suspended_before_job_assignment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1411,16 +1409,15 @@ def test_windows_sandbox_starts_process_suspended_before_job_assignment(
     processes: list[object] = []
 
     class _FakeProcess:
-        pid = 4321  # Popen contract; owned-process recording is disabled on Windows.
+        pid = 123  # Popen contract; owned-process recording is disabled on Windows.
         returncode = 0
-        pid = 123
         _handle = 123
-        _thread = 456
 
         def __init__(self, argv: list[str], **kwargs: object) -> None:
             events.append("popen")
             self.result_path = Path(argv[-2])
             self.creationflags = kwargs.get("creationflags")
+            self.stdin = kwargs.get("stdin")
             self.env = kwargs.get("env")
             self.stdout = io.BytesIO()
             self.stderr = io.BytesIO()
@@ -1487,6 +1484,8 @@ def test_windows_sandbox_starts_process_suspended_before_job_assignment(
         assert events == ["enter_job", "popen", "assign", "resume", "exit_job"]
         assert processes[0].args[:2] == [str(tmp_path / "python.exe"), "-s"]
         assert processes[0].creationflags == 4
+        # The sidecar's stdin is the JSON-RPC pipe; the child must not inherit it.
+        assert processes[0].stdin is subprocess.DEVNULL
         assert processes[0].env["OPENBLAS_NUM_THREADS"] == "1"
         assert processes[0].env["OMP_NUM_THREADS"] == "1"
         assert processes[0].env["MKL_NUM_THREADS"] == "1"
@@ -1547,7 +1546,7 @@ def test_posix_sandbox_timeout_kills_process_group(
     assert not scratch_dir.exists()
 
 
-@windows_only
+@_windows_layout
 @pytest.mark.parametrize("use_workspace", [True, False], ids=["workspace", "scratch"])
 def test_windows_sandbox_working_directory_and_scratch_environment(
     tmp_path: Path,
@@ -1629,8 +1628,12 @@ def test_windows_sandbox_working_directory_and_scratch_environment(
         process = processes[0]
         expected_cwd = workspace_root if use_workspace else scratch_dir
         assert process.cwd == str(expected_cwd)
-        for key in ("TEMP", "TMP", "MPLCONFIGDIR", "JENNY_OUTPUT_DIR"):
+        for key in ("TEMP", "TMP", "JENNY_OUTPUT_DIR"):
             assert process.env[key] == str(scratch_dir)
+        # The font cache outlives the run: it lives beside the runtime, not
+        # in the per-run scratch dir that is deleted afterwards.
+        assert process.env["MPLCONFIGDIR"] == str(tmp_path / ".mplconfig")
+        assert (tmp_path / ".mplconfig").is_dir()
         if use_workspace:
             assert process.env["JENNY_WORKSPACE_ROOT"] == str(workspace_root)
         else:
@@ -1899,3 +1902,301 @@ def test_offline_pip_bootstrap_failure_names_the_cause(
         interpreter_module._ensure_offline_pip(python, wheelhouse)
 
     assert "No module named pip" in str(excinfo.value)
+
+
+# --- review fixes 2026-10-19: output trust, sandbox cleanup, ready cache ----
+
+_PNG = b"\x89PNG\r\n\x1a\n"
+
+
+def test_format_python_output_refuses_image_names_outside_the_figure_contract(
+    tmp_path: Path,
+) -> None:
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    (tmp_path / "figure_9.png").write_bytes(_PNG + b"outside")  # traversal target
+    (work_dir / "figure_1.png").write_bytes(b"GIF89a not a png")
+    (work_dir / "figure_2.png").write_bytes(_PNG + b"inside")
+
+    payload, attachments = format_python_output(
+        {
+            "images": ["../figure_9.png", "figure_0.png\x00", "figure_1.png", "figure_2.png"],
+            "tables": [],
+        },
+        work_dir,
+    )
+
+    assert len(attachments) == 1
+    decoded = base64.b64decode(attachments[0]["data_base64"], validate=True)
+    assert decoded == _PNG + b"inside"
+    assert payload["truncated"] is True
+
+
+def test_format_python_output_redacts_paths_outside_the_workspace(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    kept_path = workspace_root / "out.csv"
+    private_windows = "C:\\Users\\someone\\AppData\\secret.txt"
+    private_posix = "/home/someone/.cache/secret.txt"
+
+    payload, _attachments = format_python_output(
+        {
+            "stdout": (
+                f"saved {kept_path}\nread {private_windows}\nread {private_posix}\n"
+                "docs at https://example.com/a/b/c\n"
+            ),
+            "stderr": f"warning from {private_posix}",
+            "error": {
+                "type": "SyntaxError",
+                "message": f"bad file {private_windows}",
+                "traceback": f'  File "{private_posix}", line 2\nSyntaxError: invalid syntax\n',
+            },
+            "images": [],
+            "tables": [],
+            "last_expr_repr": None,
+        },
+        tmp_path / "scratch",
+        workspace_root=workspace_root,
+    )
+
+    serialized = json.dumps(payload)
+    assert "someone" not in serialized
+    assert str(kept_path) in str(payload["stdout"])
+    assert "https://example.com/a/b/c" in str(payload["stdout"])
+    assert "<path>" in str(payload["stderr"])
+    assert payload["error"]["type"] == "SyntaxError"
+    assert "<path>" in payload["error"]["traceback"]
+    assert "SyntaxError: invalid syntax" in payload["error"]["traceback"]
+    assert "<path>" in payload["error"]["message"]
+
+
+def test_failed_execution_cleanup_survives_an_unkillable_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    work_dir = tmp_path / "jenny-pyexec-test"
+    work_dir.mkdir()
+    (work_dir / "_script.py").write_text("print(1)", encoding="utf-8")
+    closed: list[str] = []
+
+    class _Pipe:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def close(self) -> None:
+            closed.append(self.name)
+
+    class _StuckProcess:
+        pid = 4321
+        stdout = _Pipe("stdout")
+        stderr = _Pipe("stderr")
+
+        def poll(self) -> None:
+            return None
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self, timeout: float | None = None) -> int:
+            raise subprocess.TimeoutExpired(["python"], timeout or 0)
+
+    monkeypatch.setattr(sandbox_module, "_kill_sandbox_tree", lambda proc: proc.kill())
+
+    # Must not raise: the primary error is what the caller re-raises.
+    sandbox_module._cleanup_failed_execution(
+        _StuckProcess(),  # type: ignore[arg-type]
+        work_dir,
+        RuntimeError("wrapper output exceeded the byte limit"),
+    )
+
+    assert sorted(closed) == ["stderr", "stdout"]
+    assert not work_dir.exists(), "a jenny-pyexec-* scratch dir must not leak"
+
+
+def test_failed_execution_cleanup_logs_instead_of_replacing_the_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _refuse(_path: Path) -> None:
+        raise PermissionError("scratch dir is locked")
+
+    monkeypatch.setattr(sandbox_module, "_remove_tree", _refuse)
+    cancelled = sandbox_module.SandboxExecutionCancelled(cleanup_confirmed=True)
+
+    sandbox_module._cleanup_failed_execution(None, tmp_path / "gone", RuntimeError("boom"))
+    sandbox_module._cleanup_failed_execution(None, tmp_path / "gone", cancelled)
+
+    assert cancelled.cleanup_confirmed is False
+
+
+@pytest.mark.parametrize(
+    ("returncode", "probe_error", "expected"),
+    [
+        (None, None, False),  # root still running
+        (0, ProcessLookupError(), True),  # root exited, group empty
+        (0, None, False),  # a descendant is still alive in the group
+        (0, PermissionError(), False),  # group id now belongs to someone else
+    ],
+)
+def test_sandbox_ledger_confirms_only_an_exited_empty_group(
+    monkeypatch: pytest.MonkeyPatch,
+    returncode: int | None,
+    probe_error: BaseException | None,
+    expected: bool,
+) -> None:
+    probes: list[tuple[int, int]] = []
+
+    def _killpg(pgid: int, sig: int) -> None:
+        probes.append((pgid, sig))
+        if probe_error is not None:
+            raise probe_error
+
+    monkeypatch.setattr(sandbox_module, "os", types.SimpleNamespace(name="posix", killpg=_killpg))
+    proc = types.SimpleNamespace(pid=777, poll=lambda: returncode)
+
+    assert sandbox_module._sandbox_tree_exited(proc) is expected  # type: ignore[arg-type]
+    assert all(sig == 0 for _pgid, sig in probes), "the probe never signals"
+
+
+@_windows_layout
+@pytest.mark.parametrize("outcome", ["exited", "timed_out"])
+def test_sandbox_settles_the_ledger_confirmed_only_after_a_clean_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    from sidecar.runtime import owned_process_tracking
+
+    settled: list[bool] = []
+    ticket = object()
+
+    class _FakeProcess:
+        pid = 123
+
+        def __init__(self, argv: list[str], **_kwargs: object) -> None:
+            self.args = argv
+            self.returncode: int | None = 0 if outcome == "exited" else None
+            self.stdout = io.BytesIO()
+            self.stderr = io.BytesIO()
+            Path(argv[-2]).write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "stdout": "",
+                        "stderr": "",
+                        "error": None,
+                        "images": [],
+                        "tables": [],
+                        "last_expr_repr": None,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def wait(self, timeout: float | None = None) -> int:
+            if self.returncode is None:
+                raise subprocess.TimeoutExpired(self.args, timeout or 0)
+            return self.returncode
+
+        def kill(self) -> None:
+            self.returncode = 1
+
+    class _FakeJobObject:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> "_FakeJobObject":
+            return self
+
+        def assign(self, _proc: object) -> None:
+            return None
+
+        def resume(self, _proc: object) -> None:
+            return None
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr(sandbox_module.subprocess, "Popen", _FakeProcess)
+    monkeypatch.setattr(sandbox_module, "JobObject", _FakeJobObject)
+    monkeypatch.setattr(owned_process_tracking, "record", lambda *_a, **_k: ticket)
+    monkeypatch.setattr(
+        owned_process_tracking,
+        "settle",
+        lambda got, *, confirmed: settled.append(confirmed) if got is ticket else None,
+    )
+
+    if outcome == "exited":
+        result = sandbox_module.execute_sandboxed(
+            code="print(1)",
+            venv_python=tmp_path / "python.exe",
+            timeout_seconds=5,
+            memory_limit_mb=128,
+        )
+        result.cleanup()
+        assert settled == [True]
+    else:
+        with pytest.raises(subprocess.TimeoutExpired):
+            sandbox_module.execute_sandboxed(
+                code="print(1)",
+                venv_python=tmp_path / "python.exe",
+                timeout_seconds=0,
+                memory_limit_mb=128,
+            )
+        assert settled == [False]
+
+
+@pytest.mark.parametrize(
+    ("relative_python", "expected_dir"),
+    [
+        (("venv", "Scripts", "python.exe"), ("venv",)),
+        (("venv", "bin", "python"), ("venv",)),
+        (("venv", "python.exe"), ("venv",)),  # embeddable runtime layout
+    ],
+)
+def test_matplotlib_config_dir_is_runtime_owned_and_persistent(
+    tmp_path: Path, relative_python: tuple[str, ...], expected_dir: tuple[str, ...]
+) -> None:
+    venv_python = tmp_path.joinpath(*relative_python)
+
+    config_dir = sandbox_module._matplotlib_config_dir(venv_python)
+
+    assert config_dir == tmp_path.joinpath(*expected_dir, ".mplconfig")
+    assert config_dir.is_dir()
+    assert sandbox_module._matplotlib_config_dir(venv_python) == config_dir
+
+
+@_windows_layout
+def test_ensure_runtime_venv_warm_cache_skips_wheelhouse_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    venv_root = tmp_path / "runtime"
+    venv_dir = venv_root / "venv"
+    python_path = venv_dir / "Scripts" / "python.exe"
+    python_path.parent.mkdir(parents=True)
+    python_path.write_text("", encoding="utf-8")
+    config = {"tools_python_runtime_root": str(venv_root)}
+    _write_fresh_marker(venv_dir, config)
+    monkeypatch.setattr(
+        interpreter_module,
+        "_validate_runtime_imports",
+        lambda _venv_python, **_kwargs: True,
+    )
+
+    assert ensure_runtime_venv(config) == python_path
+
+    phases: list[str] = []
+    original_phase = interpreter_module.BootstrapTelemetry.phase
+
+    def _counting_phase(self: object, name: str, *, data: dict[str, object]):
+        phases.append(name)
+        return original_phase(self, name, data=data)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(interpreter_module.BootstrapTelemetry, "phase", _counting_phase)
+    monkeypatch.setattr(
+        interpreter_module,
+        "_runtime_requirements_fingerprint_for_wheelhouse",
+        lambda _wheelhouse: pytest.fail("a warm call must not re-read the manifest"),
+    )
+
+    assert ensure_runtime_venv(config) == python_path
+    assert phases == [], "a warm call must not re-log wheelhouse_resolved"

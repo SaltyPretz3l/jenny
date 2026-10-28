@@ -689,3 +689,187 @@ test('workspace-ide-service search rejects bytes that finish after a root transi
   const committed = await commit;
   assert.equal(committed.committed, true);
 });
+
+test('a leading UTF-8 BOM does not shift line-1 columns', async () => {
+  const root = createTrackedTempDir('jenny-ide-search-');
+  fs.writeFileSync(path.join(root, 'bom.txt'), Buffer.concat([
+    Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('hit x hit\nhit\n', 'utf8'),
+  ]));
+
+  const result = await searchWorkspaceFiles({ root, query: 'hit' });
+  assert.deepEqual(result.results.map((entry) => [entry.line, entry.column]), [[1, 1], [1, 7], [2, 1]]);
+  assert.equal(result.results[0].preview.text.charCodeAt(0) === 0xfeff, false, 'the BOM is not previewed');
+});
+
+// ---- row 82 slice X2: whole word, include/exclude globs ----
+
+test('workspace-ide-search wholeWord rejects a needle embedded in a longer word', async () => {
+  const root = createTrackedTempDir('jenny-ide-search-');
+  fs.writeFileSync(path.join(root, 'only.txt'), 'testing\n', 'utf8');
+  const result = await searchWorkspaceFiles({ root, query: 'test', wholeWord: true });
+  assert.equal(result.results.length, 0, 'wholeWord must reject `testing`');
+  assert.equal(result.fileCount, 0);
+  const loose = await searchWorkspaceFiles({ root, query: 'test' });
+  assert.equal(loose.results.length, 1, 'without wholeWord the substring still matches');
+});
+
+test('workspace-ide-search wholeWord keeps punctuation/edge hits and rescans after a rejected candidate', async () => {
+  const root = createTrackedTempDir('jenny-ide-search-');
+  fs.writeFileSync(path.join(root, 'a.txt'), [
+    'a test.',
+    '(test)',
+    'test at start',
+    'ends with test',
+    'testing',
+    'retest',
+    'test_x',
+    'x_test',
+    'testing test',
+    'test',
+  ].join('\n'), 'utf8');
+  const result = await searchWorkspaceFiles({ root, query: 'test', wholeWord: true });
+  assert.deepEqual(
+    result.results.map((entry) => [entry.line, entry.column]),
+    [[1, 3], [2, 2], [3, 1], [4, 11], [9, 9], [10, 1]]
+  );
+});
+
+test('workspace-ide-search wholeWord works with the case-fold map path (İ expands on fold)', async () => {
+  const root = createTrackedTempDir('jenny-ide-search-');
+  fs.writeFileSync(path.join(root, 'a.txt'), 'İ needle needles\n', 'utf8');
+  const result = await searchWorkspaceFiles({ root, query: 'needle', wholeWord: true });
+  assert.deepEqual(result.results.map((entry) => entry.column), [3]);
+});
+
+test('workspace-ide-search include globs limit files by folder and by extension', async () => {
+  const root = createTrackedTempDir('jenny-ide-search-');
+  fs.mkdirSync(path.join(root, 'src', 'deep'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'docs'));
+  fs.writeFileSync(path.join(root, 'src', 'a.js'), 'token\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'src', 'deep', 'b.js'), 'token\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'docs', 'c.md'), 'token\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'README.md'), 'token\n', 'utf8');
+
+  const byFolder = await searchWorkspaceFiles({ root, query: 'token', include: ['src'] });
+  assert.deepEqual(byFolder.results.map((entry) => entry.path).sort(), ['src/a.js', 'src/deep/b.js']);
+  assert.equal(byFolder.fileCount, 2);
+  const byExt = await searchWorkspaceFiles({ root, query: 'token', include: ['*.md'] });
+  assert.deepEqual(byExt.results.map((entry) => entry.path).sort(), ['README.md', 'docs/c.md']);
+  const rootAnchored = await searchWorkspaceFiles({ root, query: 'token', include: ['/README.md'] });
+  assert.deepEqual(rootAnchored.results.map((entry) => entry.path), ['README.md']);
+  // Patterns test the root-relative path even when a scope is set.
+  const scoped = await searchWorkspaceFiles({ root, query: 'token', scope: 'src', include: ['/src/deep'] });
+  assert.deepEqual(scoped.results.map((entry) => entry.path), ['src/deep/b.js']);
+});
+
+test('workspace-ide-search exclude prunes directories without reading them', async () => {
+  const opened = [];
+  const dirs = {
+    '/fake': [fakeDirent('keep', 'directory'), fakeDirent('vendor', 'directory'), fakeDirent('top.txt')],
+    '/fake/keep': [fakeDirent('a.txt'), fakeDirent('b.log')],
+    '/fake/vendor': [fakeDirent('lib.txt')],
+  };
+  const fakeFs = {
+    async opendir(directoryPath) {
+      opened.push(directoryPath);
+      const entries = dirs[directoryPath] || [];
+      return {
+        async *[Symbol.asyncIterator]() { for (const entry of entries) yield entry; },
+        async close() {},
+      };
+    },
+    async stat() { return fakeStats(6); },
+    async open() { return fakeHandle(Buffer.from('needle')); },
+  };
+  const result = await searchWorkspaceFiles({
+    root: '/fake',
+    query: 'needle',
+    exclude: ['vendor', '*.log'],
+    fs: fakeFs,
+    path: { join: (...parts) => parts.filter(Boolean).join('/') },
+  });
+  assert.deepEqual(result.results.map((entry) => entry.path).sort(), ['keep/a.txt', 'top.txt']);
+  assert.ok(!opened.includes('/fake/vendor'), 'excluded directory is never opened');
+  assert.ok(opened.includes('/fake/keep'));
+});
+
+test('workspace-ide-service searchInFiles forwards wholeWord/include/exclude and ignores junk', async () => {
+  const root = createTrackedTempDir('jenny-ide-search-');
+  fs.mkdirSync(path.join(root, 'src'));
+  fs.mkdirSync(path.join(root, 'lib'));
+  fs.writeFileSync(path.join(root, 'src', 'a.js'), 'test testing\n', 'utf8');
+  fs.writeFileSync(path.join(root, 'lib', 'b.js'), 'test\n', 'utf8');
+  const logs = [];
+  const service = createSearchService(root, { logger: (level, event, data) => logs.push({ level, event, data }) });
+
+  const word = await service.searchInFiles({ query: 'test', wholeWord: true });
+  assert.deepEqual(word.results.map((entry) => [entry.path, entry.column]).sort(), [['lib/b.js', 1], ['src/a.js', 1]]);
+  const filtered = await service.searchInFiles({
+    query: 'test', wholeWord: true, include: ['src'], exclude: ['lib'],
+  });
+  assert.deepEqual(filtered.results.map((entry) => entry.path), ['src/a.js']);
+  // Non-array junk is ignored; non-string entries are coerced; oversize entries are dropped.
+  const junk = await service.searchInFiles({ query: 'test', include: 'src', exclude: { a: 1 }, wholeWord: 'yes' });
+  assert.equal(junk.results.length, 3, 'junk options do not filter and wholeWord must be boolean true');
+  const oversize = await service.searchInFiles({ query: 'test', include: ['x'.repeat(300)] });
+  assert.equal(oversize.results.length, 3, 'an oversize entry is dropped rather than failing the search');
+  const logged = logs.find((entry) => entry.event === 'workspace_fs.search' && entry.data.include_count === 1);
+  assert.ok(logged, 'log carries counts');
+  assert.equal(logged.data.whole_word, true);
+  assert.equal(logged.data.exclude_count, 1);
+  assert.ok(!JSON.stringify(logged.data).includes('src'), 'patterns are never logged');
+});
+
+// ---- row 82 cleanup X1: filters before the file budget, anchored-include pruning ----
+
+test('X1: an include-filtered walk counts only matching files', async () => {
+  const root = createTrackedTempDir('jenny-ide-search-');
+  for (let index = 0; index < 30; index += 1) fs.writeFileSync(path.join(root, `n${index}.txt`), 'token\n', 'utf8');
+  fs.mkdirSync(path.join(root, 'src'));
+  for (let index = 0; index < 3; index += 1) fs.writeFileSync(path.join(root, 'src', `a${index}.js`), 'token\n', 'utf8');
+  const result = await searchWorkspaceFiles({ root, query: 'token', include: ['*.js'], maxFiles: 5 });
+  assert.deepEqual(result.results.map((entry) => entry.path).sort(), ['src/a0.js', 'src/a1.js', 'src/a2.js']);
+  assert.equal(result.truncated, false, 'thirty filtered files do not spend the five-file budget');
+  assert.equal(result.filesScanned, 3);
+  // Matching files still stop at the budget.
+  const capped = await searchWorkspaceFiles({ root, query: 'token', include: ['*.js'], maxFiles: 2 });
+  assert.equal(capped.results.length, 2);
+  assert.equal(capped.truncationReason, 'file_limit');
+  // Without a filter the budget counts every file, as before.
+  const plain = await searchWorkspaceFiles({ root, query: 'token', maxFiles: 5 });
+  assert.equal(plain.truncationReason, 'file_limit');
+});
+
+test('X1: an anchored include never lists an unrelated top-level directory', async () => {
+  const opened = [];
+  const dirs = {
+    '/fake': [fakeDirent('docs', 'directory'), fakeDirent('src', 'directory'), fakeDirent('top.js')],
+    '/fake/src': [fakeDirent('a.js'), fakeDirent('nested', 'directory')],
+    '/fake/src/nested': [fakeDirent('b.js')],
+    '/fake/docs': [fakeDirent('src', 'directory'), fakeDirent('c.js')],
+    '/fake/docs/src': [fakeDirent('d.js')],
+  };
+  const fakeFs = {
+    async opendir(directoryPath) {
+      opened.push(directoryPath);
+      const entries = dirs[directoryPath] || [];
+      return {
+        async *[Symbol.asyncIterator]() { for (const entry of entries) yield entry; },
+        async close() {},
+      };
+    },
+    async stat() { return fakeStats(6); },
+    async open() { return fakeHandle(Buffer.from('needle')); },
+  };
+  const run = (include) => searchWorkspaceFiles({
+    root: '/fake', query: 'needle', include, fs: fakeFs, path: { join: (...parts) => parts.filter(Boolean).join('/') },
+  });
+  const anchored = await run(['/src/**']);
+  assert.deepEqual(anchored.results.map((entry) => entry.path).sort(), ['src/a.js', 'src/nested/b.js']);
+  assert.ok(!opened.includes('/fake/docs'), 'docs/ is never listed');
+  // An unanchored `src/**` matches at any depth, so docs/src/ must still be walked.
+  opened.length = 0;
+  const anywhere = await run(['src/**']);
+  assert.deepEqual(anywhere.results.map((entry) => entry.path).sort(), ['docs/src/d.js', 'src/a.js', 'src/nested/b.js']);
+  assert.ok(opened.includes('/fake/docs/src'));
+});

@@ -494,8 +494,7 @@
 .composer-select-shell select:focus-visible,
 .composer-icon-button:focus-visible,
 .composer-jump-button:focus-visible,
-.attachment-chip-remove:focus-visible,
-.composer-popover-action:focus-visible {
+.attachment-chip-remove:focus-visible {
   outline: 2px solid var(--focus-outline);
   outline-offset: 2px;
 }
@@ -879,33 +878,6 @@
   max-width: calc(100vw - 32px);
   max-height: calc(100vh - 32px);
   overflow-y: auto;
-}
-
-/* Row 38 item 7 (variant B): Commands is a slash-command menu, so it shows a
-   "/" glyph and its word instead of a terminal icon. The pill keeps the
-   icon-button chrome; only its content changes. */
-.composer-icon-button.composer-text-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: auto;
-  gap: var(--space-2);
-  padding-inline: var(--space-3);
-}
-
-.composer-button-glyph {
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-body);
-  font-weight: 600;
-  line-height: 1;
-}
-
-.composer-button-text {
-  font-size: var(--font-size-caption);
-  font-weight: 500;
-  line-height: 1;
-  white-space: nowrap;
 }
 
 /* Row 38 item 3 (variant A): the project pill sits on the bar as quiet text,

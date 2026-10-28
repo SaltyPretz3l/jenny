@@ -157,6 +157,7 @@ test('convertReport to an archived parent leaves a failed, retryable report that
   assert.equal(f.mail(parent).inbox.length, 0);
   f.store.setSessionMeta(parent, { archived_at: null });
   const retried = await f.service.retry({ ...V, operation_id: record.operation_id });
+  assert.equal(f.wakes.length, 0, 'Retry of a failed delivery wakes nothing (row 70 D4)');
   assert.equal(retried.ok, true);
   assert.equal(f.mail(child).outbox[0].state, 'delivered');
   assert.equal(f.mail(parent).inbox.length, 1);
@@ -214,6 +215,10 @@ test('deliverReport delivers a pending report and tracks it for Retry/Cancel', a
   assert.equal(delivered.ok, true);
   assert.equal(delivered.operation.state, 'delivered');
   assert.equal(f.mail(parent).inbox.length, 1);
+  // Row 70 D6: a live report wakes the parent once, with the report anchor.
+  assert.equal(f.wakes.length, 1);
+  assert.equal(f.wakes[0].request.sessionId, parent);
+  assert.match(f.wakes[0].request.visiblePrompt, /^Woken by a report from /);
   const missing = f.service.deliverReport(child, '00000000-0000-4000-8000-00000000dead');
   assert.equal(missing.ok, false);
   assert.equal(missing.reason, 'stale_operation');
@@ -224,6 +229,7 @@ test('deliverReport delivers a pending report and tracks it for Retry/Cancel', a
 test('startup repair drops a reservation whose report already exists', async (t) => {
   const { f, child, mail, convert } = linked(t);
   await convert();
+  assert.equal(f.wakes.length, 1, 'the live conversion delivered and woke the parent once');
   const [record] = f.mail(child).outbox;
   // Put the reservation back as a crash between "append the report" and "remove the reservation" would leave it.
   assert.ok(mail.mutate(child, ({ mail: current }) => ({
@@ -233,6 +239,7 @@ test('startup repair drops a reservation whose report already exists', async (t)
   f.service.reconcileOnStartup();
   assert.equal(f.mail(child).report_reservations.length, 0);
   assert.equal(f.mail(child).outbox.length, 1, 'no second report');
+  assert.equal(f.wakes.length, 1, 'startup repair wakes nothing (row 70 D4)');
 });
 
 test('startup repair converts from terminal evidence without a marker, mapping the row to an outcome', async (t) => {

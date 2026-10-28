@@ -36,7 +36,9 @@ async function stopManagedServerOrAbort(service, manager, kind, to) {
   const label = SERVER_LABELS[kind] || kind;
   let stopFailure;
   try {
-    const stopped = await manager.stop();
+    // A switch initializes the sidecar for its target right after; an unload
+    // has no follow-up, so only it lets the stop re-broker the config.
+    const stopped = await manager.stop(to === 'unload' ? {} : { stoppedBy: 'engine_switch' });
     stopFailure = String(stopped?.lastError || '');
   } catch (error) {
     stopFailure = String(error?.message || error) || 'stop_failed';

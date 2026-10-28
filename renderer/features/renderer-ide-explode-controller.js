@@ -51,7 +51,6 @@
     // otherwise toggling from the palette while Preview/File Map is on stage
     // would flip the tab's mode invisibly. Optional — absent = legacy behavior.
     const onViewModeApplied = typeof d.onViewModeApplied === 'function' ? d.onViewModeApplied : null;
-    const getWorkspaceId = typeof d.getWorkspaceId === 'function' ? d.getWorkspaceId : () => '';
     const escapeHtml = typeof d.escapeHtml === 'function' ? d.escapeHtml : defaultEscapeHtml;
     const windowRef = d.windowRef || (typeof window !== 'undefined' ? window : globalRef);
 
@@ -70,7 +69,10 @@
     let lastGraph = null;
     const graphCache = new Map(); // `${path}@${altVersion}` -> graph
     const GRAPH_CACHE_MAX = 16; // LRU cap so a long edit-and-explode session can't grow unbounded
-    const pendingBuilds = new Map(); // cache key -> in-flight build's token (de-dupe re-entry)
+    // cache key -> in-flight build's token (de-dupe re-entry). A marker whose
+    // token is not the current buildToken belongs to a superseded build that
+    // will paint nothing, so it is dead and never blocks a rebuild.
+    const pendingBuilds = new Map();
 
     const layoutModule = resolveModule('rendererIdeExplodeLayout', './renderer-ide-explode-layout');
 
@@ -140,17 +142,10 @@
       viewportEl.appendChild(contentEl);
       hostEl.appendChild(viewportEl);
 
+      // No workspaceId -> no pan/zoom persistence: each build reframes via
+      // fitToContent, so a stored camera would only flash the previous file.
       transform = resolveModule('rendererIdeMapTransform', './renderer-ide-map-transform')
-        .createMapTransform?.({
-          viewportEl,
-          contentEl,
-          workspaceId: getWorkspaceId(),
-          storageKeyPrefix: 'jenny.explode.view.',
-          // No pan/zoom persistence for this surface: each build reframes via
-          // fitToContent, so a stored per-workspace {scale,tx,ty} is dead weight
-          // (and would briefly restore the previous file's framing on cold start).
-          storage: { getItem: () => null, setItem: () => {} },
-        }) || null;
+        .createMapTransform?.({ viewportEl, contentEl }) || null;
 
       view = resolveModule('rendererIdeExplodeView', './renderer-ide-explode-view')
         .createExplodeView?.({ contentEl, escapeHtml }) || null;
@@ -288,7 +283,7 @@
       // without this guard an uncached activation re-kicks a full worker fan-out
       // on each render until the first resolves. The cache is only written on
       // resolve, so the has()-check above can't cover the in-flight window.
-      if (!force && pendingBuilds.has(cacheKey)) return;
+      if (!force && pendingBuilds.get(cacheKey) === buildToken) return;
       const token = ++buildToken;
       pendingBuilds.set(cacheKey, token);
       if (states) states.showLoading();
@@ -309,7 +304,9 @@
       // straight from cache without ever rebuilding. A stale build writes
       // nothing and paints nothing — the next same-key lookup simply misses
       // and triggers a real rebuild.
-      if (token !== buildToken || disposed) return; // stale (tab switched / edited / resetForRoot)
+      // stale (tab switched / edited / resetForRoot), or a cache-served tab
+      // switch left this build current while another file is on screen.
+      if (token !== buildToken || disposed || path !== currentPath) return;
       if (graph) {
         failedCacheKey = '';
         graphCache.set(cacheKey, graph);

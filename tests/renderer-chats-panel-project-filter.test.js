@@ -33,7 +33,7 @@ test('the view model filters by project id, treats a missing project_id as Gener
 
   const ascend = buildChatsViewModel({ sessions: SESSIONS, scope: 'recent', projectId: 'project_ascend' });
   assert.deepEqual(ascend.visibleSessions.map((row) => row.id), ['s1']);
-  assert.equal(ascend.projectTotal, 2, 'the project total counts archived chats too');
+  assert.equal(ascend.recentTotal + ascend.archivedTotal, 2, 'the project total counts archived chats too');
   assert.equal(ascend.recentTotal, 1, 'the Recent / Archived counts follow the filter (D15)');
   assert.equal(ascend.archivedTotal, 1);
   assert.ok(ascend.groups.length >= 1, 'date groups survive the filter');

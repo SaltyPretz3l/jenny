@@ -22,35 +22,11 @@
   const settingsSnapshotPoll = (typeof globalThis !== 'undefined' && globalThis.rendererSettingsSnapshotPoll)
     || (typeof require === 'function' ? require('./renderer-settings-snapshot-poll') : null)
     || {};
-  const DEFAULT_SETTINGS_SECTION = settingsSectionRegistry.DEFAULT_SETTINGS_SECTION || 'models';
-  const SETTINGS_STORAGE_KEY = settingsSectionRegistry.SETTINGS_STORAGE_KEY || 'jenny.settings.activeSection';
-  function isLazySettingsSection(sectionId) {
-    if (typeof settingsSectionRegistry.isLazySettingsSection === 'function') {
-      return settingsSectionRegistry.isLazySettingsSection(sectionId);
-    }
-    return new Set([
-      'skills',
-      'offline',
-      'personality',
-      'memories',
-      'usage',
-    ]).has(String(sectionId || '').trim());
-  }
-  function normalizeSettingsSectionId(sectionId) {
-    if (typeof settingsSectionRegistry.normalizeSettingsSectionId === 'function') {
-      return settingsSectionRegistry.normalizeSettingsSectionId(sectionId);
-    }
-    return String(sectionId || '').trim() || DEFAULT_SETTINGS_SECTION;
-  }
+  const { isLazySettingsSection, normalizeSettingsSectionId } = settingsSectionRegistry;
   /* Hidden sections merged into a host card (Skills -> Extensions). The
    * host readies + refreshes them as companions when it is shown, so the merged
    * subsections behave exactly like their former standalone sections did. */
-  function companionSectionIds(sectionId) {
-    if (typeof settingsSectionRegistry.getSettingsCompanionSectionIds === 'function') {
-      return settingsSectionRegistry.getSettingsCompanionSectionIds(sectionId) || [];
-    }
-    return [];
-  }
+  const companionSectionIds = settingsSectionRegistry.getSettingsCompanionSectionIds;
 
   function createSettingsShellController(deps) {
     const { state, composerLayoutRuntime } = deps;
@@ -159,12 +135,6 @@
       renderLogs = function noopRenderLogs() {},
       renderSessions = function noopRenderSessions() {},
       setSidebarCollapsed,
-      upsertApprovedMemoryDraft,
-      getApprovedMemoryById,
-      hasApprovedMemoryDraftChanges,
-      clearApprovedMemoryDraft,
-      handleApprovedMemorySave,
-      handleApprovedMemoryDelete,
       applyAppearancePreferences,
       applyChatZoomPercent,
       appearanceUtils,
@@ -208,7 +178,6 @@
       refreshPendingMemories,
       refreshMemoryStatus,
       refreshPersonalityWorkspace,
-      listSlashCommands = function noopListSlashCommands() { return []; },
       normalizeAppearancePreferences,
       getPalettePresets,
       getTypographyPresets,
@@ -231,7 +200,6 @@
       isDefaultChatZoomPercent,
       resolveComposerModelSelectWidth,
       updateComposerSafeOffset,
-      renderApprovedMemoryManager,
       renderSkillsManager,
       renderOfflineManager,
       escapeHtml,
@@ -312,27 +280,23 @@
     });
 
     function runRefreshBatch(sectionId, tasks) {
-      return settingsRefreshUtils.runSettingsRefreshBatch?.({
+      return settingsRefreshUtils.runSettingsRefreshBatch({
         sectionId,
         tasks,
         state,
         appendClientLog,
-      }) || Promise.allSettled(tasks.map((task) => {
-        try {
-          return Promise.resolve(task.run());
-        } catch (error) {
-          return Promise.reject(error);
-        }
-      }));
+      });
+    }
+
+    function logSectionRefreshFailure(sectionId, error) {
+      appendClientLog('WARN', 'settings.section_refresh_failed', {
+        message: error?.message || String(error),
+        section: sectionId,
+      });
     }
 
     function refreshSectionWithWarning(sectionId, options = {}) {
-      refreshSettingsSection(sectionId, options).catch((error) => {
-        appendClientLog('WARN', 'settings.section_refresh_failed', {
-          message: error.message || String(error),
-          section: sectionId,
-        });
-      });
+      refreshSettingsSection(sectionId, options).catch((error) => logSectionRefreshFailure(sectionId, error));
     }
 
     function isSectionInitialized(sectionId) {
@@ -376,6 +340,24 @@
       return normalizedSectionId;
     }
 
+    // Start a lazy section's refresher and track it in refreshPromises until it
+    // settles; `onSettle` (the render) runs either way. Null when there is no task.
+    function startSectionRefresh(sectionId, onSettle) {
+      const refreshTask = sectionRefreshers[sectionId]?.() || null;
+      if (!refreshTask) {
+        return null;
+      }
+      const guardedTask = Promise.resolve(refreshTask)
+        .finally(() => {
+          refreshPromises.delete(sectionId);
+          if (onSettle && bound) {
+            onSettle();
+          }
+        });
+      refreshPromises.set(sectionId, guardedTask);
+      return guardedTask;
+    }
+
     // Fire-and-forget lazy refresh of a single section (used for merged companions
     // so a non-lazy host like Tools still drives Skills' deferred MCP discovery).
     // Honors the host's render flag so a silent (render:false) host refresh stays silent.
@@ -383,18 +365,8 @@
       if (!isLazySettingsSection(sectionId) || refreshPromises.has(sectionId)) {
         return;
       }
-      const refreshTask = sectionRefreshers[sectionId]?.() || null;
-      if (!refreshTask) {
-        return;
-      }
-      const guardedTask = Promise.resolve(refreshTask)
-        .finally(() => {
-          refreshPromises.delete(sectionId);
-          if (renderOnSettle && bound) {
-            renderSettings();
-          }
-        });
-      refreshPromises.set(sectionId, guardedTask);
+      startSectionRefresh(sectionId, renderOnSettle ? renderSettings : null)
+        ?.catch((error) => logSectionRefreshFailure(sectionId, error));
     }
 
     function refreshSettingsSection(sectionId, options = {}) {
@@ -417,6 +389,9 @@
         refreshSectionLazily(companionId, renderCompanions);
       });
       if (!isLazySettingsSection(normalizedSectionId)) {
+        // A non-lazy section's refresher is a "shown again" signal (Tools
+        // re-reads its subagent routing); it has no promise to track.
+        sectionRefreshers[normalizedSectionId]?.();
         if (options.render !== false) {
           renderSettle();
         }
@@ -425,33 +400,14 @@
       if (refreshPromises.has(normalizedSectionId)) {
         return refreshPromises.get(normalizedSectionId);
       }
-      const refreshTask = sectionRefreshers[normalizedSectionId]?.() || null;
-      if (!refreshTask) {
+      const guardedTask = startSectionRefresh(normalizedSectionId, options.render !== false ? renderSettle : null);
+      if (!guardedTask) {
         if (options.render !== false) {
           renderSettle();
         }
         return Promise.resolve();
       }
-      const guardedTask = Promise.resolve(refreshTask)
-        .finally(() => {
-          refreshPromises.delete(normalizedSectionId);
-          if (options.render !== false && bound) {
-            renderSettle();
-          }
-        });
-      refreshPromises.set(normalizedSectionId, guardedTask);
       return guardedTask;
-    }
-
-    function persistActiveSection(sectionId) {
-      try {
-        globalWindow?.localStorage?.setItem?.(SETTINGS_STORAGE_KEY, sectionId);
-      } catch (error) {
-        appendClientLog('WARN', 'settings.active_section_persist_failed', {
-          section: sectionId,
-          message: error.message || String(error),
-        });
-      }
     }
 
     function confirmSettingsSectionChange(nextSectionId, previousSectionId) {
@@ -462,23 +418,15 @@
         : false;
     }
 
+    // True once the section is shown; false when the leave guard (unsaved
+    // personality changes) vetoed the switch.
     function navigateSettingsSection(sectionId, options = {}) {
       const normalizedSectionId = normalizeSettingsSectionId(sectionId);
       const previousSectionId = state.ui.activeSettingsSection;
       setActiveView('settings');
-      if (settingsNavController?.setActiveSection) {
-        if (settingsNavController.setActiveSection(normalizedSectionId) === false) return false;
-        if (options.refresh === true && previousSectionId === normalizedSectionId) {
-          refreshSectionWithWarning(normalizedSectionId, { render: options.render !== false });
-        }
-      } else {
-        if (!confirmSettingsSectionChange(normalizedSectionId, previousSectionId)) return false;
-        state.ui.activeSettingsSection = normalizedSectionId;
-        persistActiveSection(normalizedSectionId);
-        ensureSettingsSectionReady(normalizedSectionId);
-        if (options.refresh === true) {
-          refreshSectionWithWarning(normalizedSectionId, { render: options.render !== false });
-        }
+      if (settingsNavController?.setActiveSection?.(normalizedSectionId) === false) return false;
+      if (options.refresh === true && previousSectionId === normalizedSectionId) {
+        refreshSectionWithWarning(normalizedSectionId, { render: options.render !== false });
       }
       if (normalizedSectionId !== 'usage') usageController?.deactivate?.();
       // Deep links (the chat tool row's "Set up PDF reading") name the group to show.
@@ -496,10 +444,7 @@
           });
         }
       });
-    }
-
-    function openSettingsSection(sectionId, options) {
-      return navigateSettingsSection(sectionId, options);
+      return true;
     }
 
     const settingsController = settingsRendererUtils.createSettingsRenderer?.({
@@ -518,9 +463,6 @@
         appearanceSpellcheckList: dom.appearanceSpellcheckList,
         composerAttachMenu: dom.composerAttachMenu,
         composerAttachShortcut: dom.composerAttachShortcut,
-        composerCommandPopover: dom.composerCommandPopover,
-        composerCommandPopoverList: dom.composerCommandPopoverList,
-        composerTerminalShortcut: dom.composerTerminalShortcut,
         settingsModelCard: dom.settingsModelCard,
         modelBadge: dom.modelBadge,
         modelStatus: dom.modelStatus,
@@ -586,14 +528,12 @@
         buildSelectOptionMarkup,
         isDefaultAppearancePreferences,
         isDefaultChatZoomPercent,
-        renderApprovedMemoryManager,
         renderPersonalityEditor,
         renderSkillsManager,
         renderOfflineManager,
         escapeHtml,
         resolveComposerModelSelectWidth,
         updateComposerSafeOffset: (...args) => updateComposerSafeOffset(...args),
-        listSlashCommands: () => listSlashCommands(),
         getSectionDom: (...args) => getSectionDom(...args),
         isSectionInitialized: (...args) => isSectionInitialized(...args),
       },
@@ -606,7 +546,6 @@
       renderSettings = function noopRenderSettings() {},
       renderComposerCarriers = function noopRenderComposerCarriers() {},
       renderComposerPopover = function noopRenderComposerPopover() {},
-      renderCommandPopover = function noopRenderCommandPopover() {},
       syncComposerInputHeight = function noopSyncComposerInputHeight() {},
     } = settingsController || {};
 
@@ -643,12 +582,6 @@
         renderAll,
         renderSessions,
         setSidebarCollapsed,
-        upsertApprovedMemoryDraft,
-        getApprovedMemoryById,
-        hasApprovedMemoryDraftChanges,
-        clearApprovedMemoryDraft,
-        handleApprovedMemorySave,
-        handleApprovedMemoryDelete,
         applyAppearancePreferences,
         applyChatZoomPercent,
         appearanceUtils,
@@ -670,7 +603,7 @@
         getCurrentRuntimePreferences,
         getRuntimePreferenceSnapshot,
         runRuntimePreferenceActivity,
-        openSettingsSection,
+        openSettingsSection: navigateSettingsSection,
         handleRunSetupAgain,
         showSetupHelp,
         showFactoryReset,
@@ -822,10 +755,8 @@
       renderSettings,
       renderComposerCarriers,
       renderComposerPopover,
-      renderCommandPopover,
       syncComposerInputHeight,
       navigateSettingsSection,
-      openSettingsSection,
       restoreSettingsNavSection: () => settingsNavController?.restoreActiveSection?.(),
       ensureSettingsSectionReady,
       refreshSettingsSection,
@@ -837,12 +768,6 @@
           && normalizeSettingsSectionId(state.ui.activeSettingsSection) === 'usage';
         return visible ? ensureUsageController()?.activate?.() : usageController?.deactivate?.();
       },
-      markSettingsSectionState: (sectionId, nextState, options) => (
-        settingsNavController?.markSectionState?.(sectionId, nextState, options)
-      ),
-      setSettingsSectionDirty: (sectionId, dirty) => (
-        settingsNavController?.setNavItemDirty?.(sectionId, dirty)
-      ),
     };
   }
 

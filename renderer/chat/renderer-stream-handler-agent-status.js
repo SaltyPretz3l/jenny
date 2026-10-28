@@ -122,7 +122,8 @@
         model: incoming.model || current.model,
         provider: incoming.provider || current.provider,
         reasoningEffort: incoming.reasoningEffort || current.reasoningEffort,
-        childActivity: incoming.childActivity || current.childActivity,
+        childActivity: (subagentModel.carryTranscript?.(incoming.childActivity, current.childActivity) ?? incoming.childActivity)
+          || current.childActivity,
         usage: incoming.usage || current.usage,
         terminalReason: incoming.terminalReason || current.terminalReason,
         source: incoming.source || current.source,

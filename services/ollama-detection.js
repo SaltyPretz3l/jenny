@@ -20,6 +20,7 @@ const installManifest = require('../config/ollama-install-manifest.json');
 const { evaluateOllamaVersion } = require('./ollama-version-policy');
 const { identifyOllamaDaemon } = require('./backend/ollama-daemon-identity');
 const { probeOllamaPort } = require('./backend/ollama-daemon-port');
+const { pathLookupCommand } = require('./backend/executable-on-path');
 
 function lookupOllamaPath(deps) {
   if (typeof deps.commandLookupImpl === 'function') {
@@ -29,10 +30,10 @@ function lookupOllamaPath(deps) {
       .catch(() => '');
   }
   return new Promise((resolve) => {
-    const command = deps.platform === 'win32' ? 'where' : 'which';
+    const [command, args] = pathLookupCommand('ollama', { platform: deps.platform, env: deps.env || process.env });
     let child;
     try {
-      child = deps.spawnImpl(command, ['ollama'], { windowsHide: true });
+      child = deps.spawnImpl(command, args, { windowsHide: true });
     } catch (_error) {
       resolve('');
       return;

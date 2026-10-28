@@ -433,3 +433,64 @@ test('failure envelopes never carry exception text and notify reaches both sinks
   assert.deepEqual(Object.keys(failure).sort(), ['current_revision', 'error_code', 'ok', 'reason', 'retryable', 'schema_version']);
   assert.ok(f.logs.every(([, , details]) => !JSON.stringify(details || {}).includes('hello')));
 });
+
+test('agentListInbox lists only this chat inbox, newest first, previews bounded, nothing marked read', async (t) => {
+  const f = createFixture(t);
+  const a = f.sessionId('Alpha chat', { projectId: 'project_a' });
+  const dst = f.sessionId('Dest');
+  const other = f.sessionId('Other');
+  const inc = (id) => f.store.getSession(id).session_incarnation;
+  await f.sendNew(a, dst, 'first message');
+  await f.sendNew(a, dst, `second ${'x'.repeat(400)}`);
+  const third = (await f.sendNew(a, dst, 'third, to discard')).prepared.envelope.message_id;
+  await f.sendNew(a, other, 'not for dest');
+  assert.equal((await f.service.discard({ ...V, session_id: dst, message_ids: [third] })).ok, true);
+  const listed = await f.service.agentListInbox({ sourceSessionId: dst, sourceIncarnation: inc(dst), limit: 2 });
+  assert.equal(listed.ok, true);
+  assert.equal(listed.truncated, true);
+  assert.deepEqual(listed.messages.map((entry) => [entry.state, entry.read]), [['discarded', true], ['queued', false]]);
+  const [discarded, second] = listed.messages;
+  assert.equal(discarded.preview, '', 'excluded or discarded text is never previewed');
+  assert.deepEqual(Object.keys(second).sort(), ['created_at', 'from', 'kind', 'message_id', 'preview', 'read', 'state']);
+  assert.equal(second.kind, 'user_message');
+  assert.deepEqual(second.from, { session_id: a, title: 'Alpha chat' });
+  assert.equal(second.preview, '', 'queued text waits for its admitted turn');
+  assert.equal(listed.counts.unread, 2);
+  assert.equal(listed.counts.discarded, 1);
+  const all = await f.service.agentListInbox({ sourceSessionId: dst, sourceIncarnation: inc(dst) });
+  assert.deepEqual(all.messages.map((entry) => entry.preview), ['', '', ''], 'nothing is included yet, so nothing is previewed');
+  assert.equal(all.messages.some((entry) => entry.preview === 'not for dest'), false);
+  // Once a message has been included in an admitted turn, its preview is the body's first 280 characters.
+  const mail = f.mail(dst);
+  mail.inbox[0] = { ...mail.inbox[0], context: { state: 'included', turn_id: 'turn_1', snapshot_id: UUID,
+    included_at: new Date().toISOString(), canonical_message_id: `ctx_${mail.inbox[0].envelope.message_id}` } };
+  assert.ok(f.store._updateSessionRecord(dst, { session_mail: mail }, { bumpUpdatedAt: false }));
+  const after = await f.service.agentListInbox({ sourceSessionId: dst, sourceIncarnation: inc(dst) });
+  const included = after.messages.filter((entry) => entry.state === 'included');
+  assert.equal(included.length, 1);
+  assert.equal(included[0].preview, mail.inbox[0].envelope.body.slice(0, 280));
+  assert.ok(included[0].preview.length > 0);
+  assert.equal(f.store.getSessionSummary(dst).unread_message_count, 2, 'listing never marks mail read');
+  for (const limit of [0, 51, 1.5]) {
+    assert.equal((await f.service.agentListInbox({ sourceSessionId: dst, sourceIncarnation: inc(dst), limit })).reason, 'invalid_request');
+  }
+  assert.equal((await f.service.agentListInbox({ sourceSessionId: dst, sourceIncarnation: inc(a) })).reason, 'stale_operation');
+});
+
+
+test('resumeWake reaches the wake ops: a paused chat queues mail, Resume wakes it once for the oldest (row 76)', async (t) => {
+  const f = createFixture(t);
+  const src = f.sessionId('Source');
+  const dst = f.sessionId('Dest');
+  let paused = true;
+  f.backend.primaryChatControls = { isPaused: (id) => paused && id === dst };
+  assert.equal((await f.sendNew(src, dst, 'first')).sent.ok, true);
+  assert.equal((await f.sendNew(src, dst, 'second')).sent.ok, true);
+  assert.equal(f.wakes.length, 0, 'a paused chat is not woken');
+  assert.equal(f.mail(dst).inbox.filter((record) => record.context.state === 'queued').length, 2, 'the mail is still queued');
+  assert.equal((await f.service.resumeWake(dst)).outcome, 'paused', 'still paused: the gate refuses');
+  paused = false;
+  assert.equal((await f.service.resumeWake(dst)).outcome, 'submitted');
+  assert.equal(f.wakes.length, 1);
+  assert.equal(f.wakes[0].request.sessionId, dst);
+});

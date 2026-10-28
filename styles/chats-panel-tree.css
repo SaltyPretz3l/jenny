@@ -1,26 +1,23 @@
-/* Linked chats in the sidebar (row 59 checkpoint 5a): 16 px indent per level, a quiet thread with
- * one elbow per last child, a chevron and a count chip that are siblings of the open button, and
- * the origin caption line. Rows stay flat siblings; depth and thread hooks come from
- * renderer-chats-panel-tree.js (data-tree-*, --cw-depth). Row height and the state-dot vocabulary
- * are unchanged. Imported after chats-panel.css and before chats-panel-selection.css so bulk
- * selection still wins the grid. Split out of chats-panel.css, which sits at the 600-line ratchet. */
+/* Linked chats in the sidebar (row 59 checkpoint 5a): 24 px indent per level, one straight guide
+ * line 4 px inside the title start, a chevron and a count chip that are siblings of the open button
+ * (placed by chats-panel-row-trail.css), and the origin caption line. Rows stay flat siblings;
+ * depth and thread hooks come from renderer-chats-panel-tree.js (data-tree-*, --cw-depth). Row
+ * height is unchanged. Imported after chats-panel.css and before chats-panel-row-trail.css and
+ * chats-panel-selection.css. Split out of chats-panel.css, which sits at the 600-line ratchet. */
 
 .session-row {
-  --cw-indent: 16px;
-  /* Centre of a parent's status dot, measured from the row's start edge. */
-  --cw-thread-x: calc(var(--space-4) + var(--session-row-dot-size) / 2);
-  --cw-dot-center: calc(var(--session-row-height) / 2);
-  --cw-thread: var(--line-strong);
-  /* Own level of this row (capped with the indent): where its elbow or tick starts. */
+  --cw-indent: 24px;
+  /* The guide line runs 4 px inside a parent's title start, measured from the row's start edge.
+   * --cw-base is a section's own indent (a project group, chats-panel-projects.css): it moves the
+   * row start and every guide line together, so linked chats nest the same inside a project. */
+  --cw-thread-x: calc(var(--cw-base, 0px) + var(--space-4) + 4px);
+  --cw-thread: color-mix(in srgb, var(--text-muted) 55%, transparent);
+  /* Own level of this row (capped with the indent): where its guide line starts. */
   --cw-own-x: calc((var(--cw-depth, 0) - 1) * var(--cw-indent) + var(--cw-thread-x));
 }
 
-.session-row[data-tree-depth]:not([data-tree-depth="0"]) {
-  padding-inline-start: calc(var(--cw-depth, 0) * var(--cw-indent));
-}
-
-.session-row[data-tree-has-children="true"] {
-  grid-template-columns: minmax(0, 1fr) auto 32px;
+.session-row[data-tree-depth] {
+  padding-inline-start: calc(var(--cw-base, 0px) + var(--cw-depth, 0) * var(--cw-indent));
 }
 
 /* Thread: each child row owns the line from the gap above it to its own bottom edge, so
@@ -59,39 +56,20 @@
 .session-row[data-tree-through~="3"] { --cw-c3: var(--cw-thread); }
 .session-row[data-tree-through~="4"] { --cw-c4: var(--cw-thread); }
 
-/* The last child: one rounded elbow into its dot. A child with later siblings: a tick that
- * starts 1 px after the straight line. */
-.session-row[data-tree-last]:not([data-tree-depth="0"])::after {
+/* The last child: a straight segment that stops short of the row's bottom, no arm or tee. */
+.session-row[data-tree-last="true"]:not([data-tree-depth="0"])::after {
   content: "";
   position: absolute;
   box-sizing: border-box;
   pointer-events: none;
-  inline-size: calc(var(--cw-indent) - var(--session-row-dot-size) / 2 - var(--space-2));
-  border-block-end: 1px solid var(--cw-thread);
-}
-
-.session-row[data-tree-last="true"]::after {
   inset-block-start: calc(-1 * var(--space-1));
   inset-inline-start: var(--cw-own-x);
-  block-size: calc(var(--cw-dot-center) + var(--space-1));
+  block-size: calc(var(--session-row-height) + var(--space-1) - var(--space-4));
   border-inline-start: 1px solid var(--cw-thread);
-  border-end-start-radius: var(--radius-xs);
 }
 
-.session-row[data-tree-last="false"]::after {
-  inset-block-start: calc(var(--cw-dot-center) - 1px);
-  inset-inline-start: calc(var(--cw-own-x) + 1px);
-  block-size: 0;
-}
-
-/* Chevron and count chip: sibling controls of the open button, reached with Left/Right on the row. */
-.session-row__branch {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-inline-end: var(--space-1);
-}
-
+/* Chevron and count chip: sibling controls of the open button, reached with Left/Right on the row.
+ * Their trailing placement and hover swap live in chats-panel-row-trail.css. */
 .session-row__chevron,
 .session-row__children-chip {
   border: 0;
@@ -112,11 +90,6 @@
     opacity var(--motion-duration-fast) var(--motion-ease-standard),
     background-color var(--motion-duration-fast) var(--motion-ease-standard),
     color var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.session-row:is(:hover, :focus-within) .session-row__chevron,
-.session-row__chevron[aria-expanded="false"] {
-  opacity: 1;
 }
 
 .session-row__chevron:is(:hover, :focus-visible) {
@@ -171,7 +144,15 @@
   background: var(--text-muted);
 }
 
-.session-row__children-dot[data-tone="active"] { background: var(--sidebar-state-streaming-color); }
+.session-row__children-dot[data-tone="active"] { background: var(--text-secondary); }
+
+/* Working is grey now (the shared streaming token), so an active descendant pulses like the row dot;
+ * the brighter grey still tells it apart under reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .session-row__children-dot[data-tone="active"] {
+    animation: sidebar-state-pulse calc(var(--motion-duration-emphasis) * 5) var(--motion-ease-standard) infinite alternate;
+  }
+}
 .session-row__children-dot[data-tone="unread"] { background: var(--accent-primary); }
 
 .session-row__chevron:focus-visible,
@@ -195,11 +176,9 @@
 }
 
 .session-row__origin {
-  order: 3;
   flex: 0 0 100%;
   box-sizing: border-box;
   min-inline-size: 0;
-  padding-inline-start: calc(var(--session-row-dot-size) + var(--space-4));
   overflow: hidden;
   color: var(--text-muted);
   font-size: var(--font-size-caption);

@@ -59,7 +59,7 @@ function createHarness(t, {
     attachments: { queued: [] },
     queuedSendBySession: new Map(),
     turnClockBySession: new Map(turnClockEntries),
-    ui: { activeView: 'chat', composerPopoverOpen: false, commandPopoverOpen: false, followLatest: true },
+    ui: { activeView: 'chat', composerPopoverOpen: false, followLatest: true },
     status: {},
     modelList: {},
   };

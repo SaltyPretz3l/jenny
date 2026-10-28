@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 import signal
 import subprocess
 import sys
@@ -21,6 +20,7 @@ except ImportError:  # pragma: no cover - Windows.
 from sidecar.ai.config import MCPServerConfig, read_environment_value
 from sidecar.ai.config_parsing import mcp_env_key_rejection
 from sidecar.ai.mcp.builtin_command_discovery import discover_command_directories
+from sidecar.ai.tools.builtins.executable_lookup import which_on_explicit_path
 from sidecar.ai.tools.builtins.python_runtime.job_object import JobObject
 from sidecar.ai.tools.catalog import BUILTIN_MCP_SERVER_NAME
 from sidecar.runtime.diagnostics import log_event
@@ -57,6 +57,29 @@ _ENV_PASSTHROUGH_KEYS = (
     "HOME",
     "USER",
     "LOGNAME",
+    # Non-secret Windows machine facts. The VS Setup API (CMake's Visual Studio
+    # generators, vswhere) reads its instance store under ProgramData; MSBuild
+    # and native toolchains read the rest.
+    "PROGRAMDATA",
+    "ALLUSERSPROFILE",
+    "WINDIR",
+    "SYSTEMDRIVE",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "PROGRAMW6432",
+    "COMMONPROGRAMFILES",
+    "COMMONPROGRAMFILES(X86)",
+    "COMMONPROGRAMW6432",
+    "PUBLIC",
+    "NUMBER_OF_PROCESSORS",
+    "PROCESSOR_ARCHITECTURE",
+    "PROCESSOR_IDENTIFIER",
+    "PROCESSOR_LEVEL",
+    "PROCESSOR_REVISION",
+    "OS",
+    "COMPUTERNAME",
+    "USERNAME",
+    "USERDOMAIN",
     "XDG_RUNTIME_DIR",
     "XDG_CONFIG_HOME",
     "XDG_DATA_HOME",
@@ -93,13 +116,18 @@ def _resolve_command_path(command: str) -> Path | None:
         return path.absolute()
 
 
-def _resolve_command_for_env(command: str) -> Path | None:
-    resolved = _resolve_command_path(command)
-    if resolved is not None:
-        return resolved
+def _bare_command_on_path(command: str) -> str | None:
+    """A bare command name found on PATH, never in the cwd (security review 2026-10-25 item 8).
+
+    Windows CreateProcess appends only ``.exe`` to a bare name and searches the
+    parent's cwd first; keep the ``.exe`` rule (a bare ``npx`` must not start
+    running ``npx.cmd`` through cmd.exe) and drop the cwd.
+    """
     token = str(command or "").strip()
     if not token or _command_has_path_separator(token):
         return None
+    if _is_windows() and not Path(token).suffix:
+        token += ".exe"
     search_paths = [
         item
         for item in (
@@ -109,10 +137,18 @@ def _resolve_command_for_env(command: str) -> Path | None:
         if item
     ]
     for search_path in dict.fromkeys(search_paths):
-        discovered = shutil.which(token, path=search_path)
+        discovered = which_on_explicit_path(token, path=search_path)
         if discovered is not None:
-            return _resolve_command_path(discovered)
+            return discovered
     return None
+
+
+def _resolve_command_for_env(command: str) -> Path | None:
+    resolved = _resolve_command_path(command)
+    if resolved is not None:
+        return resolved
+    discovered = _bare_command_on_path(command)
+    return _resolve_command_path(discovered) if discovered is not None else None
 
 
 def _command_has_path_separator(command: str) -> bool:
@@ -275,6 +311,16 @@ class MCPProcessContainment:
         self._process_group_id: int | None = None
         self._cpu_stop = threading.Event()
         self._cpu_thread: threading.Thread | None = None
+
+    def spawn_command(self) -> str:
+        """The executable to spawn; on Windows a bare name is resolved on PATH only."""
+        command = str(self._config.command or "").strip()
+        if not _is_windows() or _command_has_path_separator(command):
+            return command
+        discovered = _bare_command_on_path(command)
+        if discovered is None:
+            raise FileNotFoundError(f"'{command}' was not found on PATH")
+        return discovered
 
     def popen_kwargs(self) -> dict[str, Any]:
         command_path = _resolve_command_for_env(str(self._config.command or ""))

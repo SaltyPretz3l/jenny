@@ -6,14 +6,14 @@ import json
 from pathlib import Path
 from typing import Any
 
+import fitz
 import pytest
 
 from sidecar.ai.tools.builtins import pdf_ocr, pdf_ocr_rapid, pdf_text
 from sidecar.ai.tools.builtins.filesystem_content import read_media_file
 from sidecar.ai.tools.builtins.rich_files.pdf import pdf_inspect_tool
+from sidecar.ai.tools.sanitization import sanitize_tool_output
 from sidecar.ai.tools.workspace import WorkspaceGuard
-
-fitz = pytest.importorskip("fitz")
 
 
 class _Rect:
@@ -138,6 +138,151 @@ def test_rapid_load_failure_logs_once_then_uses_tesseract(
     assert rapid_events[0]["data"] == {"error_type": "ImportError"}
 
 
+def test_sessions_share_one_loaded_engine_per_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loads: list[object] = []
+
+    def load() -> object:
+        loads.append(object())
+        return loads[-1]
+
+    used: list[object] = []
+    monkeypatch.setattr(pdf_ocr_rapid, "load_engine", load)
+    monkeypatch.setattr(
+        pdf_ocr_rapid,
+        "recognize_page",
+        lambda engine, _page: used.append(engine) or (_rapid_words(), 200),
+    )
+
+    for page_number in (1, 2):
+        session = pdf_ocr.PdfOcrSession()
+        assert session.recover_words(_Page(), page_number=page_number) is not None
+
+    assert len(loads) == 1
+    assert used == [loads[0], loads[0]]
+    pdf_ocr_rapid.reset_shared_engine()
+    pdf_ocr.PdfOcrSession().recover_words(_Page(), page_number=3)
+    assert len(loads) == 2
+
+
+def test_failed_engine_load_is_remembered_across_sessions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts: list[int] = []
+
+    def fail_load() -> object:
+        attempts.append(1)
+        raise ImportError("rapidocr package missing")
+
+    monkeypatch.setattr(pdf_ocr_rapid, "load_engine", fail_load)
+    monkeypatch.setattr(pdf_ocr, "resolve_tessdata", lambda **_kwargs: _tessdata(tmp_path))
+    words = [(10, 20, 30, 32, "Tess", 0, 0, 0)]
+    sessions = [pdf_ocr.PdfOcrSession(), pdf_ocr.PdfOcrSession()]
+
+    for session in sessions:
+        result = session.recover_words(_Page(tess_words=words), page_number=1)
+        assert result == pdf_ocr.OcrPageResult(words, "tesseract", None)
+        assert session.rapid_unavailable_reason == "ImportError: rapidocr package missing"
+
+    assert attempts == [1]
+
+
+def test_transient_engine_load_failure_is_retried_after_the_backoff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts: list[int] = []
+    engine = object()
+    clock = [100.0]
+    monkeypatch.setattr(pdf_ocr_rapid, "monotonic", lambda: clock[0])
+
+    def flaky_load() -> object:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise RuntimeError("onnxruntime init failed")
+        return engine
+
+    monkeypatch.setattr(pdf_ocr_rapid, "load_engine", flaky_load)
+    monkeypatch.setattr(pdf_ocr, "resolve_tessdata", lambda **_kwargs: _tessdata(tmp_path))
+    monkeypatch.setattr(pdf_ocr_rapid, "recognize_page", lambda _engine, _page: (_rapid_words(), 200))
+    words = [(10, 20, 30, 32, "Tess", 0, 0, 0)]
+
+    first = pdf_ocr.PdfOcrSession()
+    assert first.recover_words(_Page(tess_words=words), page_number=1) == pdf_ocr.OcrPageResult(
+        words, "tesseract", None
+    )
+    assert first.rapid_unavailable_reason == "RuntimeError"
+    assert first.rapid_transient_failure is True
+    # Inside the backoff the failure is remembered: no reload on every read.
+    soon = pdf_ocr.PdfOcrSession()
+    assert soon.recover_words(_Page(tess_words=words), page_number=1).engine == "tesseract"
+    assert attempts == [1]
+    clock[0] += pdf_ocr_rapid.RAPID_LOAD_RETRY_SECONDS
+    second = pdf_ocr.PdfOcrSession()
+    assert second.recover_words(_Page(tess_words=words), page_number=1).engine == "rapidocr"
+    assert second.rapid_transient_failure is False
+    assert attempts == [1, 1]
+
+
+def test_missing_package_is_not_a_transient_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_load() -> object:
+        raise ImportError("rapidocr package missing")
+
+    monkeypatch.setattr(pdf_ocr_rapid, "load_engine", fail_load)
+    monkeypatch.setattr(pdf_ocr, "resolve_tessdata", lambda **_kwargs: _tessdata(tmp_path))
+    session = pdf_ocr.PdfOcrSession()
+
+    session.recover_words(_Page(tess_words=[(10, 20, 30, 32, "Tess", 0, 0, 0)]), page_number=1)
+
+    assert session.rapid_transient_failure is False
+
+
+def test_rapid_page_failure_is_a_transient_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(pdf_ocr_rapid, "load_engine", object)
+
+    def recognize(_engine: object, _page: object) -> Any:
+        raise RuntimeError("bad raster")
+
+    monkeypatch.setattr(pdf_ocr_rapid, "recognize_page", recognize)
+    monkeypatch.setattr(pdf_ocr, "resolve_tessdata", lambda **_kwargs: _tessdata(tmp_path))
+    session = pdf_ocr.PdfOcrSession()
+
+    result = session.recover_words(
+        _Page(tess_words=[(10, 20, 30, 32, "Tess", 0, 0, 0)]), page_number=1
+    )
+
+    assert result is not None and result.engine == "tesseract"
+    assert session.rapid_transient_failure is True
+
+
+def test_rapid_load_failure_reason_carries_no_local_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = tmp_path / "site" / "onnxruntime.pyd"
+
+    def fail_load() -> object:
+        raise ImportError(f"DLL load failed while importing onnxruntime: {library}")
+
+    monkeypatch.setattr(pdf_ocr_rapid, "load_engine", fail_load)
+    monkeypatch.setattr(pdf_ocr, "resolve_tessdata", lambda **_kwargs: _tessdata(tmp_path))
+    session = pdf_ocr.PdfOcrSession()
+
+    session.recover_words(_Page(tess_words=[(10, 20, 30, 32, "Tess", 0, 0, 0)]), page_number=1)
+
+    assert session.rapid_unavailable_reason.startswith("ImportError: DLL load failed")
+    assert str(tmp_path) not in session.rapid_unavailable_reason
+    assert "<path>" in session.rapid_unavailable_reason
+
+
 def test_rapid_page_failure_falls_back_once_then_retries_rapid(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -241,8 +386,8 @@ def test_page_lines_reports_uncertain_tokens_and_tesseract_alternatives(
         "engine": "rapidocr",
         "dpi": 200,
         "uncertain": [
-            {"line": 1, "token": "24,066,365", "score": 0.6, "alt": "24,086,365"},
-            {"line": 1, "token": "21,864,486", "score": 0.7},
+            {"line": 1, "word": "24,066,365", "score": 0.6, "alt": "24,086,365"},
+            {"line": 1, "word": "21,864,486", "score": 0.7},
         ],
     }
 
@@ -371,10 +516,14 @@ def test_media_and_rich_pdf_paths_publish_rapidocr_details(
     media_payload = json.loads(media.output)
     media_page = media_payload["pages"][0]
     assert media_page["ocr_engine"] == "rapidocr"
-    assert media_page["ocr_uncertain"] == [{"line": 1, "token": "24,066,365", "score": 0.6}]
+    assert media_page["ocr_uncertain"] == [{"line": 1, "word": "24,066,365", "score": 0.6}]
     assert "24,066,365" in media_page["text_excerpt"]
     assert "21,864,486" in media_page["text_excerpt"]
     assert media.metadata["ocr_engines"] == {1: "rapidocr"}
+    # The model reads the sanitized output; secret redaction rewrites any
+    # `token: <value>` pair, so the uncertain reading must survive it.
+    sanitized = json.loads(sanitize_tool_output(media.output, max_chars=100_000))
+    assert sanitized["pages"][0]["ocr_uncertain"] == media_page["ocr_uncertain"]
     media_note = media_payload["note"]
     assert media_note.startswith("Page 1 has no text layer; its text was recovered")
     assert media_note.endswith(pdf_text.SOURCES_NOTE)
@@ -385,7 +534,7 @@ def test_media_and_rich_pdf_paths_publish_rapidocr_details(
     )
     rich_page = rich.metadata["summary"]["pages"][0]
     assert rich_page["ocr_engine"] == "rapidocr"
-    assert rich_page["ocr_uncertain"][0]["token"] == "24,066,365"
+    assert rich_page["ocr_uncertain"][0]["word"] == "24,066,365"
     rich_note = rich.metadata["summary"]["note"]
     assert rich_note.startswith("Page 1 has no text layer; its text was recovered")
     assert rich_note.endswith(pdf_text.SOURCES_NOTE)
@@ -438,7 +587,62 @@ def test_oversized_page_is_refused_before_either_engine_renders(
 
     assert session.recover_words(page, page_number=1) is None
     assert session.unavailable_reason == "page too large to rasterize for OCR"
-    assert session.recover_textpage(page, page_number=1) is None
     assert session.used_pages == []
     assert pdf_ocr.page_exceeds_pixel_budget(_Page()) is False
     assert pdf_ocr.page_exceeds_pixel_budget(object()) is True
+
+
+def test_second_opinion_never_downloads_the_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def resolve(**kwargs: Any) -> pdf_ocr.TessdataResolution:
+        calls.append(kwargs)
+        return pdf_ocr.TessdataResolution(None, "English OCR model not installed")
+
+    monkeypatch.setattr(pdf_ocr_rapid, "load_engine", object)
+    monkeypatch.setattr(pdf_ocr_rapid, "recognize_page", lambda _engine, _page: (_rapid_words(), 200))
+    monkeypatch.setattr(pdf_ocr, "resolve_tessdata", resolve)
+    session = pdf_ocr.PdfOcrSession()
+
+    _lines, _text_layer, info = pdf_text.page_lines(
+        _Page(),
+        page_number=1,
+        ocr_session=session,
+        text_less_pages=[],
+        tool_name="read_file",
+    )
+
+    assert calls == [{"allow_download": False}]
+    assert info is not None
+    assert info["uncertain"] == [{"line": 1, "word": "24,066,365", "score": 0.6}]
+    # The miss is not remembered: a later Tesseract fallback page may still download.
+    assert session._resolution is None
+
+
+def test_uncertain_tokens_and_alternates_are_sanitized_and_capped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token = "9" * 200
+    rapid_words = [pdf_ocr_rapid.RapidWord(36, 50, 400, 62, token, 0.5)]
+    tess_words = [(36, 50, 400, 62, "8" * 200, 0, 0, 0)]
+    monkeypatch.setattr(pdf_ocr_rapid, "load_engine", object)
+    monkeypatch.setattr(pdf_ocr_rapid, "recognize_page", lambda _engine, _page: (rapid_words, 200))
+    monkeypatch.setattr(pdf_ocr, "resolve_tessdata", lambda **_kwargs: _tessdata(tmp_path))
+
+    _lines, _text_layer, info = pdf_text.page_lines(
+        _Page(tess_words=tess_words),
+        page_number=1,
+        ocr_session=pdf_ocr.PdfOcrSession(),
+        text_less_pages=[],
+        tool_name="read_file",
+    )
+
+    assert info is not None
+    [entry] = info["uncertain"]
+    assert len(entry["word"]) <= pdf_ocr.OCR_UNCERTAIN_TOKEN_CHARS
+    assert entry["word"].startswith("999")
+    assert len(entry["alt"]) <= pdf_ocr.OCR_UNCERTAIN_TOKEN_CHARS
+    assert entry["alt"].startswith("888")

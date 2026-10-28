@@ -47,3 +47,32 @@ test('HOM-06 single-date forms accept overnight events and preserve them on edit
   assert.equal(form.buildEventPayload(edit).payload.end, result.payload.end);
   assert.ok(form.buildEventPayload({ ...values, end: '23:00' }).error);
 });
+
+test('shortening an overnight event keeps it same-day; a 24h event keeps its span', () => {
+  const overnight = form.buildEditValues({ id: 'o', title: 'Shift', start: '2026-06-11T22:00', end: '2026-06-12T02:00' });
+  assert.equal(form.endDayOffset(overnight), 0);
+  assert.equal(form.buildEventPayload(overnight).payload.end, '2026-06-12T02:00');
+  overnight.end = '23:30';
+  assert.equal(form.buildEventPayload(overnight).payload.end, '2026-06-11T23:30');
+
+  const fullDay = form.buildEditValues({ id: 'f', title: 'Watch', start: '2026-06-11T08:00', end: '2026-06-12T08:00' });
+  assert.equal(form.endDayOffset(fullDay), 1);
+  assert.equal(form.buildEventPayload(fullDay).payload.end, '2026-06-12T08:00');
+});
+
+test('"Save all events" from an occurrence moves the series anchor by the same day delta', () => {
+  const values = form.buildEditValues({ id: 's', title: 'Standup', start: '2026-06-01T09:00', end: '2026-06-01T09:30', recurrence: 'daily' });
+  // Opened from the Jun 22 occurrence: the form shows that date.
+  Object.assign(values, { occurrenceStart: '2026-06-22T09:00', date: '2026-06-22', start: '09:00', end: '09:30' });
+  values.title = 'Daily standup';
+  const unchanged = form.rebaseSeriesPayload(form.buildEventPayload(values).payload, values);
+  assert.equal(unchanged.start, '2026-06-01T09:00');
+  assert.equal(unchanged.end, '2026-06-01T09:30');
+
+  values.date = '2026-06-23';
+  values.start = '10:00';
+  values.end = '10:30';
+  const moved = form.rebaseSeriesPayload(form.buildEventPayload(values).payload, values);
+  assert.equal(moved.start, '2026-06-02T10:00');
+  assert.equal(moved.end, '2026-06-02T10:30');
+});

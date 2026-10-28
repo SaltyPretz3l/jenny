@@ -68,6 +68,8 @@
   'use strict';
 
   var NODE = 'data-chat-node';
+  // Dispatched on a .chat-pane by renderer-side-panel-motion.js (same literal there).
+  var FIT_FLUSH_EVENT = 'jenny:composer-fit-flush';
   var jtFallback = function (key, fallback) { return fallback; };
   var CLONE_CLEARED_ATTRIBUTES = ['id', 'for', 'aria-describedby', 'aria-disabled', 'tabindex'];
   var CLONE_CLEARED_CLASSES = ['composer-control-inert', 'inv-chip--open'];
@@ -117,6 +119,8 @@
       'composer-model-pill-slot': jt('composer.settingsSummary.rowModel', 'Model'),
       'composer-context-usage-slot': jt('composer.settingsSummary.rowContext', 'Context'),
       'composer-plan-usage-slot': jt('composer.settingsSummary.rowPlanUsage', 'Plan usage'),
+      // Row 63: the project pill folds into the open list like the others, so it gets its row label.
+      'composer-project-pill-slot': jt('composer.settingsSummary.rowProject', 'Project'),
     };
   }
 
@@ -519,6 +523,9 @@
       ResizeObserverCtor: deps.ResizeObserverCtor !== undefined ? deps.ResizeObserverCtor : view.ResizeObserver,
       getHost: deps.getHost,
     });
+    // Side-panel motion measures the end state in one task; it asks every pane to settle its fit first.
+    function onFitFlush() { fit.flush(); }
+    if (paneRoot) paneRoot.addEventListener(FIT_FLUSH_EVENT, onFitFlush);
 
     /* The summary text: the model pill's visible label, run mode first when it
        is not `ask`. Rewritten, and the fit rechecked, only when it changed. */
@@ -587,6 +594,7 @@
       setOpen(false);
       disposed = true;
       fit.dispose();
+      if (paneRoot) paneRoot.removeEventListener(FIT_FLUSH_EVENT, onFitFlush);
       if (observer) observer.disconnect();
       observer = null;
       summary.removeEventListener('click', onSummaryClick);
@@ -730,9 +738,17 @@
       if (!modelSelect || typeof buildModelOptionMarkup !== 'function') return;
       var models = Array.isArray(state.modelList && state.modelList.data) ? state.modelList.data : [];
       var status = state.status || {};
-      var backendModel = String(status.model || (state.modelList && state.modelList.active_model) || '').trim();
-      var backendEngine = String(status.engine || status.engine_type || (state.modelList && state.modelList.engine_type) || '')
-        .trim().toLowerCase();
+      var pickerUtils = globalThis.rendererComposerModelPickerUtils;
+      // "Use default" runs on the Settings default model when the catalog lists it.
+      var defaultChat = pickerUtils && typeof pickerUtils.resolveDefaultChatModel === 'function'
+        ? pickerUtils.resolveDefaultChatModel(state)
+        : {
+          model: String(status.model || (state.modelList && state.modelList.active_model) || '').trim(),
+          engineType: String(status.engine || status.engine_type || (state.modelList && state.modelList.engine_type) || '')
+            .trim().toLowerCase(),
+        };
+      var backendModel = defaultChat.model;
+      var backendEngine = defaultChat.engineType;
       var signature = JSON.stringify([
         models.map(function (model) {
           return [model && model.id, model && (model.engine_type || model.engineType), model && model.available, model && model.reason];
@@ -846,6 +862,7 @@
   }
 
   return {
+    FIT_FLUSH_EVENT: FIT_FLUSH_EVENT,
     createPaneComposerRail: createPaneComposerRail,
     createComposerSettingsFit: createComposerSettingsFit,
     measureComposerToolbar: measureComposerToolbar,

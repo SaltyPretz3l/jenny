@@ -1,0 +1,192 @@
+/* styles/ide-terminal-theme.css - the Workspace terminal's ANSI palette and its find bar
+ * (row 82, plan IDE_VSCODE_PARITY_2026-10-26.md section 7.5, slice T1). Not an eager
+ * styles.css import: renderer-ide-xterm-loader.js injects it on the first terminal Start.
+ * The file links in run and test output live in ide-problems.css (always loaded).
+ *
+ * renderer-ide-pty-terminal-xterm.js reads these custom properties from the terminal host's
+ * computed style and hands them to xterm, so every value here is a literal hex colour (xterm
+ * cannot parse var() or color-mix()). Dark palettes share the :root set and override a few
+ * hues where the palette has its own character; the three light palettes share the light set.
+ * xterm still lifts any foreground under 4.5:1 against the live background
+ * (minimumContrastRatio), so these tokens set the hue, not the contrast floor. */
+
+:root {
+  --ide-terminal-ansi-black: #3b4048;
+  --ide-terminal-ansi-red: #f0716b;
+  --ide-terminal-ansi-green: #7fc98b;
+  --ide-terminal-ansi-yellow: #e5c07b;
+  --ide-terminal-ansi-blue: #6cb4ff;
+  --ide-terminal-ansi-magenta: #d38cf0;
+  --ide-terminal-ansi-cyan: #56c7d6;
+  --ide-terminal-ansi-white: #c9ced6;
+  --ide-terminal-ansi-bright-black: #7a828e;
+  --ide-terminal-ansi-bright-red: #ff8f88;
+  --ide-terminal-ansi-bright-green: #9fe0a8;
+  --ide-terminal-ansi-bright-yellow: #f2d491;
+  --ide-terminal-ansi-bright-blue: #8cc6ff;
+  --ide-terminal-ansi-bright-magenta: #e2a8f7;
+  --ide-terminal-ansi-bright-cyan: #7fdbe6;
+  --ide-terminal-ansi-bright-white: #f2f4f7;
+  --ide-terminal-selection: #7fb6dd59;
+  --ide-terminal-find-match: #e5c07b55;
+  --ide-terminal-find-match-active: #f29d4bb3;
+}
+
+:root[data-palette="jenny-day"],
+:root[data-palette="paper"],
+:root[data-palette="woolly"] {
+  --ide-terminal-ansi-black: #24292f;
+  --ide-terminal-ansi-red: #c4312b;
+  --ide-terminal-ansi-green: #2f7d32;
+  --ide-terminal-ansi-yellow: #8a6100;
+  --ide-terminal-ansi-blue: #0b5cad;
+  --ide-terminal-ansi-magenta: #8f3fa8;
+  --ide-terminal-ansi-cyan: #0e7385;
+  --ide-terminal-ansi-white: #6e7781;
+  --ide-terminal-ansi-bright-black: #57606a;
+  --ide-terminal-ansi-bright-red: #a8221d;
+  --ide-terminal-ansi-bright-green: #1f6b26;
+  --ide-terminal-ansi-bright-yellow: #735100;
+  --ide-terminal-ansi-bright-blue: #0a4a8f;
+  --ide-terminal-ansi-bright-magenta: #7a2f92;
+  --ide-terminal-ansi-bright-cyan: #0a5f6e;
+  --ide-terminal-ansi-bright-white: #3d444d;
+  --ide-terminal-find-match: #d9a40066;
+  --ide-terminal-find-match-active: #e2761bb3;
+}
+
+:root[data-palette="jenny-day"] {
+  --ide-terminal-ansi-cyan: #0c6f78;
+  --ide-terminal-selection: #4fa9b04d;
+}
+
+:root[data-palette="paper"] {
+  --ide-terminal-ansi-blue: #2f5fd6;
+  --ide-terminal-selection: #3568f040;
+}
+
+:root[data-palette="woolly"] {
+  --ide-terminal-ansi-green: #3d7a25;
+  --ide-terminal-ansi-yellow: #7d5a10;
+  --ide-terminal-selection: #3d8c2a40;
+}
+
+:root[data-palette="slate"] {
+  --ide-terminal-selection: #7fb6dd59;
+}
+
+:root[data-palette="jenny-night"] {
+  --ide-terminal-ansi-red: #ff6b8b;
+  --ide-terminal-ansi-magenta: #ff5fa8;
+  --ide-terminal-ansi-blue: #7d8bff;
+  --ide-terminal-ansi-cyan: #4ee6ff;
+  --ide-terminal-ansi-bright-magenta: #ff8cc4;
+  --ide-terminal-ansi-bright-cyan: #8af0ff;
+  --ide-terminal-selection: #ff3d8e4d;
+}
+
+:root[data-palette="rocko"] {
+  --ide-terminal-ansi-red: #f07a4a;
+  --ide-terminal-ansi-yellow: #f0b45a;
+  --ide-terminal-ansi-green: #8fd18a;
+  --ide-terminal-ansi-bright-yellow: #ffcf80;
+  --ide-terminal-selection: #e8641a4d;
+}
+
+:root[data-palette="signal"] {
+  --ide-terminal-ansi-blue: #4aa8ff;
+  --ide-terminal-ansi-cyan: #29c0ff;
+  --ide-terminal-ansi-bright-cyan: #7ad8ff;
+  --ide-terminal-selection: #29c0ff4d;
+}
+
+:root[data-palette="obsidian"] {
+  --ide-terminal-ansi-cyan: #1bd6ff;
+  --ide-terminal-ansi-bright-cyan: #6ee5ff;
+  --ide-terminal-selection: #1bd6ff40;
+}
+
+:root[data-palette="lexicon"] {
+  --ide-terminal-ansi-yellow: #e0b072;
+  --ide-terminal-ansi-red: #e8806a;
+  --ide-terminal-selection: #c88f524d;
+}
+
+:root[data-palette="darkroom"] {
+  --ide-terminal-ansi-magenta: #b9a6e8;
+  --ide-terminal-ansi-blue: #8fa8e8;
+  --ide-terminal-selection: #9c8fbe4d;
+}
+
+:root[data-palette="pewter"] {
+  --ide-terminal-ansi-blue: #8aa4c8;
+  --ide-terminal-ansi-cyan: #7fb8c4;
+  --ide-terminal-selection: #6a809f59;
+}
+
+/* == Find bar (Ctrl+F while the terminal has focus) == */
+
+.ide-terminal-find {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 4px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--font-size-footnote);
+}
+
+.ide-terminal-find[hidden] {
+  display: none;
+}
+
+.ide-terminal-find__input {
+  flex: 0 1 260px;
+  min-width: 0;
+}
+
+.ide-terminal-find__input .inv-text-field-control,
+input.ide-terminal-find__input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: var(--font-size-footnote);
+  line-height: 1.4;
+}
+
+.ide-terminal-find__input .inv-text-field-control:focus-visible,
+input.ide-terminal-find__input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.ide-terminal-find__count {
+  min-width: 7ch;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.ide-terminal-find__button {
+  border: 0;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+  cursor: pointer;
+}
+
+.ide-terminal-find__button:hover {
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
+}
+
+.ide-terminal-find__button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}

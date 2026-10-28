@@ -207,7 +207,13 @@ test('agentSend with a one-off approval consumes it with the pending transition,
   assert.equal(inbox.length, 1);
   assert.equal(inbox[0].envelope.message_id, op.envelope.message_id);
   assert.equal(inbox[0].envelope.kind, 'agent_message');
-  assert.equal(inbox[0].context.state, 'queued', 'delivery never wakes or includes anything');
+  assert.equal(inbox[0].context.state, 'queued', 'delivery queues the mail; the wake turn admits it');
+  // Row 70: a live delivery wakes the idle destination exactly once, under its own authority.
+  assert.equal(f.wakes.length, 1, 'one wake turn for the destination');
+  assert.equal(f.wakes[0].request.sessionId, dst);
+  assert.match(f.wakes[0].request.visiblePrompt, /^Woken by a message from /);
+  assert.equal(f.wakes[0].request.approvalMode, 'prompt');
+  assert.match(f.wakes[0].options.idempotencyKey, /^wake_[0-9a-f]{32}$/);
   const receipt = f.store.getSession(src).coordination_receipts.at(-1);
   assert.equal(receipt.method, 'session_message.send');
   assert.equal(receipt.resource_kind, 'outbox_operation');

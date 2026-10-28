@@ -15,6 +15,8 @@
   root.rendererAttachmentEventUtils = factory(root.rendererComposerFlowUtils);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (composerFlowUtils) {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  // The slash menu's open request (renderer-slash-autocomplete.js SLASH_MENU_EVENT).
+  const SLASH_MENU_EVENT = 'jenny:open-slash-menu';
   function createAttachmentEventBindings(deps) {
     const { state, sessionContext = null } = deps;
     const documentLevel = !sessionContext || (sessionContext.paneId ?? 0) === 0;
@@ -22,8 +24,6 @@
     const {
       attachmentTray,
       composerAttachMenu,
-      composerCommandPopover,
-      composerTerminalShortcut,
       composerAttachShortcut,
       chatInput,
       chatView,
@@ -40,11 +40,9 @@
       prepareDroppedAttachments,
       getDroppedFilePaths,
       renderComposerPopover,
-      renderCommandPopover,
       updateComposerSafeOffset,
       closeComposerPopover,
       openComposerPopover,
-      closeCommandPopover,
       queueInlineImageAttachment,
       handleAttachmentPicker,
       beginAttachmentToken = () => null,
@@ -57,8 +55,6 @@
     const chatDropEnterEvents = ['dragenter', 'dragover'];
     const cleanupFns = [];
     const attachmentTokens = new Set();
-    let commandTypeahead = '';
-    let commandTypeaheadTimer = 0;
     let bound = false;
     let disposed = false;
 
@@ -249,11 +245,6 @@
         && composerAttachShortcut
         && typeof composerAttachMenu.contains === 'function'
         && typeof composerAttachShortcut.contains === 'function';
-      const hasCommandPopoverTargets =
-        composerCommandPopover
-        && composerTerminalShortcut
-        && typeof composerCommandPopover.contains === 'function'
-        && typeof composerTerminalShortcut.contains === 'function';
       if (state.ui.composerPopoverOpen) {
         if (!hasComposerPopoverTargets) {
           closeComposerPopover();
@@ -264,16 +255,21 @@
           closeComposerPopover();
         }
       }
-      if (state.ui.commandPopoverOpen) {
-        if (!hasCommandPopoverTargets) {
-          closeCommandPopover();
-        } else if (
-          !composerCommandPopover.contains(target) &&
-          !composerTerminalShortcut.contains(target)
-        ) {
-          closeCommandPopover();
-        }
-      }
+    }
+
+    /* Row 63: the + menu's Commands and Skills rows open this composer's searchable
+       slash menu under the + button. Without one, they start a / in the message box. */
+    function openSlashMenu(kind) {
+      if (!chatInput) return;
+      const request = new window.CustomEvent(SLASH_MENU_EVENT, {
+        cancelable: true,
+        detail: { anchor: composerAttachShortcut, kind },
+      });
+      if (!chatInput.dispatchEvent(request)) return;
+      if (!String(chatInput.value || '').startsWith('/')) chatInput.value = '/' + String(chatInput.value || '');
+      chatInput.focus();
+      chatInput.setSelectionRange?.(1, 1);
+      chatInput.dispatchEvent(new window.Event('input', { bubbles: true }));
     }
 
     function handleAttachMenuKeydown(event) {
@@ -291,61 +287,6 @@
       items[index].focus();
     }
 
-    function getCommandMenuItems() {
-      if (!composerCommandPopover || typeof composerCommandPopover.querySelectorAll !== 'function') return [];
-      return [...composerCommandPopover.querySelectorAll('[role="menuitem"][data-command-name]')];
-    }
-
-    function focusCommandMenuItem(items, index) {
-      if (!items.length) return;
-      const normalized = (index + items.length) % items.length;
-      items.forEach((item, itemIndex) => { item.tabIndex = itemIndex === normalized ? 0 : -1; });
-      items[normalized].focus?.();
-    }
-
-    function handleCommandMenuKeydown(event) {
-      const items = getCommandMenuItems();
-      if (!items.length) return false;
-      const activeIndex = Math.max(items.indexOf(document.activeElement), 0);
-      if (event.key === 'ArrowDown') {
-        event.preventDefault();
-        focusCommandMenuItem(items, activeIndex + 1);
-        return true;
-      }
-      if (event.key === 'ArrowUp') {
-        event.preventDefault();
-        focusCommandMenuItem(items, activeIndex - 1);
-        return true;
-      }
-      if (event.key === 'Home') {
-        event.preventDefault();
-        focusCommandMenuItem(items, 0);
-        return true;
-      }
-      if (event.key === 'End') {
-        event.preventDefault();
-        focusCommandMenuItem(items, items.length - 1);
-        return true;
-      }
-      if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
-        commandTypeahead += event.key.toLowerCase();
-        if (commandTypeaheadTimer) window.clearTimeout(commandTypeaheadTimer);
-        commandTypeaheadTimer = window.setTimeout(() => {
-          commandTypeahead = '';
-          commandTypeaheadTimer = 0;
-        }, 500);
-        const matchIndex = items.findIndex((item) => (
-          String(item.dataset.commandName || '').replace(/^\//, '').toLowerCase().startsWith(commandTypeahead)
-        ));
-        if (matchIndex >= 0) {
-          event.preventDefault();
-          focusCommandMenuItem(items, matchIndex);
-        }
-        return matchIndex >= 0;
-      }
-      return false;
-    }
-
     function handleDocumentKeydown(event) {
       if (
         event.defaultPrevented
@@ -354,23 +295,10 @@
       ) {
         return;
       }
-      if (event.key === 'Escape' && state.ui.commandPopoverOpen) {
-        event.preventDefault();
-        event.stopPropagation();
-        closeCommandPopover({ restoreFocus: true });
-        return;
-      }
-      if (state.ui.commandPopoverOpen && handleCommandMenuKeydown(event)) {
-        return;
-      }
       if (event.key === 'Escape' && state.ui.composerPopoverOpen) {
         event.preventDefault();
         event.stopPropagation();
         closeComposerPopover({ restoreFocus: true });
-        return;
-      }
-      if (event.key === 'Tab' && state.ui.commandPopoverOpen) {
-        closeCommandPopover();
         return;
       }
       if (event.key === 'Tab' && state.ui.composerPopoverOpen) {
@@ -383,9 +311,6 @@
     function handleWindowResize() {
       if (state.ui.composerPopoverOpen) {
         renderComposerPopover();
-      }
-      if (state.ui.commandPopoverOpen) {
-        renderCommandPopover({ positionOnly: true });
       }
       updateComposerSafeOffset({
         force: true,
@@ -537,9 +462,6 @@
 
     function dispose() {
       disposed = true;
-      if (commandTypeaheadTimer) window.clearTimeout(commandTypeaheadTimer);
-      commandTypeaheadTimer = 0;
-      commandTypeahead = '';
       for (const token of attachmentTokens) {
         cancelAttachmentToken(token);
       }
@@ -590,7 +512,11 @@
         else openComposerPopover();
       });
       registerListener(composerAttachMenu, 'click', (event) => {
-        if (event.target.closest?.('[role="menuitem"]')) closeComposerPopover();
+        const item = event.target.closest?.('[role="menuitem"]');
+        if (!item) return;
+        closeComposerPopover();
+        const action = item.getAttribute('data-composer-menu-action');
+        if (action === 'commands' || action === 'skills') openSlashMenu(action);
       });
       registerListener(captureScreenButton, 'click', handleCaptureScreenClick);
     }

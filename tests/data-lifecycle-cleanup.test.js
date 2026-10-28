@@ -13,6 +13,7 @@ const {
 const { DERIVED_INDEX_CHILDREN } = require('../services/data-lifecycle/derived-indexes');
 const { WORKSPACE_PORTABLE_NAMES } = require('../services/data-lifecycle/data-inventory');
 const { HomeAiJournalStore } = require('../services/home-ai-journal-store');
+const { linkDirectory } = require('./helpers/platform-skips');
 
 function makeTempRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-cleanup-'));
@@ -232,7 +233,7 @@ describe('cleanupJennyData', () => {
     ]);
   });
 
-  it('fails closed when .jenny itself is a link during archived removal', async (t) => {
+  it('fails closed when .jenny itself is a link during archived removal', async () => {
     const root = makeTempRoot();
     try {
       const workspaceRoot = path.join(root, 'workspace');
@@ -240,12 +241,7 @@ describe('cleanupJennyData', () => {
       fs.mkdirSync(workspaceRoot);
       fs.mkdirSync(path.join(externalPath, 'artifacts'), { recursive: true });
       fs.writeFileSync(path.join(externalPath, 'artifacts', 'keep.txt'), 'keep');
-      try {
-        fs.symlinkSync(externalPath, path.join(workspaceRoot, '.jenny'), 'junction');
-      } catch (error) {
-        t.skip(`junction creation unavailable: ${error.code || 'unknown'}`);
-        return;
-      }
+      linkDirectory(externalPath, path.join(workspaceRoot, '.jenny'));
       const result = await cleanupJennyData({
         workspaceRoot, removeWorkspaceData: true, includeUserData: false, workspaceRemovalScope: 'archived',
       });
@@ -468,7 +464,7 @@ describe('cleanupJennyData', () => {
     }), false);
   });
 
-  it('fails closed when a selected recursive target contains a link', async (t) => {
+  it('fails closed when a selected recursive target contains a link', async () => {
     const root = makeTempRoot();
     try {
       const userDataPath = path.join(root, 'profile');
@@ -476,12 +472,7 @@ describe('cleanupJennyData', () => {
       fs.mkdirSync(userDataPath);
       fs.mkdirSync(externalPath);
       fs.writeFileSync(path.join(externalPath, 'keep.txt'), 'keep');
-      try {
-        fs.symlinkSync(externalPath, path.join(userDataPath, 'sessions'), 'junction');
-      } catch (error) {
-        t.skip(`junction creation unavailable: ${error.code || 'unknown'}`);
-        return;
-      }
+      linkDirectory(externalPath, path.join(userDataPath, 'sessions'));
       const result = await cleanupJennyData({ userDataPath });
       assert.equal(result.ok, false);
       assert.equal(result.results[0].reason, 'reparse_or_symlink');
@@ -502,13 +493,6 @@ describe('cleanupJennyData', () => {
     fs.writeFileSync(path.join(sessionsPath, 'one.json'), '{}');
     fs.mkdirSync(outside);
     fs.writeFileSync(path.join(outside, 'keep'), 'keep');
-    try {
-      fs.symlinkSync(outside, path.join(root, 'probe-junction'), 'junction');
-      fs.unlinkSync(path.join(root, 'probe-junction'));
-    } catch (error) {
-      t.skip(`junction creation unavailable: ${error.code || 'unknown'}`);
-      return;
-    }
     // A concurrent writer plants the junction after validation scanned the tree and found no link.
     const originalLstat = fs.promises.lstat;
     let planted = false;
@@ -579,6 +563,22 @@ describe('cleanupJennyData', () => {
     } finally {
       fs.readdirSync = originalReaddirSync;
       fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('main-process compile cache', () => {
+  it('is a known user-data child, so uninstall and reset remove it instead of reporting it unknown', () => {
+    const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-cleanup-compile-cache-'));
+    try {
+      fs.mkdirSync(path.join(userDataPath, 'compile-cache'));
+      const targets = buildCleanupTargets({ userDataPath });
+      assert.ok(
+        targets.some((target) => target.kind === 'user_data_child' && target.name === 'compile-cache'),
+        'main.js writes <userData>/compile-cache; cleanup must own it',
+      );
+    } finally {
+      fs.rmSync(userDataPath, { recursive: true, force: true });
     }
   });
 });

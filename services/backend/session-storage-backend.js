@@ -21,6 +21,8 @@ const {
 const {
   readsNewerSchema,
   enterNewerSchemaFreeze,
+  isSessionFileShape,
+  sessionRecordOf,
   freezeRecoveredIndex,
   skipsReadonlyModeWrite,
 } = require('./session-storage-guards');
@@ -30,6 +32,7 @@ const {
   installIndexStore,
   noteJournalStatus,
   normalizeJournalOption,
+  preserveDamagedIndexFile,
   preserveDamagedIndexJournals,
   quarantineSessionJournals,
   readIndexStatus,
@@ -49,6 +52,7 @@ const {
 const {
   TranscriptCacheAccounting,
 } = require('./session-transcript-cache');
+const { ActiveTurnMarker } = require('./session-active-turn-marker');
 
 let mutationAfterDisposeWarningEmitted = false;
 
@@ -120,6 +124,7 @@ class SessionStorageBackend {
     journal = null,
     logger = null,
     storeName = 'session_store',
+    activeTurnMarker = false,
   } = {}) {
     if (!rootDir) {
       throw new Error('SessionStorageBackend requires a rootDir.');
@@ -167,9 +172,11 @@ class SessionStorageBackend {
     // backend has authoritative in-memory knowledge of. Lets bulk callers
     // (listSessionRecords) answer active_turn without loading message bodies.
     // Lazily seeded from disk once per process by getActiveTurnSnapshots(),
-    // then maintained on every upsert/load/delete.
+    // then maintained on every upsert/load/delete. With `activeTurnMarker` the
+    // seed reads only the chats session-active-turn-marker.js lists.
     this._scanActiveTurns = new Map();
     this._activeTurnScanSeeded = false;
+    this._activeTurnMarker = new ActiveTurnMarker(this, { enabled: activeTurnMarker === true });
     // Non-persisted sessionId -> count of accepted writes that moved
     // turn_event_seq_counter (every turn-event append path ends in upsert).
     this._turnEventStamps = new Map();
@@ -216,6 +223,8 @@ class SessionStorageBackend {
     }
     const raw = indexStatus.value;
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      // An unreadable index (value null, not corrupted) stays in place.
+      if (indexStatus.corrupted || raw != null) preserveDamagedIndexFile(this);
       if (this._recoverSplitIndexFromSessionFiles('unreadable_index')) {
         return;
       }
@@ -240,9 +249,9 @@ class SessionStorageBackend {
     if (
       (!raw.sessions || typeof raw.sessions !== 'object' || Array.isArray(raw.sessions))
       && this._newerSchemaVersion === 0
-      && this._recoverSplitIndexFromSessionFiles('malformed_index')
     ) {
-      return;
+      preserveDamagedIndexFile(this);
+      if (this._recoverSplitIndexFromSessionFiles('malformed_index')) return;
     }
     if (
       this._newerSchemaVersion === 0
@@ -259,6 +268,7 @@ class SessionStorageBackend {
   }
 
   _queueSplitLayoutMigration(indexRaw, observedVersion) {
+    this._activeTurnMarker.distrust();
     return queueSplitLayoutMigration(this, indexRaw, observedVersion);
   }
 
@@ -418,6 +428,7 @@ class SessionStorageBackend {
 
     let writeError = null;
     let sessionWrite = null;
+    this._activeTurnMarker.note(sessionId, normalized?.active_turn);
     try {
       const store = this._getOrCreateSessionStore(sessionId);
       sessionWrite = store.write({
@@ -515,6 +526,7 @@ class SessionStorageBackend {
     this._cacheAvailabilityListeners.clear();
     flushBackend(this, { compact: true });
     this._pruneCache();
+    this._activeTurnMarker.rebuild();
     return { disposed: true, pending: countPendingSessions(this) };
   }
 
@@ -524,6 +536,7 @@ class SessionStorageBackend {
     this._cacheAvailabilityListeners.clear();
     await flushBackendAsync(this);
     this._pruneCache();
+    this._activeTurnMarker.rebuild();
     return { disposed: true, pending: countPendingSessions(this) };
   }
 
@@ -689,20 +702,19 @@ class SessionStorageBackend {
     if (readStatus.corrupted) {
       return this._quarantineAndRecoverCorruptSession(sessionId, readStatus);
     }
+    if (readStatus.missing) return null;
     const raw = readStatus.value;
-    if (!raw) {
-      return null;
-    }
     if (readsNewerSchema(this, raw)) {
       // A newer app wrote this file; freeze and do not load future-schema data.
       enterNewerSchemaFreeze(this, raw.schema_version, this._sessionFilePath(sessionId));
       return null;
     }
-    const sessionRecord =
-      raw && typeof raw === 'object' && !Array.isArray(raw) && raw.session
-        ? raw.session
-        : raw;
-    return this._normalizeSession(sessionId, sessionRecord);
+    if (!isSessionFileShape(raw)) {
+      return this._quarantineAndRecoverCorruptSession(sessionId, {
+        errorCode: 'not_a_session_record', errorMessage: 'chat file is not a session record',
+      });
+    }
+    return this._normalizeSession(sessionId, sessionRecordOf(raw));
   }
 
   _trackActiveTurn(sessionId, session) {
@@ -710,12 +722,9 @@ class SessionStorageBackend {
       session && typeof session === 'object' && !Array.isArray(session)
         ? session.active_turn
         : null;
-    this._scanActiveTurns.set(
-      sessionId,
-      activeTurn && typeof activeTurn === 'object' && !Array.isArray(activeTurn)
-        ? activeTurn
-        : null
-    );
+    const tracked = activeTurn && typeof activeTurn === 'object' && !Array.isArray(activeTurn) ? activeTurn : null;
+    if (tracked) this._activeTurnMarker.note(sessionId, tracked);
+    this._scanActiveTurns.set(sessionId, tracked);
   }
 
   _seedActiveTurnScan() {
@@ -723,12 +732,16 @@ class SessionStorageBackend {
       return;
     }
     this._activeTurnScanSeeded = true;
-    for (const sessionId of this.getSessionIds()) {
-      if (this._scanActiveTurns.has(sessionId)) {
+    const retained = [];
+    for (const sessionId of this._activeTurnMarker.seedCandidates() || this.getSessionIds()) {
+      if (this._scanActiveTurns.has(sessionId) || !this.hasSession(sessionId)) {
         continue;
       }
-      this._trackActiveTurn(sessionId, this.peekSession(sessionId));
+      const session = this.peekSession(sessionId);
+      if (!session) retained.push(sessionId);
+      this._trackActiveTurn(sessionId, session);
     }
+    this._activeTurnMarker.rebuild({ retained });
   }
 
   _quarantineAndRecoverCorruptSession(sessionId, readStatus) {
@@ -868,13 +881,9 @@ class SessionStorageBackend {
         enterNewerSchemaFreeze(this, raw.schema_version, filePath);
         continue;
       }
-      const sessionRecord =
-        raw && typeof raw === 'object' && !Array.isArray(raw) && raw.session
-          ? raw.session
-          : raw;
-      if (!sessionRecord || typeof sessionRecord !== 'object' || Array.isArray(sessionRecord)) {
-        continue;
-      }
+      // Not a chat: skipped and left as it is (a later read quarantines it).
+      if (!isSessionFileShape(raw)) continue;
+      const sessionRecord = sessionRecordOf(raw);
       const sessionId = String(
         sessionRecord.id || path.basename(entry.name, '.json') || ''
       ).trim();
@@ -899,6 +908,7 @@ class SessionStorageBackend {
       return false;
     }
     installIndexStore(this);
+    this._activeTurnMarker.distrust();
     this._cachedIndex = {
       schema_version: this._schemaVersion,
       sessions: indexSessions,

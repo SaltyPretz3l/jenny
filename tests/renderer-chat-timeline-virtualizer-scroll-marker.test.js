@@ -154,3 +154,43 @@ test('a batch that unmounts nothing reports no programmatic write', (t) => {
   env.observers[0]._fire([{ target: entries[42], isIntersecting: false }]);
   assert.deepEqual(writes, [], 'an already-virtualized entry unmounts nothing and must not attribute the next frame');
 });
+
+// Owner-reported idle scroll loop (2026-10-16): the shell log attributed repeated
+// idle moves to `virtualizer`, but the resize-driven restore armed that reason
+// before every restore, including restores that wrote nothing. The coordinator
+// arms `anchor_restore` itself when a restore moves the viewport, so the resize
+// path must not report a write of its own; otherwise the marker labels any other
+// writer's move in the next second as the virtualizer's.
+
+test('a resize that changes no width and mutates nothing reports no programmatic write', (t) => {
+  const env = buildEnvironment();
+  t.after(() => env.restore());
+  const previousRO = global.ResizeObserver;
+  const resizeCallbacks = [];
+  global.ResizeObserver = class FakeResizeObserver {
+    constructor(callback) { resizeCallbacks.push(callback); }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+  t.after(() => { global.ResizeObserver = previousRO; });
+  const writes = [];
+  let restores = 0;
+  const entries = bulkEntries(200);
+  const chatTimeline = makeChatTimeline(entries);
+  const v = createTimelineVirtualizer({
+    chatTimeline,
+    document: makeFakeDocument(),
+    noteProgrammaticWrite(reason) { writes.push(reason); },
+    restoreReaderAnchor() { restores += 1; return 'unchanged'; },
+  });
+  t.after(() => v.dispose());
+  v.rebuild();
+  assert.equal(resizeCallbacks.length, 1, 'the virtualizer observes timeline resizes');
+  writes.length = 0;
+  restores = 0;
+
+  resizeCallbacks[0]([{ target: chatTimeline }]);
+  assert.equal(restores, 1, 'a height-only resize still restores the detached reader anchor');
+  assert.deepEqual(writes, [], 'a restore attributes its own write; the resize path must not pre-arm one');
+});

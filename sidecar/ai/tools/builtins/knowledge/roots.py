@@ -8,6 +8,7 @@ not the security boundary.
 
 from __future__ import annotations
 
+import os
 import re
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -196,9 +197,10 @@ def resolve_knowledge_path(raw_path: object) -> tuple[KnowledgeRoot, Path, str]:
     candidate = raw_path.strip()
     # Reject NTFS alternate-data-stream forms (file.txt:stream / ::$DATA) —
     # streams bypass the binary/size gating the plain file goes through. The
-    # only legal ':' is a drive-letter separator at index 1.
+    # only legal ':' is a drive-letter separator at index 1. POSIX has no
+    # streams, and ':' is an ordinary file-name character there.
     drive_free = candidate[2:] if _DRIVE_PREFIX_RE.match(candidate) else candidate
-    if ":" in drive_free:
+    if os.name == "nt" and ":" in drive_free:
         raise ToolExecutionFailure(
             code=CMP_TOOL_INVALID_PATH,
             message="path contains an unsupported ':' segment",

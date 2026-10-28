@@ -14,6 +14,7 @@ function createReminderNotifier({
   getMainWindow,
   notificationFactory,
   isSupported,
+  isEnabled = () => true,
   sendBridgeEvent,
   log,
   now = Date.now,
@@ -91,6 +92,7 @@ function createReminderNotifier({
     // category, sound); the in-app reminders.onFired event is unaffected.
     // Every decision leaves a log line so a missing toast can be diagnosed.
     const settings = readNotificationSettings();
+    if (isEnabled() !== true) return logInfo('reminder_notifier.suppressed', { reason: 'flag_off' });
     if (settings.enabled === false) return logInfo('reminder_notifier.suppressed', { reason: 'disabled' });
     if (settings.categories.reminders === false) return logInfo('reminder_notifier.suppressed', { reason: 'category_off' });
     // "Only when Jenny is in the background" covers reminders too: the in-app

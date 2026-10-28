@@ -82,28 +82,9 @@ test('Electron tool bridge routes the canonical Jenny status facade', async () =
   assert.equal(result.metadata.result_kind, 'jenny_status');
 });
 
-test('Electron tool bridge treats an absent per-call plan_mode as plan-safe', async () => {
-  let observedContext = null;
-  await executeElectronToolRequest({
-    toolExecutor: {
-      async executePreApproved(_call, context) {
-        observedContext = context;
-        return { content: 'ok', isError: false, metadata: {} };
-      },
-    },
-  }, {
-    planMode: false,
-    params: {
-      tool_name: 'jenny_status',
-      read_only: false,
-    },
-  });
-
-  assert.equal(observedContext.planMode, true);
-  assert.equal(observedContext.readOnly, false);
-});
-
-test('Electron tool bridge treats an absent per-call read_only as read-only', async () => {
+test('Electron tool bridge ignores payload mode flags without a trusted execution authority', async () => {
+  // The payload's own plan_mode / read_only are sidecar-supplied text; without a
+  // trusted authority the request runs as Plan + read-only whatever they say.
   let observedContext = null;
   await executeElectronToolRequest({
     toolExecutor: {
@@ -117,10 +98,11 @@ test('Electron tool bridge treats an absent per-call read_only as read-only', as
     params: {
       tool_name: 'jenny_status',
       plan_mode: false,
+      read_only: false,
     },
   });
 
-  assert.equal(observedContext.planMode, false);
+  assert.equal(observedContext.planMode, true);
   assert.equal(observedContext.readOnly, true);
 });
 

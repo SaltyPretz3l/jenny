@@ -72,6 +72,53 @@
     return [];
   }
 
+  function latestAssistantMessageId(messages) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message && message.role === 'assistant') {
+        return trimString(message.id);
+      }
+    }
+    return '';
+  }
+
+  /* With no active turn, the phase model falls back to the last live reducer
+     entry, and a turn that never reconciled (a denied approval) outlives later
+     completed turns there. The agent surface anchors on the latest assistant
+     message instead: the turn that produced it wins, from either map, and the
+     phase model's own fallback runs only when no turn claims that message. */
+  function selectAgentTurn(phaseUtils, liveState, messages) {
+    const select = typeof phaseUtils.selectActiveTurnFromLiveState === 'function'
+      ? phaseUtils.selectActiveTurnFromLiveState
+      : () => null;
+    if (!liveState || typeof liveState !== 'object') {
+      return select(liveState);
+    }
+    const activeTurnId = trimString(liveState.active_turn_id || liveState.activeTurnId);
+    const liveTurns = liveState.turns_by_id && typeof liveState.turns_by_id === 'object' ? liveState.turns_by_id : {};
+    if (activeTurnId && liveTurns[activeTurnId]) {
+      return liveTurns[activeTurnId];
+    }
+    const anchorId = latestAssistantMessageId(messages);
+    if (anchorId) {
+      const reconciled = liveState.reconciled_rows_by_turn_id && typeof liveState.reconciled_rows_by_turn_id === 'object'
+        ? liveState.reconciled_rows_by_turn_id : {};
+      for (const key of Object.keys(reconciled)) {
+        const entry = reconciled[key];
+        if (entry && entry.turn && trimString(entry.turn.primary_assistant_message_id) === anchorId) {
+          return select({ active_turn_id: '', turns_by_id: {}, reconciled_rows_by_turn_id: { [key]: entry } });
+        }
+      }
+      for (const key of Object.keys(liveTurns)) {
+        const turn = liveTurns[key];
+        if (turn && trimString(turn.primary_assistant_message_id) === anchorId) {
+          return turn;
+        }
+      }
+    }
+    return select(liveState);
+  }
+
   /* (a) Active-turn lifecycle from the live reducer state. Falls back to the
      idle shape when the phase module or live state is unavailable so the
      surface never throws and never reports a stale "running" turn. */
@@ -82,10 +129,7 @@
     if (!phaseUtils) {
       return idle;
     }
-    const selectActiveTurn = typeof phaseUtils.selectActiveTurnFromLiveState === 'function'
-      ? phaseUtils.selectActiveTurnFromLiveState
-      : () => null;
-    const activeTurn = selectActiveTurn(readLiveState(state, sessionId));
+    const activeTurn = selectAgentTurn(phaseUtils, readLiveState(state, sessionId), readSessionMessages(state, sessionId));
     if (!activeTurn) {
       return idle;
     }

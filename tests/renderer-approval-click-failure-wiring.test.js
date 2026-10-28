@@ -8,6 +8,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
+const { withExactApproval } = require('./helpers/exact-approval-fixtures');
 
 test('a failed Allow once shows the approval error and frees the card', async (t) => {
   const sessionId = 'approval-failure-session';
@@ -36,8 +37,8 @@ test('a failed Allow once shows the approval error and frees the card', async (t
     await waitForUi(window, 65);
   };
   await emit({ type: 'started' });
-  await emit({ type: 'tool_approval_needed', callId: 'call-write', approvalId: 'call-write',
-    toolName: 'write_file', input: { path: 'a.txt', content: 'x' } });
+  await emit(withExactApproval({ type: 'tool_approval_needed', callId: 'call-write', approvalId: 'call-write',
+    toolName: 'write_file', input: { path: 'a.txt', content: 'x' } }));
 
   const allow = doc.querySelector('.tool-approve-btn:not(.tool-approve-always-btn)');
   assert.ok(allow, 'Allow once is on the card');
@@ -65,8 +66,8 @@ test('an Allow clicked before the resumed re-offer answers the new approval id',
   window.document.querySelector('[data-session-open="resume-1"]').click();
   await waitForUi(window, 60);
   await shell.__emitChat({ type: 'started', sessionId: 'resume-1', streamId: 'stream-a' });
-  await shell.__emitChat({ type: 'tool_approval_needed', sessionId: 'resume-1', streamId: 'stream-a',
-    callId: 'call-x', approvalId: 'approval-a', toolName: 'write_file', input: { path: 'a.txt', content: 'x' } });
+  await shell.__emitChat(withExactApproval({ type: 'tool_approval_needed', sessionId: 'resume-1', streamId: 'stream-a',
+    callId: 'call-x', approvalId: 'approval-a', toolName: 'write_file', input: { path: 'a.txt', content: 'x' } }));
   await waitForUi(window, 80);
   const allow = window.document.querySelector('.tool-approve-btn:not(.tool-approve-always-btn)');
   assert.ok(allow, 'precondition: the card offers Allow once');
@@ -78,8 +79,8 @@ test('an Allow clicked before the resumed re-offer answers the new approval id',
   assert.deepEqual(approveCalls, [], 'nothing is sent before main re-offers the call');
 
   await shell.__emitChat({ type: 'started', sessionId: 'resume-1', streamId: 'stream-b' });
-  await shell.__emitChat({ type: 'tool_approval_needed', sessionId: 'resume-1', streamId: 'stream-b',
-    callId: 'call-x', approvalId: 'approval-b', toolName: 'write_file', input: { path: 'a.txt', content: 'x' } });
+  await shell.__emitChat(withExactApproval({ type: 'tool_approval_needed', sessionId: 'resume-1', streamId: 'stream-b',
+    callId: 'call-x', approvalId: 'approval-b', toolName: 'write_file', input: { path: 'a.txt', content: 'x' } }));
   await waitForUi(window, 300);
   assert.deepEqual(approveCalls, ['approval-b']);
 });
@@ -100,8 +101,8 @@ test('an Allow in the resume gap never answers another session with the same cal
   window.document.querySelector('[data-session-open="resume-1"]').click();
   await waitForUi(window, 60);
   await shell.__emitChat({ type: 'started', sessionId: 'resume-1', streamId: 'stream-a' });
-  await shell.__emitChat({ type: 'tool_approval_needed', sessionId: 'resume-1', streamId: 'stream-a',
-    callId: 'call-x', approvalId: 'approval-a', toolName: 'write_file', input: { path: 'a.txt', content: 'x' } });
+  await shell.__emitChat(withExactApproval({ type: 'tool_approval_needed', sessionId: 'resume-1', streamId: 'stream-a',
+    callId: 'call-x', approvalId: 'approval-a', toolName: 'write_file', input: { path: 'a.txt', content: 'x' } }));
   await waitForUi(window, 80);
   const allow = window.document.querySelector('.tool-approve-btn:not(.tool-approve-always-btn)');
   assert.ok(allow, 'precondition: the card offers Allow once');
@@ -114,8 +115,33 @@ test('an Allow in the resume gap never answers another session with the same cal
   assert.deepEqual(approveCalls, [], 'another session\'s approval is never answered');
 
   await shell.__emitChat({ type: 'started', sessionId: 'resume-1', streamId: 'stream-b' });
-  await shell.__emitChat({ type: 'tool_approval_needed', sessionId: 'resume-1', streamId: 'stream-b',
-    callId: 'call-x', approvalId: 'approval-b', toolName: 'write_file', input: { path: 'a.txt', content: 'x' } });
+  await shell.__emitChat(withExactApproval({ type: 'tool_approval_needed', sessionId: 'resume-1', streamId: 'stream-b',
+    callId: 'call-x', approvalId: 'approval-b', toolName: 'write_file', input: { path: 'a.txt', content: 'x' } }));
   await waitForUi(window, 300);
   assert.deepEqual(approveCalls, ['approval-b']);
+});
+
+// A write approval that arrives without the exact presentation (the shape a rehydrated one has)
+// offers Deny only: there is no Allow to click.
+test('a write approval without its exact presentation offers no Allow', async (t) => {
+  const approveCalls = [];
+  const app = await loadRendererApp({ shell: { tools: { approve: (ref) => { approveCalls.push(ref); return { ok: true }; } } } });
+  t.after(() => app.dispose());
+  const { window } = app;
+  const shell = window.jennyShell;
+  shell.__state.sessions = [{ id: 'resume-1', title: 'Resume', conversation_mode: 'chat', preferred_model: 'gpt-test',
+    updated_at: new Date().toISOString(), linked_session_ids: [],
+    context_preferences: { history_scope: 'session', include_personality: true, include_memory: true } }];
+  await shell.__emitAuthState({ authenticated: true, user: { email: 'dev@example.com' } });
+  await waitForUi(window, 60);
+  window.document.querySelector('[data-session-open="resume-1"]').click();
+  await waitForUi(window, 60);
+  await shell.__emitChat({ type: 'started', sessionId: 'resume-1', streamId: 'stream-a' });
+  await shell.__emitChat({ type: 'tool_approval_needed', sessionId: 'resume-1', streamId: 'stream-a',
+    callId: 'call-x', approvalId: 'approval-a', toolName: 'write_file', input: { path: 'a.txt', content: 'x' } });
+  await waitForUi(window, 80);
+  assert.equal(window.document.querySelector('.tool-approve-btn'), null);
+  assert.ok(window.document.querySelector('[data-approval-exact-unavailable="missing"]'));
+  assert.ok(window.document.querySelector('.tool-deny-btn'));
+  assert.deepEqual(approveCalls, []);
 });

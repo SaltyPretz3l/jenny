@@ -8,7 +8,6 @@ the lock while waiting for a process and cannot erase a concurrent handoff.
 from __future__ import annotations
 
 import contextlib
-import errno
 import json
 import logging
 import os
@@ -17,7 +16,9 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable
+
+from sidecar.runtime.advisory_file_lock import advisory_file_lock
 
 logger = logging.getLogger(__name__)
 MAX_LEDGER_BYTES = 4 * 1024 * 1024
@@ -29,12 +30,6 @@ MAX_ENTRIES = 4096
 MAX_IDENTITY_CHARS = 4096
 KINDS = {"owned_process", "background_job", "python_sandbox", "mcp_stdio"}
 _LOCKS: dict[str, threading.RLock] = {}
-_CONTENTION = {
-    errno.EAGAIN,
-    errno.EWOULDBLOCK,
-    errno.EACCES,
-    getattr(errno, "EDEADLOCK", errno.EDEADLK),
-}
 _LOCKS_GUARD = threading.Lock()
 
 
@@ -59,54 +54,6 @@ def _process_gone(process: dict[str, Any]) -> bool:
     return observed.get("state") == "missing" or (
         observed.get("state") == "alive" and observed.get("identity") != process
     )
-
-
-@contextlib.contextmanager
-def _file_lock(path: Path, deadline: float) -> Iterator[None]:
-    """OS releases the lock even after SIGKILL; Windows only supports fixtures."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a+b") as handle:
-        if os.name == "nt":
-            import msvcrt
-
-            if handle.tell() == 0:
-                handle.write(b"0")
-                handle.flush()
-
-            def lock() -> None:
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-
-            def unlock() -> None:
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl
-
-            flock = getattr(fcntl, "flock", None)
-            if not callable(flock):
-                raise OSError("POSIX locking unavailable")
-            exclusive = getattr(fcntl, "LOCK_EX", 0) | getattr(fcntl, "LOCK_NB", 0)
-
-            def lock() -> None:
-                flock(handle.fileno(), exclusive)
-
-            def unlock() -> None:
-                flock(handle.fileno(), getattr(fcntl, "LOCK_UN", 0))
-
-        while True:
-            try:
-                lock()
-                break
-            except OSError as error:
-                # Only contention is worth waiting for; an unsupported lock fails now.
-                if error.errno not in _CONTENTION or time.monotonic() >= deadline:
-                    raise TimeoutError("owned ledger lock unavailable") from None
-                time.sleep(0.01)
-        try:
-            yield
-        finally:
-            unlock()
 
 
 class OwnedProcessLedger:
@@ -185,7 +132,8 @@ class OwnedProcessLedger:
             acquired = self._lock.acquire(timeout=max(0.0, deadline - time.monotonic()))
             if not acquired or time.monotonic() >= deadline:
                 raise TimeoutError("owned ledger lock unavailable")
-            with _file_lock(self.path.with_suffix(self.path.suffix + ".lock"), deadline):
+            lock_path = self.path.with_suffix(self.path.suffix + ".lock")
+            with advisory_file_lock(lock_path, deadline):
                 value = self._read()
                 result = change(value)
                 if len(value["entries"]) > MAX_ENTRIES:

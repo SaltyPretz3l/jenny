@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from typing import Literal, NamedTuple
 
@@ -18,6 +19,11 @@ _WAL_MAGIC = frozenset({_WAL_MAGIC_LITTLE_ENDIAN, _WAL_MAGIC_BIG_ENDIAN})
 _WAL_FORMAT_VERSION = 3_007_000
 _MIN_SQLITE_PAGE_SIZE = 512
 _MAX_SQLITE_PAGE_SIZE = 65_536
+# quick_check also reports rows that break a CHECK or NOT NULL constraint. The
+# store quarantines such rows itself while serving the rest, so they are not
+# page damage.
+_ROW_LEVEL_FINDINGS = ("CHECK constraint failed in ", "NULL value in ")
+_QUICK_CHECK_LIMIT = 100
 
 
 class _WalFrameValidation(NamedTuple):
@@ -62,6 +68,51 @@ def validate_memory_store_files(db_path: Path, *, schema_version: int) -> None:
                 f"expected {schema_version}; explicit repair is required"
             ),
         )
+
+
+def verify_memory_database_pages(connection: sqlite3.Connection) -> None:
+    """Refuse a database with damaged pages before anything writes to it.
+
+    The file checks above read only the header and the WAL; a damaged b-tree
+    page passes them, and a store opened over it would report itself available
+    while every read fails and retention sweeps write into the damage.
+    ``quick_check`` only reads, so the bytes stay as they are and the error
+    says so (``preserved``).
+    """
+
+    try:
+        rows = connection.execute(f"PRAGMA quick_check({_QUICK_CHECK_LIMIT})").fetchall()
+    except sqlite3.OperationalError as error:
+        # Busy, locked or an I/O error: nothing is known about the pages.
+        raise MemoryStoreError(
+            CMP_MEMORY_FAILED,
+            "memory database pages could not be checked; explicit repair is required",
+            preserved=True,
+        ) from error
+    except sqlite3.DatabaseError as error:
+        raise _damaged_pages_error() from error
+    findings = [str(row[0]) for row in rows if row and row[0] != "ok"]
+    if any(not finding.startswith(_ROW_LEVEL_FINDINGS) for finding in findings):
+        raise _damaged_pages_error()
+
+
+def decode_text_replacing_damage(raw: bytes) -> str:
+    """Text factory: a damaged byte in one stored text reads as U+FFFD.
+
+    Python's default decoding raises on it and fails the whole read of the
+    table, though SQLite's own checks pass; the JSON stores read such a byte
+    the same way.
+    """
+
+    return raw.decode("utf-8", errors="replace")
+
+
+def _damaged_pages_error() -> MemoryStoreError:
+    return MemoryStoreError(
+        CMP_MEMORY_FAILED,
+        "memory database pages are damaged; explicit repair is required",
+        preserved=True,
+    )
 
 
 def _validate_wal_file(wal_path: Path) -> int | None:

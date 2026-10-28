@@ -256,9 +256,13 @@ function createChatStreamBridge({
         summary.usageRecordingFailed = true;
         summary.usageRecordingError = 'record_failed';
       }
+      // A stream the user stopped or denied ends with an error-type event; its summary is
+      // information, not an error to triage.
+      const terminalStatus = normalizeToken(payload?.terminal_status || payload?.status).toLowerCase();
+      const userIntentTerminal = terminalStatus === 'cancelled' || terminalStatus === 'denied';
       invokeSafely(
         log,
-        type === 'error' ? 'ERROR' : 'INFO',
+        type === 'error' && !userIntentTerminal ? 'ERROR' : 'INFO',
         'chat.stream_summary',
         summary
       );

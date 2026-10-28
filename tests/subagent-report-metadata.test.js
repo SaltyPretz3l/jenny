@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  normalizeChildActivity,
   normalizeSubagentBatchReport,
   normalizeSubagentMetadata,
   normalizeSubagentReport,
@@ -370,4 +371,71 @@ test('runtime budgets and elapsed time above ten minutes survive normalization a
   }
   const capped = normalizeSubagentReport(report({ budget: { elapsed_ms: Number.MAX_SAFE_INTEGER } }));
   assert.equal(capped.budget.elapsed_ms, 86400000, 'still bounded by the longest supported parent turn');
+});
+
+test('prompt and answer_truncated are kept bounded, redacted, and omitted when absent', () => {
+  const plain = normalizeSubagentReport(report());
+  assert.equal(Object.hasOwn(plain, 'prompt'), false);
+  assert.equal(Object.hasOwn(plain, 'answer_truncated'), false);
+  assert.equal(Object.hasOwn(normalizeSubagentReport(report({ prompt: '  ', answer_truncated: 'yes' })), 'prompt'), false);
+  assert.equal(Object.hasOwn(normalizeSubagentReport(report({ answer_truncated: 'yes' })), 'answer_truncated'), false);
+  assert.equal(Object.hasOwn(normalizeSubagentReport(report({ answer_truncated: false })), 'answer_truncated'), false);
+
+  const kept = normalizeSubagentReport(report({
+    prompt: 'Read D:\\docs\\a.md\r\n\r\nthen api_key=prompt-secret-value\u202e',
+    answer_truncated: true,
+  }));
+  assert.equal(kept.answer_truncated, true);
+  assert.equal(kept.prompt.startsWith('Read D:\\docs\\a.md\n\nthen '), true);
+  assert.equal(kept.prompt.includes('prompt-secret-value'), false);
+  assert.equal(kept.prompt.includes('\u202e'), false);
+  assert.equal(normalizeSubagentReport(report({ prompt: 'p'.repeat(5000) })).prompt.length, 2000);
+});
+
+test('step range and path survive on ok steps with caps; failed or outside-path steps drop them', () => {
+  const normalized = normalizeSubagentReport(report({
+    steps: [
+      { tool: 'read_pdf', display: 'Read PDF', ok: true, target: 'docs/m.pdf', range: 'p1\u20133', path: './docs/m.pdf', extra: 'x' },
+      { tool: 'read_pdf', ok: true, target: 'a.md', range: `\u00a7 ${'R'.repeat(80)}` },
+      { tool: 'read_file', ok: false, error_code: 'CMP-TOOL-0001', detail: 'Denied', range: 'p1', path: 'docs/m.pdf' },
+      { tool: 'read_file', ok: true, target: 'x.md', path: 'C:\\Users\\me\\x.md' },
+      { tool: 'read_file', ok: true, target: 'y.md', path: '/etc/passwd' },
+      { tool: 'read_file', ok: true, target: 'z.md', path: '../z.md' },
+      { tool: 'read_file', ok: true, target: 'w.md', range: '   ' },
+      { tool: 'read_file', ok: true, target: '~/x', path: '~/x' },
+      { tool: 'read_file', ok: true, target: 'v.md', path: '~/v.md' },
+    ],
+  }));
+  const [first, second, failed, winAbs, posixAbs, parent, blank, homeNoTarget, home] = normalized.steps;
+
+  assert.deepEqual(first, {
+    tool: 'read_pdf', display: 'Read PDF', ok: true, target: 'docs/m.pdf', range: 'p1\u20133', path: 'docs/m.pdf',
+  });
+  assert.equal(second.range.length, 40);
+  assert.equal(Object.hasOwn(failed, 'range'), false);
+  assert.equal(Object.hasOwn(failed, 'path'), false);
+  for (const step of [winAbs, posixAbs, parent, homeNoTarget, home]) assert.equal(Object.hasOwn(step, 'path'), false, JSON.stringify(step));
+  assert.equal(Object.hasOwn(blank, 'range'), false);
+});
+
+test('child activity steps keep range and path through the shared step normalizer', () => {
+  const activity = normalizeChildActivity({
+    sequence: 2,
+    steps: [{ tool: 'read_file', display: 'Read File', ok: true, target: 'a.md', range: 'lines 1\u201350', path: 'a.md' }],
+  });
+
+  assert.deepEqual(activity.steps, [
+    { tool: 'read_file', display: 'Read File', ok: true, target: 'a.md', range: 'lines 1\u201350', path: 'a.md' },
+  ]);
+});
+
+test('batch tasks keep prompt and answer_truncated through the shared report normalizer', () => {
+  const batch = normalizeSubagentBatchReport({
+    batch_id: 'delegate:req:call',
+    status: 'completed',
+    tasks: [{ ...report(), ordinal: 1, prompt: 'Find the test command.', answer_truncated: true }],
+  });
+
+  assert.equal(batch.tasks[0].prompt, 'Find the test command.');
+  assert.equal(batch.tasks[0].answer_truncated, true);
 });

@@ -22,6 +22,8 @@ const CANCEL_REASON_TRANSPORT_ABORT = 'transport_abort';
 const CANCEL_REASON_SIDECAR = 'sidecar_cancel';
 // The session runtime's reason when Jenny closes mid-turn (dogfood TR-012).
 const CANCEL_REASON_APP_SHUTDOWN = 'app_shutdown';
+// A New session preparation turn that ran past its deadline (chat-proposal-session-flow.js).
+const CANCEL_REASON_HANDOFF_DEADLINE = 'handoff_deadline';
 
 const CANCEL_REASONS = new Set([
   CANCEL_REASON_USER,
@@ -32,6 +34,7 @@ const CANCEL_REASONS = new Set([
   CANCEL_REASON_TRANSPORT_ABORT,
   CANCEL_REASON_SIDECAR,
   CANCEL_REASON_APP_SHUTDOWN,
+  CANCEL_REASON_HANDOFF_DEADLINE,
 ]);
 
 const TERMINAL_ERROR_STATUSES = new Set([
@@ -307,6 +310,7 @@ function resolveTerminalRouting({
 module.exports = {
   CANCEL_REASON_APP_SHUTDOWN,
   CANCEL_REASON_DISPOSE,
+  CANCEL_REASON_HANDOFF_DEADLINE,
   CANCEL_REASON_SERVICE_STOP,
   CANCEL_REASON_SESSION_DELETE,
   CANCEL_REASON_SIDECAR,

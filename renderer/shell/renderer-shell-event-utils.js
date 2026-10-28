@@ -31,7 +31,6 @@
     const {
       renderSessions,
       resetSidebarWidth,
-      loadMoreChats,
       setRovingChatSession,
       handleSidebarResizeStart,
       handleSidebarResizeMove,
@@ -110,7 +109,7 @@
 
     function getConversationButtons() {
       return conversationGroups
-        ? [...conversationGroups.querySelectorAll('[data-session-open]')]
+        ? [...conversationGroups.querySelectorAll('[data-session-open], [data-project-toggle]')]
         : [];
     }
 
@@ -141,15 +140,70 @@
       }
       const nextIndex = Math.max(0, Math.min(index, buttons.length - 1));
       const target = buttons[nextIndex];
-      setRovingChatSession?.(target?.dataset?.sessionId);
+      // A project header is a stop in the order but never the roving chat row.
+      if (target?.matches?.('[data-session-open]')) setRovingChatSession?.(target.dataset.sessionId);
       target?.focus();
+    }
+
+    function isRtl(element) {
+      return element.ownerDocument?.documentElement?.dir === 'rtl';
+    }
+
+    // Tree-style horizontal keys apply only to an unmodified key outside bulk-select mode.
+    function isPlainTreeKey(event, card) {
+      return !(event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || card.classList.contains('sidebar-bulk-selecting'));
+    }
+
+    // Up/Down/Home/End over the shared button order (rows and project headers); false when not one of those keys.
+    function handleVerticalNavKey(event, buttons, currentIndex) {
+      if (event.key === 'ArrowDown') focusConversationButtonAt(currentIndex + 1);
+      else if (event.key === 'ArrowUp') focusConversationButtonAt(currentIndex - 1);
+      else if (event.key === 'Home') focusConversationButtonAt(0);
+      else if (event.key === 'End') focusConversationButtonAt(buttons.length - 1);
+      else return false;
+      return true;
+    }
+
+    // Project headers (grouped Chats): Right opens a closed project or enters its first row, Left
+    // closes an open one, the menu key opens the project menu; Up/Down/Home/End are shared with rows.
+    function handleProjectHeaderKeydown(event, toggle) {
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      const buttons = getConversationButtons();
+      const currentIndex = buttons.indexOf(toggle);
+      const expanded = toggle.getAttribute('aria-expanded') === 'true';
+      const rtl = isRtl(toggle);
+      const group = toggle.closest('.project-group');
+      const firstRow = group?.querySelector('[data-session-open]');
+      let handled = true;
+      if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) group?.querySelector('[data-project-menu]')?.click();
+      else if (handleVerticalNavKey(event, buttons, currentIndex)) { /* focus moved */ }
+      else if (event.key === 'Escape') handled = clearConversationSearch();
+      else if (event.shiftKey) handled = false;
+      else if (event.key === (rtl ? 'ArrowLeft' : 'ArrowRight')) {
+        if (!expanded) toggle.click();
+        else if (firstRow) focusConversationButtonAt(buttons.indexOf(firstRow));
+      } else if (event.key === (rtl ? 'ArrowRight' : 'ArrowLeft')) {
+        if (expanded) toggle.click();
+        else handled = false;
+      } else handled = false;
+      if (handled) event.preventDefault();
+    }
+
+    // Left (Right in RTL) on a top-level row with nothing to collapse goes up to its project header.
+    function focusProjectHeaderFromRow(event, card) {
+      if (!isPlainTreeKey(event, card)) return false;
+      if (event.key !== (isRtl(card) ? 'ArrowRight' : 'ArrowLeft')) return false;
+      const header = card.closest('.project-group')?.querySelector('[data-project-toggle]');
+      if (!header) return false;
+      header.focus();
+      return true;
     }
 
     // Linked chats: Right expands a collapsed parent or enters its first child; Left collapses an
     // expanded parent or goes to the parent row. Focus moves; selection and the row menu are untouched.
     function handleLinkedTreeKey(event, card, buttons, currentIndex) {
-      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || card.classList.contains('sidebar-bulk-selecting')) return false;
-      const rtl = card.ownerDocument?.documentElement?.dir === 'rtl';
+      if (!isPlainTreeKey(event, card)) return false;
+      const rtl = isRtl(card);
       const hasChildren = card.dataset.treeHasChildren === 'true';
       const expanded = card.dataset.treeExpanded === 'true';
       if (event.key === (rtl ? 'ArrowLeft' : 'ArrowRight')) {
@@ -171,6 +225,8 @@
     async function handleConversationCardKeydown(event) {
       const openButton = event.target.closest('[data-session-open]');
       if (!openButton) {
+        const headerToggle = event.target.closest('[data-project-toggle]');
+        if (headerToggle) handleProjectHeaderKeydown(event, headerToggle);
         return;
       }
       const card = event.target.closest('.conversation-item[data-session-id]');
@@ -187,28 +243,13 @@
         });
         return;
       }
-      if (event.key === 'ArrowDown') {
-        event.preventDefault();
-        focusConversationButtonAt(currentIndex + 1);
-        return;
-      }
-      if (event.key === 'ArrowUp') {
-        event.preventDefault();
-        focusConversationButtonAt(currentIndex - 1);
-        return;
-      }
-      if ((event.key === 'ArrowRight' || event.key === 'ArrowLeft') && handleLinkedTreeKey(event, card, buttons, currentIndex)) {
+      if (handleVerticalNavKey(event, buttons, currentIndex)) {
         event.preventDefault();
         return;
       }
-      if (event.key === 'Home') {
+      if ((event.key === 'ArrowRight' || event.key === 'ArrowLeft')
+        && (handleLinkedTreeKey(event, card, buttons, currentIndex) || focusProjectHeaderFromRow(event, card))) {
         event.preventDefault();
-        focusConversationButtonAt(0);
-        return;
-      }
-      if (event.key === 'End') {
-        event.preventDefault();
-        focusConversationButtonAt(buttons.length - 1);
         return;
       }
       if (event.key === 'Escape' && clearConversationSearch()) {
@@ -302,10 +343,6 @@
 
       registerListener(conversationGroups, 'click', async (event) => {
         try {
-          if (event.target.closest('[data-chats-load-more]')) {
-            loadMoreChats?.();
-            return;
-          }
           const actionButton = event.target.closest('[data-session-action]');
           if (actionButton) {
             if (actionButton.dataset.sessionAction === 'menu') {

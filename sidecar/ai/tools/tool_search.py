@@ -28,6 +28,11 @@ MAX_RESULTS = 25
 MIN_ID_PREFIX_LENGTH = 3
 MAX_DERIVED_SEARCH_HINT_CHARS = 160
 TOOL_SEARCH_TOOL_NAME = "tool_search"
+# Owner decision 2026-10-20 (row 69 Q6): defer-eligible tools that ``tst-auto`` defers even
+# under the threshold, so their schemas cost nothing until ``tool_search`` loads them.
+# ``JENNY_ENABLE_JENNY_HELP_DEFER=0`` offers them in full again.
+ALWAYS_DEFERRED_TOOL_NAMES = frozenset({"jenny_help"})
+JENNY_HELP_DEFER_FLAG = "JENNY_ENABLE_JENNY_HELP_DEFER"
 
 # Scoring weights
 SCORE_EXACT_ID = 100
@@ -265,7 +270,7 @@ class ToolSearchIndex:
         """Fuzzy keyword search.  Returns up to *max_results* matches sorted by score."""
         parsed = parse_tool_search_query(query)
         if parsed.mode == "select":
-            return self.select(list(parsed.select_names))
+            return self.select(list(parsed.select_names))[:max_results]
 
         all_terms = list(parsed.required_terms) + list(parsed.optional_terms)
         if not all_terms:
@@ -309,12 +314,14 @@ class ToolSearchIndex:
         return scored[:max_results]
 
     def select(self, names: list[str]) -> list[ScoredTool]:
-        """Direct selection by exact name (case-insensitive)."""
+        """Direct selection by exact name (case-insensitive); each tool appears once."""
         lower_map = {n.lower(): e for n, e in self._by_name.items()}
         results: list[ScoredTool] = []
+        seen: set[str] = set()
         for name in names:
             entry = lower_map.get(name.lower())
-            if entry is not None:
+            if entry is not None and entry.name not in seen:
+                seen.add(entry.name)
                 results.append(
                     ScoredTool(name=entry.name, score=100, description=entry.description)
                 )
@@ -336,6 +343,13 @@ def preset_starter_tool_names(descriptors: Iterable[Any]) -> frozenset[str]:
     return frozenset(name for server in server_names for name in starter_tool_names(server))
 
 
+def always_deferred_tools_enabled() -> bool:
+    """Whether ``tst-auto`` always defers ``ALWAYS_DEFERRED_TOOL_NAMES`` (default on)."""
+    from sidecar.ai.config import read_environment_value
+
+    return read_environment_value(JENNY_HELP_DEFER_FLAG, "1") != "0"
+
+
 def compute_deferral_set(
     mode: DeferralMode,
     all_descriptors: Sequence[Any],
@@ -348,6 +362,7 @@ def compute_deferral_set(
 
     Built-in tools are never deferred.  The ``tool_search`` tool itself
     is never deferred, nor are the starter tools of a preset MCP server.
+    ``TST_AUTO`` always defers the eligible ``ALWAYS_DEFERRED_TOOL_NAMES``.
     """
     if mode == DeferralMode.STANDARD:
         return frozenset()
@@ -361,8 +376,13 @@ def compute_deferral_set(
         return frozenset(d.name for d in candidates)
 
     # TST_AUTO: defer only when MCP tool description tokens exceed threshold
+    always_deferred = (
+        frozenset(d.name for d in candidates if d.name in ALWAYS_DEFERRED_TOOL_NAMES)
+        if always_deferred_tools_enabled()
+        else frozenset()
+    )
     if context_window <= 0 or tool_token_threshold_pct <= 0:
-        return frozenset()
+        return always_deferred
     estimated_tokens = sum(
         len(str(getattr(d, "description", "") or "")) // 4
         + len(str(getattr(d, "input_schema", {}) or {})) // 4
@@ -371,7 +391,7 @@ def compute_deferral_set(
     threshold = context_window * tool_token_threshold_pct // 100
     if estimated_tokens > threshold:
         return frozenset(d.name for d in candidates)
-    return frozenset()
+    return always_deferred
 
 
 # ── Tool payload builders ───────────────────────────────────────────

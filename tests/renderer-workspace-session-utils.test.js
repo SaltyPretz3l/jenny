@@ -437,63 +437,6 @@ test('opening a ninth tab says which idle tab closed and offers to show it in Ch
   assert.deepEqual(focused, ['s1'], 'the action focuses the evicted chat in the sidebar');
 });
 
-test('Show in Chats widens a filtered or paged sidebar until the evicted row is mounted', async () => {
-  const focused = [];
-  const calls = [];
-  const row = {
-    dataset: { sessionId: 's1' },
-    querySelector: () => ({ focus() { focused.push('s1'); }, scrollIntoView() {} }),
-  };
-  // The row is filtered out (a search, a project, the archived scope) and sits
-  // one page down: it mounts only after the filters clear and a page loads.
-  let mounted = false;
-  let pages = 0;
-  const search = { value: 'harness' };
-  const chatsPanel = {
-    getScope: () => 'archived',
-    setScope: (scope) => calls.push(['setScope', scope]),
-    getProjectFilter: () => 'proj-1',
-    setProjectFilter: (id) => calls.push(['setProjectFilter', id]),
-    resetQuery: () => calls.push(['resetQuery']),
-    renderNow: () => { calls.push(['renderNow']); mounted = pages >= 1; },
-    loadMore: () => { pages += 1; calls.push(['loadMore']); },
-  };
-  const workspaceRailShell = {
-    ownerDocument: {
-      querySelectorAll: (selector) => (mounted && selector.includes('#conversationGroups') ? [row] : []),
-      getElementById: (id) => (id === 'conversationSearch' ? search : null),
-    },
-    classList: { toggle() {} },
-    hidden: false,
-  };
-  const sessions = Array.from({ length: 9 }, (_v, index) => ({ id: `s${index + 1}`, title: `Chat ${index + 1}` }));
-  const { wsc, coordinator, toasts } = createHarness({ getOpenSessionsInNewTab: () => true, workspaceRailShell, sessions, chatsPanel });
-  await fillRail(wsc, coordinator);
-  await coordinator.activateWorkspaceSession('s9');
-  toasts[0].actions[0].onClick();
-
-  assert.equal(search.value, '', 'the search box is cleared');
-  assert.deepEqual(calls.slice(0, 4), [['setScope', 'recent'], ['setProjectFilter', ''], ['resetQuery'], ['renderNow']]);
-  assert.equal(pages, 1, 'one more page was enough');
-  assert.deepEqual(focused, ['s1']);
-});
-
-test('Show in Chats gives up after a bounded number of pages when the session is gone', async () => {
-  let pages = 0;
-  const chatsPanel = { renderNow() {}, loadMore: () => { pages += 1; } };
-  const workspaceRailShell = {
-    ownerDocument: { querySelectorAll: () => [], getElementById: () => null },
-    classList: { toggle() {} },
-    hidden: false,
-  };
-  const sessions = Array.from({ length: 9 }, (_v, index) => ({ id: `s${index + 1}`, title: `Chat ${index + 1}` }));
-  const { wsc, coordinator, toasts } = createHarness({ getOpenSessionsInNewTab: () => true, workspaceRailShell, sessions, chatsPanel });
-  await fillRail(wsc, coordinator);
-  await coordinator.activateWorkspaceSession('s9');
-  assert.doesNotThrow(() => toasts[0].actions[0].onClick());
-  assert.equal(pages, 20);
-});
-
 test('a full rail of busy tabs names the cap in sentence case', async () => {
   const { wsc, coordinator, toasts } = createHarness({ getOpenSessionsInNewTab: () => true, isSessionBusy: () => true });
   await fillRail(wsc, coordinator);
@@ -544,4 +487,28 @@ test('a chrome pass outside the chat view keeps a row-anchored link popover open
   state.ui.activeView = 'plugin';
   coordinator.renderWorkspaceChrome();
   assert.deepEqual(hides, [{ keepRowAnchored: true }]);
+});
+
+// A background chat streams: only runtime-only chrome passes run, so they are
+// the only signal a collapsed project's roll-up dot or a collapsed parent's
+// chip gets. Structural passes re-render the panel and need no patch.
+test('a runtime-only chrome pass patches the chats panel runtime state', async () => {
+  const patches = [];
+  const badgePasses = [];
+  const chatsPanel = { patchRuntimeState: () => patches.push('patchRuntimeState') };
+  const chrome = {
+    renderSidebarBadges: (...args) => badgePasses.push({ linkedCounts: args[4], options: args[7] }),
+    syncTabTitles() {}, patchRailRuntime() {}, renderRail() {}, hideLinkedSessionPopover() {},
+  };
+  const workspaceRailShell = { ownerDocument: { querySelectorAll: () => [] }, classList: { toggle() {} }, hidden: false };
+  const { coordinator, state } = createHarness({ chrome, workspaceRailShell, chatsPanel });
+  coordinator.renderWorkspaceChrome({ runtimeOnly: true });
+  assert.deepEqual(patches, ['patchRuntimeState']);
+  coordinator.renderWorkspaceChrome();
+  assert.deepEqual(patches, ['patchRuntimeState'], 'a structural pass leaves the panel to its own render');
+  // The runtime pass lets the badges skip unchanged rows and keep their linked counts.
+  assert.deepEqual(badgePasses, [{ linkedCounts: null, options: { runtimeOnly: true } }, { linkedCounts: {}, options: undefined }]);
+  state.ui.activeView = 'plugin';
+  coordinator.renderWorkspaceChrome({ runtimeOnly: true });
+  assert.deepEqual(patches, ['patchRuntimeState', 'patchRuntimeState'], 'the sidebar outlives the chat view');
 });

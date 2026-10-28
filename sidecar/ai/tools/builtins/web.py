@@ -14,8 +14,10 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from sidecar.ai.error_codes import (
+    CMP_TOOL_EXECUTION_FAILED,
     CMP_WEB_CONTENT_TOO_LARGE,
     CMP_WEB_FETCH_FAILED,
+    CMP_WEB_INVALID_QUERY,
     CMP_WEB_INVALID_URL,
     CMP_WEB_RATE_LIMITED,
     CMP_WEB_REDIRECT_BLOCKED,
@@ -32,8 +34,15 @@ from sidecar.ai.tools.builtins.web_ddg import (
     build_provider_dispatch,
     normalize_provider_keys,
 )
-from sidecar.ai.tools.builtins.web_extract import convert_html_to_markdown, is_text_content_type
+from sidecar.ai.tools.builtins.web_extract import (
+    convert_html_to_markdown,
+    decode_text_body,
+    is_html_content_type,
+    is_text_content_type,
+    sniff_untyped_body,
+)
 from sidecar.ai.tools.builtins.web_http import (
+    HostResolutionError,
     RedirectBlockedError,
     RedirectPolicyBlockedError,
     RedirectTargetInvalidError,
@@ -45,13 +54,16 @@ from sidecar.ai.tools.builtins.web_http import (
     validate_public_url,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
-from sidecar.ai.tools.sanitization import sanitize_tool_output
+from sidecar.ai.tools.sanitization import sanitize_tool_output, truncate_text
 
 logger = logging.getLogger(__name__)
 
 _MAX_QUERY_LENGTH = 2000
-_DEFAULT_FETCH_MAX_CHARS = 20_000
 _MAX_FETCH_CONTENT_CHARS = 20_000
+# The cached body is cut to this many characters before sanitizing: the
+# sanitizer's regex passes are the dominant cost of a fetch, and everything past
+# the cap is dropped anyway (headroom covers text the sanitizer shrinks).
+_FETCH_SANITIZE_INPUT_CHARS = 4 * _MAX_FETCH_CONTENT_CHARS
 # Managed tool-loop response cap (see
 # `sidecar/ai/routing/harness_helpers.MAX_RESPONSE_CHARS`). Keep the full
 # serialized `fetch_url` JSON payload inside this budget so the downstream
@@ -157,6 +169,7 @@ def configure_web_tools(config: Any) -> None:
     if config is None:
         return
 
+    previous_allow_private = _allow_private_addresses
     if isinstance(config, dict):
         rate = config.get("tools_web_rate_limit_per_min", 30)
         _allow_private_addresses = bool(config.get("tools_web_allow_private_addresses", False))
@@ -177,6 +190,10 @@ def configure_web_tools(config: Any) -> None:
     _provider_keys = normalize_provider_keys(raw_provider_keys)
     _rate_limiter = WebRateLimiter(requests_per_minute=int(rate))
     _provider_dispatch = _rebuild_provider_dispatch()
+    if _allow_private_addresses != previous_allow_private:
+        # Entries are served before URL validation, so a flag flip must not let a
+        # private-address entry outlive the setting that allowed it.
+        _fetch_cache.clear()
 
 
 def _check_rate_limit() -> None:
@@ -188,10 +205,6 @@ def _check_rate_limit() -> None:
             message=str(exc),
             retryable=True,
         ) from exc
-
-
-def _sanitize_text(text: str) -> str:
-    return "".join(ch for ch in text if ch == "\n" or ch == "\t" or ord(ch) >= 32)
 
 
 def _coerce_int_argument(arguments: dict[str, object], key: str, default: int) -> int:
@@ -228,8 +241,15 @@ def _coerce_domain_filters(arguments: dict[str, object], key: str) -> tuple[str,
 
 
 def _safe_fetch_content_limit(requested: int) -> int:
-    normalized = min(max(200, requested), _DEFAULT_FETCH_MAX_CHARS)
-    return min(normalized, _MAX_FETCH_CONTENT_CHARS)
+    return min(max(200, requested), _MAX_FETCH_CONTENT_CHARS)
+
+
+def _fetch_cache_key(raw_url: str) -> str:
+    """The key `validate_public_url` would produce, without any DNS lookup."""
+    try:
+        return urllib.parse.urlparse(str(raw_url or "").strip()).geturl()
+    except ValueError:
+        return ""
 
 
 def _build_cached_fetch_entry(validated: ValidatedUrl, result: UrlReadResult) -> _CachedFetchEntry:
@@ -241,23 +261,40 @@ def _build_cached_fetch_entry(validated: ValidatedUrl, result: UrlReadResult) ->
         )
 
     content_type = str(result.content_type or "").strip()
-    if not is_text_content_type(content_type) and content_type:
-        mime = content_type.split(";", 1)[0].strip()
-        raise ToolExecutionFailure(
-            code=CMP_WEB_FETCH_FAILED,
-            message=f"Unsupported content type: {mime}",
-            retryable=False,
-        )
+    if content_type:
+        if not is_text_content_type(content_type):
+            mime = content_type.split(";", 1)[0].strip()
+            raise ToolExecutionFailure(
+                code=CMP_WEB_FETCH_FAILED,
+                message=f"Unsupported content type: {mime}",
+                retryable=False,
+            )
+        is_html = is_html_content_type(content_type)
+    else:
+        # No Content-Type: sniff instead of trusting the body as plain text.
+        sniffed = sniff_untyped_body(result.payload)
+        if sniffed == "binary":
+            raise ToolExecutionFailure(
+                code=CMP_WEB_FETCH_FAILED,
+                message="Unsupported content: no Content-Type header and the body looks binary.",
+                retryable=False,
+            )
+        is_html = sniffed == "html"
 
-    body = result.payload.decode("utf-8", errors="replace")
+    body = decode_text_body(result.payload, content_type)
     content_format = "text"
     html_truncated = False
-    if "text/html" in content_type.lower():
+    if is_html:
         body, html_truncated = convert_html_to_markdown(body)
         content_format = "markdown"
 
-    body = _sanitize_text(body)
-    body = sanitize_tool_output(body, max_chars=_MAX_FETCH_CONTENT_CHARS, tool_name="fetch_url")
+    # sanitize_tool_output strips control characters itself; cut first so its
+    # passes never run over a ~1 MB body that is about to be capped at 20k.
+    body = sanitize_tool_output(
+        body[:_FETCH_SANITIZE_INPUT_CHARS],
+        max_chars=_MAX_FETCH_CONTENT_CHARS,
+        tool_name="fetch_url",
+    )
     payload_size = len(body.encode("utf-8")) + len(result.final_url.encode("utf-8"))
     return _CachedFetchEntry(
         requested_url=validated.url,
@@ -275,9 +312,8 @@ def _build_cached_fetch_entry(validated: ValidatedUrl, result: UrlReadResult) ->
 def _load_fetch_entry(
     validated: ValidatedUrl, *, timeout_s: float, deadline: float
 ) -> tuple[_CachedFetchEntry, bool]:
-    cached = _fetch_cache.get(validated.url)
-    if cached is not None:
-        return cached, True
+    # The cache is consulted by `fetch_url_tool` before validation, so a hit never
+    # reaches here; this only fills it.
     result = read_url_response(
         validated,
         timeout_s=timeout_s,
@@ -313,13 +349,13 @@ def web_search_tool(arguments: dict[str, object], workspace: object) -> ToolHand
     query = str(arguments.get("query", "")).strip()
     if not query:
         raise ToolExecutionFailure(
-            code=CMP_WEB_INVALID_URL,
+            code=CMP_WEB_INVALID_QUERY,
             message="Missing search query.",
             retryable=False,
         )
     if len(query) > _MAX_QUERY_LENGTH:
         raise ToolExecutionFailure(
-            code=CMP_WEB_INVALID_URL,
+            code=CMP_WEB_INVALID_QUERY,
             message=f"Query exceeds maximum length of {_MAX_QUERY_LENGTH} characters.",
             retryable=False,
         )
@@ -329,29 +365,14 @@ def web_search_tool(arguments: dict[str, object], workspace: object) -> ToolHand
     # the structured error below, never a silent fallback to DuckDuckGo.
     impl = _provider_dispatch.get(provider)
     if impl is None:
-        payload = {
-            "query": query,
-            "provider": provider,
-            "answer": "",
-            "error": f"Unsupported web provider: {provider}",
-            "sources": [],
-            "citations": [],
-            "missing_source_metadata": True,
-            "source_url": "",
-        }
-        return ToolHandlerResult(output=json.dumps(payload, ensure_ascii=False), success=False)
+        return _search_failure(
+            query, provider, f"Unsupported web provider: {provider}", CMP_TOOL_EXECUTION_FAILED
+        )
     if not impl.is_configured():
-        payload = {
-            "query": query,
-            "provider": provider,
-            "answer": "",
-            "error": f"{provider} is not configured (missing url/key).",
-            "sources": [],
-            "citations": [],
-            "missing_source_metadata": True,
-            "source_url": "",
-        }
-        return ToolHandlerResult(output=json.dumps(payload, ensure_ascii=False), success=False)
+        return _search_failure(
+            query, provider, f"{provider} is not configured (missing url/key).",
+            CMP_TOOL_EXECUTION_FAILED,
+        )
 
     timeout_s = max(1, min(30, _coerce_int_argument(arguments, "timeout_s", 10)))
     allowed_domains = _coerce_domain_filters(arguments, "allowed_domains")
@@ -365,40 +386,43 @@ def web_search_tool(arguments: dict[str, object], workspace: object) -> ToolHand
             blocked_domains=list(blocked_domains) or None,
         )
         # Contract: `error` is non-empty exactly when the search failed.
+        failed = bool(payload.get("error"))
         return ToolHandlerResult(
             output=json.dumps(payload, ensure_ascii=False),
-            success=not payload.get("error"),
+            success=not failed,
+            error_code=CMP_WEB_FETCH_FAILED if failed else None,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("web_search failed: %s", exc)
-        payload = {
-            "query": query,
-            "provider": provider,
-            "answer": "",
-            "error": "Web search failed.",
-            "sources": [],
-            "citations": [],
-            "missing_source_metadata": True,
-            "source_url": "",
-        }
-        return ToolHandlerResult(output=json.dumps(payload, ensure_ascii=False), success=False)
+        return _search_failure(query, provider, "Web search failed.", CMP_WEB_FETCH_FAILED)
 
 
-def fetch_url_tool(arguments: dict[str, object], workspace: object) -> ToolHandlerResult:
-    """Fetch a URL and return bounded text or markdown content."""
-    _ = workspace
-    _check_rate_limit()
+def _search_failure(query: str, provider: str, error: str, error_code: str) -> ToolHandlerResult:
+    """A failed search as the same JSON shape a provider returns, with no sources."""
+    payload = {
+        "query": query,
+        "provider": provider,
+        "answer": "",
+        "error": error,
+        "sources": [],
+        "citations": [],
+        "missing_source_metadata": True,
+        "source_url": "",
+    }
+    return ToolHandlerResult(
+        output=json.dumps(payload, ensure_ascii=False),
+        success=False,
+        error_code=error_code,
+    )
 
-    url = str(arguments.get("url", "")).strip()
-    if not url:
-        raise ToolExecutionFailure(
-            code=CMP_WEB_INVALID_URL,
-            message="Missing url.",
-            retryable=False,
-        )
 
-    timeout_s = max(1, min(30, _coerce_int_argument(arguments, "timeout_s", 10)))
-    deadline = time.monotonic() + timeout_s
+# HTTP answers worth the MCP reconnect-and-replay; other 4xx (403/404/410) do not change on a retry.
+_TRANSIENT_HTTP_STATUSES = frozenset({408, 425, 429})
+_HTTP_SERVER_ERROR_MIN = 500
+
+
+def _fetch_entry_uncached(url: str, *, timeout_s: int, deadline: float) -> _CachedFetchEntry:
+    """Validate *url*, fetch it and cache the result (the cache-miss path)."""
     try:
         validated = validate_public_url(
             url, allow_private=_allow_private_addresses, deadline=deadline
@@ -409,23 +433,28 @@ def fetch_url_tool(arguments: dict[str, object], workspace: object) -> ToolHandl
             message=str(exc),
             retryable=False,
         ) from exc
+    except HostResolutionError as exc:
+        # DNS failed for a well-formed URL: a transient network condition, not a
+        # malformed argument, so the model may retry. Must stay ahead of the
+        # ValueError arm it subclasses.
+        raise ToolExecutionFailure(
+            code=CMP_WEB_FETCH_FAILED,
+            message=str(exc),
+            retryable=True,
+        ) from exc
     except ValueError as exc:
         raise ToolExecutionFailure(
             code=CMP_WEB_INVALID_URL,
             message=str(exc),
             retryable=False,
         ) from exc
-
     except TimeoutError as exc:
         raise ToolExecutionFailure(
             code=CMP_WEB_FETCH_FAILED, message="Failed to fetch URL.", retryable=True
         ) from exc
 
-    requested = _coerce_int_argument(arguments, "max_chars", _DEFAULT_FETCH_MAX_CHARS)
-    max_chars = _safe_fetch_content_limit(requested)
-
     try:
-        entry, cache_hit = _load_fetch_entry(
+        entry, _ = _load_fetch_entry(
             validated, timeout_s=_remaining_seconds(deadline), deadline=deadline
         )
     # A redirect hop that lands on a rejected address is the same policy block as
@@ -453,7 +482,7 @@ def fetch_url_tool(arguments: dict[str, object], workspace: object) -> ToolHandl
         raise ToolExecutionFailure(
             code=CMP_WEB_FETCH_FAILED,
             message=f"HTTP error {exc.code}",
-            retryable=True,
+            retryable=exc.code >= _HTTP_SERVER_ERROR_MIN or exc.code in _TRANSIENT_HTTP_STATUSES,
         ) from exc
     except ToolExecutionFailure:
         raise
@@ -463,8 +492,38 @@ def fetch_url_tool(arguments: dict[str, object], workspace: object) -> ToolHandl
             message="Failed to fetch URL.",
             retryable=True,
         ) from exc
+    return entry
 
-    content = sanitize_tool_output(entry.content, max_chars=max_chars, tool_name="fetch_url")
+
+def fetch_url_tool(arguments: dict[str, object], workspace: object) -> ToolHandlerResult:
+    """Fetch a URL and return bounded text or markdown content."""
+    _ = workspace
+    _check_rate_limit()
+
+    url = str(arguments.get("url", "")).strip()
+    if not url:
+        raise ToolExecutionFailure(
+            code=CMP_WEB_INVALID_URL,
+            message="Missing url.",
+            retryable=False,
+        )
+
+    timeout_s = max(1, min(30, _coerce_int_argument(arguments, "timeout_s", 10)))
+    deadline = time.monotonic() + timeout_s
+    requested = _coerce_int_argument(arguments, "max_chars", _MAX_FETCH_CONTENT_CHARS)
+    max_chars = _safe_fetch_content_limit(requested)
+
+    cached_entry = _fetch_cache.get(_fetch_cache_key(url))
+    if cached_entry is not None:
+        # Served before DNS validation: only validated URLs are ever cached and the
+        # cache is cleared when the allow-private flag changes.
+        entry, cache_hit = cached_entry, True
+    else:
+        entry = _fetch_entry_uncached(url, timeout_s=timeout_s, deadline=deadline)
+        cache_hit = False
+
+    # The entry was sanitized when it was built; only clip it to this call's cap.
+    content = truncate_text(entry.content, max_chars)
     truncated = entry.truncated or len(content) < len(entry.content)
     host = urllib.parse.urlparse(entry.final_url).netloc
     citations = [

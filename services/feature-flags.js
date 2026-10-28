@@ -1,6 +1,7 @@
 const {
   TOOL_SETTING_KEYS,
 } = require('./tool-config-schema');
+const { isAgentQuietLaunch } = require('./agent-quiet-launch');
 
 function isFeatureEnabledByDefault(envValue, defaultValue = true) {
   const normalized = String(envValue || '').trim().toLowerCase();
@@ -60,12 +61,9 @@ const FEATURE_OVERRIDE_KEYS = Object.freeze([
   // The DOM keeps its inert spellcheck="true" attributes while off, so flag-off
   // is behaviourally coherent but NOT byte-identical markup.
   'text_spellcheck',
+  'dictation', // row 84 mic + shortcut (Settings > Dictation); the env var below force-denies it
 ]);
-
-const FORCE_DENY_ENV_KEYS = Object.freeze({
-  session_runtime: 'JENNY_ENABLE_SESSION_RUNTIME',
-});
-
+const FORCE_DENY_ENV_KEYS = Object.freeze({ session_runtime: 'JENNY_ENABLE_SESSION_RUNTIME', dictation: 'JENNY_ENABLE_DICTATION' });
 // Retired flags whose JENNY_ENABLE_* name is still ACCEPTED AND IGNORED until
 // the listed release, so a leftover operator setting stays harmless: no flag
 // key is emitted and nothing reads the env var. Drop each entry at removeIn.
@@ -145,8 +143,10 @@ const INTERNAL_FEATURE_FLAG_KEYS = Object.freeze([
   'tools_task_board_enabled',
   // gates the default-on per-project note tool (project_notes)
   'tools_project_notes_enabled',
-  // gates agentic memory v2 (the sidecar `memory` tool); kill switch only
-  'memory_v2_enabled',
+  // row 69: the primary Jenny chat and its directory tools; row 70: wake on delivery; row 76: launch permission, activity log, Pause/Reset/Forget
+  'primary_chat', 'tools_session_directory_enabled', 'session_directory_tool_gate', 'session_message_wake', 'child_auto_resume', 'primary_launch_permission', 'primary_activity_log', 'primary_chat_controls', // all default-on kill switches
+  // kill switches only: agentic memory v2 (the sidecar `memory` tool); row 77, the File Map Components draft on each scan; row 78, API-key providers
+  'memory_v2_enabled', 'file_map_components', 'api_providers', 'ide_hot_exit', 'model_catalog_guard',
   // row 60 harness fixes (sidecar-only, default-on kill switches)
   'shell_noninteractive_env', 'shell_head_tail_output', 'loop_result_aware_signature',
   'edit_match_fallbacks', 'compaction_reject_truncated_summary', 'compaction_micro_first',
@@ -422,24 +422,25 @@ function buildFeatureFlagDefaults(env = process.env) {
     // DEFAULT-ON; set JENNY_ENABLE_TOOLS_IMAGE_GENERATE=0 to roll back (the tool
     // is not registered, byte-identical to flag-off behavior).
     tools_image_generate_enabled: fe('TOOLS_IMAGE_GENERATE', true),
-    // tools_home_enabled gates the consolidated `home` tool (calendar,
-    // reminders, read-only scratchpad). DEFAULT-ON; set
-    // JENNY_ENABLE_TOOLS_HOME=0 to roll back (the tool is not registered,
-    // byte-identical to today's flag-off behavior).
+    // tools_home_enabled gates the consolidated `home` tool (calendar, reminders, read-only
+    // scratchpad). DEFAULT-ON; JENNY_ENABLE_TOOLS_HOME=0 rolls back (the tool is not registered).
     tools_home_enabled: fe('TOOLS_HOME', true),
-    // tools_task_board_enabled gates durable model-authored Open Loops tasks.
-    // DEFAULT-ON; set JENNY_ENABLE_TOOLS_TASK_BOARD_ENABLED=0 to remove the
-    // tool from both the Electron registry and managed-sidecar catalog.
+    // tools_task_board_enabled gates durable model-authored Open Loops tasks. DEFAULT-ON;
+    // JENNY_ENABLE_TOOLS_TASK_BOARD_ENABLED=0 removes the tool from both catalogs.
     tools_task_board_enabled: fe('TOOLS_TASK_BOARD_ENABLED', true),
-    // tools_project_notes_enabled gates the model's read/append/replace access to
-    // the per-project note. DEFAULT-ON; set
-    // JENNY_ENABLE_TOOLS_PROJECT_NOTES_ENABLED=0 to remove the tool from both
-    // the Electron registry and the managed-sidecar catalog.
+    // tools_project_notes_enabled gates the model's read/append/replace access to the per-project
+    // note. DEFAULT-ON; JENNY_ENABLE_TOOLS_PROJECT_NOTES_ENABLED=0 removes it from both catalogs.
     tools_project_notes_enabled: fe('TOOLS_PROJECT_NOTES_ENABLED', true),
-    // memory_v2_enabled gates agentic memory v2: the sidecar-owned `memory`
-    // tool (managed-sidecar `tools_memory_enabled` derives from it), later
-    // reflection and episodic recall. DEFAULT-ON; set JENNY_ENABLE_MEMORY_V2=0
-    // to remove the tool from the managed-sidecar catalog. The user's memory
+    // Row 69: primary_chat ensures the one profile-wide Jenny chat (JENNY_ENABLE_PRIMARY_CHAT=0: none is created, existing ones stay);
+    // tools_session_directory_enabled gates sessions_list/session_status/session_transcript/session_stop. Row 76 (plan
+    // PRIMARY_CHAT_CONTROLS_2026-10-25.md): the primary's standing launch permission, activity log and Pause/Reset/Forget controls.
+    primary_chat: fe('PRIMARY_CHAT', true), session_directory_tool_gate: fe('SESSION_DIRECTORY_TOOL_GATE', true), // only primary + linked chats see them
+    tools_session_directory_enabled: fe('TOOLS_SESSION_DIRECTORY_ENABLED', true), session_message_wake: fe('SESSION_MESSAGE_WAKE', true), child_auto_resume: fe('CHILD_AUTO_RESUME', true), // row 70: wake on delivery; a linked child's budget stop resumes it before its parent wakes
+    primary_launch_permission: fe('PRIMARY_LAUNCH_PERMISSION', true), primary_activity_log: fe('PRIMARY_ACTIVITY_LOG', true), primary_chat_controls: fe('PRIMARY_CHAT_CONTROLS', true),
+    file_map_components: fe('FILE_MAP_COMPONENTS', true), api_providers: fe('API_PROVIDERS', true), model_catalog_guard: fe('MODEL_CATALOG_GUARD', true), ide_hot_exit: fe('IDE_HOT_EXIT', true), // row 77: =0 skips the File Map components draft; row 78: =0 hides API-key providers and hands no key to the sidecar (keys stay stored); row 82: =0 stops every IDE hot-exit backup read/write
+    // memory_v2_enabled gates agentic memory v2: the sidecar-owned `memory` tool (managed-sidecar
+    // `tools_memory_enabled` derives from it), later reflection and episodic recall. DEFAULT-ON; set
+    // JENNY_ENABLE_MEMORY_V2=0 to remove the tool from the managed-sidecar catalog. The user's memory
     // toggles (pause, ask before saving) are separate and ride each request.
     memory_v2_enabled: fe('MEMORY_V2', true),
     // Row 60 harness fixes, DEFAULT-ON and A/B-measured; JENNY_ENABLE_<KEY>=0 restores the old behaviour.
@@ -462,12 +463,10 @@ function buildFeatureFlagDefaults(env = process.env) {
     // removed at the end of the cleanup wave.
     error_intake_routing: fe('ERROR_INTAKE_ROUTING', true),
     unattended_guard: fe('UNATTENDED_GUARD', true),
-    // desktop_notifications gates the OS toast notifier for finished replies,
-    // failed runs, permission requests and questions (services/main/
-    // desktop-notifier.js). DEFAULT-ON kill switch
-    // JENNY_ENABLE_DESKTOP_NOTIFICATIONS=0; not user-overridable because
-    // Settings owns the user switch (windowUi.notifications.enabled).
-    desktop_notifications: fe('DESKTOP_NOTIFICATIONS', true),
+    // desktop_notifications gates every OS toast (replies, failures, permissions,
+    // questions, reminders). DEFAULT-ON, off for quiet agent launches; kill switch
+    // JENNY_ENABLE_DESKTOP_NOTIFICATIONS=0. Settings owns the user switch.
+    desktop_notifications: fe('DESKTOP_NOTIFICATIONS', !isAgentQuietLaunch(env)),
     // agent_test_hooks gates the window.__jennyAgent automation surface and
     // DEBUG-level renderer log forwarding. Defaults on under the agent/dev
     // launcher (JENNY_AGENT_DEV) and off everywhere else.
@@ -544,6 +543,7 @@ function buildFeatureFlagDefaults(env = process.env) {
     // in Settings (FEATURE_OVERRIDE_KEYS).
     ollama_tray_remediation: fe('OLLAMA_TRAY_REMEDIATION', true),
     text_spellcheck: fe('TEXT_SPELLCHECK', true),
+    dictation: fe('DICTATION', true),
     session_runtime: fe('SESSION_RUNTIME', true),
     llama_server_acceleration: fe('LLAMA_SERVER_ACCELERATION', true),
     // ninfer gates the managed NInfer runtime for an eligible RTX 5090 (row 54).

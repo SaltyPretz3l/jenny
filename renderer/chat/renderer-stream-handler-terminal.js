@@ -807,12 +807,6 @@
     async function handleError(payload, callOptions = {}) {
       resetThinkingIndicator(payload.sessionId);
       const durability = normalizeUnsavedDurability(payload.durability);
-      appendClientLog('ERROR', 'stream.handle_error', {
-        streamId: payload.streamId,
-        sessionId: String(payload.sessionId || '').trim(),
-        message: String(payload.message || '').slice(0, 200),
-        activeView: state.ui?.activeView,
-      });
       let index = ensurePendingStreamEntry(payload);
       let activeMessages = [...getSessionMessages(payload.sessionId)];
       const streamErrorMessage = String(payload.message || jt('error.chat.unknownStreaming', 'Unknown streaming error.'));
@@ -828,6 +822,12 @@
       // suppress the danger toast for them — a red "Streaming Error" for the
       // user's own Stop click reads as a failure (GUI finding 2026-07-20).
       const isUserIntentTerminal = terminalStatusValue === 'cancelled' || terminalStatusValue === 'denied';
+      // The user's own Stop or Deny is logged as information, not as an error to triage.
+      appendClientLog(isUserIntentTerminal ? 'INFO' : 'ERROR', 'stream.handle_error', {
+        streamId: payload.streamId, sessionId: String(payload.sessionId || '').trim(),
+        message: String(payload.message || '').slice(0, 200), activeView: state.ui?.activeView,
+        ...(terminalStatusValue ? { terminalStatus: terminalStatusValue } : {}),
+      });
       const isLateTerminalReconcile = index === -1;
       if (index === -1) {
         // Reconcile a late error onto its surviving bubble; synthesize only

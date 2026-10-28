@@ -264,6 +264,27 @@
   border-radius: var(--tl-radius-control);
 }
 
+/* The exact arguments of a command or write, one quoted block per field. */
+.tool-approval-exact {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.tool-approval-exact-name {
+  color: var(--text-muted);
+  font-family: var(--font-family-mono);
+  font-size: var(--tl-font-detail);
+}
+
+/* An invisible control character (bidi override, zero-width space) shown as a marker. */
+.tool-approval-invisible {
+  padding-inline: var(--space-1);
+  border-radius: var(--tl-radius-chip);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--tl-status-warn) 28%, transparent);
+}
+
 .tool-approval-actions {
   display: flex;
   flex-wrap: wrap;
@@ -600,6 +621,10 @@
 }
 
 .approval-gap-row {
+  /* The machinery row's name column: toggle padding + status dot + gap.
+     Approval text starts here, and the kicker dot and the receipt mark hang
+     on the row's dot axis, so the card reads as part of its tool row. */
+  --approval-text-inset: calc(2 * var(--space-3) + var(--tl-dot-size));
   box-sizing: border-box;
   min-width: 0;
   max-width: 100%;
@@ -615,7 +640,12 @@
 }
 
 .approval-gap-row .tool-approval-block {
-  padding-inline-start: var(--space-5);
+  padding-inline-start: var(--approval-text-inset);
+}
+
+.approval-gap-row .tool-approval-kicker {
+  gap: var(--space-3);
+  margin-inline-start: calc(-1 * (var(--tl-dot-size) + var(--space-3)));
 }
 
 @media (prefers-reduced-motion: reduce) {

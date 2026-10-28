@@ -281,7 +281,15 @@
         return;
       }
       const target = getInputTarget() || null;
-      const generation = target ? target.generation : 0;
+      // No effect is listening (the default 'none'): skip the selector and rect
+      // work per pointer event, dropping any state left from a prior effect.
+      if (!target || !target.controller || target.inputDisabled) {
+        if (pointerStates.size || pendingMoves.size || pressPrimary.size) {
+          clearPointerState('no-input-target');
+        }
+        return;
+      }
+      const generation = target.generation;
       const pointerId = Number.isFinite(event.pointerId) ? event.pointerId : 1;
       let pointerState = pointerStates.get(pointerId);
       // Chromium dispatches click as a PointerEvent whose isPrimary is false

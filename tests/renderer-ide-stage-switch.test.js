@@ -1,25 +1,29 @@
 'use strict';
 
-/* Preview / File map toggles at the trailing end of the editor tab row (row 40 W3;
- * they used to live in the rail activity bar). Pressed-state toggle buttons routed
- * through the stage-surface controller. */
+/* Editor toolbar at the trailing end of the editor tab row: Preview / File map
+ * pressed-state toggles (row 40 W3), Split Editor Right and the open-tabs More button,
+ * all icon-only inventory buttons routed through the stage-surface controller. */
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 
 const actionButton = require('../renderer/inventory/action-button');
-const { ENTRIES, createIdeStageSwitch } = require('../renderer/features/renderer-ide-stage-switch');
+const {
+  ENTRIES, editorActionsMarkup, surfaceTabFor, createIdeStageSwitch,
+} = require('../renderer/features/renderer-ide-stage-switch');
 
 function setup(t, opts = {}) {
   const dom = new JSDOM('<!doctype html><body><div id="ideStageSwitch"></div><input id="outside"></body>');
   const doc = dom.window.document;
   const host = doc.getElementById('ideStageSwitch');
-  const state = { surface: opts.surface || 'editor', toggles: [] };
+  const state = { surface: opts.surface || 'editor', toggles: [], splits: 0, mores: [] };
   const stageSwitch = createIdeStageSwitch({
     getMountEl: () => (opts.noHost ? null : host),
     actionButton: opts.noButton ? null : actionButton,
     onToggle: (surface) => state.toggles.push(surface),
+    onSplit: () => { state.splits += 1; },
+    onMore: (anchor) => state.mores.push(anchor),
     getActiveSurface: () => state.surface,
   });
   t.after(() => {
@@ -27,7 +31,13 @@ function setup(t, opts = {}) {
     dom.window.close();
   });
   const buttons = () => [...host.querySelectorAll('[data-ide-stage-surface]')];
-  return { dom, doc, host, state, stageSwitch, buttons };
+  const action = (name) => host.querySelector(`[data-ide-editor-action="${name}"]`);
+  return { dom, doc, host, state, stageSwitch, buttons, action };
+}
+
+function parse(markup) {
+  const dom = new JSDOM(`<!doctype html><body><div id="m">${markup}</div></body>`);
+  return { dom, root: dom.window.document.getElementById('m') };
 }
 
 test('entries are Preview and File Map with translated labels', () => {
@@ -35,30 +45,89 @@ test('entries are Preview and File Map with translated labels', () => {
   assert.deepEqual(ENTRIES.map((entry) => entry.label()), ['Preview', 'File Map']);
 });
 
-test('renders two toggle buttons with aria-pressed reflecting the active surface', (t) => {
+test('renders icon-only toggles with aria-pressed, a name and a title', (t) => {
   const h = setup(t);
   h.stageSwitch.render();
   assert.deepEqual(h.buttons().map((b) => b.getAttribute('data-ide-stage-surface')), ['preview', 'file_map']);
-  assert.deepEqual(h.buttons().map((b) => b.textContent.trim()), ['Preview', 'File Map']);
+  assert.deepEqual(h.buttons().map((b) => b.textContent.trim()), ['', ''], 'icon-only: no visible text');
+  assert.deepEqual(h.buttons().map((b) => b.getAttribute('aria-label')), ['Preview', 'File Map']);
   assert.deepEqual(h.buttons().map((b) => b.getAttribute('aria-pressed')), ['false', 'false']);
   assert.equal(h.buttons()[0].getAttribute('title'), 'Show Preview');
+  for (const button of h.buttons()) {
+    assert.ok(button.classList.contains('ide-editor-action'));
+    const svg = button.querySelector('svg');
+    assert.ok(svg, 'carries an svg icon');
+    assert.equal(svg.getAttribute('aria-hidden'), 'true');
+    assert.equal(svg.getAttribute('focusable'), 'false');
+    assert.equal(svg.getAttribute('width'), '15');
+  }
 
   h.state.surface = 'preview';
   h.stageSwitch.render();
   assert.deepEqual(h.buttons().map((b) => b.getAttribute('aria-pressed')), ['true', 'false']);
-  assert.ok(h.buttons()[0].classList.contains('ide-stage-switch-btn--active'));
-  assert.equal(h.buttons()[1].classList.contains('ide-stage-switch-btn--active'), false);
+  assert.ok(h.buttons()[0].classList.contains('ide-editor-action--active'));
+  assert.equal(h.buttons()[1].classList.contains('ide-editor-action--active'), false);
   assert.match(h.buttons()[0].getAttribute('title'), /return to the editor/);
+  assert.equal(h.buttons()[0].getAttribute('aria-label'), 'Preview', 'the name stays the label when pressed');
 
   h.state.surface = 'file_map';
   h.stageSwitch.render();
   assert.deepEqual(h.buttons().map((b) => b.getAttribute('aria-pressed')), ['false', 'true']);
 });
 
-test('bindEvents labels the group and a click calls onToggle with that surface', (t) => {
+test('split and more buttons are always present with names, titles and a menu popup', (t) => {
+  const h = setup(t);
+  h.stageSwitch.render();
+  const split = h.action('split-right');
+  assert.equal(split.getAttribute('aria-label'), 'Split Editor Right');
+  assert.equal(split.getAttribute('title'), 'Split Editor Right');
+  assert.equal(split.getAttribute('aria-haspopup'), null);
+  const more = h.action('more');
+  assert.equal(more.getAttribute('aria-label'), 'Show all open tabs');
+  assert.equal(more.getAttribute('title'), 'Show all open tabs');
+  assert.equal(more.getAttribute('aria-haspopup'), 'menu');
+  assert.deepEqual([...h.host.children].map((el) => el.getAttribute('data-ide-stage-surface') || el.getAttribute('data-ide-editor-action')),
+    ['preview', 'file_map', 'split-right', 'more']);
+});
+
+test('editorActionsMarkup is pure; surfaces:false omits the surface toggles', () => {
+  assert.equal(editorActionsMarkup({ actionButton: null }), '');
+  assert.equal(editorActionsMarkup(), '');
+
+  const full = parse(editorActionsMarkup({ actionButton, surfaces: true, activeSurface: 'file_map' }));
+  assert.equal(full.root.querySelectorAll('[data-ide-stage-surface]').length, 2);
+  assert.equal(full.root.querySelector('[data-ide-stage-surface="file_map"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(full.root.querySelectorAll('button').length, 4);
+
+  const groups = parse(editorActionsMarkup({ actionButton, surfaces: false }));
+  assert.equal(groups.root.querySelectorAll('[data-ide-stage-surface]').length, 0);
+  assert.deepEqual([...groups.root.querySelectorAll('button')].map((b) => b.getAttribute('data-ide-editor-action')), ['split-right', 'more']);
+
+  const defaults = parse(editorActionsMarkup({ actionButton }));
+  assert.deepEqual([...defaults.root.querySelectorAll('[data-ide-stage-surface]')].map((b) => b.getAttribute('aria-pressed')), ['false', 'false']);
+});
+
+test('surfaceTabFor describes a stage surface and rejects everything else', () => {
+  assert.deepEqual(surfaceTabFor('preview'), { surface: 'preview', label: 'Preview' });
+  assert.deepEqual(surfaceTabFor('file_map'), { surface: 'file_map', label: 'File Map' });
+  assert.equal(surfaceTabFor('editor'), null);
+  assert.equal(surfaceTabFor(''), null);
+  assert.equal(surfaceTabFor(undefined), null);
+});
+
+test('the toolbar no longer renders a surface tab or close control', (t) => {
+  const h = setup(t, { surface: 'file_map' });
+  h.stageSwitch.render();
+  assert.equal(h.host.querySelector('[data-ide-surface-tab]'), null);
+  assert.equal(h.host.querySelector('[data-ide-surface-close]'), null);
+  assert.equal(h.host.querySelectorAll('button').length, 4);
+});
+
+test('bindEvents makes a labelled toolbar; clicks route toggle, split and more', (t) => {
   const h = setup(t);
   h.stageSwitch.render();
   h.stageSwitch.bindEvents();
+  assert.equal(h.host.getAttribute('role'), 'toolbar');
   assert.equal(h.host.getAttribute('aria-label'), 'Workspace views');
 
   h.buttons()[0].click();
@@ -66,10 +135,40 @@ test('bindEvents labels the group and a click calls onToggle with that surface',
   h.buttons()[1].click();
   assert.deepEqual(h.state.toggles, ['preview', 'file_map', 'file_map'], 'the toggle (not the switch) decides what pressing the active one does');
 
+  h.action('split-right').click();
+  assert.equal(h.state.splits, 1);
+  assert.equal(h.state.mores.length, 0);
+  h.action('more').click();
+  assert.deepEqual(h.state.mores, [h.action('more')], 'More receives its button as the menu anchor');
+  assert.equal(h.state.splits, 1);
+  assert.equal(h.state.toggles.length, 3, 'split / more never toggle a surface');
+
+  // A click on an inner icon resolves to its button.
+  h.action('split-right').querySelector('svg').dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true }));
+  assert.equal(h.state.splits, 2);
+
   // Clicks on the host outside a button, or from other elements, do nothing.
   h.host.click();
   h.doc.getElementById('outside').click();
   assert.equal(h.state.toggles.length, 3);
+  assert.equal(h.state.splits, 2);
+  assert.equal(h.state.mores.length, 1);
+});
+
+test('missing onSplit / onMore callbacks are tolerated', (t) => {
+  const dom = new JSDOM('<!doctype html><body><div id="ideStageSwitch"></div></body>');
+  t.after(() => dom.window.close());
+  const host = dom.window.document.getElementById('ideStageSwitch');
+  const stageSwitch = createIdeStageSwitch({ getMountEl: () => host, actionButton });
+  t.after(() => stageSwitch.dispose());
+  stageSwitch.render();
+  stageSwitch.bindEvents();
+  assert.equal(host.getAttribute('role'), 'toolbar', 'binding still labels the toolbar');
+  assert.equal(host.querySelectorAll('[data-ide-stage-surface]').length, 2);
+  assert.equal(host.querySelectorAll('[data-ide-editor-action]').length, 2, 'split and more render without callbacks');
+  assert.doesNotThrow(() => host.querySelector('[data-ide-editor-action="split-right"]').click());
+  assert.doesNotThrow(() => host.querySelector('[data-ide-editor-action="more"]').click());
+  assert.doesNotThrow(() => host.querySelector('[data-ide-stage-surface="preview"]').click());
 });
 
 test('bindEvents is idempotent and dispose stops listening', (t) => {
@@ -78,15 +177,19 @@ test('bindEvents is idempotent and dispose stops listening', (t) => {
   h.stageSwitch.bindEvents();
   h.stageSwitch.bindEvents();
   h.buttons()[0].click();
+  h.action('split-right').click();
   assert.deepEqual(h.state.toggles, ['preview'], 'a double bind does not double-fire');
+  assert.equal(h.state.splits, 1);
 
   h.stageSwitch.dispose();
   h.buttons()[0].click();
+  h.action('split-right').click();
   assert.equal(h.state.toggles.length, 1, 'a disposed switch ignores clicks');
+  assert.equal(h.state.splits, 1);
   h.stageSwitch.dispose(); // idempotent
 });
 
-test('a re-render keeps keyboard focus on the same toggle and skips identical markup', (t) => {
+test('a re-render keeps keyboard focus on the same button and skips identical markup', (t) => {
   const h = setup(t);
   h.stageSwitch.render();
   h.stageSwitch.bindEvents();
@@ -104,6 +207,14 @@ test('a re-render keeps keyboard focus on the same toggle and skips identical ma
   assert.notEqual(h.buttons()[1], original, 'changed state repaints the buttons');
   assert.equal(h.doc.activeElement, h.buttons()[1], 'focus follows to the same surface\'s new button');
   assert.equal(h.buttons()[1].getAttribute('aria-pressed'), 'true');
+
+  // An editor-action button keeps focus across a repaint too.
+  const more = h.action('more');
+  more.focus();
+  h.state.surface = 'preview';
+  h.stageSwitch.render();
+  assert.notEqual(h.action('more'), more, 'the repaint replaced the button');
+  assert.equal(h.doc.activeElement, h.action('more'), 'focus follows to the same editor action');
 
   h.doc.getElementById('outside').focus();
   h.state.surface = 'editor';
@@ -123,34 +234,4 @@ test('without a host or an action button render and bind are no-ops', (t) => {
 
   assert.doesNotThrow(() => createIdeStageSwitch().render());
   assert.doesNotThrow(() => createIdeStageSwitch().bindEvents());
-});
-
-test('an active surface reads as a closable tab before the toggles; its close returns to the editor (W5)', (t) => {
-  const h = setup(t);
-  h.stageSwitch.render();
-  assert.equal(h.host.querySelector('[data-ide-surface-tab]'), null, 'no surface tab on the editor');
-  h.state.surface = 'file_map';
-  h.stageSwitch.render();
-  const tab = h.host.querySelector('[data-ide-surface-tab]');
-  assert.ok(tab, 'File map shows as a tab');
-  assert.equal(tab.getAttribute('data-ide-surface-tab'), 'file_map');
-  assert.equal(h.host.firstElementChild, tab, 'ahead of the toggles');
-  assert.equal(tab.textContent.replace(/×/g, '').trim(), 'File Map');
-  assert.ok(tab.classList.contains('ide-tab--active'));
-  const close = tab.querySelector('[data-ide-surface-close]');
-  assert.equal(close.getAttribute('aria-label'), 'Close File Map');
-  assert.equal(h.buttons().length, 2, 'the two toggles stay');
-  h.stageSwitch.bindEvents();
-  close.dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true }));
-  assert.deepEqual(h.state.toggles, ['file_map'], 'closing toggles the active surface off');
-});
-
-test('closing a surface by keyboard keeps focus on its toggle, never <body> (row 40 review)', (t) => {
-  const h = setup(t, { surface: 'preview' });
-  h.stageSwitch.render();
-  h.host.querySelector('[data-ide-surface-close]').focus();
-  h.state.surface = 'editor'; // Enter on Close: the surface closed, the switch repaints
-  h.stageSwitch.render();
-  assert.equal(h.host.querySelector('[data-ide-surface-close]'), null);
-  assert.equal(h.doc.activeElement, h.host.querySelector('[data-ide-stage-surface="preview"]'));
 });

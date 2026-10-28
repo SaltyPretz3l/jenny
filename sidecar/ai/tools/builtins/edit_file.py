@@ -12,17 +12,13 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_INVALID_PATH,
     CMP_TOOL_IO_FAILED,
 )
-from sidecar.ai.tools.builtins.edit_matching import (  # noqa: F401 - re-exported names
+from sidecar.ai.tools.builtins.edit_matching import (
     EditSpec,
-    _apply_edit,
-    _batch_failure_result,
-    _dominant_newline,
-    _edit_failure,
-    _fold_edits,
-    _FoldContext,
-    _normalize_newlines,
-    _projected_rendered_chars,
-    _render_with_newlines,
+    FoldContext,
+    dominant_newline,
+    fold_edits,
+    normalize_newlines,
+    render_preserving_newlines,
 )
 from sidecar.ai.tools.builtins.file_atomic_write import (
     build_write_metadata,
@@ -37,12 +33,14 @@ from sidecar.ai.tools.builtins.file_history import (
     plan_checkpoint,
 )
 from sidecar.ai.tools.builtins.file_state import (
+    ExistingTextState,
     attach_structured_diff_metadata,
     encode_text_for_existing_file,
     load_existing_text_state_for_mutation,
     refuse_reserved_internal_path,
 )
 from sidecar.ai.tools.builtins.filesystem import (
+    _checkpoint_failure_result,
     current_max_edit_file_bytes,
     failure_result,
     workspace_relative_path,
@@ -235,14 +233,14 @@ def _edit_locked(  # noqa: PLR0913
             metadata={"path": relative_path},
         )
 
-    newline_style = _dominant_newline(existing_state.text)
-    normalized_content = _normalize_newlines(existing_state.text)
+    newline_style = dominant_newline(existing_state.text)
+    normalized_content = normalize_newlines(existing_state.text)
     max_final_bytes = current_max_edit_file_bytes()
     fallback_notices: list[str] = []
-    folded = _fold_edits(
+    folded = fold_edits(
         edits,
         content=normalized_content,
-        context=_FoldContext(
+        context=FoldContext(
             relative_path=relative_path,
             newline_style=newline_style,
             max_final_bytes=max_final_bytes,
@@ -254,21 +252,19 @@ def _edit_locked(  # noqa: PLR0913
         return folded
     updated_content, total_replacements, applied_replace_all, skipped = folded
 
-    rendered_content = _render_with_newlines(updated_content, newline_style)
-    try:
-        encoded = encode_text_for_existing_file(
-            rendered_content,
-            max_bytes=max_final_bytes,
-            subject=f"edit_file final content for {relative_path}",
-            preserve_utf8_bom=existing_state.has_utf8_bom and not normalize_bom,
-            normalize_bom=normalize_bom,
-        )
-    except ToolExecutionFailure as error:
-        return failure_result(
-            message=f"Could not edit {relative_path}: {error.message}",
-            error_code=error.code,
-            metadata={"path": relative_path},
-        )
+    rendered_content = render_preserving_newlines(
+        existing_state.text, updated_content, newline_style
+    )
+    encoded = _encode_edited_content(
+        rendered_content,
+        resolved=resolved,
+        relative_path=relative_path,
+        existing_state=existing_state,
+        max_bytes=max_final_bytes,
+        normalize_bom=normalize_bom,
+    )
+    if isinstance(encoded, ToolHandlerResult):
+        return encoded
     journal = workspace.mutation_journal
     recovery = _prepare_edit_recovery(
         journal=journal,
@@ -278,6 +274,7 @@ def _edit_locked(  # noqa: PLR0913
         target=resolved,
         relative_path=relative_path,
         encoded=encoded,
+        current_bytes=existing_state.raw_bytes,
     )
     if isinstance(recovery, ToolHandlerResult):
         return recovery
@@ -350,25 +347,50 @@ def _edit_locked(  # noqa: PLR0913
     )
 
 
+def _encode_edited_content(  # noqa: PLR0913 - explicit encode context.
+    rendered_content: str,
+    *,
+    resolved: Path,
+    relative_path: str,
+    existing_state: ExistingTextState,
+    max_bytes: int,
+    normalize_bom: bool,
+) -> bytes | ToolHandlerResult:
+    """Encode the edited text, or the refusal / no-change result to return instead."""
+    try:
+        encoded = encode_text_for_existing_file(
+            rendered_content,
+            max_bytes=max_bytes,
+            subject=f"edit_file final content for {relative_path}",
+            preserve_utf8_bom=existing_state.has_utf8_bom and not normalize_bom,
+            normalize_bom=normalize_bom,
+        )
+    except ToolExecutionFailure as error:
+        return failure_result(
+            message=f"Could not edit {relative_path}: {error.message}",
+            error_code=error.code,
+            metadata={"path": relative_path},
+        )
+    if encoded != existing_state.raw_bytes:
+        return encoded
+    # A batch whose edits cancel out: nothing to checkpoint, journal or write.
+    return ToolHandlerResult(
+        output=f"No changes written to {relative_path}: the edits leave its content unchanged.",
+        success=True,
+        metadata={
+            **build_write_metadata(
+                path=relative_path, bytes_written=0, written=(resolved, encoded)
+            ),
+            "changed": False,
+        },
+    )
+
+
 def _fallback_notice(metadata: dict[str, object], steps: list[str]) -> str:
     if not steps:
         return ""
     metadata["match_fallback"] = steps[-1]
     return "".join(f" (matched after normalising {step})" for step in dict.fromkeys(steps))
-
-
-def _checkpoint_failure_result(
-    journal: Any,
-    prepared: Any,
-    relative_path: str,
-    error: ToolExecutionFailure,
-) -> ToolHandlerResult:
-    summary = journal.mark_failed_sequence(prepared, prepared.sequences[0])
-    return failure_result(
-        message=f"Failed to create recovery checkpoint: {error.message}",
-        error_code=error.code,
-        metadata={"path": relative_path, "workspace_change_set": summary},
-    )
 
 
 def _prepare_edit_recovery(  # noqa: PLR0913 - explicit recovery context.
@@ -380,10 +402,13 @@ def _prepare_edit_recovery(  # noqa: PLR0913 - explicit recovery context.
     target: Path,
     relative_path: str,
     encoded: bytes,
+    current_bytes: bytes,
 ) -> tuple[CheckpointInfo, Any] | ToolHandlerResult:
     if journal is None:
         return create_checkpoint(target, workspace_root), None
-    planned = plan_checkpoint(target, workspace_root)
+    # The plan reuses the bytes just read; materialisation re-reads the file
+    # and refuses if it no longer matches this planned identity.
+    planned = plan_checkpoint(target, workspace_root, data=current_bytes)
     prepared = journal.prepare_file_change(
         journal_arguments,
         tool_name="edit_file",

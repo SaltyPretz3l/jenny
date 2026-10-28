@@ -90,6 +90,7 @@ def test_recall_current_turn() -> None:
     assert result.output == "fresh"
     assert result.call_id == "recall-1"
     assert result.metadata == {
+        "effects": "none",
         "recalled_call_id": "current",
         "source": "current_turn",
         "original_tool": "run_command",
@@ -101,6 +102,7 @@ def test_recall_history() -> None:
     assert result.success is True
     assert result.output == "original"
     assert result.metadata == {
+        "effects": "none",
         "recalled_call_id": "old",
         "source": "history",
         "original_tool": "read_file",
@@ -121,6 +123,7 @@ def test_missing_id_fails(arguments: dict[str, Any]) -> None:
     assert result.success is False
     assert str(arguments.get("call_id", "")) in result.output
     assert "only outputs from this conversation can be recalled" in result.output.lower()
+    assert result.metadata["effects"] == "none"
     assert result.error_code
 
 

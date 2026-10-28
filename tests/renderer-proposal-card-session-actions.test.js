@@ -76,7 +76,7 @@ async function setupSession(proposals, { bridge, extraDeps = {} } = {}) {
   await flush();
   const container = dom.window.document.querySelector('.timeline');
   for (const proposal of list) {
-    container.insertAdjacentHTML('beforeend', cards.buildProposalCardMarkup({ sessionId: SID, proposalId: proposal.proposal_id, kind: 'session', lookup: store.lookup(SID, proposal.proposal_id) }));
+    container.insertAdjacentHTML('beforeend', cards.buildProposalCardMarkup({ sessionId: SID, proposalId: proposal.proposal_id, kind: 'session', lookup: store.lookup(SID, proposal.proposal_id) }, extraDeps));
   }
   await flush();
   const dispose = actions.bindProposalCardInteractions(container, { store, cards, getBridge: () => theBridge, ...extraDeps });
@@ -343,5 +343,113 @@ test('Options with the app-wide popover handlers: the open survives its own clic
   await flush();
   assert.equal(ctx.store.isOptionsOpen(SID, pidOf('a')), false, 'the store follows the app-wide close');
   assert.equal(ctx.q('.proposal-options-popover').hidden, true);
+  ctx.dispose();
+});
+
+// ---- Row 76 (E1): "Always allow Jenny to start chats in <project>" on the primary chat's offer card ----
+
+const ALWAYS = '[data-proposal-always-allow]';
+const P_OPTIONS = { ...S_OPTIONS, destination_project_id: 'proj_1' };
+const primaryDeps = (grantLaunch, extra = {}) => {
+  const calls = [];
+  return {
+    calls,
+    deps: {
+      isPrimarySession: (id) => id === SID,
+      getPrimaryBridge: () => ({ grantLaunch: async (request) => { calls.push(request); return typeof grantLaunch === 'function' ? grantLaunch(request) : grantLaunch; } }),
+      ...extra,
+    },
+  };
+};
+const primaryOffer = (overrides = {}) => sessionProposal('a', { options: P_OPTIONS, ...overrides });
+const decideOk = (choice = 'new_session') => ({ decide: { schema_version: 1, ok: true, created: true, proposal: sessionAccepted('a', choice, 'queued', { options: P_OPTIONS }) } });
+
+test('Always allow: New session with the box ticked decides, then grants the destination project once', async () => {
+  const bridge = sessionBridge(decideOk());
+  const { calls, deps } = primaryDeps({ schema_version: 1, ok: true, permission: {}, created: true });
+  const ctx = await setupSession(primaryOffer(), { bridge, extraDeps: deps });
+  const box = ctx.q(ALWAYS);
+  assert.ok(box, 'the row is on the primary chat offer');
+  box.click();
+  ctx.q('[data-proposal-action="new_session"]').click();
+  await flush();
+  await flush();
+  assert.equal(bridge.only('decide').length, 1);
+  assert.deepEqual(calls, [{ schema_version: 1, project_id: 'proj_1' }]);
+  assert.equal(ctx.q(ALWAYS), null, 'the decided card no longer carries the row');
+  assert.equal(ctx.q('.proposal-notice'), null);
+  ctx.dispose();
+});
+
+test('Always allow: Do it here with the box ticked grants too; an unticked box grants nothing', async () => {
+  const ticked = primaryDeps({ schema_version: 1, ok: true });
+  const bridgeA = sessionBridge(decideOk('do_it_here'));
+  const a = await setupSession(primaryOffer(), { bridge: bridgeA, extraDeps: ticked.deps });
+  a.q(ALWAYS).click();
+  a.q('[data-proposal-action="do_it_here"]').click();
+  await flush(); await flush();
+  assert.equal(ticked.calls.length, 1);
+  a.dispose();
+  const unticked = primaryDeps({ schema_version: 1, ok: true });
+  const bridgeB = sessionBridge(decideOk());
+  const b = await setupSession(primaryOffer(), { bridge: bridgeB, extraDeps: unticked.deps });
+  b.q('[data-proposal-action="new_session"]').click();
+  await flush(); await flush();
+  assert.equal(bridgeB.only('decide').length, 1);
+  assert.equal(unticked.calls.length, 0);
+  b.dispose();
+});
+
+test('Always allow: a refused decision grants nothing', async () => {
+  const bridge = sessionBridge({ decide: { schema_version: 1, ok: false, error_code: 'CMP-PROPOSAL-0004', reason: 'conflict', retryable: false, current_revision: 2 } });
+  const { calls, deps } = primaryDeps({ schema_version: 1, ok: true });
+  const ctx = await setupSession(primaryOffer(), { bridge, extraDeps: deps });
+  ctx.q(ALWAYS).click();
+  ctx.q('[data-proposal-action="new_session"]').click();
+  await flush(); await flush();
+  assert.equal(calls.length, 0);
+  assert.equal(ctx.q('.proposal-notice').textContent, 'That conflicts with an earlier choice.');
+  ctx.dispose();
+});
+
+test('Always allow: a refused or failed grant leaves a calm notice that the chat still started', async () => {
+  for (const refusal of [{ schema_version: 1, ok: false, code: 'CMP-PRIMARY-0004', reason: 'capacity', retryable: false }, null]) {
+    const bridge = sessionBridge(decideOk());
+    const { calls, deps } = primaryDeps(() => { if (refusal === null) throw new Error('bridge down'); return refusal; });
+    const ctx = await setupSession(primaryOffer(), { bridge, extraDeps: deps });
+    ctx.q(ALWAYS).click();
+    ctx.q('[data-proposal-action="new_session"]').click();
+    await flush(); await flush();
+    assert.equal(calls.length, 1);
+    assert.equal(ctx.q('.proposal-notice').textContent, 'The permission was not saved.');
+    ctx.dispose();
+  }
+});
+
+test('Always allow: the tick survives a repaint between ticking and clicking', async () => {
+  const bridge = sessionBridge(decideOk());
+  const { calls, deps } = primaryDeps({ schema_version: 1, ok: true });
+  const ctx = await setupSession(primaryOffer(), { bridge, extraDeps: deps });
+  ctx.q(ALWAYS).click();
+  ctx.store.setNotice(SID, pidOf('a'), { text: 'Something changed' });
+  await flush();
+  assert.equal(ctx.q('.proposal-notice').textContent, 'Something changed');
+  assert.equal(ctx.q(ALWAYS).checked, true, 'the repainted card keeps the tick');
+  ctx.q('[data-proposal-action="new_session"]').click();
+  await flush(); await flush();
+  assert.deepEqual(calls, [{ schema_version: 1, project_id: 'proj_1' }]);
+  ctx.dispose();
+});
+
+test('Always allow: never offered or granted for a non-primary chat, even if a box is present', async () => {
+  const { calls, deps } = primaryDeps({ schema_version: 1, ok: true }, { isPrimarySession: () => false });
+  const bridge = sessionBridge(decideOk());
+  const ctx = await setupSession(primaryOffer(), { bridge, extraDeps: deps });
+  assert.equal(ctx.q(ALWAYS), null);
+  ctx.q('[data-proposal-action="new_session"]').insertAdjacentHTML('afterend', '<input type="checkbox" data-proposal-always-allow checked>');
+  ctx.q('[data-proposal-action="new_session"]').click();
+  await flush(); await flush();
+  assert.equal(bridge.only('decide').length, 1);
+  assert.equal(calls.length, 0);
   ctx.dispose();
 });

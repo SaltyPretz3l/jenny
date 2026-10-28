@@ -194,7 +194,7 @@ test('buildCatalogBodyHtml emits the shortcut catalog with kbd chiclets (E7)', (
 
 test('the run-mode shortcuts are documented in the catalog (spec §5, decision 3)', () => {
   const html = buildCatalogBodyHtml();
-  assert.match(html, /Cycle run mode \(Ask → Auto → Plan\)/);
+  assert.match(html, /Cycle run mode \(Ask → Auto → Plan → Propose\)/);
   assert.match(html, /<kbd[^>]*>Tab<\/kbd>/);
   assert.match(html, /Toggle Plan mode/);
   assert.match(html, /<kbd[^>]*>P<\/kbd>/);

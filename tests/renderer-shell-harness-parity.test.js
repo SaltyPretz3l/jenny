@@ -193,6 +193,11 @@ test('File Map atlas factories load before the controller without CommonJS', () 
     'renderer/features/renderer-ide-map-prefs.js',
     'renderer/features/renderer-ide-map-activity-bus.js',
     'renderer/features/renderer-ide-map-activity-rail.js',
+    // Hard dependencies the controller (and controller-utils) destructure
+    // at module load.
+    'renderer/features/renderer-ide-map-event-ownership.js',
+    'renderer/features/renderer-ide-map-controller-utils.js',
+    'renderer/features/renderer-ide-map-scan-coordinator.js',
   ];
   const controller = 'renderer/features/renderer-ide-map-controller.js';
 
@@ -205,7 +210,9 @@ test('File Map atlas factories load before the controller without CommonJS', () 
   );
 
   const browserContext = vm.createContext({});
-  for (const src of ['renderer/shared/string-utils.js', ...dependencies, controller]) {
+  // string-utils and ide-state load from index.html before the IDE group.
+  const preloaded = ['renderer/shared/string-utils.js', 'renderer/features/renderer-ide-state.js'];
+  for (const src of [...preloaded, ...dependencies, controller]) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, src), 'utf8'), browserContext, { filename: src });
   }
   assert.equal(typeof browserContext.rendererIdeMapAtlasLayout?.layout, 'function');

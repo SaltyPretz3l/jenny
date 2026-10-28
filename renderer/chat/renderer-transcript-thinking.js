@@ -171,6 +171,15 @@
       const strategy = String(compaction?.strategy || '');
       const reasonCode = String(compaction?.reasonCode || '');
       const scope = String(compaction?.historyScopeFallback || '');
+      // A manual compaction (/compact, Compact now) is saved for the turns after it.
+      if (phase === 'manual') {
+        return [
+          strategy === 'micro'
+            ? jt('chat.thinking.olderContextCondensedManual', 'Older context was condensed for future turns')
+            : jt('chat.thinking.olderTurnsSummarizedManual', 'Older turns were summarized for future turns'),
+          jt('chat.thinking.compactedOnRequest', 'Compacted on request'),
+        ];
+      }
       let variant = jt('chat.thinking.olderContextReduced', 'Older context was reduced to fit this request');
       if (summaryStatus === 'created') {
         variant = phase === 'tool_loop'

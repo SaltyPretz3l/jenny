@@ -34,6 +34,7 @@ function createFakePane(kind) {
         host.appendChild(root);
       }
       loads.push({ path, base64: payload.base64 });
+      if (pane.loadFailure) return pane.loadFailure;
       docs.set(path, { dirty: false, exportBase64: payload.base64 });
       return { ok: true, pageCount: 1 };
     },
@@ -45,6 +46,7 @@ function createFakePane(kind) {
     markSaved(path) { if (docs.has(path)) docs.get(path).dirty = false; },
     async exportBytes(path) { if (pane.exportGate) await pane.exportGate; return docs.get(path)?.exportBase64 ?? null; },
     exportGate: null,
+    loadFailure: null,
     dispose() { docs.clear(); visible = ''; },
     setDirty(path, dirty) {
       const doc = docs.get(path);
@@ -213,6 +215,16 @@ test('document read failures close the tab and use document refusal copy', async
   assert.equal(await harness.controller.openFile('docs/memo.docx'), false);
   assert.match(harness.toasts.at(-1).message, /could not be opened as a document/);
   harness.bridge.jennyShell.workspaceFs.readDocument = originalRead;
+});
+
+test('a document the viewer refuses toasts its reason with the refusal copy', async (t) => {
+  const { harness, pdf } = createDocumentHarness(t);
+  await harness.controller.activateIde();
+  pdf.loadFailure = { ok: false, code: 'document_unsupported', message: 'Password-protected PDFs are not supported.' };
+  assert.equal(await harness.controller.openFile('docs/report.pdf'), false);
+  assert.equal(harness.toasts.at(-1).message,
+    'report.pdf could not be opened as a document. Password-protected PDFs are not supported.');
+  assert.equal(harness.state.ui.ide.openTabs.length, 0);
 });
 
 test('dirty documents participate in close orchestration and forced close releases the pane', async (t) => {

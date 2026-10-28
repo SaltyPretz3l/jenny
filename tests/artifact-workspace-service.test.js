@@ -11,6 +11,7 @@ const {
   cleanupTrackedResources,
   createTrackedTempDir,
 } = require('./helpers/resource-cleanup');
+const { linkDirectory } = require('./helpers/platform-skips');
 const {
   ArtifactWorkspaceService,
   SESSION_ARTIFACT_ROOT,
@@ -107,12 +108,7 @@ for (const operation of ['read', 'save', 'delete', 'create', 'clone', 'cleanup',
     const reportB = path.join(scratchB, 'report.md');
     const originalBytes = fs.readFileSync(reportB);
     fs.rmSync(scratchA, { recursive: true });
-    try {
-      fs.symlinkSync(scratchB, scratchA, process.platform === 'win32' ? 'junction' : 'dir');
-    } catch (error) {
-      t.skip(`Platform refused directory link: ${error.code}`);
-      return;
-    }
+    linkDirectory(scratchB, scratchA);
     const artifactId = metadata.get('session-a').artifact_id;
     if (operation === 'clone' || operation === 'clone-target') {
       const sourceId = operation === 'clone' ? 'session-a' : 'session-b';
@@ -142,15 +138,10 @@ for (const operation of ['read', 'save', 'delete', 'create', 'clone', 'cleanup',
   });
 }
 
-test('ArtifactWorkspaceService accepts a linked workspace root', async (t) => {
+test('ArtifactWorkspaceService accepts a linked workspace root', async () => {
   const actualRoot = createWorkspaceRoot();
   const workspaceRoot = path.join(createWorkspaceRoot(), 'linked-root');
-  try {
-    fs.symlinkSync(actualRoot, workspaceRoot, process.platform === 'win32' ? 'junction' : 'dir');
-  } catch (error) {
-    t.skip(`Platform refused directory link: ${error.code}`);
-    return;
-  }
+  linkDirectory(actualRoot, workspaceRoot);
   let metadata;
   const service = new ArtifactWorkspaceService({
     configService: { getState: () => ({ toolsWorkspaceRoot: workspaceRoot }) },
@@ -716,12 +707,10 @@ test('ArtifactWorkspaceService refuses to reveal or externally open dangerous ex
     () => service.openArtifactExternal('session-dangerous', 'artifact_dangerous'),
     /dangerous|cannot be opened/i
   );
-  await assert.rejects(
-    () => service.revealArtifact('session-dangerous', 'artifact_dangerous'),
-    /dangerous|cannot be revealed/i
-  );
+  // Reveal only selects the file in the OS file manager; it is not gated.
+  await service.revealArtifact('session-dangerous', 'artifact_dangerous');
   assert.deepEqual(openedPaths, []);
-  assert.deepEqual(revealedPaths, []);
+  assert.deepEqual(revealedPaths, [artifactPath]);
 });
 
 test('ArtifactWorkspaceService rejects missing artifacts below symlinked parents', async () => {

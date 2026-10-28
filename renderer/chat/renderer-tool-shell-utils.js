@@ -3,9 +3,10 @@
 /**
  * renderer/chat/renderer-tool-shell-utils.js
  *
- * Specialized tool shell renderers using inventory primitives (UMD).
- * Each shell returns an HTML string for the tool-call-block interior,
- * or null to fall back to the generic renderer in transcript-utils.
+ * The Mermaid tool shell (its asynchronous preview), the kv-grid the detail
+ * body shares, the scripted-change and Python image helpers, and the
+ * tool-row routing predicate (UMD). Every other tool's detail renders in
+ * renderer-tool-detail-body.js.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -17,6 +18,9 @@
   'use strict';
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  // Routing predicate (renderer-render-pipeline-projection-context): these tool
+  // kinds keep the transcript tool-call block; every other settled call renders
+  // as the generic trace row. The name predates the retired per-tool shells.
   const SPECIALIZED_TOOL_KINDS = new Set([
     'Bash',
     'run_command',
@@ -184,29 +188,13 @@
   }
 
   function createToolShellRenderer(deps) {
-    const {
-      escapeHtml,
-      toolCallUtils,
-      sanitizeHtmlFragment,
-      actionButton,
-    } = deps;
-    const fileDiffView = deps.fileDiffView
-      || globalThis.rendererFileDiffView
-      || (typeof require === 'function' ? require('./renderer-file-diff-view') : {});
-    const fileDiffBindings = deps.fileDiffBindings
-      || globalThis.rendererFileDiffBindings
-      || (typeof require === 'function' ? require('./renderer-file-diff-bindings') : {});
-    const codeHighlight = deps.codeHighlight
-      || globalThis.rendererCodeHighlight
-      || (typeof require === 'function' ? require('./renderer-code-highlight') : {});
-    const diffActionButton = actionButton || globalThis.inventoryActionButton || null;
+    const { escapeHtml, toolCallUtils } = deps;
     // Pending timers are keyed by preview id to coalesce re-renders and avoid duplicate iframe work.
     const _mermaidPreviewTimers = new Map();
 
     const inv = (typeof globalThis !== 'undefined' && globalThis.inventory) || null;
     if (!inv) return null;
 
-    const badge = inv.badge || null;
     const Collapsible = inv.collapsible || null;
     const CodeBlock = inv.codeBlock || null;
     if (!Collapsible || !CodeBlock) return null;
@@ -220,29 +208,13 @@
       };
     }
 
-    /* Optional Phase B/C dependencies — gracefully absent. */
-    const sourceUtils = typeof globalThis !== 'undefined' && globalThis.rendererSourceUtils || null;
+    /* Optional dependency — gracefully absent. */
     const artifactCardUtils = typeof globalThis !== 'undefined' && globalThis.rendererArtifactCardUtils || null;
-    // Single normalize source for monitor metadata (the rich copy). Resolved at
-    // render time, by which point renderer-monitor-tool-utils.js has loaded (it is
-    // the next defer script after this one in index.html); CommonJS require covers
-    // tests. renderMonitorShell reads only fields the rich copy produces identically.
-    const monitorToolUtils = (typeof globalThis !== 'undefined' && globalThis.rendererMonitorToolUtils)
-      ? globalThis.rendererMonitorToolUtils
-      : typeof require === 'function'
-        ? require('./renderer-monitor-tool-utils')
-        : null;
     const mermaidUtils = typeof globalThis !== 'undefined' && globalThis.rendererMermaidUtils
       ? globalThis.rendererMermaidUtils
       : typeof require === 'function'
         ? require('../features/renderer-mermaid-utils')
         : null;
-    var _sourceRenderer = undefined;
-    function getSourceRenderer() {
-      if (_sourceRenderer !== undefined) return _sourceRenderer;
-      _sourceRenderer = sourceUtils ? sourceUtils.createSourceRenderer() : null;
-      return _sourceRenderer;
-    }
     function sanitizeMermaidPreviewToken(value) {
       return String(value || '')
         .trim()
@@ -437,31 +409,6 @@
       return '<div class="tool-kv-grid">' + rows + '</div>';
     }
 
-    /*
-     * Render an "Args" kv-grid for any input keys *other* than the
-     * shell-specific one (e.g. `command` for Bash, `code` for Python),
-     * so structured arg metadata (timeout, working_dir, etc.) still
-     * surfaces alongside the shell-native code block. Returns '' when
-     * there are no extra keys so callers can splice unconditionally.
-     */
-    function argsKvGridFromParsed(parsedInput, excludedKeys) {
-      if (!parsedInput || typeof parsedInput !== 'object' || Array.isArray(parsedInput)) return '';
-      var skip = Array.isArray(excludedKeys) ? excludedKeys : [];
-      var filtered = {};
-      var keys = Object.keys(parsedInput);
-      for (var i = 0; i < keys.length; i += 1) {
-        if (skip.indexOf(keys[i]) === -1) filtered[keys[i]] = parsedInput[keys[i]];
-      }
-      if (Object.keys(filtered).length === 0) return '';
-      return kvGrid(filtered);
-    }
-
-    function tryPrettyPrintJson(text) {
-      var trimmed = String(text || '').trim();
-      if ((!trimmed.startsWith('{') && !trimmed.startsWith('[')) || trimmed.length > MAX_SHELL_OUTPUT_CHARS) return null;
-      try { return JSON.stringify(JSON.parse(trimmed), null, 2); } catch (_e) { return null; }
-    }
-
     var lastShellFallbackDebugAt = 0;
     var suppressedShellFallbackLogs = 0;
     var SHELL_FALLBACK_DEBUG_WINDOW_MS = 5000;
@@ -482,342 +429,6 @@
         message: error && error.message ? String(error.message) : String(error || ''),
         suppressedCount: suppressed,
       });
-    }
-
-    function diffDeps(model) {
-      return {
-        escapeHtml: escapeHtml, fileDiffView: fileDiffView, fileDiffBindings: fileDiffBindings,
-        codeHighlight: codeHighlight, actionButton: diffActionButton,
-        input: model.input && typeof model.input === 'object' ? model.input : {},
-        resolveExpanded: function (diffId) { return fileDiffBindings.getFileDiffExpanded?.(diffId) === true; },
-        registerExpanded: false,
-      };
-    }
-
-    /* Script tool card: the Changed files section follows the output. */
-    function changedFilesSection(model) {
-      var content = buildScriptedChangesContent(model, diffDeps(model));
-      return content ? section(jt('chat.toolShell.changedFiles', 'Changed files'), content) : '';
-    }
-
-    /* ── Shell: Bash / Terminal ── */
-
-    function renderBashShell(model) {
-      var parsedInput = null;
-      try {
-        parsedInput = model.inputJson ? JSON.parse(model.inputJson) : null;
-      } catch (_e) { /* ignore */ }
-      var command = parsedInput && parsedInput.command ? String(parsedInput.command) : '';
-
-      var stdout = typeof model.metadata.stdout === 'string' ? model.metadata.stdout : '';
-      var stderr = typeof model.metadata.stderr === 'string' ? model.metadata.stderr : '';
-      var rawExitCode = model.metadata.exitCode != null ? model.metadata.exitCode : model.metadata.exit_code;
-      var exitCode = rawExitCode != null ? Number(rawExitCode) : null;
-      var timedOut = Boolean(model.metadata.timedOut) || model.metadata.timed_out === true;
-      var prettyStdout = tryPrettyPrintJson(stdout);
-      var stdoutDisplay = prettyStdout || stdout;
-      var fallbackOutput = !stdout && !stderr ? String(model.outputText || '') : '';
-
-      var parts = [];
-      var extraArgs = argsKvGridFromParsed(parsedInput, ['command']);
-      if (extraArgs) {
-        parts.push(section('Args', extraArgs));
-      }
-      if (command) {
-        parts.push(section(jt('chat.toolShell.commandPreview', 'Command preview'), CodeBlock.codeblockTruncated({
-          code: command, language: 'bash', label: jt('chat.toolShell.commandPreview', 'Command preview'), copyable: true,
-          copyId: 'tool-copy-' + (model.domToken || model.callId) + '-command',
-          ariaLabel: jt('chat.toolShell.commandPreview', 'Command preview'), maxChars: MAX_SHELL_OUTPUT_CHARS,
-        })));
-      }
-      if (stdout) {
-        parts.push(section('Output', CodeBlock.codeblockTruncated({
-          code: stdoutDisplay, label: jt('chat.toolShell.outputPreview', 'Output preview'), copyable: true,
-          copyId: 'tool-copy-' + (model.domToken || model.callId) + '-stdout',
-          ariaLabel: jt('chat.toolShell.commandOutput', 'Command output'), maxChars: MAX_SHELL_OUTPUT_CHARS,
-        })));
-      }
-      if (stderr) {
-        parts.push(section('Stderr', CodeBlock.codeblockTruncated({
-          code: stderr, label: jt('chat.toolShell.stderrPreview', 'Stderr preview'), copyable: true,
-          copyId: 'tool-copy-' + (model.domToken || model.callId) + '-stderr',
-          ariaLabel: jt('chat.toolShell.standardError', 'Standard error'), maxChars: MAX_SHELL_OUTPUT_CHARS,
-        }), model.isError));
-      }
-      if (fallbackOutput) {
-        parts.push(section('Output', CodeBlock.codeblockTruncated({
-          code: fallbackOutput, label: jt('chat.toolShell.outputPreview', 'Output preview'), copyable: true,
-          copyId: 'tool-copy-' + (model.domToken || model.callId) + '-output',
-          ariaLabel: jt('chat.toolShell.commandOutput', 'Command output'), maxChars: MAX_SHELL_OUTPUT_CHARS,
-        }), model.isError));
-      }
-
-      var exitLabel = '';
-      if (exitCode != null) {
-        exitLabel = timedOut ? jt('chat.toolShell.exitTimedOut', 'exit {code} (timed out)', { code: exitCode }) : jt('chat.toolShell.exitCode', 'exit {code}', { code: exitCode });
-      } else if (timedOut) {
-        exitLabel = jt('chat.toolShell.timedOut', 'timed out');
-      }
-      if (exitLabel && badge) {
-        var exitTone = exitCode === 0 && !timedOut ? 'success' : 'danger';
-        parts.push('<div class="bash-exit-badge">'
-          + badge({ tone: exitTone, text: exitLabel })
-          + '</div>');
-      }
-      parts.push(changedFilesSection(model));
-
-      return shellHeader(model) + shellContent(model, parts.join(''));
-    }
-
-    /* ── Shell: Read ── */
-
-    function renderReadShell(model) {
-      var filePath = '';
-      var lineRange = '';
-      try {
-        var parsed = model.input && typeof model.input === 'object' ? model.input : {};
-        filePath = String(parsed.path || parsed.file_path || '');
-        if (parsed.offset != null || parsed.limit != null) {
-          var start = parsed.offset != null ? Number(parsed.offset) : 0;
-          var count = parsed.limit != null ? Number(parsed.limit) : 0;
-          lineRange = count > 0 ? ' (lines ' + start + '-' + (start + count) + ')' : '';
-        }
-      } catch (_e) { /* ignore */ }
-
-      var output = String(model.outputText || '');
-      var parts = [];
-      var rangeLabel = filePath + lineRange;
-      if (rangeLabel) {
-        parts.push('<div class="tool-call-output-meta">' + escapeHtml(rangeLabel) + '</div>');
-      }
-      if (output) {
-        parts.push(CodeBlock.codeblockTruncated({
-          code: output, label: jt('chat.toolShell.filePreview', 'File preview'), copyable: true,
-          copyId: 'tool-copy-' + (model.domToken || model.callId) + '-read',
-          ariaLabel: rangeLabel ? jt('chat.toolShell.fileContentsRange', 'File contents of {range}', { range: rangeLabel }).replace('{range}', function () { return String(rangeLabel); }) : jt('chat.toolShell.fileContents', 'File contents'),
-          maxChars: MAX_SHELL_OUTPUT_CHARS,
-        }));
-      } else if (!model.isRunning) {
-        parts.push('<div class="tool-call-empty">' + escapeHtml(jt('chat.toolShell.noContent', 'No content')) + '</div>');
-      }
-
-      return shellHeader(model) + shellContent(model, parts.join(''));
-    }
-
-    /* ── Shell: Edit ── */
-
-    function renderEditShell(model) {
-      var metadata = model.metadata || {};
-      var multi = Array.isArray(metadata.diffs) ? metadata.diffs : [];
-      var diffs = multi.length ? multi : (metadata.diff ? [metadata.diff] : []);
-      if (!diffs.length || typeof fileDiffView.buildFileDiffMarkup !== 'function') {
-        /* No structured diff — fall back to generic */
-        return null;
-      }
-      var rows = buildFileDiffRowsMarkup(model, diffDeps(model));
-      return rows ? shellHeader(model) + shellContent(model, '<div class="file-diff-list">' + rows + '</div>') : null;
-    }
-
-    /* ── Shell: Write ── */
-
-    function renderWriteShell(model) {
-      var metadata = model.metadata || {};
-      if (metadata.diff || (Array.isArray(metadata.diffs) && metadata.diffs.length)) {
-        /* If we have structured diff data, use the Edit shell */
-        return renderEditShell(model);
-      }
-
-      var parts = [];
-      var output = String(model.outputText || '').trim();
-      if (output) {
-        parts.push(CodeBlock.codeblockTruncated({
-          code: output, ariaLabel: jt('chat.toolShell.writeResult', 'Write result'), maxChars: MAX_SHELL_OUTPUT_CHARS,
-        }));
-      }
-
-      return shellHeader(model) + shellContent(model, parts.join(''));
-    }
-
-    /* ── Shell: Glob ── */
-
-    function renderGlobShell(model) {
-      var output = String(model.outputText || '').trim();
-      var parts = [];
-      if (output) {
-        var lines = output.split('\n').filter(Boolean);
-        if (lines.length > 0) {
-          parts.push('<div class="tool-shell-file-list">'
-            + lines.map(function (line) {
-              return '<div class="tool-shell-file-item">' + escapeHtml(line) + '</div>';
-            }).join('')
-            + '</div>');
-        }
-      } else if (!model.isRunning) {
-        parts.push('<div class="tool-call-empty">' + escapeHtml(jt('chat.toolShell.noMatches', 'No matches')) + '</div>');
-      }
-
-      return shellHeader(model) + shellContent(model, parts.join(''));
-    }
-
-    /* ── Shell: Grep ── */
-
-    function renderGrepShell(model) {
-      var output = String(model.outputText || '').trim();
-      var parts = [];
-      if (output) {
-        parts.push(CodeBlock.codeblockTruncated({
-          code: output, label: jt('chat.toolShell.searchPreview', 'Search preview'), copyable: true,
-          copyId: 'tool-copy-' + (model.domToken || model.callId) + '-grep',
-          ariaLabel: jt('chat.toolShell.searchResults', 'Search results'), maxChars: MAX_SHELL_OUTPUT_CHARS,
-        }));
-      } else if (!model.isRunning) {
-        parts.push('<div class="tool-call-empty">' + escapeHtml(jt('chat.toolShell.noMatches', 'No matches')) + '</div>');
-      }
-
-      return shellHeader(model) + shellContent(model, parts.join(''));
-    }
-
-    /* ── Shell: Python ── */
-
-    function renderPythonShell(model) {
-      var parsed;
-      try {
-        parsed = JSON.parse(String(model.outputText || ''));
-      } catch (_e) {
-        parsed = null;
-      }
-      if (!parsed || typeof parsed !== 'object') return null;
-
-      var parsedInput = null;
-      try {
-        parsedInput = model.inputJson ? JSON.parse(model.inputJson) : null;
-      } catch (_e) { /* ignore */ }
-      var code = String(parsedInput && parsedInput.code || '').trim();
-
-      var tables = Array.isArray(parsed.tables) ? parsed.tables : [];
-      var error = parsed.error && typeof parsed.error === 'object' ? parsed.error : null;
-      var stdout = String(parsed.stdout || '');
-      var stderr = String(parsed.stderr || '');
-      var lastExpr = String(parsed.last_expr_repr || '');
-      var outputImages = pythonOutputImages(parsed.images, model.trustedAttachmentImages);
-
-      var parts = [];
-      var extraArgs = argsKvGridFromParsed(parsedInput, ['code']);
-      if (extraArgs) {
-        parts.push(section('Args', extraArgs));
-      }
-      if (code) {
-        parts.push(section(jt('chat.toolShell.inputPreview', 'Input preview'), CodeBlock.codeblockTruncated({
-          code: code, language: 'python', label: jt('chat.toolShell.inputPreview', 'Input preview'), copyable: true,
-          copyId: 'tool-copy-' + (model.domToken || model.callId) + '-input',
-          ariaLabel: jt('chat.toolShell.pythonInputPreview', 'Python input preview'), maxChars: MAX_SHELL_OUTPUT_CHARS,
-        })));
-      }
-      if (stdout) {
-        parts.push(section('Stdout', CodeBlock.codeblockTruncated({
-          code: stdout, label: jt('chat.toolShell.stdoutPreview', 'Stdout preview'), copyable: true,
-          copyId: 'tool-copy-' + (model.domToken || model.callId) + '-stdout',
-          ariaLabel: jt('chat.toolShell.standardOutput', 'Standard output'), maxChars: MAX_SHELL_OUTPUT_CHARS,
-        })));
-      }
-      if (stderr) {
-        parts.push(section(jt('chat.toolShell.stderrPreview', 'Stderr preview'), CodeBlock.codeblockTruncated({
-          code: stderr, label: jt('chat.toolShell.stderrPreview', 'Stderr preview'), copyable: true,
-          copyId: 'tool-copy-' + (model.domToken || model.callId) + '-stderr',
-          ariaLabel: jt('chat.toolShell.standardErrorPreview', 'Standard error preview'), maxChars: MAX_SHELL_OUTPUT_CHARS,
-        })));
-      }
-      if (lastExpr) {
-        parts.push(section(jt('chat.toolShell.resultPreview', 'Result preview'), CodeBlock.codeblockTruncated({
-          code: lastExpr, label: jt('chat.toolShell.resultPreview', 'Result preview'), copyable: true,
-          copyId: 'tool-copy-' + (model.domToken || model.callId) + '-result',
-          ariaLabel: jt('chat.toolShell.returnValuePreview', 'Return value preview'), maxChars: MAX_SHELL_OUTPUT_CHARS,
-        })));
-      }
-      var imageFigures = renderPythonOutputImages(outputImages.items);
-      if (imageFigures) parts.push(section('Images', imageFigures));
-      if (outputImages.blocked > 0) {
-        parts.push(section('Images', '<div class="tool-call-empty">'
-          + escapeHtml(jt('chat.toolShell.imagesUnavailable', '{count} image output(s) are unavailable.', { count: outputImages.blocked }))
-          + '</div>'));
-      }
-      if (tables.length && sanitizeHtmlFragment) {
-        parts.push(section('Tables', tables.map(function (table) {
-          return '<div class="python-table-output">'
-            + sanitizeHtmlFragment(table && table.html)
-            + '</div>';
-        }).join('')));
-      }
-      if (error) {
-        parts.push(section(jt('chat.toolShell.errorPreview', 'Error preview'), CodeBlock.codeblockTruncated({
-          code: String(error.traceback || error.message || ''), label: jt('chat.toolShell.errorPreview', 'Error preview'),
-          copyable: true,
-          copyId: 'tool-copy-' + (model.domToken || model.callId) + '-error',
-          ariaLabel: jt('chat.toolShell.pythonErrorPreview', 'Python error preview'), maxChars: MAX_SHELL_OUTPUT_CHARS,
-          className: 'python-output-error',
-        }), true));
-      }
-      var changedFiles = changedFilesSection(model);
-      if (changedFiles) parts.push(changedFiles);
-
-      if (!parts.length) return null;
-      return shellHeader(model) + shellContent(model, parts.join(''));
-    }
-
-    /* ── Shell: Web Search ── */
-
-    function renderWebSearchShell(model) {
-      var output = String(model.outputText || '').trim();
-      var parts = [];
-
-      /* Try to parse JSON and show answer + source badges. */
-      var parsed = null;
-      try { if (output.startsWith('{')) parsed = JSON.parse(output); } catch (_e) { /* ignore */ }
-
-      if (parsed && typeof parsed === 'object') {
-        var answer = String(parsed.answer || '').trim();
-        if (answer) {
-          parts.push(section('Answer', '<div class="tool-call-output-text">'
-            + escapeHtml(answer) + '</div>'));
-        }
-        if (parsed.error) {
-          parts.push(section('Error', '<div class="tool-call-output-text tool-call-section-label-error">'
-            + escapeHtml(String(parsed.error)) + '</div>', true));
-        }
-        /* Source citation badges (Phase B). */
-        var sr = getSourceRenderer();
-        if (sr) {
-          var sourceHtml = sr.renderSourceSection(output, model.domToken || model.callId);
-          if (sourceHtml) parts.push(sourceHtml);
-        }
-      } else if (output) {
-        parts.push(CodeBlock.codeblockTruncated({
-          code: output, label: jt('chat.toolShell.searchPreview', 'Search preview'), copyable: true,
-          copyId: 'tool-copy-' + (model.domToken || model.callId) + '-search',
-          ariaLabel: jt('chat.toolShell.searchResults', 'Search results'), maxChars: MAX_SHELL_OUTPUT_CHARS,
-        }));
-      } else if (!model.isRunning) {
-        parts.push('<div class="tool-call-empty">' + escapeHtml(jt('chat.toolShell.noResults', 'No results')) + '</div>');
-      }
-
-      return shellHeader(model) + shellContent(model, parts.join(''));
-    }
-
-    /* ── Shell: Fetch URL ── */
-
-    function renderFetchUrlShell(model) {
-      var output = String(model.outputText || '').trim();
-      var parts = [];
-      if (output) {
-        parts.push(CodeBlock.codeblockTruncated({
-          code: output, label: jt('chat.toolShell.contentPreview', 'Content preview'), copyable: true,
-          copyId: 'tool-copy-' + (model.domToken || model.callId) + '-fetch',
-          ariaLabel: jt('chat.toolShell.fetchedContent', 'Fetched content'), maxChars: MAX_SHELL_OUTPUT_CHARS,
-        }));
-      } else if (!model.isRunning) {
-        parts.push('<div class="tool-call-empty">' + escapeHtml(jt('chat.toolShell.noContent', 'No content')) + '</div>');
-      }
-      return shellHeader(model) + shellContent(model, parts.join(''));
     }
 
     /* ── Shell: Mermaid Generate ── */
@@ -868,37 +479,6 @@
 
     /* ── Artifact card append (Phase C) ── */
 
-    function renderMonitorShell(model) {
-      var monitor = monitorToolUtils.normalizeMonitorMetadata(model.metadata && model.metadata.monitor);
-      var description = monitor.description || model.summary || 'Monitor';
-      var timeoutLabel = monitor.timeoutMs > 0 ? Math.round(monitor.timeoutMs / 1000) + 's' : '';
-      var metaParts = [
-        monitor.state,
-        timeoutLabel ? 'timeout ' + timeoutLabel : '',
-        monitor.persistent ? 'persistent' : '',
-        monitor.eventCount === 1 ? '1 event' : monitor.eventCount + ' events',
-        monitor.droppedEventCount > 0 ? monitor.droppedEventCount + ' dropped' : '',
-        monitor.terminalReason,
-        monitor.exitCode != null ? 'exit ' + monitor.exitCode : '',
-      ].filter(Boolean);
-      var eventLines = monitor.events.length
-        ? monitor.events.map(function (event) {
-          return '<div class="tool-monitor-event" data-monitor-stream="' + escapeHtml(event.stream) + '">'
-            + '<span class="tool-monitor-event-stream">' + escapeHtml(event.stream) + '</span>'
-            + '<span class="tool-monitor-event-text">' + escapeHtml(event.text) + '</span>'
-            + '</div>';
-        }).join('')
-        : '<div class="tool-call-empty">' + escapeHtml(jt('chat.toolShell.noMonitorEvents', 'No monitor events recorded yet.')) + '</div>';
-      var body = '<div class="tool-monitor-panel" data-monitor-state="' + escapeHtml(monitor.state) + '">'
-        + '<div class="tool-monitor-heading">'
-        + '<div class="tool-monitor-description">' + escapeHtml(description) + '</div>'
-        + '<div class="tool-monitor-meta">' + escapeHtml(metaParts.join(' | ')) + '</div>'
-        + '</div>'
-        + '<div class="tool-monitor-events">' + eventLines + '</div>'
-        + '</div>';
-      return shellHeader(model) + shellContent(model, body);
-    }
-
     function appendArtifactCards(html, model) {
       if (!artifactCardUtils) return html;
       var artifacts = model.metadata && model.metadata.generated_artifacts;
@@ -917,26 +497,10 @@
 
     /* ── Registry ── */
 
+    // Mermaid is the only specialized shell left: its asynchronous preview
+    // sits outside the disclosure. Every other tool renders through
+    // renderer-tool-detail-body.
     var SHELL_REGISTRY = {
-      Bash: renderBashShell,
-      bash: renderBashShell,
-      run_command: renderBashShell,
-      run_temp_script: renderBashShell,
-      Monitor: renderMonitorShell,
-      monitor: renderMonitorShell,
-      Read: renderReadShell,
-      read_file: renderReadShell,
-      Edit: renderEditShell,
-      edit_file: renderEditShell,
-      Write: renderWriteShell,
-      write_file: renderWriteShell,
-      Glob: renderGlobShell,
-      glob_files: renderGlobShell,
-      Grep: renderGrepShell,
-      grep_search: renderGrepShell,
-      python_execute: renderPythonShell,
-      web_search: renderWebSearchShell,
-      fetch_url: renderFetchUrlShell,
       mermaid_generate: renderMermaidShell,
       Mermaid: renderMermaidShell,
     };
@@ -961,11 +525,9 @@
 
     return {
       renderToolShell: renderToolShell,
-      /* Shared helpers reused by the generic transcript path. */
-      section: section,
+      /* Shared helpers reused by the detail body. */
       kvGrid: kvGrid,
       kvRow: kvRow,
-      argsKvGridFromParsed: argsKvGridFromParsed,
     };
   }
 

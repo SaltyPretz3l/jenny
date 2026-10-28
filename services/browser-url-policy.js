@@ -212,7 +212,11 @@ function _isFileUrlWithinAllowedRootsRealpathSync(parsed, allowedRoots, options 
   for (const root of allowedRoots) {
     if (typeof root !== 'string' || !root.trim()) continue;
     try {
-      const realRoot = fsImpl.realpathSync(pathImpl.resolve(root));
+      // A caller that already realpath-resolved its roots once per session
+      // passes allowedFileRootsResolved; only the candidate is resolved here.
+      const realRoot = options.allowedFileRootsResolved === true
+        ? pathImpl.resolve(root)
+        : fsImpl.realpathSync(pathImpl.resolve(root));
       if (realRoot && _isPathInside(pathImpl, realRoot, realCandidate)) {
         return true;
       }

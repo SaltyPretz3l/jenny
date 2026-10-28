@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import io
+import re
 import zipfile
 from datetime import date, datetime, time
 from typing import Any
@@ -14,17 +15,17 @@ from sidecar.ai.tools.builtins.rich_files.base import (
     RichInspectResult,
     build_dependency_missing_result,
     build_unsupported_result,
-    read_bounded_file_bytes,
     rich_inspect_result_to_tool_result,
+    source_bytes,
     string_argument,
     validate_rich_file_source,
 )
 from sidecar.ai.tools.builtins.rich_files.ooxml import (
     MAX_OOXML_XML_PART_BYTES,
-    has_part,
     integer_cap,
     local_attribute,
     local_name_of,
+    macro_enabled,
     ooxml_boolean,
     preflight_ooxml_archive,
 )
@@ -33,7 +34,6 @@ from sidecar.ai.tools.sanitization import sanitize_tool_output
 from sidecar.ai.tools.workspace import WorkspaceGuard
 
 SUPPORTED_SPREADSHEET_EXTENSIONS = frozenset({".xlsx", ".xlsm", ".xltx", ".xltm"})
-MACRO_ENABLED_EXTENSIONS = frozenset({".xlsm", ".xltm"})
 DEFAULT_MAX_SHEETS = 10
 DEFAULT_MAX_ROWS_PER_SHEET = 20
 DEFAULT_MAX_COLUMNS_PER_SHEET = 12
@@ -44,6 +44,8 @@ MAX_CELL_STRING_CHARS = 256
 MAX_SAMPLE_ROW_INDEX = 10_000
 MAX_SAMPLE_COLUMN_INDEX = 16_384
 MAX_SAMPLE_RANGES = 64
+# Excel's last column is XFD: at most three letters before the row number.
+_CELL_COLUMN_RE = re.compile(r"([A-Z]{1,3})[0-9]")
 
 
 def spreadsheet_inspect_tool(
@@ -56,6 +58,7 @@ def spreadsheet_inspect_tool(
         workspace=workspace,
         adapter="spreadsheet",
         max_bytes=filesystem_content.MAX_MEDIA_FILE_BYTES,
+        supported_suffixes=SUPPORTED_SPREADSHEET_EXTENSIONS,
     )
     if source.absolute_path.suffix.lower() not in SUPPORTED_SPREADSHEET_EXTENSIONS:
         return rich_inspect_result_to_tool_result(
@@ -92,11 +95,12 @@ def spreadsheet_inspect_tool(
             )
         )
 
+    # read_file's dispatcher forwards only path/pages/cursor: caps stay at their defaults.
     caps = _inspect_caps(arguments)
-    raw_workbook = read_bounded_file_bytes(
-        source.absolute_path,
+    raw_workbook = source_bytes(
+        source,
+        workspace=workspace,
         max_bytes=filesystem_content.MAX_MEDIA_FILE_BYTES,
-        authorized_root=workspace.require_root(),
         message="spreadsheet source changed beyond rich-file size limit",
     )
     try:
@@ -162,9 +166,8 @@ def _inspect_workbook(
             )
             for worksheet in selected
         ]
-        macro_enabled = (
-            source.absolute_path.suffix.lower() in MACRO_ENABLED_EXTENSIONS
-            or has_part(archive, "xl/vbaProject.bin")
+        workbook_macro_enabled = macro_enabled(
+            source.absolute_path, archive, vba_part="xl/vbaProject.bin"
         )
     visible_count = len(visible_worksheets)
     hidden_count = len(hidden_worksheets)
@@ -178,7 +181,7 @@ def _inspect_workbook(
             "sheet_count": len(worksheets),
             "visible_sheet_count": visible_count,
             "hidden_sheet_count": hidden_count,
-            "macro_enabled": macro_enabled,
+            "macro_enabled": workbook_macro_enabled,
             "omitted_sheet_count": omitted,
             "sample_caps": caps,
             "sheets": sheets_payload,
@@ -195,9 +198,19 @@ def _inspect_sheet(
     max_rows: int,
     max_columns: int,
 ) -> dict[str, object]:
-    max_row = _positive_int(getattr(worksheet, "max_row", 0))
-    max_column = _positive_int(getattr(worksheet, "max_column", 0))
     state = _sheet_state(worksheet)
+    declared_row = getattr(worksheet, "max_row", 0)
+    declared_column = getattr(worksheet, "max_column", 0)
+    # Read-only openpyxl sizes a sheet from its <dimension> element alone; a
+    # writer that omits it leaves both None, which must not read as "empty".
+    dimension_unknown = declared_row is None or declared_column is None
+    max_row = _positive_int(declared_row)
+    max_column = _positive_int(declared_column)
+    scan_truncated = False
+    if dimension_unknown and state == "visible":
+        max_row, max_column, scan_truncated = _scanned_dimensions(
+            archive, worksheet=worksheet, element_tree=element_tree
+        )
     has_formulas = False
     formula_count = 0
     payload: dict[str, object] = {
@@ -215,6 +228,8 @@ def _inspect_sheet(
         "sampled_rows": [],
         "sample_truncated": False,
     }
+    if dimension_unknown:
+        payload["dimension_unknown"] = True
     if state != "visible":
         payload["sample_skipped"] = "hidden_sheet"
         payload["formula_scan_skipped"] = "hidden_sheet"
@@ -242,7 +257,8 @@ def _inspect_sheet(
     payload["formula_cells_sampled"] = formula_count
     payload["sampled_rows"] = sampled_rows
     sample_truncated = (
-        visible_row_count > len(visible_rows)
+        scan_truncated
+        or visible_row_count > len(visible_rows)
         or visible_column_count > len(visible_columns)
         or len(sampled_rows) < len(visible_rows)
     )
@@ -356,6 +372,62 @@ def _hidden_dimensions(
                     hidden_rows.add(row_index)
             node.clear()
     return hidden_rows, hidden_columns
+
+
+def _scanned_dimensions(
+    archive: zipfile.ZipFile,
+    *,
+    worksheet: Any,
+    element_tree: Any,
+) -> tuple[int, int, bool]:
+    """``(max_row, max_column, truncated)`` from the cells of a sheet part.
+
+    Stands in for a missing ``<dimension>``. At most MAX_SAMPLE_ROW_INDEX rows
+    are scanned; ``truncated`` means cells lie beyond them.
+    """
+
+    part_name = str(getattr(worksheet, "_worksheet_path", "") or "")
+    if not part_name:
+        return 0, 0, False
+    try:
+        info = archive.getinfo(part_name)
+    except KeyError:
+        return 0, 0, False
+    if int(info.file_size) > MAX_OOXML_XML_PART_BYTES:
+        raise ValueError(f"OOXML XML part exceeds limit: {part_name}")
+
+    max_row = 0
+    max_column = 0
+    last_row_index = 0
+    with archive.open(info) as stream:
+        for _event, node in element_tree.iterparse(stream, events=("end",)):
+            if local_name_of(node.tag) != "row":
+                continue
+            row_index = _xml_index(local_attribute(node, "r")) or last_row_index + 1
+            last_row_index = row_index
+            if row_index > MAX_SAMPLE_ROW_INDEX:
+                return max_row, max_column, True
+            column = 0
+            for cell in node:
+                if local_name_of(cell.tag) != "c":
+                    continue
+                column = _cell_column(local_attribute(cell, "r")) or column + 1
+                max_column = max(max_column, min(column, MAX_SAMPLE_COLUMN_INDEX))
+                max_row = row_index
+            node.clear()
+    return max_row, max_column, False
+
+
+def _cell_column(reference: object) -> int:
+    """1-based column of an A1-style cell reference ("BC12" -> 55), or 0."""
+
+    match = _CELL_COLUMN_RE.match(str(reference or "").upper())
+    if match is None:
+        return 0
+    column = 0
+    for letter in match.group(1):
+        column = column * 26 + ord(letter) - ord("A") + 1
+    return column
 
 
 def _xml_index(value: object) -> int:

@@ -26,10 +26,12 @@ test('chat composer affordance CSS loads after the base composer stylesheet', ()
   const composerIndex = imports.indexOf('./styles/chat-composer.css');
 
   assert.notEqual(composerIndex, -1);
-  assert.equal(imports[composerIndex + 1], './styles/chat-composer-meta-affordances.css');
-  assert.equal(imports[composerIndex + 2], './styles/chat-composer-v2-affordances.css');
-  assert.equal(imports[composerIndex + 3], './styles/chat-composer-v2.css');
-  assert.equal(imports[composerIndex + 4], './styles/chat-composer-shell-v2.css');
+  // Row 63: the composer menus sit right after the base sheet, where their rules lived before the split.
+  assert.equal(imports[composerIndex + 1], './styles/chat-composer-menus.css');
+  assert.equal(imports[composerIndex + 2], './styles/chat-composer-meta-affordances.css');
+  assert.equal(imports[composerIndex + 3], './styles/chat-composer-v2-affordances.css');
+  assert.equal(imports[composerIndex + 4], './styles/chat-composer-v2.css');
+  assert.equal(imports[composerIndex + 5], './styles/chat-composer-shell-v2.css');
 });
 
 test('chat composer meta and wayfinder selectors live in their focused stylesheet', () => {

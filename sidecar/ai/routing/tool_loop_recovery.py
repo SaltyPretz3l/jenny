@@ -320,16 +320,16 @@ def canonicalize_tool_call_batch(
                 ),
                 metadata={"provider_input_limit": True},
             )
+    # Every pre-dispatch rejection family shares the all-blocked tail, so when
+    # nothing survives the model still sees each failure and gets one more
+    # generation to correct itself.
+    all_blocked = (
+        tuple(call for call, _error in (*provider_limit_rejections, *argument_conflicts))
+        + malformed_calls + repair_rejected
+    )
     if not argument_conflicts:
         if result.tool_calls:
             return result, False
-        # Every call this iteration was rejected pre-dispatch. Both rejection
-        # families share the all-blocked tail so the model still sees the
-        # failure and gets one more generation to correct itself.
-        all_blocked = (
-            tuple(call for call, _error in provider_limit_rejections)
-            + malformed_calls + repair_rejected
-        )
         if all_blocked:
             finish_all_blocked_iteration(loop, all_blocked, last_error_output)
             return result, True
@@ -363,14 +363,7 @@ def canonicalize_tool_call_batch(
         )
     if result.tool_calls:
         return result, False
-    finish_all_blocked_iteration(
-        loop,
-        tuple(
-            call
-            for call, _error in (*provider_limit_rejections, *argument_conflicts)
-        ),
-        last_error_output,
-    )
+    finish_all_blocked_iteration(loop, all_blocked, last_error_output)
     return result, True
 
 
@@ -758,9 +751,13 @@ def budget_exhausted_wind_down(loop: Any, result: Any, *, reason: str) -> Any:
     clean_answer = False
     if reason == "context_budget":
         # The context is already over the error threshold: another generation
-        # would only fail, so go straight to the deterministic summary.
+        # would only fail, so go straight to the deterministic summary, led by
+        # why the turn stopped (a parent reading the report saw a model failure).
         response_text = (
-            _tl_hub._empty_post_tool_context_response(loop.outcomes) or stop_sentence
+            _tl_hub._empty_post_tool_context_response(
+                loop.outcomes, lead=f"{stop_sentence} Here is what I gathered so far."
+            )
+            or stop_sentence
         )
         completion_source = "deterministic_tool_fallback"
         _restream_response(loop, response_text)
@@ -952,6 +949,7 @@ def approval_with_recovery(
                 request_disabled_tools=loop.request_disabled_tools,
                 policy_decisions_by_call=policy_decisions_by_call,
                 approval_mode=str(getattr(loop.request_context, "approval_mode", "prompt")),
+                execution_context=getattr(loop.request_context, "execution_context", None),
             )
         except _tl_hub.ToolExecutionFailure as exc:
             failure_message = str(exc.message or "the harness refused the call")

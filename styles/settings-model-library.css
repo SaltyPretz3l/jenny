@@ -6,102 +6,6 @@
  * cover live here.
  */
 
-.model-library-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  margin-top: var(--space-4);
-}
-
-.model-library-row-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-/* Status tags cluster ahead of the action buttons; the larger gap after the
-   cluster makes the 24px tags / 36px buttons height mix read as two groups. */
-.model-library-row-tags {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-inline-end: var(--space-3);
-}
-
-/* De-buttonize status tags in this row: softer fill, muted text, and no
-   pointer feedback so they read as state, not actions. */
-.model-library-row-tags .settings-badge {
-  background: color-mix(in srgb, var(--widget-settings-badge-bg) 60%, transparent);
-  color: var(--text-secondary);
-  border-color: color-mix(in srgb, var(--settings-shell-badge-border) 70%, transparent);
-  pointer-events: none;
-  user-select: none;
-}
-
-.model-library-row-tags .model-library-inuse-badge {
-  background: color-mix(in srgb, var(--accent, #4c8bf5) 14%, transparent);
-  color: color-mix(in srgb, var(--accent, #4c8bf5) 80%, var(--text-secondary));
-  border-color: color-mix(in srgb, var(--accent, #4c8bf5) 30%, transparent);
-}
-
-.model-library-row {
-  flex-wrap: wrap;
-}
-
-.model-library-advanced {
-  flex: 0 0 100%;
-  margin-top: var(--space-2);
-}
-
-.model-library-advanced summary {
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: var(--font-size-caption);
-  width: max-content;
-}
-
-.model-library-advanced-body {
-  display: grid;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
-  padding-inline-start: var(--space-4);
-}
-
-.model-library-advanced-body .select-shell {
-  width: min(280px, 100%);
-}
-
-.model-library-apply-note {
-  margin: 0;
-}
-
-.model-library-inuse-badge {
-  background: color-mix(in srgb, var(--accent, #4c8bf5) 18%, transparent);
-  color: var(--accent, #4c8bf5);
-}
-
-.model-library-pull-row {
-  margin-top: var(--space-6);
-  padding-top: var(--space-5);
-  border-top: 1px solid color-mix(in srgb, var(--settings-shell-muted-border) 70%, transparent);
-}
-
-/* The pull input renders via the inventory text-field primitive: the class
-   lands on the wrapping <label>; the control itself is .inv-text-field-control. */
-.model-library-pull-input {
-  min-width: 0;
-  width: 220px;
-  max-width: 100%;
-}
-
-.model-library-pull-input .inv-text-field-control {
-  width: 100%;
-  min-width: 0;
-}
-
-.model-library-pull-progress {
-  font-variant-numeric: tabular-nums;
-}
 .model-tuning-drawer-copy {
   margin-bottom: 16px;
   color: var(--text-secondary);
@@ -293,7 +197,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-secondary);
-  font-family: var(--font-family-mono, ui-monospace, monospace);
+  font-family: var(--font-family-mono);
   font-size: var(--font-size-code);
 }
 
@@ -409,7 +313,7 @@
 }
 
 .model-row-name--tag {
-  font-family: var(--font-family-mono, ui-monospace, monospace);
+  font-family: var(--font-family-mono);
   font-size: var(--font-size-code);
   font-weight: 500;
 }

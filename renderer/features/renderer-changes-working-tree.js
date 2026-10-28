@@ -95,10 +95,13 @@
     let lastScopeHtml = '';
     let lastFilterOpen = null;
     let loadedOnce = false;
+    // Row 64: a chat findings list's Show in diff. { sessionId, toolCallId, focusIndex, focusPath, byPath, scrollPending }
+    let review = null;
 
     const sig = (file) => `${file.change}:${file.additions}:${file.deletions}:${file.binary ? 1 : 0}`;
 
     function resetForSession(next) {
+      if (review && review.sessionId !== next) review = null;
       sessionKey = next;
       loadToken += 1;
       status = 'checking';
@@ -130,7 +133,11 @@
         filterOpen,
         filter,
         allExpanded: visible.length > 0 && visible.every((file) => expanded.has(file.path)),
-        files: visible.map((file) => ({ ...file, expanded: expanded.has(file.path), diff: diffs.get(file.path) || null })),
+        files: visible.map((file) => ({
+          ...file, expanded: expanded.has(file.path), diff: diffs.get(file.path) || null,
+          reviewFindings: review ? review.byPath.get(file.path) || null : null,
+        })),
+        review: review ? { sessionId: review.sessionId, toolCallId: review.toolCallId, focusIndex: review.focusIndex } : null,
       };
     }
 
@@ -202,6 +209,52 @@
       const model = buildModel();
       renderScopeRow(model);
       renderBody(model);
+      scrollToReviewFocus();
+    }
+
+    // Once the focused finding's comment is in the page, bring it into view (one time per Show in diff).
+    function scrollToReviewFocus() {
+      if (!review || !review.scrollPending || !bodyEl) return;
+      const comment = bodyEl.querySelector('[data-review-focus="true"]');
+      if (!comment) return;
+      review.scrollPending = false;
+      if (typeof comment.scrollIntoView === 'function') comment.scrollIntoView({ block: 'center' });
+    }
+
+    // Until its comment is shown, the focused finding's file opens with its diff, even when a reload reset
+    // the expanded set; after that the user's collapse sticks. A listing without that file ends the pending
+    // scroll, so renders stop looking for a comment that cannot appear.
+    function expandReviewFocus() {
+      if (!review || !review.focusPath || !review.scrollPending) return;
+      if (!files.some((file) => file.path === review.focusPath)) {
+        if (status !== 'checking') review.scrollPending = false;
+        return;
+      }
+      expanded.add(review.focusPath);
+      ensureDiff(review.focusPath);
+    }
+
+    function setReviewFindings(payload) {
+      // Findings arrive bounded by the chat block (parseReviewFindings caps them); only located ones show here.
+      const located = (Array.isArray(payload?.findings) ? payload.findings : [])
+        .filter((finding) => finding && typeof finding.file === 'string' && finding.file);
+      const byPath = new Map();
+      for (const finding of located) {
+        if (!byPath.has(finding.file)) byPath.set(finding.file, []);
+        byPath.get(finding.file).push(finding);
+      }
+      if (!byPath.size && !review) return;
+      const focus = located.find((finding) => finding.index === Number(payload.focusIndex)) || null;
+      review = byPath.size ? {
+        sessionId: String(payload.sessionId || sessionKey || ''),
+        toolCallId: String(payload.toolCallId || ''),
+        focusIndex: focus ? focus.index : 0,
+        focusPath: focus ? focus.file : '',
+        byPath,
+        scrollPending: Boolean(focus),
+      } : null;
+      expandReviewFocus();
+      renderAll();
     }
 
     /* ── Data ── */
@@ -259,11 +312,15 @@
         log('WARN', 'changes_working_tree.list_failed', { message: String(error && error.message || error).slice(0, 200) });
       }
       loading = false;
-      if (disposed || token !== loadToken) return;
-      loadedOnce = true;
-      applyListing(response);
-      renderAll();
-      for (const file of files) if (expanded.has(file.path)) ensureDiff(file.path);
+      if (disposed) return;
+      // A superseded listing (owner switch or remount) is dropped but still runs the load queued behind it.
+      if (token === loadToken) {
+        loadedOnce = true;
+        applyListing(response);
+        expandReviewFocus();
+        renderAll();
+        for (const file of files) if (expanded.has(file.path)) ensureDiff(file.path);
+      }
       if (loadAgain) { loadAgain = false; load(); }
     }
 
@@ -293,8 +350,12 @@
         log('WARN', 'changes_working_tree.diff_failed', { message: String(error && error.message || error).slice(0, 200) });
         entry = { state: 'error', sig: job.sig };
       }
-      if (disposed || job.token !== loadToken || job.sessionId !== sessionKey) return;
-      if (diffs.get(job.path) && diffs.get(job.path).pending !== job) return;
+      // A reload for the same owner (two loads overlap when the page mounts) keeps the diff: only a new
+      // owner, a newer request for this file, or a listing that dropped it discards the result, else the
+      // row would stay on "Loading the diff…".
+      if (disposed || job.sessionId !== sessionKey) return;
+      const current = diffs.get(job.path);
+      if (!current || current.pending !== job) return;
       diffs.set(job.path, entry);
       renderAll();
     }
@@ -306,7 +367,7 @@
       const current = diffs.get(path);
       if (current && current.sig === signature && (current.state === 'loading' || current.state === 'ready' || current.state === 'binary')) return;
       if (file.binary) { diffs.set(path, { state: 'binary', sig: signature }); return; }
-      const job = { path, sig: signature, sessionId: sessionKey, token: loadToken };
+      const job = { path, sig: signature, sessionId: sessionKey };
       diffs.set(path, { state: 'loading', sig: signature, pending: job, hunks: current && current.hunks, truncated: false });
       queue.push(job);
       pump();
@@ -478,6 +539,8 @@
       if (refreshTimer !== null) { clearTimer(refreshTimer); refreshTimer = null; }
       if (unsubscribe) { unsubscribe(); unsubscribe = null; }
       loadToken += 1;
+      // Queued diffs never start: forget their loading entries so a remount requests them again.
+      for (const job of queue) if (diffs.get(job.path) && diffs.get(job.path).pending === job) diffs.delete(job.path);
       queue = [];
       rootEl.classList.remove('changes-wt');
       rootEl.replaceChildren();
@@ -496,6 +559,7 @@
       unmount,
       dispose,
       setScope,
+      setReviewFindings,
       getScope: () => scope,
       refresh: load,
       getState: () => ({ status, scope, files: files.map((file) => file.path), expanded: Array.from(expanded), filter, filterOpen }),

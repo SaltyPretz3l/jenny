@@ -342,7 +342,7 @@ test('each activity form, tone and settled shape is declared', () => {
   assert.equal(tone('error'), 'var(--sprite-dot-error)');
   assert.equal(tone('done'), 'var(--sprite-dot-ok)');
   assert.equal(tone('rest'), 'var(--widget-sprite-color)');
-  for (const name of ['think', 'write', 'compose', 'check', 'search', 'tool', 'compact']) {
+  for (const name of ['think', 'write', 'compose', 'check', 'search', 'make', 'run', 'tool', 'compact']) {
     assert.equal(tone(name), undefined, `${name} keeps the default active tone`);
   }
   const p1 = (name) => declsFor(baseRules, `${state(name)} .p1`);
@@ -356,6 +356,9 @@ test('each activity form, tone and settled shape is declared', () => {
   assert.equal(p1('approve').get('width'), '8px');
   assert.equal(declsFor(baseRules, `${state('stuck')} .r`).get('width'), '12px');
   assert.equal(declsFor(baseRules, `${state('search')} .r`).get('width'), '9px');
+  assert.equal(declsFor(baseRules, `${state('make')} .r`).get('height'), '15px', 'make: the ring is the page');
+  assert.equal(declsFor(baseRules, `${state('run')} .p1`).get('transform'), 'translate(-4.6px,-2.1px) rotate(-45deg)');
+  assert.equal(declsFor(baseRules, `${state('run')} .p2`).get('transform'), 'translate(-4.6px,2.1px) rotate(45deg)');
   assert.equal(p1('done').get('width'), '2.6px');
   assert.equal(p1('done').get('transform'), 'translate(-5.5px,0.5px)');
   const check = declsFor(baseRules, '.chat-sprite-check .ck');
@@ -376,6 +379,8 @@ const LOOPS = [
   ['compose', '.p1 .q', 'sprite-hop'], ['compose', '.p2 .q', 'sprite-hop'], ['compose', '.p3 .q', 'sprite-hop'],
   ['check', '.q', 'sprite-draw'],
   ['search', '.w', 'sprite-scan'],
+  ['make', '.q', 'sprite-draw'],
+  ['run', '.p1 .q', 'sprite-run-nudge'], ['run', '.p2 .q', 'sprite-run-nudge'], ['run', '.p3 .q', 'sprite-run-cursor'],
   ['tool', '.w', 'sprite-orbit'],
   ['compact', '.p2 .q', 'sprite-fold-l'], ['compact', '.p3 .q', 'sprite-fold-r'],
   ['wait', '.p1 .q', 'sprite-hg-a'], ['wait', '.p2 .q', 'sprite-hg-b'], ['wait', '.p3 .q', 'sprite-hg-grain'],
@@ -531,6 +536,8 @@ test('reduced motion removes every loop and parks a distinct pose per state', ()
   assert.equal(reduced(`${state('check')} .p2 .q`).get('transform'), 'scaleX(0.7)');
   assert.equal(reduced(`${state('check')} .p3 .q`).get('transform'), 'scaleX(0.4)');
   assert.equal(reduced(`${state('search')} .w`).get('transform'), 'translateX(0px) rotate(0deg)');
+  assert.equal(reduced(`${state('make')} .p1 .q`).get('transform'), 'scaleX(1)');
+  assert.equal(reduced(`${state('make')} .p3 .q`).get('transform'), 'scaleX(0.55)');
   assert.equal(reduced(`${state('compact')} .p2 .q`).get('transform'), 'translateX(3px)');
   assert.equal(reduced(`${state('compact')} .p3 .q`).get('transform'), 'translateX(-3px)');
   assert.equal(reduced(`${state('compact')} .p2 .q`).get('opacity'), '0.45');

@@ -13,6 +13,7 @@ from sidecar.ai.context.builder import (
     looks_like_source_architecture_request,
     request_workspace_root_kwargs,
 )
+from sidecar.ai.context.context_count import resolve_token_scale
 from sidecar.ai.context.token_budget import (
     apply_budget_check,
     build_tool_schema_budget_plan,
@@ -27,6 +28,10 @@ from sidecar.ai.routing.system_messages import (
     build_request_system_messages,
     render_turn_context_row,
     trailing_turn_context_enabled,
+)
+from sidecar.ai.routing.tool_budget_pairs import (
+    pair_kept_partners,
+    primary_directory_tool_names,
 )
 from sidecar.ai.tools import assembly as _tool_assembly
 from sidecar.ai.tools import build_turn_tools as _build_turn_tools
@@ -50,12 +55,15 @@ class ToolBudgetFilterResult:
     tool_payload: list[dict[str, Any]]
     tool_statuses: tuple[Any, ...]
     system_prompt: Any | None = None
+    # The probe's count-source ladder result, reused by the budget preflight.
+    count_scale: tuple[float | None, str] | None = None
 
 
 @dataclass(frozen=True)
 class _BudgetPressureProbe:
     status: Any | None
     system_prompt: Any
+    count_scale: tuple[float | None, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -193,6 +201,7 @@ def apply_budget_aware_tool_filter(
             tool_payload,
             tool_statuses,
             system_prompt=budget_probe.system_prompt,
+            count_scale=getattr(budget_probe, "count_scale", None),
         )
 
     budget_status = budget_probe.status
@@ -231,7 +240,7 @@ def apply_budget_aware_tool_filter(
     )
     if withheld_delete:
         plan = replace(plan, filtered_names=plan.filtered_names | {"delete_file"}, active=True)
-    plan = _pair_delete_with_move(plan, candidate_names, preferred_names)
+    plan = pair_kept_partners(plan, candidate_names, preferred_names)
     if inactive_status_names:
         plan = replace(
             plan,
@@ -271,36 +280,8 @@ def apply_budget_aware_tool_filter(
         tool_contract=rebuilt_contract,
         tool_payload=rebuilt_payload,
         tool_statuses=rebuilt_contract.status_entries,
+        count_scale=getattr(budget_probe, "count_scale", None),
     )
-
-
-def _pair_delete_with_move(
-    plan: Any, candidate_names: tuple[str, ...], preferred_names: tuple[str, ...],
-) -> Any:
-    if (
-        "delete_file" in plan.kept_names
-        and "move_file" not in plan.kept_names
-        and "move_file" in candidate_names
-    ):
-        kept = [*plan.kept_names, "move_file"]
-        filtered = plan.filtered_names - {"move_file"}
-        if len(kept) > plan.cap:
-            for name in reversed(kept):
-                if (
-                    name not in plan.mandatory_names
-                    and name not in {"delete_file", "move_file"}
-                    and name not in preferred_names
-                ):
-                    kept.remove(name)
-                    filtered |= {name}
-                    break
-            # Keep the +1 if nothing is evictable: pairing is safety and delete was requested.
-        plan = replace(
-            plan,
-            kept_names=tuple(kept),
-            filtered_names=filtered,
-        )
-    return plan
 
 
 def _budget_filter_enabled(context: ToolBudgetFilterInput) -> bool:
@@ -326,23 +307,31 @@ def _budget_pressure_for_tool_filter(
         turn_context_row=build_turn_context_row_for_statuses(context, result.tool_statuses),
         execution_context=getattr(context.request_context, "execution_context", None),
     )
-    num_tools = (
-        count_full_tool_schemas(result.tool_payload)
-        if context.kernel._config.tools_enabled
-        else 0
+    kernel = context.kernel
+    num_tools = count_full_tool_schemas(result.tool_payload) if kernel._config.tools_enabled else 0
+    count_scale = resolve_token_scale(
+        engine=kernel._engine,
+        config=kernel._config,
+        messages=working_messages,
+        tool_payload=result.tool_payload if kernel._config.tools_enabled else (),
+        calibration=getattr(context.request_context, "context_calibration", None),
+        extra_tokens=int(getattr(context.request_context, "vision_token_surcharge", 0) or 0),
     )
     _messages, budget, tracker = apply_budget_check(
         working_messages,
-        context.kernel._config,
-        context.kernel._engine,
+        kernel._config,
+        kernel._engine,
         num_tools=num_tools,
         tool_schema_tokens=(
             estimate_tool_schema_tokens(result.tool_payload) if num_tools else None
         ),
+        token_scale=count_scale[0],
+        scale_source=count_scale[1],
     )
     if budget is None:
         return _BudgetPressureProbe(status=None, system_prompt=system_prompt)
     return _BudgetPressureProbe(
+        count_scale=count_scale,
         # Count with the backend the budget was derived from; the tool-schema
         # cap this probe drives must key off the same figure the chat_decision
         # preflight sees, or the two lanes disagree about pressure level.
@@ -431,6 +420,8 @@ def _budget_preferred_tool_names(
     return ordered_unique_names(
         (
             *(name for name in candidate_names if name in enabled_tools),
+            *(name for name in primary_directory_tool_names(context.request_context)
+              if name in candidate_names),
             *(name for name in active_status_names if name in candidate_names),
             *(name for name in family_names if name in candidate_names),
             *(name for name in recent_successes if name in candidate_names),

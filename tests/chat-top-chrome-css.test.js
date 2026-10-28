@@ -127,11 +127,10 @@ test('the retired per-tab link button leaves no styles behind', () => {
   assert.doesNotMatch(css, /workspace-rail-link-button/);
 });
 
-test('a chat open as a tab shows a ring in the sidebar dot slot', () => {
+test('a chat open as a tab no longer paints a ring in the sidebar dot column', () => {
   const css = readRepoFile('styles/chats-panel.css');
-  const rule = cssRules(css).find((entry) => /\[data-session-dominant-state="open"\]/.test(entry.selector) && /\.session-row__dot/.test(entry.selector) && /box-shadow/.test(entry.body));
-  assert.ok(rule, 'a ring rule keyed on the open dominant state should exist');
+  const ring = cssRules(css).find((entry) => /\[data-session-dominant-state="open"\]/.test(entry.selector) && /\.session-row__dot/.test(entry.selector) && /box-shadow/.test(entry.body));
+  assert.equal(ring, undefined, 'the open ring is retired: the dot column only carries attention states');
   assert.doesNotMatch(css, /data-session-tab-open/, 'the open mark is the dominant state, not a second attribute');
-  assert.match(rule.body, /box-shadow\s*:\s*inset 0 0 0 1px var\(--text-decorative\)/);
-  assert.doesNotMatch(rule.selector, /streaming|approval/, 'the ring marks idle rows; state dots keep their fill');
+  assert.match(readRepoFile('styles/foundation.css'), /--sidebar-state-streaming-color:\s*var\(--text-muted\);/, 'working is a pulsing grey shared by the rail and the sidebar');
 });

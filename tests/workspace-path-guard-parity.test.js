@@ -11,6 +11,7 @@ const {
   CASES,
   NAME_CASES,
 } = require('./helpers/path-guard-parity-cases');
+const { windowsOnly } = require('./helpers/platform-skips');
 
 async function realpathForMissing(targetPath) {
   let current = targetPath;
@@ -74,12 +75,8 @@ function assertOutside(rootReal, targetReal, message) {
 for (const parityCase of CASES) {
   test(parityCase.id, async (t) => {
     for (const adapterName of ['tool-path-policy', 'root-operation', 'versioned-file', 'workspace-import']) {
-      await t.test(adapterName, async (t) => {
-        if (parityCase.win32Only && process.platform !== 'win32') {
-          t.skip('Win32-only path algebra');
-          return;
-        }
-
+      const skip = parityCase.win32Only ? windowsOnly('Win32 path algebra') : false;
+      await t.test(adapterName, { skip }, async (t) => {
         const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), 'jenny-path-parity-root-'));
         const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), 'jenny-path-parity-outside-'));
         t.after(async () => {
@@ -88,10 +85,6 @@ for (const parityCase of CASES) {
         });
 
         const fixture = await parityCase.setup(rootDir, outsideDir);
-        if (fixture && typeof fixture === 'object' && typeof fixture.skip === 'string') {
-          t.skip(fixture.skip);
-          return;
-        }
 
         const adapter = buildAdapters({ rootDir })
           .find((candidate) => candidate.name === adapterName);

@@ -82,6 +82,63 @@
     }
   }
 
+  // Scalar fields only, each string bounded: the fallback for every allow-list below.
+  function copyScalarFields(target, source, keys, maxChars) {
+    for (const key of keys) {
+      const field = source[key];
+      if (typeof field === 'string') target[key] = field.slice(0, maxChars);
+      else if (typeof field === 'boolean' || Number.isFinite(field)) target[key] = field;
+    }
+    return target;
+  }
+
+  // The "Updated project notes" row (Open / Undo) rebuilds from these after a
+  // cold reopen and settles Undo against the live journal; the note text is
+  // never among them.
+  const PROJECT_NOTES_METADATA_KEYS = Object.freeze(['result_kind', 'action', 'status', 'project_id',
+    'journal_entry_id', 'revision', 'summary']);
+
+  function copyProjectNotesMetadata(metadata, value) {
+    copyScalarFields(metadata, value, PROJECT_NOTES_METADATA_KEYS, 256);
+    if (value.lines && typeof value.lines === 'object' && !Array.isArray(value.lines)) {
+      metadata.lines = copyScalarFields({}, value.lines, ['added', 'removed', 'changed'], 0);
+    }
+    if (Array.isArray(value.headings)) {
+      metadata.headings = value.headings.filter((heading) => typeof heading === 'string')
+        .slice(0, 6).map((heading) => heading.slice(0, 128));
+    }
+  }
+
+  // Header meta the formatter reads (formatToolResultMeta): task mutations and verify verdicts.
+  const RESULT_KIND_SCALAR_KEYS = Object.freeze({
+    task_board: ['result_kind', 'action', 'status'],
+    verify: ['result_kind', 'action', 'status', 'reason', 'passed_count', 'failed_count', 'duration_ms', 'attempt'],
+  });
+  // A Docker sandbox receipt's header facts, and the per-chat budget block's recovery link.
+  const EXECUTION_SCALAR_KEYS = Object.freeze(['backend', 'status', 'exit_code', 'exitCode', 'output_truncated',
+    'cleanup_confirmed']);
+  const PROVENANCE_SCALAR_KEYS = Object.freeze(['seed', 'image_prompt', 'image_negative_prompt']);
+
+  function copyPresentationMetadata(metadata, value, resultKind) {
+    if (resultKind === 'project_notes') copyProjectNotesMetadata(metadata, value);
+    if (RESULT_KIND_SCALAR_KEYS[resultKind]) copyScalarFields(metadata, value, RESULT_KIND_SCALAR_KEYS[resultKind], 256);
+    copyScalarFields(metadata, value, ['quota_scope', 'session_budget_notice'], 64);
+    for (const [key, keys, maxChars] of [['execution', EXECUTION_SCALAR_KEYS, 64], ['provenance', PROVENANCE_SCALAR_KEYS, 2000]]) {
+      const nested = value[key];
+      if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+        const copy = copyScalarFields({}, nested, keys, maxChars);
+        if (Object.keys(copy).length) metadata[key] = copy;
+      }
+    }
+    // The review affordance keys on its presence; the change itself lives in the change ledger.
+    const suggestedChange = value.suggested_change;
+    if (suggestedChange && typeof suggestedChange === 'object' && !Array.isArray(suggestedChange)) {
+      metadata.suggested_change = copyScalarFields({}, suggestedChange, Object.keys(suggestedChange).slice(0, 16), 256);
+    } else if (suggestedChange === true) {
+      metadata.suggested_change = true;
+    }
+  }
+
   // `toolResult` is the stored tool_result the metadata belongs to: older
   // results carry the command's exit status only at their top level.
   function cloneSubagentReportMetadata(value, toolResult) {
@@ -108,6 +165,7 @@
     if (resultKind === 'home') copyHomeMetadata(metadata, value);
     if (resultKind === 'memory') copyMemoryMetadata(metadata, value);
     if (resultKind === 'git_proposal' || resultKind === 'command_proposal') copyProposalMetadata(metadata, value);
+    copyPresentationMetadata(metadata, value, resultKind);
     // A command the shell tool stopped at its time limit reads Timed out (B11).
     if (value.timed_out === true) metadata.timed_out = true;
     // A command's own exit status: the row reads "exit N" after a reopen too.

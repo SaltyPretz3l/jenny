@@ -19,6 +19,9 @@
   const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
+  // A .git change within this window of an eager (own-mutation) refresh is
+  // that mutation's own echo.
+  const OWN_MUTATION_QUIET_MS = 1500;
 
   function resolveModule(globalName, requirePath) {
     if (globalRef[globalName]) {
@@ -32,10 +35,6 @@
       }
     }
     return {};
-  }
-
-  function fallbackNormalize(value) {
-    return String(value == null ? '' : value).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   }
 
   function createIdeGitFeature(deps) {
@@ -68,16 +67,18 @@
       : (typeof textFieldResolved === 'function' ? textFieldResolved : null);
     const windowRef = options.windowRef || globalRef.window || globalRef;
 
+    const openFile = typeof options.openFile === 'function' ? options.openFile : noop;
+
     const clientUtils = resolveModule('rendererWorkspaceGitClient', './renderer-workspace-git-client');
     const storeUtils = resolveModule('rendererIdeGitStatusStore', './renderer-ide-git-status-store');
-    const diffUtils = resolveModule('rendererIdeDiffController', './renderer-ide-diff-controller');
+    // Both diff sides are EOL-normalized the same way (the find/replace util owns toLf).
+    const { toLf } = resolveModule('rendererIdeReplaceTextUtils', './renderer-ide-replace-text-utils');
     const ideStateUtils = resolveModule('rendererIdeState', './renderer-ide-state');
     const panelUtils = resolveModule('rendererIdeSourceControlPanel', './renderer-ide-source-control-panel');
     const historyUtils = resolveModule('rendererIdeCommitHistory', './renderer-ide-commit-history');
+    const conflictUtils = resolveModule('rendererIdeScmConflicts', './renderer-ide-scm-conflicts');
+    const gitActionsUtils = resolveModule('rendererIdeGitActions', './renderer-ide-git-actions');
 
-    const normalizeDiffText = typeof diffUtils.normalizeDiffText === 'function'
-      ? diffUtils.normalizeDiffText
-      : fallbackNormalize;
     const relPathOf = (path) => ideStateUtils.normalizeIdeRelativePath?.(path) || String(path || '');
     const fileNameOf = (path) => ideStateUtils.fileNameOf?.(path) || String(path || '');
 
@@ -88,74 +89,86 @@
       || storeUtils.createIdeGitStatusStore?.({ client, appendClientLog })
       || null;
 
-    // "Compare with Last Commit": original = the file at HEAD ('' when it has no
-    // HEAD version yet - a clean all-additions diff, never a fake one), modified
-    // = the copy on disk now. Read-only diff tab.
-    async function openHeadCompare(path) {
-      const normalized = relPathOf(path);
-      if (!normalized || !editorHost || !store) {
-        return false;
-      }
-      let headContent = '';
-      let head;
-      try {
-        head = await store.getFileAtHead({ path: normalized });
-      } catch (error) {
-        showShellErrorToast(jt('ide.git.lastCommitReadFailed', 'Could not read {path} from the last commit.', { path: normalized }), {
-          title: jt('ide.git.sourceControl', 'Source Control'), dedupeKey: `ide:githead:${normalized}`,
-        });
-        appendClientLog('WARN', 'ide.git_head_read_failed', {
-          message: String((error && error.message) || error || '').slice(0, 200),
-        });
-        return false;
-      }
-      const missingAtHead = head && head.found === false
-        && (head.reason === 'no_head' || head.reason === 'not_found');
-      if (!head || head.ok === false || (head.found !== true && !missingAtHead)) {
-        showShellErrorToast(jt('ide.git.lastCommitReadFailed', 'Could not read {path} from the last commit.', { path: normalized }), {
-          title: jt('ide.git.sourceControl', 'Source Control'), dedupeKey: `ide:githead:${normalized}`,
-        });
-        appendClientLog('WARN', 'ide.git_head_read_failed', {
-          reason: String(head?.reason || 'invalid_response').slice(0, 80),
-        });
-        return false;
-      }
-      if (head.found) headContent = normalizeDiffText(head.content);
-      const api = getWorkspaceFsApi();
-      if (!api || typeof api.readFile !== 'function') {
-        showShellErrorToast(jt('ide.git.lastCommitCompareReadFailed', 'Could not read {path} to compare with the last commit.', { path: normalized }), {
-          title: jt('ide.git.sourceControl', 'Source Control'), dedupeKey: `ide:gitdiff:${normalized}`,
-        });
-        appendClientLog('WARN', 'ide.git_head_disk_read_failed', { reason: 'bridge_unavailable' });
-        return false;
-      }
-      let modified;
-      try {
-        const payload = await api.readFile({ path: normalized });
-        modified = normalizeDiffText(payload && payload.content);
-      } catch (error) {
-        // A deleted file has no copy on disk: show HEAD-vs-empty (a deletion
-        // diff) rather than erroring. Any other read failure aborts.
-        if (store.getDecoration(normalized) === 'deleted') {
-          modified = '';
-        } else {
-          showShellErrorToast(jt('ide.git.lastCommitCompareReadFailed', 'Could not read {path} to compare with the last commit.', { path: normalized }), {
-            title: jt('ide.git.sourceControl', 'Source Control'),
-            dedupeKey: `ide:gitdiff:${normalized}`,
-          });
-          appendClientLog('WARN', 'ide.git_head_disk_read_failed', {
-            message: String((error && error.message) || error || ''),
-          });
-          return false;
-        }
-      }
-      const id = `${ideStateUtils.DIFF_TAB_PREFIX || 'diff://'}head/${normalized}`;
-      const label = jt('ide.git.vsHeadLabel', '{file} (vs HEAD)', { file: fileNameOf(normalized) });
-      await editorHost.openDiffDocument({ id, label, languagePath: normalized, original: headContent, modified });
+    // Root-switch epoch: every diff open captures it and re-checks after each
+    // await, so a result from the old root never opens a tab under the new one.
+    let rootEpoch = 0;
+    const isCurrentRoot = (epoch) => epoch === rootEpoch;
+
+    // Every Source Control toast carries the same title + a scoped dedupeKey.
+    function scmToast(message, dedupeKey) {
+      showShellErrorToast(message, { title: jt('ide.git.sourceControl', 'Source Control'), dedupeKey });
+    }
+
+    // Opens (or refreshes) a read-only diff:// tab once its document is ready.
+    async function openDiffTabFor(epoch, documentOptions) {
+      const { id, label } = documentOptions;
+      await editorHost.openDiffDocument({ ...documentOptions, shouldApply: () => isCurrentRoot(epoch) });
+      if (!isCurrentRoot(epoch)) return false;
       ideStateUtils.openDiffTab?.(getIde(), { id, label });
       (options.showDiffTab || ((tabId) => editorHost.activateDocument(tabId)))(id);
       renderTabs();
       return true;
+    }
+
+    // "Compare with Last Commit": original = the file at HEAD ('' when it has no
+    // HEAD version yet - a clean all-additions diff, never a fake one), modified
+    // = the copy on disk now. Read-only diff tab. A rename's HEAD copy is read
+    // at its original path (opts.origPath).
+    async function openHeadCompare(path, opts) {
+      const normalized = relPathOf(path);
+      if (!normalized || !editorHost || !store) {
+        return false;
+      }
+      const headPath = relPathOf(opts && opts.origPath) || normalized;
+      const epoch = rootEpoch;
+      let head = null;
+      let thrown = null;
+      try {
+        head = await store.getFileAtHead({ path: headPath });
+      } catch (error) {
+        thrown = error;
+      }
+      if (!isCurrentRoot(epoch)) return false;
+      const missingAtHead = head && head.found === false
+        && (head.reason === 'no_head' || head.reason === 'not_found');
+      if (!head || head.ok === false || (head.found !== true && !missingAtHead)) {
+        scmToast(jt('ide.git.lastCommitReadFailed', 'Could not read {path} from the last commit.', { path: normalized }), `ide:githead:${normalized}`);
+        appendClientLog('WARN', 'ide.git_head_read_failed', thrown
+          ? { message: String((thrown && thrown.message) || thrown || '').slice(0, 200) }
+          : { reason: String(head?.reason || 'invalid_response').slice(0, 80) });
+        return false;
+      }
+      const headContent = head.found ? toLf(head.content) : '';
+      const api = getWorkspaceFsApi();
+      const diskReadFailed = (details) => {
+        scmToast(jt('ide.git.lastCommitCompareReadFailed', 'Could not read {path} to compare with the last commit.', { path: normalized }), `ide:gitdiff:${normalized}`);
+        appendClientLog('WARN', 'ide.git_head_disk_read_failed', details);
+        return false;
+      };
+      if (!api || typeof api.readFile !== 'function') {
+        return diskReadFailed({ reason: 'bridge_unavailable' });
+      }
+      let modified;
+      try {
+        const payload = await api.readFile({ path: normalized });
+        modified = toLf(payload && payload.content);
+      } catch (error) {
+        if (!isCurrentRoot(epoch)) return false;
+        // A deleted file has no copy on disk: show HEAD-vs-empty (a deletion
+        // diff) rather than erroring. Any other read failure aborts.
+        if (store.getDecoration(normalized) !== 'deleted') {
+          return diskReadFailed({ message: String((error && error.message) || error || '') });
+        }
+        modified = '';
+      }
+      if (!isCurrentRoot(epoch)) return false;
+      return openDiffTabFor(epoch, {
+        id: `${ideStateUtils.DIFF_TAB_PREFIX || 'diff://'}head/${normalized}`,
+        label: jt('ide.git.vsHeadLabel', '{file} (vs HEAD)', { file: fileNameOf(normalized) }),
+        languagePath: normalized,
+        original: headContent,
+        modified,
+      });
     }
 
     // Single-file discard, confirm-gated. An open editor is reconciled directly
@@ -182,18 +195,17 @@
           variant: 'danger',
         })
         : false;
-      if (!approved) {
-        return false;
-      }
-      const lifecycle = getFileLifecycle();
-      const hasOpenBuffer = editorHost?.hasDocument?.(normalized) === true;
-      const reloadSnapshot = hasOpenBuffer ? lifecycle?.captureGitDiscard?.(normalized) : null;
-      if (hasOpenBuffer && !reloadSnapshot) {
-        showShellErrorToast(jt('ide.git.discardPrepareFailed', 'Could not safely prepare the open editor for "{file}". Nothing was discarded.', { file: fileNameOf(normalized) }), {
-          title: jt('ide.git.sourceControl', 'Source Control'), dedupeKey: `ide:discard-preflight:${normalized}`,
-        });
-        return false;
-      }
+      return approved ? discardPath(normalized) : false;
+    }
+
+    // The confirmed single-file discard. The git actions own the open-editor
+    // reconcile (shared with Discard All): an untracked discard deletes the file, so
+    // its tab closes (UIUX-032); a restored file's editor reloads.
+    async function discardPath(path) {
+      const normalized = relPathOf(path);
+      if (!normalized || !store || !actions) return false;
+      const captured = actions.captureEditors([normalized]);
+      if (!captured.ready.length) return false;
       const releaseRefresh = store.beginRefreshHold?.() || (() => store.refreshNow?.());
       try {
         // Hold status publication across BOTH backend restore and editor reload.
@@ -204,48 +216,15 @@
           // The backend's own message names the actual cause (recycle bin
           // unreachable, trash failed, directory) — prefer it over the guess.
           const specific = String(result?.message || '').trim();
-          showShellErrorToast(
-          specific || jt('ide.git.discardFileFailed', 'Could not discard changes to “{file}”. The file may be locked or in use.', { file: fileNameOf(normalized) }),
-            { title: jt('ide.git.sourceControl', 'Source Control'), dedupeKey: `ide:discard:${normalized}` },
+          scmToast(
+            specific || jt('ide.git.discardFileFailed', 'Could not discard changes to “{file}”. The file may be locked or in use.', { file: fileNameOf(normalized) }),
+            `ide:discard:${normalized}`,
           );
           return false;
         }
-        let reloaded = true;
-        // UIUX-032: an untracked discard DELETES the file - there is no
-        // committed content to reload from disk, and attempting one would
-        // fail and then mislead the user with a "restored on disk" toast.
-        // Decision: close the buffer (same as any other deliberate delete of
-        // the file it was viewing), never reload.
-        if (reloadSnapshot && result.class === 'untracked') {
-          lifecycle?.closeTab?.(normalized);
-        } else if (reloadSnapshot) {
-          try {
-            reloaded = await lifecycle?.reloadAfterGitDiscard?.(reloadSnapshot) === true;
-          } catch (error) {
-            reloaded = false;
-            appendClientLog('WARN', 'ide.git_discard_reload_failed', {
-              error_name: String(error?.name || 'Error').slice(0, 80),
-              error_code: String(error?.code || '').slice(0, 80),
-            });
-          }
-        }
-        if (!reloaded) {
-          showShellErrorToast(
-            jt('ide.git.editorReloadChanged', 'The file was restored on disk, but the open editor for "{file}" changed before it could reload. Review or reopen the file.', { file: fileNameOf(normalized) }),
-            { title: jt('ide.git.sourceControl', 'Source Control'), dedupeKey: `ide:discard-reload:${normalized}` },
-          );
-          return false;
-        }
-        return true;
+        return await actions.settleEditors(captured, result.class === 'untracked' ? { untracked: [normalized] } : { tracked: [normalized] });
       } finally {
-        try {
-          lifecycle?.releaseGitDiscard?.(reloadSnapshot);
-        } catch (error) {
-          appendClientLog('WARN', 'ide.git_discard_release_failed', {
-            error_name: String(error?.name || 'Error').slice(0, 80),
-            error_code: String(error?.code || '').slice(0, 80),
-          });
-        }
+        actions.releaseEditors(captured);
         try {
           await releaseRefresh();
         } catch (error) {
@@ -274,9 +253,9 @@
       if (!result || result.ok !== true) {
         const count = Array.isArray(paths) ? paths.length : 0;
         const verb = action === 'unstage' ? 'unstage' : 'stage';
-        showShellErrorToast(
+        scmToast(
           jtn('ide.git.selectedFilesMutationFailed', count, { action: verb, count }, 'Could not {action} the selected file. The file may be locked or in use.', 'Could not {action} the selected files. The file may be locked or in use.'),
-          { title: jt('ide.git.sourceControl', 'Source Control'), dedupeKey: `ide:${action}:${count === 1 ? paths[0] : 'batch'}` },
+          `ide:${action}:${count === 1 ? paths[0] : 'batch'}`,
         );
       }
       return result;
@@ -285,6 +264,16 @@
     // The STAGED diff (index-vs-HEAD: the changes that WILL be committed) for
     // AI commit-message generation. Routes through the git client, which
     // degrades-never (a missing bridge resolves a structured non-ok shape).
+    // Row 82 G1: Open Changes / Open Staged Changes / commit file diffs, Unstage All,
+    // Discard All, the amend prefill and the stash / branch quick picks.
+    const actions = gitActionsUtils.createIdeGitActions?.({
+      client, store, openDiffTabFor, getRootEpoch: () => rootEpoch, relPathOf, fileNameOf, toLf, getWorkspaceFsApi, scmToast,
+      appendClientLog, confirmDialog, getFileLifecycle, hasDocument: (path) => editorHost?.hasDocument?.(path) === true, mutateWithFeedback,
+      getClipboardApi: typeof options.getClipboardApi === 'function' ? options.getClipboardApi : () => windowRef?.jennyShell?.clipboard || null,
+      getDom, escapeHtml, showShellErrorToast,
+      showToastMessage: options.showToastMessage, diffTabPrefix: ideStateUtils.DIFF_TAB_PREFIX, onPickerClosed: () => editorHost?.focus?.(),
+    }) || null;
+
     async function getStagedDiff() {
       if (!client || typeof client.getDiff !== 'function') {
         return { ok: false, available: false, diff: '' };
@@ -322,6 +311,7 @@
       if (!rev || !editorHost) {
         return { opened: false };
       }
+      const epoch = rootEpoch;
       let result = null;
       try {
         result = await getCommitDiff(rev);
@@ -330,28 +320,25 @@
           message: String((error && error.message) || error || ''),
         });
       }
+      if (!isCurrentRoot(epoch)) return { opened: false };
       const diffText = result && result.ok === true && typeof result.diff === 'string'
         ? result.diff
         : '';
       if (!diffText.trim()) {
-        showShellErrorToast(jt('ide.git.commitChangesLoadFailed', 'Could not load this commit’s changes.'), {
-          title: jt('ide.git.sourceControl', 'Source Control'),
-          dedupeKey: `ide:commitdiff:${rev}`,
-        });
+        scmToast(jt('ide.git.commitChangesLoadFailed', 'Could not load this commit’s changes.'), `ide:commitdiff:${rev}`);
         return { opened: false };
       }
       const body = result.truncated === true
         ? jt('ide.git.truncatedCommitDiff', '{diff}\n\n… diff truncated (large commit).', { diff: diffText })
         : diffText;
-      const id = `${ideStateUtils.DIFF_TAB_PREFIX || 'diff://'}commit/${rev}`;
-      const label = jt('ide.git.commitLabel', 'Commit {ref}', { ref: rev.slice(0, 7) });
       // placeholderText switches the diff tab into its read-only <pre> rendering
       // (the unified diff text is itself a diff, so a two-pane editor is wrong).
-      await editorHost.openDiffDocument({ id, label, placeholderText: body });
-      ideStateUtils.openDiffTab?.(getIde(), { id, label });
-      (options.showDiffTab || ((tabId) => editorHost.activateDocument(tabId)))(id);
-      renderTabs();
-      return { opened: true };
+      const opened = await openDiffTabFor(epoch, {
+        id: `${ideStateUtils.DIFF_TAB_PREFIX || 'diff://'}commit/${rev}`,
+        label: jt('ide.git.commitLabel', 'Commit {ref}', { ref: rev.slice(0, 7) }),
+        placeholderText: body,
+      });
+      return { opened };
     }
 
     // One-shot, OFF-TRANSCRIPT local-model commit-message generation. Reachable
@@ -376,6 +363,13 @@
     // Single Source Control panel deps. Its host + active-gate follow the panel's
     // location (the controller injects getMountEl/isActivePanel; standalone tests
     // omit them and the panel defaults to the rail host).
+    // Row 75: Mark resolved (marker-guarded stage) and delete-to-resolve.
+    const conflictResolver = conflictUtils.createConflictResolver?.({
+      store, getWorkspaceFsApi, getFileLifecycle, confirmDialog, editorHost,
+      stage: (paths) => mutateWithFeedback('stage', paths),
+      toast: (message, key) => scmToast(message, key),
+    }) || null;
+
     const scmPanelDeps = {
       getDom,
       getIde: () => getIde(),
@@ -391,11 +385,15 @@
       onStageAll: (paths) => mutateWithFeedback('stage-all', paths),
       onDiscard: (path) => confirmDiscard(path),
       onDelete: (path) => deleteUntracked(path),
-      onOpenDiff: (path) => openHeadCompare(path),
+      onOpenDiff: (path, opts) => (actions ? actions.openForRow(path, opts) : openHeadCompare(path, opts)),
+      onResolve: (path) => conflictResolver?.resolve(relPathOf(path)) || null,
+      onResolveDelete: (path) => conflictResolver?.resolveDelete(relPathOf(path)) || false,
+      onOpenFile: (path) => openFile(relPathOf(path)),
       // Jenny marker on rows (row 40 W6): both optional, supplied by the controller.
       getJennyChange: options.getJennyChange,
       onOpenJennyChange: options.onOpenJennyChange,
-      onCommit: (message) => store && store.commit({ message }),
+      onCommit: (message, opts) => store && store.commit({ message, ...(opts?.amend === true ? { amend: true } : {}), ...(opts?.signoff === true ? { signoff: true } : {}) }),
+      gitActions: actions,
       onGetDiff: () => getStagedDiff(),
       onWriteMessage: (diff) => generateCommitMessage(diff),
       onGetLog: (opts) => getCommitLog(opts && opts.limit),
@@ -432,7 +430,9 @@
       // them; this dedicated signal keeps the tree/statusbar/gutter in sync.
       if (fsApi && typeof fsApi.onGitMetaChange === 'function' && !gitMetaUnsubscribe) {
         gitMetaUnsubscribe = fsApi.onGitMetaChange(() => {
-          store && store.refresh();
+          // The app's own stage/commit/checkout already refreshed eagerly; its
+          // own .git echo moments later is skipped (an external op still runs).
+          store && store.refresh({ unlessRefreshedWithinMs: OWN_MUTATION_QUIET_MS });
           // An external commit can move HEAD while leaving porcelain status
           // unchanged. The store then correctly suppresses its subscriber
           // notification, but HEAD-dependent consumers still need their caches
@@ -454,11 +454,8 @@
     // cache, then synchronously empty the status store and pull status for the
     // committed root. Returns the store's refresh promise.
     function resetForRoot() {
-      if (panel && typeof panel.resetForRoot === 'function') {
-        panel.resetForRoot();
-      } else if (panel && typeof panel.resetHistory === 'function') {
-        panel.resetHistory();
-      }
+      rootEpoch += 1;
+      panel?.resetForRoot();
       return store && typeof store.resetForRoot === 'function'
         ? store.resetForRoot()
         : Promise.resolve();
@@ -490,6 +487,12 @@
       },
       getBranch: () => (store && store.getBranch()) || '',
       getDirtyCount: () => (store && store.getDirtyCount()) || 0,
+      // Unsaved editor buffers: the branch-switch guard counts them with the
+      // git dirty count (a checkout would otherwise strand them silently).
+      getUnsavedCount: () => {
+        const dirtyByPath = getIde().dirtyByPath || {};
+        return Object.keys(dirtyByPath).filter((key) => dirtyByPath[key] === true).length;
+      },
       getAheadBehind: () => {
         const snap = store && typeof store.getSnapshot === 'function' ? store.getSnapshot() : null;
         return { ahead: snap ? snap.ahead : 0, behind: snap ? snap.behind : 0 };
@@ -502,9 +505,10 @@
       subscribe: (fn) => (store ? store.subscribe(fn) : noop),
       openHeadCompare,
       confirmDiscard,
+      getActions: () => actions,
+      commitFromPalette: (opts) => panel?.commitFromPalette?.(opts),
       deleteUntracked,
       getStagedDiff,
-      getCommitLog,
       getCommitDiff,
       openCommitDiff,
       generateCommitMessage,
@@ -527,6 +531,7 @@
           gitMetaUnsubscribe = null;
         }
         panel && panel.dispose();
+        actions?.dispose();
         store && store.dispose();
       },
     };

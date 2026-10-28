@@ -8,8 +8,12 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const windowRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const documentRef = windowRef.document || null;
+  // Node (tests) only: in the renderer the global `require` is Monaco's AMD loader, which throws for these paths.
+  const nodeRequire = typeof module === 'object' && module.exports && typeof require === 'function'
+    ? require
+    : null;
 
-  const escapeStatusText = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
+  const escapeStatusText = (globalThis.stringUtils || (nodeRequire ? nodeRequire('../shared/string-utils') : null)).escapeHtml;
 
   function getStatusRowRenderer() {
     return windowRef.inventory && typeof windowRef.inventory.statusRow === 'function'
@@ -19,12 +23,12 @@
 
   function getActionButtonRenderer() {
     return windowRef.inventoryActionButton
-      || (typeof require === 'function' ? require('../inventory/action-button') : null);
+      || (nodeRequire ? nodeRequire('../inventory/action-button') : null);
   }
 
   function getStatusChipUtils() {
     return windowRef.rendererStatusChipUtils
-      || (typeof require === 'function' ? require('../shell/renderer-status-chip-utils') : null);
+      || (nodeRequire ? nodeRequire('../shell/renderer-status-chip-utils') : null);
   }
 
   // Render inventory switches into a stable .settings-toggle-list container.
@@ -33,11 +37,11 @@
   function renderOfflineToggleList(target, fields) {
     if (!target) { return; }
     const lazy = windowRef.rendererSettingsLazyRenderers
-      || (typeof require === 'function' ? require('../shell/renderer-settings-lazy-renderers') : null);
+      || (nodeRequire ? nodeRequire('../shell/renderer-settings-lazy-renderers') : null);
     if (lazy && typeof lazy.renderToggleListInto === 'function') {
       lazy.renderToggleListInto(target, fields, escapeStatusText);
     } else {
-      target.innerHTML = '';
+      target.innerHTML = ''; // Settings scripts not loaded yet; the Settings page renders the list when it opens.
     }
   }
 

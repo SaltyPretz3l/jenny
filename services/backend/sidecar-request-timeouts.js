@@ -44,10 +44,15 @@ const REQUEST_TIMEOUT_MS_BY_METHOD = Object.freeze({
   'conversations.embed_step': 35_000,
   'suggestions.generate': 8_000,
   'commit.generate_message': 30_000,
+  // /handoff: one bounded local generation over a clipped transcript.
+  'handoff.generate_note': 120_000,
   'hardware.profile': 10_000,
   'hardware.vram_usage': 5_000,
   'models.resident': 3_000,
   'models.ollama_blob': 3_000,
+  // Dictation: first call loads a ~670 MB model on CPU; transcription runs a clip of up to 2 minutes.
+  'speech.prepare': 60_000,
+  'speech.transcribe': 60_000,
   'harness.inspect': 10_000,
   'harness.turn_diagnostic': 10_000,
   'mcp.inspect': 20_000,

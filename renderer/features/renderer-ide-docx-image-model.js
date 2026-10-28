@@ -2,20 +2,31 @@
  * insertion and resizing operations used by the preservation-first model. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory();
+    module.exports = factory(require('./renderer-ide-docx-ooxml'));
     return;
   }
-  root.rendererIdeDocxImageModel = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  root.rendererIdeDocxImageModel = factory(root.rendererIdeDocxOoxml);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (ooxml) {
   'use strict';
 
-  const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
-  const R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
-  const WP_NS = 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing';
-  const A_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main';
+  const { W_NS, R_NS, WP_NS, A_NS, REL_NS, elementChildren, isW, payloadLength, runPositions } = ooxml;
   const PIC_NS = 'http://schemas.openxmlformats.org/drawingml/2006/picture';
-  const REL_NS = 'http://schemas.openxmlformats.org/package/2006/relationships';
   const INSERTED_MEDIA_BUDGET = 64 * 1024 * 1024;
+  const EMU_PER_PX = 9525;
+  // The one image-type table: MIME -> part extension (picker accept list, the
+  // host's allow-list and the extension -> MIME lookup all derive from it).
+  const IMAGE_TYPES = Object.freeze({
+    'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/bmp': 'bmp',
+  });
+
+  function clampImagePx(value, fallback = 0) {
+    return Math.max(24, Math.min(1200, Math.round(Number(value) || fallback)));
+  }
+
+  function setExtent(element, width, height) {
+    element?.setAttribute('cx', String(width * EMU_PER_PX));
+    element?.setAttribute('cy', String(height * EMU_PER_PX));
+  }
 
   function mediaTarget(relationship) {
     if (relationship.getAttribute('TargetMode') === 'External') return '';
@@ -37,6 +48,7 @@
     const stores = resources.mediaStores;
 
     function referenced(documentDoc, relsDoc, removeUnused = false) {
+      if (!inserted.size && !removeUnused) return new Set();
       const ids = new Set();
       for (const element of documentDoc.getElementsByTagName('*')) {
         for (const attribute of element.attributes) {
@@ -53,6 +65,7 @@
     }
 
     function prune(documentDoc, relsDoc, snapshots) {
+      if (!inserted.size) return;
       const reachable = referenced(documentDoc, relsDoc, true);
       for (const state of snapshots) {
         for (const name of state.mediaNames) reachable.add(name);
@@ -151,27 +164,13 @@
       return String((ids.length ? Math.max(...ids) : 0) + 1);
     }
 
-    function insertionBoundary(paragraph, offset) {
-      const positions = context.runPositions(paragraph);
-      const inside = positions.find((item) => item.start < offset && offset < item.end);
-      const previous = [...positions].reverse().find((item) => item.end <= offset && item.text.length);
-      const next = positions.find((item) => item.start >= offset && item.text.length);
-      if (inside) {
-        const right = context.splitRun(inside.run, offset - inside.start);
-        return { parent: right.parentNode, reference: right };
-      }
-      if (previous) return context.boundaryAfter(previous.run, paragraph);
-      if (next) return context.boundaryBefore(next.run, paragraph);
-      return { parent: paragraph, reference: null };
-    }
-
     function insertImage(blockId, offset, image) {
       const paragraph = context.paragraphFor(blockId);
       const mime = String(image?.mime || '').toLowerCase();
-      const extension = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/bmp': 'bmp' }[mime];
+      const extension = IMAGE_TYPES[mime];
       const base64 = String(image?.base64 || '');
-      const width = Math.max(24, Math.min(1200, Math.round(Number(image?.widthPx) || 320)));
-      const height = Math.max(24, Math.min(1200, Math.round(Number(image?.heightPx) || 180)));
+      const width = clampImagePx(image?.widthPx, 320);
+      const height = clampImagePx(image?.heightPx, 180);
       if (!paragraph || !context.validRange(paragraph, offset) || !extension || !base64) return false;
       if (!context.mediaRetention.canInsert(base64.length)) return false;
       context.recordMutation();
@@ -189,7 +188,7 @@
       const drawing = documentDoc.createElementNS(W_NS, 'w:drawing');
       const inline = makeNs(documentDoc, WP_NS, 'wp', 'inline');
       const extent = makeNs(documentDoc, WP_NS, 'wp', 'extent');
-      extent.setAttribute('cx', String(width * 9525)); extent.setAttribute('cy', String(height * 9525));
+      setExtent(extent, width, height);
       const docPr = makeNs(documentDoc, WP_NS, 'wp', 'docPr');
       docPr.setAttribute('id', drawingId); docPr.setAttribute('name', String(image?.name || `Picture ${drawingId}`).slice(0, 255));
       const graphic = makeNs(documentDoc, A_NS, 'a', 'graphic');
@@ -209,36 +208,47 @@
       const xfrm = makeNs(documentDoc, A_NS, 'a', 'xfrm');
       const off = makeNs(documentDoc, A_NS, 'a', 'off'); off.setAttribute('x', '0'); off.setAttribute('y', '0');
       const innerExtent = makeNs(documentDoc, A_NS, 'a', 'ext');
-      innerExtent.setAttribute('cx', String(width * 9525)); innerExtent.setAttribute('cy', String(height * 9525));
+      setExtent(innerExtent, width, height);
       xfrm.append(off, innerExtent);
       const geometry = makeNs(documentDoc, A_NS, 'a', 'prstGeom');
       geometry.setAttribute('prst', 'rect'); geometry.appendChild(makeNs(documentDoc, A_NS, 'a', 'avLst'));
       spPr.append(xfrm, geometry); picture.append(nvPicPr, blipFill, spPr);
       graphicData.appendChild(picture); graphic.appendChild(graphicData);
       inline.append(extent, docPr, graphic); drawing.appendChild(inline); run.appendChild(drawing);
-      const boundary = insertionBoundary(paragraph, offset);
+      const boundary = context.insertionBoundary(paragraph, offset);
       boundary.parent.insertBefore(run, boundary.reference);
       return true;
     }
 
+    // The drawing at a paragraph offset, also when its run holds text or
+    // other drawings before it (`add_run('Caption ').add_picture(...)`).
+    function drawingAt(paragraph, offset) {
+      const item = paragraph && runPositions(paragraph).find((entry) => entry.start <= offset && offset < entry.end);
+      let position = item?.start;
+      for (const child of item ? elementChildren(item.run) : []) {
+        if (position === offset && isW(child, 'drawing')) return child;
+        position += payloadLength(child);
+        if (position > offset) break;
+      }
+      return null;
+    }
+
     function resizeImage(blockId, offset, widthPx, heightPx) {
-      const paragraph = context.paragraphFor(blockId);
-      const item = paragraph && context.runPositions(paragraph)
-        .find((entry) => entry.start === offset && context.directChild(entry.run, 'drawing'));
-      const width = Math.max(24, Math.min(1200, Math.round(Number(widthPx) || 0)));
-      const height = Math.max(24, Math.min(1200, Math.round(Number(heightPx) || 0)));
-      if (!item || !width || !height) return false;
+      const drawing = drawingAt(context.paragraphFor(blockId), offset);
+      const width = clampImagePx(widthPx);
+      const height = clampImagePx(heightPx);
+      if (!drawing) return false;
       context.recordMutation();
-      const drawing = context.directChild(item.run, 'drawing');
-      const extent = drawing.getElementsByTagNameNS(WP_NS, 'extent')[0];
-      const innerExtent = drawing.getElementsByTagNameNS(A_NS, 'ext')[0];
-      extent?.setAttribute('cx', String(width * 9525)); extent?.setAttribute('cy', String(height * 9525));
-      innerExtent?.setAttribute('cx', String(width * 9525)); innerExtent?.setAttribute('cy', String(height * 9525));
+      setExtent(drawing.getElementsByTagNameNS(WP_NS, 'extent')[0], width, height);
+      // The shape size is a:xfrm/a:ext; an a:blip or a:graphicData extension
+      // list also holds a:ext elements, which must never gain cx/cy.
+      const transform = drawing.getElementsByTagNameNS(A_NS, 'xfrm')[0];
+      setExtent(Array.from(transform?.childNodes || []).find((child) => child.namespaceURI === A_NS && child.localName === 'ext'), width, height);
       return true;
     }
 
     return { insertImage, resizeImage };
   }
 
-  return { createImageOperations, createMediaRetention };
+  return { createImageOperations, createMediaRetention, mediaTarget, IMAGE_TYPES };
 });

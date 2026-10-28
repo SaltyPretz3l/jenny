@@ -24,9 +24,10 @@
   });
 
   const APPROVAL_PREVIEW_VALUE_MAX_CHARS = 240;
+  // The fact kind of a single-path file tool (its label is localized below).
   const PATH_FACT_TARGETS = {
-    Read: [APPROVAL_FACT_KINDS.READ, 'Reads'], Write: [APPROVAL_FACT_KINDS.WRITE, 'Writes'],
-    Edit: [APPROVAL_FACT_KINDS.WRITE, 'Changes'], delete_file: [APPROVAL_FACT_KINDS.DELETE, 'Deletes'],
+    Read: APPROVAL_FACT_KINDS.READ, Write: APPROVAL_FACT_KINDS.WRITE,
+    Edit: APPROVAL_FACT_KINDS.WRITE, delete_file: APPROVAL_FACT_KINDS.DELETE,
   };
   const APPROVAL_PURPOSE_MAX_CHARS = 240;
 
@@ -69,7 +70,7 @@
         case 'Edit':
         case 'delete_file': {
           if (!path) return [];
-          const [factKind] = PATH_FACT_TARGETS[kind];
+          const factKind = PATH_FACT_TARGETS[kind];
           const subtree = kind === 'delete_file' && args.recursive === true;
           const label = kind === 'Read' ? jt('approval.facts.readsPath', 'Reads {path}', { path }) : kind === 'Write' ? jt('approval.facts.writesPath', 'Writes {path}', { path }) : kind === 'Edit' ? jt('approval.facts.changesPath', 'Changes {path}', { path }) : subtree ? jt('approval.facts.deletesTree', 'Deletes {path} and everything under it', { path }) : jt('approval.facts.deletesPath', 'Deletes {path}', { path });
           return [{ kind: factKind, label }];
@@ -160,6 +161,9 @@
         case 'Grep':
         case 'grep_search':
           return normalizeString(args.pattern);
+        // A stop is named by the app's own target (renderer-approval-block.js), never its raw id.
+        case 'session_stop':
+          return '';
         default: {
           const entries = Object.entries(args).filter(([key]) => key !== 'purpose');
           if (!entries.length) return '';

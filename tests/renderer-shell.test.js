@@ -378,7 +378,10 @@ test('active-file action renders as a menu item, arms the file and dismisses the
   const action = host.querySelector('[data-active-file-arm]');
   assert.equal(action.getAttribute('role'), 'menuitem');
   doc.getElementById('composerAttachShortcut').click();
-  doc.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }));
+  // Row 63: the file rows come first (files, screen, active file), then Commands and Skills.
+  for (let step = 0; step < 2; step += 1) {
+    doc.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+  }
   assert.equal(doc.activeElement, action);
   action.click();
   assert.equal(host.querySelector('[data-active-file-arm]').getAttribute('aria-pressed'), 'true');

@@ -10,6 +10,7 @@ const {
   REQUIRED_SLOTS, loadFamilies, familyForArchitecture, scanModelFolder, saveModelSet,
   listModelSets, resolveModelSet, removeModelSet, setDefaultModelSet,
 } = require('../services/image-model-sets');
+const { linkDirectory } = require('./helpers/platform-skips');
 
 function gguf(architecture) {
   const key = Buffer.from('general.architecture');
@@ -101,13 +102,7 @@ test('scan skips symlinked directories', (t) => {
   const { root, write } = fixture(t);
   write('outside/hidden.gguf', gguf('qwen_image21'));
   const link = path.join(root, 'diffusion_models', 'linked');
-  try { fs.symlinkSync(path.join(root, 'outside'), link, process.platform === 'win32' ? 'junction' : 'dir'); }
-  catch (error) {
-    if (!['EPERM', 'EACCES', 'ENOTSUP'].includes(error.code)) throw error;
-    assert.equal(['EPERM', 'EACCES', 'ENOTSUP'].includes(error.code), true);
-    t.skip('Symlink creation is not permitted');
-    return;
-  }
+  linkDirectory(path.join(root, 'outside'), link);
   const result = scanModelFolder(root);
   assert.equal(result.ok, true);
   assert.equal(result.candidates.diffusion.some((item) => item.name.includes('linked')), false);
@@ -163,13 +158,7 @@ test('save enforces realpath containment for symlink escapes', (t) => {
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-image-outside-'));
   t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
   fs.writeFileSync(path.join(outside, 'vae.safetensors'), 'outside');
-  try { fs.symlinkSync(outside, path.join(root, 'escape'), process.platform === 'win32' ? 'junction' : 'dir'); }
-  catch (error) {
-    if (!['EPERM', 'EACCES', 'ENOTSUP'].includes(error.code)) throw error;
-    assert.equal(['EPERM', 'EACCES', 'ENOTSUP'].includes(error.code), true);
-    t.skip('Symlink creation is not permitted');
-    return;
-  }
+  linkDirectory(outside, path.join(root, 'escape'));
   assert.deepEqual(saveModelSet({ ...input, vae: 'escape/vae.safetensors' }), { ok: false, reason: 'name_escapes_root' });
 });
 

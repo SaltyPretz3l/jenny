@@ -82,3 +82,70 @@ test('listWorktrees persists reconciled missing state for describeStatus without
   assert.equal(status.registry_count, 2);
   assert.equal(status.missing_count, 1);
 });
+
+test('listWorktrees re-reads the registry before saving so a concurrent add survives', async (t) => {
+  const repositoryRoot = path.resolve('C:/repo/current');
+  const missingRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-worktree-race-'));
+  t.after(() => fs.rmSync(missingRoot, { recursive: true, force: true }));
+  const porcelain = `worktree ${repositoryRoot}\nHEAD abc123\nbranch refs/heads/main\n`;
+  const { service, getEntries, getSaveCount } = createService({
+    porcelain,
+    repositoryRoot,
+    registryEntries: [{
+      id: 'current-missing',
+      repository_root: repositoryRoot,
+      worktree_path: path.join(missingRoot, 'gone'),
+      status: 'available',
+    }],
+  });
+  const registry = service._registryService;
+  const listAll = registry.listAll.bind(registry);
+  let reads = 0;
+  registry.listAll = () => {
+    const snapshot = listAll();
+    reads += 1;
+    if (reads === 1) {
+      // A worktree_create lands while listWorktrees awaits its stat calls.
+      registry.saveAll([...listAll(), {
+        id: 'concurrent-add',
+        repository_root: repositoryRoot,
+        worktree_path: path.join(missingRoot, 'new'),
+        status: 'available',
+      }]);
+    }
+    return snapshot;
+  };
+
+  const listed = await service.listWorktrees({ workspaceRoot: repositoryRoot });
+
+  assert.equal(listed.success, true);
+  assert.equal(getSaveCount(), 2, 'one concurrent add plus one reconcile write');
+  assert.deepEqual(getEntries().map((entry) => entry.id).sort(), ['concurrent-add', 'current-missing']);
+  assert.equal(getEntries().find((entry) => entry.id === 'current-missing').status, 'missing');
+});
+
+test('listWorktrees does not write the registry when no status changed', async () => {
+  const repositoryRoot = path.resolve('C:/repo/current');
+  const worktreePath = path.resolve('C:/repo/current-worktrees/alpha');
+  const porcelain = [
+    `worktree ${repositoryRoot}`, 'HEAD abc123', 'branch refs/heads/main', '',
+    `worktree ${worktreePath}`, 'HEAD def456', 'branch refs/heads/jenny/alpha', '',
+  ].join('\n');
+  const { service, getSaveCount } = createService({
+    porcelain,
+    repositoryRoot,
+    registryEntries: [{
+      id: 'alpha',
+      repository_root: repositoryRoot,
+      worktree_path: worktreePath,
+      status: 'available',
+      last_checked_at: 'old',
+    }],
+  });
+
+  const listed = await service.listWorktrees({ workspaceRoot: repositoryRoot });
+
+  assert.equal(listed.success, true);
+  assert.equal(listed.worktrees.find((entry) => entry.registry_id === 'alpha').status, 'available');
+  assert.equal(getSaveCount(), 0);
+});

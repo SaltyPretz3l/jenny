@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { WindowStateWriter, errorDetails } = require('./window-state-writer');
 
 const WINDOW_STATE_VERSION = 1;
 const WINDOW_STATE_FILENAME = 'window-state.json';
@@ -79,13 +80,6 @@ function displayWorkArea(display) {
 
 function displayId(display) {
   return Number.isFinite(Number(display?.id)) ? Math.trunc(Number(display.id)) : null;
-}
-
-function errorDetails(error) {
-  return {
-    name: String(error?.name || 'Error'),
-    code: String(error?.code || 'unknown'),
-  };
 }
 
 function getWindowStateSnapshot(windowRef) {
@@ -209,7 +203,15 @@ class WindowStateService {
       ? debounceMs
       : SAVE_DEBOUNCE_MS;
     this.saveTimer = null;
-    this.lastState = this._readState();
+    this._saveDueAt = 0;
+    this._saveWindowRef = null;
+    this._writer = new WindowStateWriter({
+      userDataPath: this.userDataPath,
+      filePath: this.filePath,
+      stateVersion: WINDOW_STATE_VERSION,
+      initialState: this._readState(),
+      log: (level, event, details) => this._log(level, event, details),
+    });
     this.lastRestore = null;
     this._displayListenersAttached = false;
     this._suppressScheduledSave = false;
@@ -238,31 +240,18 @@ class WindowStateService {
     }
   }
 
+  // The state last committed to disk (or read from it at startup).
+  get lastState() {
+    return this._writer.lastState;
+  }
+
   _writeState(state) {
-    const tempPath = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
-    try {
-      fs.mkdirSync(this.userDataPath, { recursive: true });
-      fs.writeFileSync(tempPath, JSON.stringify(state, null, 2), 'utf8');
-      fs.renameSync(tempPath, this.filePath);
-      this.lastState = state;
-      this._log('DEBUG', 'window.state_saved', {
-        isMaximized: state.isMaximized === true,
-        displayId: state.displayId,
-      });
-      return true;
-    } catch (error) {
-      try {
-        if (fs.existsSync(tempPath)) {
-          fs.unlinkSync(tempPath);
-        }
-      } catch (_cleanupError) {
-        // The next successful write will replace the canonical state file.
-      }
-      this._log('WARN', 'window.state_save_failed', {
-        ...errorDetails(error),
-      });
-      return false;
-    }
+    return this._writer.writeSync(state);
+  }
+
+  // Resolves once every queued async write has settled.
+  whenWritesSettled() {
+    return this._writer.whenSettled();
   }
 
   _defaultBounds() {
@@ -379,6 +368,31 @@ class WindowStateService {
     this.saveTimer = null;
   }
 
+  _nowMs() {
+    return this.nowProvider().getTime();
+  }
+
+  // One debounce timer per burst: a move/resize while it is armed only pushes
+  // the deadline out, and the timer re-arms itself for the remainder when it
+  // fires early instead of being cleared and recreated on every event.
+  _armSaveTimer(delayMs) {
+    this.saveTimer = this.setTimeoutImpl(() => {
+      this.saveTimer = null;
+      // Capped so a wall-clock jump backwards cannot stall the save.
+      const remainingMs = Math.min(this._saveDueAt - this._nowMs(), this.saveDebounceMs);
+      if (remainingMs > 0) {
+        this._armSaveTimer(remainingMs);
+        return;
+      }
+      const windowRef = this._saveWindowRef;
+      this._saveWindowRef = null;
+      void this.flushAsync(windowRef);
+    }, delayMs);
+    if (typeof this.saveTimer?.unref === 'function') {
+      this.saveTimer.unref();
+    }
+  }
+
   scheduleSave(windowRef) {
     if (this._suppressScheduledSave) {
       return;
@@ -386,16 +400,14 @@ class WindowStateService {
     if (windowRef && typeof windowRef.isMinimized === 'function' && windowRef.isMinimized()) {
       return;
     }
-    this._clearSaveTimer();
-    this.saveTimer = this.setTimeoutImpl(() => {
-      this.saveTimer = null;
-      this.flush(windowRef);
-    }, this.saveDebounceMs);
-    if (typeof this.saveTimer?.unref === 'function') {
-      this.saveTimer.unref();
+    this._saveWindowRef = windowRef;
+    this._saveDueAt = this._nowMs() + this.saveDebounceMs;
+    if (this.saveTimer == null) {
+      this._armSaveTimer(this.saveDebounceMs);
     }
   }
 
+  // Synchronous save: the window 'close' path, so quit cannot lose it.
   flush(windowRef) {
     this._clearSaveTimer();
     const state = this._captureWindow(windowRef);
@@ -405,24 +417,38 @@ class WindowStateService {
     return this._writeState(state);
   }
 
+  // Async save for the debounced move/resize and maximize/unmaximize paths.
+  // Resolves true once the state is on disk (or already was).
+  flushAsync(windowRef) {
+    this._clearSaveTimer();
+    const state = this._captureWindow(windowRef);
+    if (!state) {
+      return Promise.resolve(false);
+    }
+    return this._writer.enqueue(state);
+  }
+
   attach(windowRef) {
     if (!windowRef || typeof windowRef.on !== 'function') {
       throw new TypeError('WindowStateService.attach requires a BrowserWindow-like object.');
     }
     const schedule = () => this.scheduleSave(windowRef);
+    const flushAsync = () => {
+      void this.flushAsync(windowRef);
+    };
     const flush = () => this.flush(windowRef);
     windowRef.on('move', schedule);
     windowRef.on('resize', schedule);
-    windowRef.on('maximize', flush);
-    windowRef.on('unmaximize', flush);
+    windowRef.on('maximize', flushAsync);
+    windowRef.on('unmaximize', flushAsync);
     windowRef.on('close', flush);
     return () => {
       this._clearSaveTimer();
       if (typeof windowRef.removeListener === 'function') {
         windowRef.removeListener('move', schedule);
         windowRef.removeListener('resize', schedule);
-        windowRef.removeListener('maximize', flush);
-        windowRef.removeListener('unmaximize', flush);
+        windowRef.removeListener('maximize', flushAsync);
+        windowRef.removeListener('unmaximize', flushAsync);
         windowRef.removeListener('close', flush);
       }
     };

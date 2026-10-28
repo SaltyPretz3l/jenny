@@ -55,6 +55,48 @@ def test_temp_script_blocks_dangerous_script_before_creation(tmp_path: Path) -> 
     assert list(tmp_path.iterdir()) == []
 
 
+def test_python_script_body_is_not_read_as_shell_grammar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `(reboot` and `(format C:` trip the raw-string shell literal guard; in a
+    # Python body they are a call argument and a string, not commands.
+    script = (
+        "# format the output\n"
+        "reboot = False\n"
+        "print(reboot)\n"
+        "label = (format C: ) if False else 'none'\n"
+    )
+    delegated: list[dict[str, object]] = []
+
+    def fake_run(arguments: dict[str, object], _workspace: WorkspaceGuard):
+        delegated.append(arguments)
+        return temp_script_module.ToolHandlerResult(
+            output=json.dumps({"stdout": "False\n", "stderr": "", "ok": True}),
+        )
+
+    monkeypatch.setattr(temp_script_module, "resolve_script_interpreter", lambda _l: sys.executable)
+    monkeypatch.setattr(temp_script_module, "run_command_tool", fake_run)
+
+    result = run_temp_script_tool(
+        {"script": script, "language": "python"}, WorkspaceGuard(str(tmp_path)),
+    )
+
+    assert result.success is True
+    assert len(delegated) == 1
+    assert str(delegated[0]["command"]).endswith('script.py"')
+    assert json.loads(result.output)["stdout"] == "False\n"
+
+
+def test_shell_script_body_still_runs_the_literal_guard(tmp_path: Path) -> None:
+    with pytest.raises(ToolExecutionFailure) as raised:
+        run_temp_script_tool(
+            {"script": "reboot\necho ok\n", "language": "cmd" if os.name == "nt" else "sh"},
+            WorkspaceGuard(str(tmp_path)),
+        )
+
+    assert raised.value.code == CMP_TOOL_COMMAND_BLOCKED
+
+
 def test_temp_script_reports_temp_directory_creation_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

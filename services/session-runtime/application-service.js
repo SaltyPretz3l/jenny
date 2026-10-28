@@ -51,6 +51,8 @@ const PASSTHROUGH_SUBMISSION_REASONS = new Set([
 function submissionRefusalReason(error) {
   /* The invoked skill is not in this chat's catalog (local-engine-requests). */
   if (error?.code === 'SKILL_NOT_AVAILABLE') return 'skill_not_available';
+  /* The durable run store latched read-only (store.js `_setReadOnly`). */
+  if (error?.code === 'store_read_only') return 'runtime_store_read_only';
   /* `_assertSubmissionOpen` throws plain Errors whose MESSAGE is the code. */
   for (const value of [error?.code, error?.message]) {
     if (typeof value === 'string' && PASSTHROUGH_SUBMISSION_REASONS.has(value)) return value;

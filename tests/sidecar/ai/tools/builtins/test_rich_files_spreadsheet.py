@@ -29,7 +29,8 @@ def _spreadsheet_tool():
 
 
 def _write_workbook(path: Path, *, many_sheets: int = 0) -> None:
-    openpyxl = pytest.importorskip("openpyxl")
+    import openpyxl
+
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     sheet.title = "Visible"
@@ -48,7 +49,8 @@ def _write_workbook(path: Path, *, many_sheets: int = 0) -> None:
 
 
 def _write_hidden_first_workbook(path: Path) -> None:
-    openpyxl = pytest.importorskip("openpyxl")
+    import openpyxl
+
     workbook = openpyxl.Workbook()
     hidden = workbook.active
     hidden.title = "Hidden First"
@@ -60,7 +62,8 @@ def _write_hidden_first_workbook(path: Path) -> None:
 
 
 def _write_hidden_dimensions_workbook(path: Path) -> None:
-    openpyxl = pytest.importorskip("openpyxl")
+    import openpyxl
+
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     sheet["A1"] = "hidden row value"
@@ -104,7 +107,7 @@ def test_spreadsheet_inspect_returns_workbook_summary_and_samples_visible_rows(
     assert result.success is True
     assert result.generated_artifacts == ()
     assert result.metadata["result_kind"] == "spreadsheet_inspect"
-    assert result.metadata["previews"] == []
+    assert "previews" not in result.metadata
     assert result.metadata["source"]["path"] == "sample.xlsx"
     assert result.metadata["summary"]["sheet_count"] == 3
     assert result.metadata["summary"]["visible_sheet_count"] == 1
@@ -350,7 +353,6 @@ def test_spreadsheet_inspect_unsupported_extension_is_nonfatal(tmp_path: Path) -
 
 
 def test_spreadsheet_inspect_corrupt_workbook_returns_unsupported(tmp_path: Path) -> None:
-    pytest.importorskip("openpyxl")
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
     (workspace_root / "broken.xlsx").write_bytes(b"not really a workbook")
@@ -371,7 +373,8 @@ def test_spreadsheet_parses_same_bytes_as_preflight(tmp_path, monkeypatch):
     path = tmp_path / "sample.xlsx"
     _write_workbook(path)
     replacement = tmp_path / "replacement.xlsx"
-    openpyxl = pytest.importorskip("openpyxl")
+    import openpyxl
+
     book = openpyxl.Workbook()
     book.active["A1"] = "replacement data"
     book.save(replacement)
@@ -391,7 +394,8 @@ def test_spreadsheet_parses_same_bytes_as_preflight(tmp_path, monkeypatch):
 
 
 def test_spreadsheet_hidden_prefix_does_not_materialize_rectangle(tmp_path, monkeypatch):
-    openpyxl = pytest.importorskip("openpyxl")
+    import openpyxl
+
     path = tmp_path / "prefix.xlsx"
     book = openpyxl.Workbook()
     sheet = book.active
@@ -419,36 +423,33 @@ def test_spreadsheet_hidden_prefix_does_not_materialize_rectangle(tmp_path, monk
 
 
 
-def test_spreadsheet_parser_rejects_redirected_handle_after_validation(tmp_path, monkeypatch):
-    import builtins
-    import io
+def test_spreadsheet_parses_the_validated_bytes_without_reopening(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import hashlib
 
-    from sidecar.ai.error_codes import CMP_TOOL_OUTSIDE_WORKSPACE
-
-    module = _spreadsheet_module()
-    root = tmp_path / "workspace"
-    root.mkdir()
-    path = root / "sample.xlsx"
-    outside = tmp_path / "outside.xlsx"
+    module = importlib.import_module("sidecar.ai.tools.builtins.rich_files.spreadsheet")
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    path = workspace_root / "sample.xlsx"
     _write_workbook(path)
-    _write_workbook(outside)
+    validated = hashlib.sha256(path.read_bytes()).hexdigest()
     original_validate = module.validate_rich_file_source
-    original_open, original_io_open = builtins.open, io.open
-    def validate_then_redirect(**kwargs):
+
+    def validate_then_swap(**kwargs):
         source = original_validate(**kwargs)
-        def redirect(file, *args, **options):
-            target = outside if isinstance(file, (str, Path)) and Path(file) == path else file
-            return original_open(target, *args, **options)
-        def redirect_io(file, *args, **options):
-            target = outside if isinstance(file, (str, Path)) and Path(file) == path else file
-            return original_io_open(target, *args, **options)
-        monkeypatch.setattr(builtins, "open", redirect)
-        monkeypatch.setattr(io, "open", redirect_io)
+        # A swap or growth after validation never reaches the parser: it reads
+        # the bytes validation hashed, not the file again.
+        path.write_bytes(b"swapped after validation" * 4096)
         return source
-    monkeypatch.setattr(module, "validate_rich_file_source", validate_then_redirect)
-    with pytest.raises(ToolExecutionFailure) as exc:
-        module.spreadsheet_inspect_tool({"path": "sample.xlsx"}, WorkspaceGuard(str(root)))
-    assert exc.value.code == CMP_TOOL_OUTSIDE_WORKSPACE
+
+    monkeypatch.setattr(module, "validate_rich_file_source", validate_then_swap)
+    result = module.spreadsheet_inspect_tool({"path": "sample.xlsx"}, WorkspaceGuard(str(workspace_root)))
+
+    assert result.success is True
+    assert result.metadata["source"]["sha256"] == validated
+    assert "Alpha" in result.output
 
 
 def test_spreadsheet_dimension_work_is_bounded_before_sampling(tmp_path, monkeypatch):
@@ -484,3 +485,64 @@ def test_spreadsheet_sparse_range_work_is_bounded_before_iteration(monkeypatch):
     assert calls == []
     assert sampled == []
     assert formulas is False and count == 0
+
+
+def _strip_dimension(path: Path) -> None:
+    import re
+
+    with zipfile.ZipFile(path) as archive:
+        sheet_xml = archive.read("xl/worksheets/sheet1.xml")
+    stripped, count = re.subn(rb"<dimension[^>]*/>", b"", sheet_xml)
+    assert count == 1
+    _replace_zip_part(path, "xl/worksheets/sheet1.xml", stripped)
+
+
+def test_spreadsheet_without_dimension_is_sized_from_its_cells(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    source_path = workspace_root / "nodim.xlsx"
+    _write_workbook(source_path)
+    _strip_dimension(source_path)
+
+    result = _spreadsheet_tool()({"path": "nodim.xlsx"}, WorkspaceGuard(str(workspace_root)))
+
+    assert result.success is True
+    visible = result.metadata["summary"]["sheets"][0]
+    assert visible["dimension_unknown"] is True
+    assert visible["max_row"] == 2
+    assert visible["max_column"] == 3
+    assert visible["sampled_rows"][0] == ["Name", "Amount", "Computed"]
+    assert visible["sampled_rows"][1][0] == "Alpha"
+    assert visible["has_formulas"] is True
+    assert visible["sample_truncated"] is False
+
+
+def test_spreadsheet_dimension_scan_is_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _spreadsheet_module()
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    source_path = workspace_root / "nodim.xlsx"
+    _write_workbook(source_path)
+    _strip_dimension(source_path)
+    monkeypatch.setattr(module, "MAX_SAMPLE_ROW_INDEX", 1)
+
+    result = module.spreadsheet_inspect_tool(
+        {"path": "nodim.xlsx"}, WorkspaceGuard(str(workspace_root))
+    )
+
+    visible = result.metadata["summary"]["sheets"][0]
+    assert visible["dimension_unknown"] is True
+    assert visible["max_row"] == 1
+    assert visible["sampled_rows"] == [["Name", "Amount", "Computed"]]
+    assert visible["sample_truncated"] is True
+
+
+def test_cell_column_parses_a1_references() -> None:
+    module = _spreadsheet_module()
+    assert module._cell_column("A1") == 1
+    assert module._cell_column("bc12") == 55
+    assert module._cell_column("XFD1048576") == 16_384
+    assert module._cell_column("") == 0
+    assert module._cell_column("12") == 0

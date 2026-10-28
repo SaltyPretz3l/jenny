@@ -14,13 +14,16 @@ const { getTrustedExecutionBinding } = require('../backend/session-execution-aut
 const { executeResolvedTool } = require('./tool-execution-dispatch');
 const { effectiveSideEffecting, isNonEmptyPlainObject } = require('./tool-policy-actions');
 
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 // True only when the tool declares per-action side effects and this call names
 // a declared read action; the same rule the sidecar and the policy evaluator
 // apply (tool-policy-actions.js), so the three gates agree.
 function isReadOnlyActionCall(tool, input) {
   if (!tool || !isNonEmptyPlainObject(tool.actions)) return false;
-  const args = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  return effectiveSideEffecting({ actions: tool.actions }, args) === false;
+  return effectiveSideEffecting({ actions: tool.actions }, input) === false;
 }
 
 class ToolExecutor {
@@ -36,6 +39,7 @@ class ToolExecutor {
     browserSessionService,
     homeAssistantService,
     projectNotesService,
+    sessionDirectoryService,
     configService,
     refreshManagedConfig,
   }) {
@@ -62,13 +66,30 @@ class ToolExecutor {
     this._projectNotesService = typeof projectNotesService === 'function'
       ? projectNotesService
       : () => projectNotesService || null;
+    // Live getter too: the session directory reads backend stores built after this executor (row 69).
+    this._sessionDirectoryService = typeof sessionDirectoryService === 'function'
+      ? sessionDirectoryService
+      : () => sessionDirectoryService || null;
     this._configService = configService || null;
     this._refreshManagedConfig = typeof refreshManagedConfig === 'function'
       ? refreshManagedConfig
       : null;
   }
 
-  async executePreApproved(call, context, { authorize = null } = {}) {
+  // The lazily built session directory (row 69), or null: the prompt pipeline reads it
+  // through BackendService.getSessionDirectory() for the primary chat's profile overview.
+  getSessionDirectoryService() {
+    try {
+      return this._sessionDirectoryService() || null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  async executePreApproved(rawCall, context, { authorize = null } = {}) {
+    // One plain-object input for the preflight, the policy and the producer, so
+    // the arguments the policy judged are exactly the ones the tool receives.
+    const call = { ...rawCall, input: isPlainObject(rawCall.input) ? rawCall.input : {} };
     context = this._bindExecutionContext(context);
     if (call.toolName === 'session_message') context = { ...context, authorize };
     const { callId, toolName } = call;
@@ -78,7 +99,7 @@ class ToolExecutor {
     }
     const { startTime, tool } = preflight;
 
-    const policyDecision = this._evaluateToolPolicy(tool, call.input || {}, context);
+    const policyDecision = this._evaluateToolPolicy(tool, call.input, context);
     if (policyDecision.decision === 'deny') {
       this._logger('INFO', 'tool.denied', {
         callId,
@@ -120,15 +141,6 @@ class ToolExecutor {
   // context; ipc-handler-registration.js owns its construction order.
   attachWorkspaceTestRunnerService(service) {
     this._workspaceTestRunnerService = service || null;
-  }
-
-  getToolPolicy(toolName, input = {}, context = {}) {
-    context = this._bindExecutionContext(context);
-    const tool = this.registry.getTool(toolName);
-    if (tool) {
-      return this._evaluateToolPolicy(tool, input, context).decision;
-    }
-    return this._legacyPolicyForUnknownTool(toolName);
   }
 
   _preflightTool(call, context, { preApproved }) {
@@ -261,9 +273,6 @@ class ToolExecutor {
           ? this._permissionStore.getSnapshot(trustedExecution.authority)
           : this._permissionStore.getSnapshot();
       }
-      if (this._permissionStore && typeof this._permissionStore.getAllPolicies === 'function') {
-        return this._permissionStore.getAllPolicies();
-      }
     } catch (_error) {
       this._logger('WARN', 'tool.policy_snapshot_unavailable', {
         toolName,
@@ -273,21 +282,6 @@ class ToolExecutor {
       return null;
     }
     return {};
-  }
-
-  _legacyPolicyForUnknownTool(toolName) {
-    try {
-      if (this._permissionStore && typeof this._permissionStore.getAllPolicies === 'function') {
-        const policies = this._permissionStore.getAllPolicies();
-        return policies[toolName] || 'ask';
-      }
-    } catch (_error) {
-      this._logger('WARN', 'tool.policy_snapshot_unavailable', {
-        toolName,
-        reason: 'legacy_policy_read_failed',
-      });
-    }
-    return 'ask';
   }
 
   _bindExecutionContext(context) {

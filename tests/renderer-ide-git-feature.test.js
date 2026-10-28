@@ -73,6 +73,8 @@ function buildFeature(over = {}) {
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+// Row actions are injected on a row's first hover or focus (cleanup G6): reveal every row's.
+const revealRows = (root) => root.querySelectorAll('.ide-scm-row').forEach((row) => row.dispatchEvent(new row.ownerDocument.defaultView.Event('focusin', { bubbles: true })));
 
 function deferred() {
   let resolve;
@@ -360,6 +362,7 @@ test('untracked Delete delegates to the Explorer recycle-bin transaction', () =>
 
 test('a failed stage / unstage / stage-all surfaces a toast (no silent no-op)', async () => {
   const stage = mountedScmPanel({ mutateResult: { ok: false } });
+  revealRows(stage.panelEl);
   stage.panelEl.querySelector('[data-ide-scm-path="src/a.js"] [data-ide-scm-action="stage"]').click();
   await settle();
   assert.equal(stage.spies.toasts.length, 1, 'stage failure toasts');
@@ -367,6 +370,7 @@ test('a failed stage / unstage / stage-all surfaces a toast (no silent no-op)', 
   assert.deepEqual(stage.store.calls.stage, [{ paths: ['src/a.js'] }], 'mutation attempted');
 
   const unstage = mountedScmPanel({ mutateResult: { ok: false } });
+  revealRows(unstage.panelEl);
   unstage.panelEl.querySelector('[data-ide-scm-path="staged.js"] [data-ide-scm-action="unstage"]').click();
   await settle();
   assert.equal(unstage.spies.toasts.length, 1, 'unstage failure toasts');
@@ -381,6 +385,7 @@ test('a failed stage / unstage / stage-all surfaces a toast (no silent no-op)', 
 
 test('a successful stage does NOT toast', async () => {
   const ok = mountedScmPanel({ mutateResult: { ok: true } });
+  revealRows(ok.panelEl);
   ok.panelEl.querySelector('[data-ide-scm-path="src/a.js"] [data-ide-scm-action="stage"]').click();
   await settle();
   assert.equal(ok.spies.toasts.length, 0, 'no toast on success');

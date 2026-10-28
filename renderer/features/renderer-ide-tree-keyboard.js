@@ -50,6 +50,9 @@
       v: onClipboardPaste,
       d: onClipboardDuplicate,
     };
+    // Files-header filter (Ctrl+F) and Open to the Side (Ctrl+Enter); absent = default keys.
+    const onOpenFilter = typeof deps?.onOpenFilter === 'function' ? deps.onOpenFilter : null;
+    const onOpenToSide = typeof deps?.onOpenToSide === 'function' ? deps.onOpenToSide : null;
     const commitEdit = typeof deps?.commitEdit === 'function' ? deps.commitEdit : noop;
     const cancelEdit = typeof deps?.cancelEdit === 'function' ? deps.cancelEdit : noop;
     const editSession = deps?.editSession || {};
@@ -138,92 +141,63 @@
       }
       const path = row.dataset.ideTreePath;
       const isDir = row.dataset.ideTreeKind === 'directory';
-      const expanded = isDir && getIde().expandedDirs?.has(path);
+      const expanded = isDir && getIde().expandedDirs?.has(path) === true;
+      // No modifier: navigation also moves the single selection.
+      const plain = !event.shiftKey && !event.ctrlKey && !event.metaKey;
+      const selectRow = (target) => {
+        if (!plain || !target) return;
+        selection.replace([target.dataset.ideTreePath], target.dataset.ideTreePath);
+        render();
+      };
+      const focusRow = (targetIndex) => {
+        const clamped = Math.max(0, Math.min(rows.length - 1, targetIndex));
+        moveTreeFocus(rows, clamped);
+        selectRow(rows[clamped]);
+      };
       switch (event.key) {
         case 'ArrowDown':
-          moveTreeFocus(rows, index + 1);
-          if (event.shiftKey) {
-            const target = rows[Math.min(rows.length - 1, index + 1)];
-            if (selection.has(path) !== true) selection.replace([path], path);
-            selection.extendRange(rows.map((item) => item.dataset.ideTreePath), target.dataset.ideTreePath);
-            render();
-          } else if (!event.ctrlKey && !event.metaKey) {
-            const target = rows[Math.min(rows.length - 1, index + 1)];
-            selection.replace([target.dataset.ideTreePath], target.dataset.ideTreePath);
-            render();
+        case 'ArrowUp': {
+          const targetIndex = Math.max(0, Math.min(rows.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)));
+          if (!event.shiftKey) {
+            focusRow(targetIndex);
+            break;
           }
+          moveTreeFocus(rows, targetIndex);
+          if (selection.has(path) !== true) selection.replace([path], path);
+          selection.extendRange(rows.map((item) => item.dataset.ideTreePath), rows[targetIndex].dataset.ideTreePath);
+          render();
           break;
-        case 'ArrowUp':
-          moveTreeFocus(rows, index - 1);
-          if (event.shiftKey) {
-            const target = rows[Math.max(0, index - 1)];
-            if (selection.has(path) !== true) selection.replace([path], path);
-            selection.extendRange(rows.map((item) => item.dataset.ideTreePath), target.dataset.ideTreePath);
-            render();
-          } else if (!event.ctrlKey && !event.metaKey) {
-            const target = rows[Math.max(0, index - 1)];
-            selection.replace([target.dataset.ideTreePath], target.dataset.ideTreePath);
-            render();
-          }
-          break;
+        }
         case 'Home':
-          moveTreeFocus(rows, 0);
-          if (!event.shiftKey && !event.ctrlKey && !event.metaKey) {
-            selection.replace([rows[0].dataset.ideTreePath], rows[0].dataset.ideTreePath);
-            render();
-          }
+          focusRow(0);
           break;
         case 'End':
-          moveTreeFocus(rows, rows.length - 1);
-          if (!event.shiftKey && !event.ctrlKey && !event.metaKey) {
-            const target = rows[rows.length - 1];
-            selection.replace([target.dataset.ideTreePath], target.dataset.ideTreePath);
-            render();
-          }
+          focusRow(rows.length - 1);
           break;
         case 'ArrowRight':
-          if (isDir && !expanded) {
+        case 'ArrowLeft': {
+          const opening = event.key === 'ArrowRight';
+          if (isDir && expanded !== opening) {
             setFocusedPath(path);
             setFocusAfterRender(true);
-            if (!event.shiftKey && !event.ctrlKey && !event.metaKey) {
-              selection.replace([path], path);
-              render();
-            }
+            selectRow(row);
             toggleDir(path);
-          } else if (isDir && expanded && rows[index + 1]?.dataset.ideTreePath.startsWith(`${path}/`)) {
-            moveTreeFocus(rows, index + 1);
-            if (!event.shiftKey && !event.ctrlKey && !event.metaKey) {
-              const target = rows[Math.min(rows.length - 1, index + 1)];
-              selection.replace([target.dataset.ideTreePath], target.dataset.ideTreePath);
-              render();
-            }
-          }
-          break;
-        case 'ArrowLeft':
-          if (isDir && expanded) {
-            setFocusedPath(path);
-            setFocusAfterRender(true);
-            if (!event.shiftKey && !event.ctrlKey && !event.metaKey) {
-              selection.replace([path], path);
-              render();
-            }
-            toggleDir(path);
+          } else if (opening) {
+            if (isDir && rows[index + 1]?.dataset.ideTreePath.startsWith(`${path}/`)) focusRow(index + 1);
           } else {
             const parentIndex = rows.findIndex(
               (candidate) => candidate.dataset.ideTreePath === parentDirOf(path)
             );
-            if (parentIndex !== -1) {
-              moveTreeFocus(rows, parentIndex);
-              if (!event.shiftKey && !event.ctrlKey && !event.metaKey) {
-                const target = rows[parentIndex];
-                selection.replace([target.dataset.ideTreePath], target.dataset.ideTreePath);
-                render();
-              }
-            }
+            if (parentIndex !== -1) focusRow(parentIndex);
           }
           break;
+        }
         case 'Enter':
         case ' ':
+          if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !isDir && onOpenToSide) {
+            onOpenToSide(path);
+            break;
+          }
           setFocusedPath(path);
           setFocusAfterRender(true);
           if (isDir) {
@@ -275,6 +249,12 @@
     function handleKeydown(event) {
       const control = event.target?.closest?.('[data-ide-tree-edit-control]');
       if (!control) {
+        if (onOpenFilter && (event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey
+          && String(event.key || '').toLowerCase() === 'f') {
+          event.preventDefault();
+          onOpenFilter();
+          return;
+        }
         handleTreeNavKeydown(event);
         return;
       }

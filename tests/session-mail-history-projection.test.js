@@ -225,3 +225,19 @@ test('compaction prefix fingerprint changes with the mail identity and is stable
   assert.notEqual(fingerprintCompactionPrefix([...plain, ctx(1)]), fingerprintCompactionPrefix([...plain, swapped]));
   assert.notEqual(fingerprintCompactionPrefix([...plain, ctx(1)]), base);
 });
+
+test('mid-turn mail (row 70 W2a): a context row between the anchor and the assistant row stays in its turn group and wire position', () => {
+  const tool = [
+    { id: 't1', role: 'assistant', kind: 'tool_use', content: '', tool_call: { call_id: 'c1', tool_name: 'read_file', input: {} } },
+    { id: 't2', role: 'tool', kind: 'tool_result', content: 'ok', tool_result: { call_id: 'c1', output_text: 'ok' } },
+  ];
+  const messages = [];
+  for (let i = 1; i <= 7; i += 1) messages.push(user(`u${i}`, `Question ${i}`), assistant(`a${i}`, `Answer ${i}`));
+  messages.push(user('u8', 'Question 8'), ...tool, ctx(1, 'turn_8', 'mid-turn mail'), assistant('a8', 'Answer 8'));
+  const recent = selectRecentTurnGroups(messages, 6);
+  assert.deepEqual(contents(recent).slice(-5), ['Question 8', '', 'ok', 'mid-turn mail', 'Answer 8']);
+  assert.equal(recent[0].content, 'Question 3');
+  const wire = buildPreparedContextHistory(messages, { history_scope: 'recent' }, { sessionMessages: true });
+  assert.deepEqual(wire.slice(-5).map((m) => m.role), ['user', 'assistant', 'tool', 'context', 'assistant']);
+  assert.deepEqual(wire.at(-2), { role: 'context', kind: 'session_message', content: 'mid-turn mail', session_message: messages.at(-2).session_message });
+});

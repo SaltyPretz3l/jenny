@@ -177,6 +177,66 @@ class TestToolOutputStreamer:
         streamer.close()
         assert [batch["sequence"] for batch in batches] == [1, 2]
 
+    def test_only_emitted_lines_pay_for_redaction(self, monkeypatch) -> None:
+        """Lines dropped by backpressure are never sanitized on the reader thread."""
+        from sidecar.ai.tools.builtins import tool_output_stream as stream_module
+
+        sanitized: list[str] = []
+        real_sanitize = stream_module.sanitize_tool_output
+
+        def _counting(text, **kwargs):
+            sanitized.append(text)
+            return real_sanitize(text, **kwargs)
+
+        monkeypatch.setattr(stream_module, "sanitize_tool_output", _counting)
+        batches: list[dict] = []
+        streamer = ToolOutputStreamer(emit=batches.append)
+        # One giant read: the burst buffer overflows before any batch is taken.
+        total = MAX_STREAM_PENDING_LINES * 3
+        streamer.on_chunk(
+            "stdout", "".join(f"line-{i}\n" for i in range(total)).encode()
+        )
+        streamer.close()
+
+        texts = [line["text"] for batch in batches for line in batch["lines"]]
+        assert texts[-1] == f"line-{total - 1}"
+        assert len(texts) + batches[-1]["dropped_lines"] == total
+        assert len(sanitized) == len(texts)
+
+    def test_emitted_lines_and_partial_are_still_redacted(self) -> None:
+        secret = "sk-" + "c" * 40
+        batches: list[dict] = []
+        streamer = ToolOutputStreamer(emit=batches.append)
+        streamer.on_chunk("stdout", f"\x1b[32mapi_key={secret}\x1b[0m\nkey={secret}".encode())
+        streamer.close()
+        texts = [line["text"] for batch in batches for line in batch["lines"]]
+        assert texts and all(secret not in text for text in texts)
+        assert all(secret not in str(batch["partial"]) for batch in batches)
+        assert "\x1b" not in "".join(texts)
+
+    def test_unchanged_partial_snapshot_is_rendered_once(self, monkeypatch) -> None:
+        from sidecar.ai.tools.builtins import tool_output_stream as stream_module
+
+        sanitized: list[str] = []
+        real_sanitize = stream_module.sanitize_tool_output
+
+        def _counting(text, **kwargs):
+            sanitized.append(text)
+            return real_sanitize(text, **kwargs)
+
+        monkeypatch.setattr(stream_module, "sanitize_tool_output", _counting)
+        batches: list[dict] = []
+        with _closing_streamer(emit=batches.append) as streamer:
+            streamer.on_chunk("stdout", b"progress 10%")
+            for _ in range(5):
+                streamer.on_chunk("stderr", b"")  # no change to any partial
+            assert _wait_for(lambda: any(b["partial"] == "progress 10%" for b in batches))
+            streamer.on_chunk("stdout", b"\rprogress 20%")
+            assert _wait_for(lambda: any(b["partial"] == "progress 20%" for b in batches))
+            # Before close (which emits the tail as a line of its own).
+            assert sanitized.count("progress 10%") == 1
+            assert sanitized.count("progress 20%") == 1
+
 
 class TestOutputChunkSlot:
     def test_begin_current_end_round_trip(self) -> None:

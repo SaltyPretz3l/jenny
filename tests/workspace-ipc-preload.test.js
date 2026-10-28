@@ -1,4 +1,3 @@
-const path = require('path');
 const Module = require('module');
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -19,34 +18,6 @@ function loadWithElectronMock(modulePath, electronMock) {
     Module._load = originalLoad;
     delete require.cache[resolvedPath];
   }
-}
-
-function createElectronMock() {
-  return {
-    app: {
-      getPath: () => path.join(process.cwd(), 'tmp'),
-      setPath() {},
-      whenReady: () => ({ then() {} }),
-      on() {},
-      quit() {},
-      exit() {},
-      setAppUserModelId() {},
-    },
-    BrowserWindow: {
-      getAllWindows: () => [],
-    },
-    clipboard: { writeText() {} },
-    dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
-    ipcMain: { handle() {} },
-    nativeImage: {},
-    powerMonitor: { on() {}, removeListener() {} },
-    safeStorage: {
-      isEncryptionAvailable: () => false,
-      encryptString: (value) => Buffer.from(String(value || ''), 'utf8'),
-      decryptString: (buffer) => Buffer.from(buffer).toString('utf8'),
-    },
-    shell: { openPath() {}, showItemInFolder() {} },
-  };
 }
 
 test('preload exposes workspace IPC helpers on window.jennyShell', async () => {
@@ -321,7 +292,7 @@ test('preload exposes chat UI IPC helpers on window.jennyShell', async () => {
 
 test('guidance IPC handlers and preload helpers expose skills and no retired tips bridge', async () => {
   const handlers = new Map();
-  const mainModule = loadWithElectronMock('../main.js', createElectronMock());
+  const ipcRegistration = require('../services/main/ipc-handler-registration');
   const skillService = {
     getState() {
       return { featureEnabled: true, settings: { bundledEnabled: true } };
@@ -333,7 +304,7 @@ test('guidance IPC handlers and preload helpers expose skills and no retired tip
       return Promise.resolve({ opened: scope });
     },
   };
-  mainModule.registerGuidanceIpcHandlers({
+  ipcRegistration.registerGuidanceIpcHandlers({
     handle(channel, handler) {
       handlers.set(channel, handler);
     },
@@ -392,7 +363,7 @@ test('guidance IPC handlers and preload helpers expose skills and no retired tip
 
 test('feature IPC handlers and preload helpers expose the consolidated feature settings bridge', async () => {
   const handlers = new Map();
-  const mainModule = loadWithElectronMock('../main.js', createElectronMock());
+  const ipcRegistration = require('../services/main/ipc-handler-registration');
   const payload = {
     tools: {
       web: true,
@@ -421,7 +392,7 @@ test('feature IPC handlers and preload helpers expose the consolidated feature s
     },
   };
 
-  mainModule.registerFeatureIpcHandlers({
+  ipcRegistration.registerFeatureIpcHandlers({
     handle(channel, handler) {
       handlers.set(channel, handler);
     },

@@ -19,7 +19,7 @@ from sidecar.ai.config import (
     RuntimeConfig,
     resolve_operation_ledger_root,
 )
-from sidecar.ai.execution_policy import desktop_policy_is_enforced
+from sidecar.ai.execution_policy import BUILTIN_MCP_SERVER_NAME, desktop_policy_is_enforced
 from sidecar.ai.feature_flags import (
     BUILTIN_DEFAULT_ON_FLAGS,
     FEATURE_GIT_TRACKING,
@@ -319,7 +319,7 @@ def _default_mcp_servers(
         command_args = ["-m", "sidecar.ai.mcp.builtin_server", *args]
     builtin_servers = (
         MCPServerConfig(
-            name="jenny_local_tools",
+            name=BUILTIN_MCP_SERVER_NAME,
             transport="stdio",
             command=sys.executable,
             args=tuple(command_args),
@@ -354,8 +354,6 @@ def _default_mcp_servers(
     )
     if host_policy_is_enforced(config) or desktop_policy_is_enforced(config):
         return builtin_servers
-    if config.mcp_servers:
-        if any(server.name == "jenny_local_tools" for server in config.mcp_servers):
-            return config.mcp_servers
-        return (*builtin_servers, *config.mcp_servers)
-    return builtin_servers
+    # A configured row never replaces the builtin server (the parser also drops the name).
+    configured = (s for s in config.mcp_servers if s.name != BUILTIN_MCP_SERVER_NAME)
+    return (*builtin_servers, *configured)

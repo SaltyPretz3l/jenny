@@ -361,3 +361,17 @@ test('a bridge without list or getCapabilities leaves rows plain: no group, no c
   assert.equal(store.lookup(SID, a.proposal_id).capabilities.status, 'idle');
   assert.equal(store.lookup(SID, a.proposal_id).optionsOpen, true);
 });
+
+test("F3b: an equal revision whose child view changed is a change; the same child key is not", async () => {
+  const child = (phase) => ({ phase, key: JSON.stringify({ phase }) });
+  const bridge = makeBridge([{ schema_version: 1, ok: true, proposal: projection({ revision: 5, child: child('running') }) }]);
+  const store = createProposalCardStore({ getBridge: () => bridge });
+  store.lookup(SID, PID);
+  await flush();
+  let changes = 0;
+  store.subscribe(() => { changes += 1; });
+  assert.equal(store.apply(SID, projection({ revision: 5, child: child('running') })), false);
+  assert.equal(store.apply(SID, projection({ revision: 5, child: child('failed') })), true);
+  assert.equal(changes, 1);
+  assert.equal(store.lookup(SID, PID).proposal.child.phase, 'failed');
+});

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -32,6 +31,12 @@ from sidecar.ai.tools.builtins.knowledge import view as view_module
 from sidecar.ai.tools.builtins.rich_files.notebook import notebook_inspect_tool
 from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
 from sidecar.ai.tools.workspace import WorkspaceGuard
+from tests.sidecar._platform_skips import (
+    make_dir_link,
+    posix_only,
+    requires_file_symlinks,
+    windows_only,
+)
 
 _PATH_VIOLATION_CODES = {CMP_TOOL_INVALID_PATH, CMP_TOOL_OUTSIDE_WORKSPACE}
 
@@ -69,25 +74,6 @@ def _payload(result: ToolHandlerResult) -> dict[str, object]:
     parsed = json.loads(result.output)
     assert isinstance(parsed, dict)
     return parsed
-
-
-def _can_create_symlink(tmp_path: Path) -> bool:
-    src = tmp_path / "_probe_src"
-    dst = tmp_path / "_probe_dst"
-    src.write_text("x", encoding="utf-8")
-    try:
-        os.symlink(src, dst)
-    except (OSError, NotImplementedError):
-        return False
-    finally:
-        if dst.exists() or dst.is_symlink():
-            try:
-                dst.unlink()
-            except OSError:
-                pass
-        if src.exists():
-            src.unlink()
-    return True
 
 
 # ── knowledge_search ─────────────────────────────────────────────────
@@ -223,6 +209,50 @@ def test_search_sources_are_bounded(corpus: dict[str, Path]) -> None:
     assert len(payload["sources"]) <= 20
 
 
+def test_search_include_glob_braces_expand(corpus: dict[str, Path]) -> None:
+    result = knowledge_search_tool(
+        {"pattern": "needle", "include_glob": "*.{md,rst}"}, _WORKSPACE
+    )
+
+    paths = {source["path"] for source in _payload(result)["sources"]}
+    assert paths == {"project-x/spec.md", "handbook/guide.md"}
+
+
+def test_search_snippet_is_the_matching_line_not_its_context(
+    corpus: dict[str, Path],
+) -> None:
+    (corpus["root_a"] / "context.txt").write_text(
+        "leading context\nthe needle line\ntrailing context\n", encoding="utf-8"
+    )
+
+    result = knowledge_search_tool(
+        {"pattern": "needle line", "root": "project-x", "context_lines": 1}, _WORKSPACE
+    )
+
+    sources = {source["path"]: source for source in _payload(result)["sources"]}
+    assert sources["project-x/context.txt"]["snippet"] == "the needle line"
+
+
+def test_search_result_has_no_workspace_relative_header(corpus: dict[str, Path]) -> None:
+    result = knowledge_search_tool({"pattern": "needle", "root": "handbook"}, _WORKSPACE)
+
+    text = str(_payload(result)["result"])
+    assert "workspace-relative" not in text
+    assert text.startswith("Found 1 matches in 1 files for pattern 'needle':\n")
+    assert "handbook/guide.md:1:needle three" in text
+    assert result.metadata["searched_root"] == "handbook"
+
+
+@posix_only("':' is reserved for NTFS streams on Windows")
+def test_view_accepts_a_colon_in_a_posix_file_name(corpus: dict[str, Path]) -> None:
+    (corpus["root_a"] / "notes:2026.md").write_text("colon name\n", encoding="utf-8")
+
+    result = knowledge_view_tool({"path": "project-x/notes:2026.md"}, _WORKSPACE)
+
+    assert result.success is True
+    assert _payload(result)["content"] == "colon name"
+
+
 # ── knowledge_view (text) ────────────────────────────────────────────
 
 
@@ -305,9 +335,8 @@ def test_view_accepts_absolute_path_inside_a_root(corpus: dict[str, Path]) -> No
     assert _payload(result)["path"] == "project-x/spec.md"
 
 
-def test_view_rejects_symlink_escape(corpus: dict[str, Path], tmp_path: Path) -> None:
-    if not _can_create_symlink(tmp_path):
-        pytest.skip("symlink creation not permitted in this environment")
+@requires_file_symlinks()
+def test_view_rejects_symlink_escape(corpus: dict[str, Path]) -> None:
     link = corpus["root_a"] / "escape.md"
     os.symlink(corpus["outside"] / "secret.md", link)
 
@@ -316,50 +345,26 @@ def test_view_rejects_symlink_escape(corpus: dict[str, Path], tmp_path: Path) ->
     assert excinfo.value.code in _PATH_VIOLATION_CODES
 
 
-def test_search_does_not_follow_symlinked_dirs(
-    corpus: dict[str, Path], tmp_path: Path
-) -> None:
-    if not _can_create_symlink(tmp_path):
-        pytest.skip("symlink creation not permitted in this environment")
-    os.symlink(
-        corpus["outside"],
-        corpus["root_a"] / "linked",
-        target_is_directory=True,
-    )
+def test_search_does_not_follow_symlinked_dirs(corpus: dict[str, Path]) -> None:
+    make_dir_link(corpus["root_a"] / "linked", corpus["outside"])
 
     result = knowledge_search_tool({"pattern": "needle"}, _WORKSPACE)
 
     assert "secret.md" not in str(_payload(result)["result"])
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows junctions only")
+@windows_only("junctions")
 def test_view_rejects_windows_junction_escape(corpus: dict[str, Path]) -> None:
-    link = corpus["root_a"] / "junction"
-    result = subprocess.run(
-        ["cmd", "/c", "mklink", "/J", str(link), str(corpus["outside"])],
-        capture_output=True,
-        check=False,
-        text=True,
-    )
-    if result.returncode != 0:
-        pytest.skip(f"mklink /J not permitted: {result.stderr.strip()}")
+    make_dir_link(corpus["root_a"] / "junction", corpus["outside"])
 
     with pytest.raises(ToolExecutionFailure) as excinfo:
         knowledge_view_tool({"path": "project-x/junction/secret.md"}, _WORKSPACE)
     assert excinfo.value.code in _PATH_VIOLATION_CODES
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows junctions only")
+@windows_only("junctions")
 def test_search_does_not_follow_junctioned_dirs(corpus: dict[str, Path]) -> None:
-    link = corpus["root_a"] / "junction"
-    result = subprocess.run(
-        ["cmd", "/c", "mklink", "/J", str(link), str(corpus["outside"])],
-        capture_output=True,
-        check=False,
-        text=True,
-    )
-    if result.returncode != 0:
-        pytest.skip(f"mklink /J not permitted: {result.stderr.strip()}")
+    make_dir_link(corpus["root_a"] / "junction", corpus["outside"])
 
     search = knowledge_search_tool({"pattern": "needle"}, _WORKSPACE)
 

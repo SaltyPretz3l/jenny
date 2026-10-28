@@ -123,7 +123,7 @@
       messages.push(status.repairRequired
         ? jt('memory.health.repairRequired', 'Memory is unavailable and requires repair; open Diagnostics for guidance.')
         : jt('memory.health.detailsUnavailable', 'Memory health details are unavailable.'));
-    } else if (!status.available && !messages.includes('Memory health details are unavailable.')) {
+    } else if (!status.available) {
       messages.unshift(jt('memory.health.detailsUnavailable', 'Memory health details are unavailable.'));
     }
     return [...new Set(messages)];
@@ -238,8 +238,8 @@
       settingsFoundation.applyBadgeState?.(dom.memoryBadge, loading
         ? { state: 'loading', srLabel: jt('memory.settings.loadingStatusLabel', 'Loading memory status') }
         : status?.available
-          ? { state: degraded ? 'warn' : 'success', text: listUnavailable ? 'Partial' : jt('memory.settings.savedCount', '{count} saved', { count: approved }) }
-          : { state: 'error', text: 'Unavailable' });
+          ? { state: degraded ? 'warn' : 'success', text: listUnavailable ? jt('memory.settings.badgePartial', 'Partial') : jt('memory.settings.savedCount', '{count} saved', { count: approved }) }
+          : { state: 'error', text: jt('memory.settings.badgeUnavailable', 'Unavailable') });
       const tone = status?.available && !allListsUnavailable ? (degraded ? 'warning' : 'success') : 'danger';
       const message = loading
         ? jt('memory.settings.loadingStatus', 'Loading memory status...')
@@ -254,7 +254,10 @@
         if (dom.memorySummary) dom.memorySummary.innerHTML = '';
       } else if (typeof settingsSupport.renderStatusRowContainer === 'function') {
         settingsSupport.renderStatusRowContainer(dom.memorySummary, settingsSupport.buildSettingsSummaryModel({
-          tone, label: jt('memory.settings.summaryLabel', 'Memory'), message, badgeText: status?.available ? (degraded ? 'Degraded' : 'Ready') : 'Unavailable', spinner: loading,
+          tone, label: jt('memory.settings.summaryLabel', 'Memory'), message, badgeText: status?.available
+            ? (degraded ? jt('memory.settings.badgeDegraded', 'Degraded') : jt('memory.settings.badgeReady', 'Ready'))
+            : jt('memory.settings.badgeUnavailable', 'Unavailable'),
+          spinner: loading,
         }), escapeHtml);
       } else if (dom.memorySummary) {
         dom.memorySummary.textContent = message;
@@ -406,6 +409,5 @@
     createMemorySettingsRenderer,
     normalizeMemoryStatus,
     buildMemoryHealthMessages,
-    MAX_RENDERED_MEMORIES,
   };
 });

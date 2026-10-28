@@ -92,7 +92,8 @@ function legacyActions(record, state, ctx) {
 }
 
 // ctx: {now, runMode:'agent'|'plan', readOnly:bool, lockdown:bool, commandRunSupported:bool,
-// sessionRuntimeSupported:bool (default true), sessionHandoffSupported:bool}.
+// sessionRuntimeSupported:bool (default true), sessionHandoffSupported:bool, child: the derived live view of a
+// New session's child chat (./chat-proposal-child-view) or null}.
 function projectProposal(record, ctx = {}) {
   const state = record.decision_state === 'pending' && isDue(record, ctx.now) ? 'expired' : record.decision_state;
   const session = record.kind === 'session';
@@ -130,7 +131,9 @@ function projectProposal(record, ctx = {}) {
       first_turn_turn_id: record.first_turn_turn_id,
       first_turn_work_id: record.first_turn_work_id,
       preparation_turn_id: record.preparation_turn_id,
+      reply_turn_id: ctx.child?.reply_turn_id || null,
     });
+    projected.child = ctx.child || null;
     projected.group_id = record.group_id;
     projected.options = structuredClone(record.options);
     projected.options_editable = state === 'pending';

@@ -275,6 +275,23 @@ test('input validation refuses before any service call', async () => {
   assert.deepEqual(service.calls, []);
 });
 
+test('a replace that changes nothing is refused before the service journals it', async () => {
+  const service = createStub();
+  const result = await projectNotesTool.execute(
+    { action: 'replace', old_text: 'Use tabs.', new_text: 'Use tabs.' },
+    ctx(service)
+  );
+  assert.equal(result.isError, true);
+  assert.equal(result.metadata.reason, 'no_change');
+  assert.deepEqual(service.calls, []);
+});
+
+test('summarize labels only known actions', () => {
+  assert.equal(projectNotesTool.summarize({ action: 'x'.repeat(5000) }), 'Project notes: action');
+  assert.equal(projectNotesTool.summarize({ action: { toString: () => 'read' } }), 'Project notes: action');
+  assert.equal(projectNotesTool.summarize({ action: 'REPLACE' }), 'Project notes: replace');
+});
+
 test('append at exactly the field limits is accepted', async () => {
   const service = createStub();
   const result = await projectNotesTool.execute(

@@ -1,7 +1,7 @@
 'use strict';
 
 // The managed-chat hook for addressed session mail (row 59 checkpoint 4, slice S3, decisions D5-D7):
-// mail joins only a brand-new model turn, after the user row and before it in the transcript.
+// mail joins a brand-new model turn or a failure retry, after the user row and before it in the transcript.
 
 const fs = require('fs');
 const os = require('os');
@@ -172,23 +172,58 @@ test('a context row already in history is dropped from the wire when the capabil
   assert.ok(env.ids().includes(`ctx_${F.uuid(7)}`), 'the user can still read the stored row');
 });
 
-test('an edit/failure-retry reuses the rows already before the anchor and admits no new mail', async (t) => {
+test('an edit reuses the rows already before the anchor and admits no new mail', async (t) => {
   const env = setup(t, { mail: 1 });
   const first = await env.run();
   assert.deepEqual(env.states(), ['included']);
-  // Mail that arrives later must wait for a genuinely new turn.
+  // Mail that arrives later waits for a new turn when the person edits their message.
   env.mailStore.mutate('sess_dest', ({ mail }) => ({
     mail: { ...mail, inbox: [...mail.inbox, F.makeInbox(2)], next_receive_sequence: 3 },
   }));
-  const anchorId = `user_${first.streamId}`;
   env.sent.length = 0;
-  await env.run({ editedMessageId: anchorId, failureRetry: true });
+  await env.run({ editedMessageId: `user_${first.streamId}` });
   assert.deepEqual(env.states(), ['included', 'queued']);
-  // The superseded attempt's reply stays in history (failure retry preserves it); only the rows matter here.
-  assert.deepEqual(env.sent[0].messages.map((m) => m.role), ['user', 'assistant', 'context', 'assistant', 'user']);
+  assert.deepEqual(env.sent[0].messages.map((m) => m.role), ['user', 'assistant', 'context', 'user']);
   assert.equal(env.sent[0].messages[2].session_message.message_id, F.uuid(1), 'identical rows are re-sent');
   assert.equal(env.ids().filter((id) => id.startsWith('ctx_')).length, 1);
   assert.equal(env.mailStore.read('sess_dest').mail.admission_snapshots.length, 1);
+});
+
+test('a failure retry keeps the rows already before the anchor and admits what is still queued, once', async (t) => {
+  const env = setup(t, { mail: 1 });
+  const first = await env.run();
+  env.mailStore.mutate('sess_dest', ({ mail }) => ({
+    mail: { ...mail, inbox: [...mail.inbox, F.makeInbox(2)], next_receive_sequence: 3 },
+  }));
+  env.sent.length = 0;
+  await env.run({ editedMessageId: `user_${first.streamId}`, failureRetry: true });
+  assert.deepEqual(env.states(), ['included', 'included']);
+  const wire = env.sent[0].messages;
+  assert.deepEqual(wire.filter((m) => m.role === 'context').map((m) => m.session_message.message_id), [F.uuid(1), F.uuid(2)]);
+  assert.equal(wire.at(-1).content, 'Summarize what you know');
+  assert.deepEqual(env.ids().filter((id) => id.startsWith('ctx_')), [`ctx_${F.uuid(1)}`, `ctx_${F.uuid(2)}`], 'nothing duplicated');
+});
+
+// 2026-10-27 incident: Jenny's "resume" woke a linked child whose wake turn failed loading the model
+// (model_busy) before admission; the person's Retry ran the turn without it and it sat above the composer.
+test('a turn that failed before admission leaves its mail queued; the failure retry carries it', async (t) => {
+  const env = setup(t, { mail: 1 });
+  const resolveModel = env.service._resolveModel;
+  env.service._resolveModel = async () => {
+    throw Object.assign(new Error('Model initialization is already in progress'), { code: 'CMP-AI-0002' });
+  };
+  const failed = await env.run({ prompt: 'Woken by a message from Jenny', visiblePrompt: 'Woken by a message from Jenny' }).catch(() => null);
+  assert.equal(env.sent.length, 0, 'the failed attempt never reached chat.send');
+  assert.deepEqual(env.states(), ['queued']);
+  env.service._resolveModel = resolveModel;
+  const anchor = env.store.getSession('sess_dest').messages.find((m) => m.role === 'user' && m.content === 'Woken by a message from Jenny');
+  assert.ok(anchor, `the wake prompt row is persisted (stream ${failed?.streamId || 'rejected'})`);
+  await env.run({ prompt: anchor.content, visiblePrompt: anchor.content, editedMessageId: anchor.id, failureRetry: true });
+  assert.deepEqual(env.states(), ['included']);
+  const wire = env.sent[0].messages;
+  assert.equal(wire.at(-2).role, 'context');
+  assert.equal(wire.at(-2).content, 'hello 1');
+  assert.equal(wire.at(-1).content, 'Woken by a message from Jenny');
 });
 
 test('the deterministic transcript answer is not a model turn: nothing is admitted', async (t) => {

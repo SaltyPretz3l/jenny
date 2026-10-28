@@ -21,6 +21,7 @@ from sidecar.ai.tools.workspace_restore import (
     preflight_undo,
     undo_change_set,
 )
+from tests.sidecar._platform_skips import make_dir_link, posix_only
 from tests.sidecar.ai.tools.test_workspace_restore import (
     CHANGE_SET_ID,
     _args,
@@ -30,18 +31,6 @@ from tests.sidecar.ai.tools.test_workspace_restore import (
     _setup,
     _three_operation_set,
 )
-
-
-def _link_directory(link: Path, target: Path) -> None:
-    if os.name == "nt":
-        import _winapi
-
-        _winapi.CreateJunction(str(target), str(link))
-        return
-    try:
-        os.symlink(target, link, target_is_directory=True)
-    except (OSError, NotImplementedError) as error:
-        pytest.skip(f"symlink creation not permitted: {error}")
 
 
 def _record(store: WorkspaceMutationJournalStore, root: Path) -> dict[str, object]:
@@ -74,7 +63,7 @@ def test_restore_never_writes_outside_after_an_ancestor_swap(
 
     def swap() -> None:
         (root / "sub").rename(root / "sub-moved")
-        _link_directory(root / "sub", outside)
+        make_dir_link(root / "sub", outside)
 
     def racing_copy(source: Path, destination: Path) -> None:
         if moment == "before_copy":
@@ -119,7 +108,7 @@ def test_directory_restore_never_writes_outside_after_an_ancestor_swap(
             # The last pre-write check passed; the ancestor becomes a link now.
             swapped.append(path)
             (root / "sub").rename(root / "sub-moved")
-            _link_directory(root / "sub", outside)
+            make_dir_link(root / "sub", outside)
 
     monkeypatch.setattr(restore_io, "_recheck", recheck_then_swap)
 
@@ -150,7 +139,7 @@ def test_an_ancestor_swapped_right_before_the_directory_create_leaves_outside_em
         if not swapped and path.parent == root / "sub":
             swapped.append(path)
             (root / "sub").rename(root / "sub-moved")
-            _link_directory(root / "sub", outside)
+            make_dir_link(root / "sub", outside)
 
     monkeypatch.setattr(restore_io, "_before_restore_io", swap_before_create)
 
@@ -187,7 +176,7 @@ def test_a_swap_right_after_a_directory_create_never_deletes_an_outside_director
         original_mkdir(name, *args, **kwargs)  # type: ignore[arg-type]
         swapped.append(leaf)
         (root / "sub").rename(root / "sub-moved")
-        _link_directory(root / "sub", outside)
+        make_dir_link(root / "sub", outside)
 
     if os.name == "nt":
         # Windows creates relative to a held parent handle, not by os.mkdir.
@@ -201,7 +190,7 @@ def test_a_swap_right_after_a_directory_create_never_deletes_an_outside_director
             original_mkdir(outside / name)
             swapped.append(name)
             (root / "sub").rename(root / "sub-moved")
-            _link_directory(root / "sub", outside)
+            make_dir_link(root / "sub", outside)
             return original_create(parent, name)
 
         monkeypatch.setattr(restore_io._win32, "create_directory_relative", create_then_swap)
@@ -232,7 +221,7 @@ def test_directory_restore_rebuilds_the_nested_tree(tmp_path: Path) -> None:
     assert sorted(path.name for path in (root / "sub").iterdir()) == ["tree"]
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX directory permission bits; Windows has no equivalent mode")
+@posix_only("directory permission bits; Windows has no equivalent mode")
 def test_directory_restore_keeps_directory_modes_and_stays_private_while_filling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

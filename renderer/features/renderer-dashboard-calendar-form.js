@@ -203,6 +203,65 @@
     };
   }
 
+  const DAY_MS = 86400000;
+
+  // Days between the stored event's start and end dates that a save keeps (the
+  // form shows one date, so a multi-day event's end date rides along hidden).
+  // A plain overnight timed event (next-day end clock before its start clock) is
+  // exactly what buildEventPayload's rollover rebuilds from the typed times, so
+  // it keeps no offset: shortening 22:00-02:00 to end 23:30 stays same-day.
+  function endDayOffset(values) {
+    const v = values || {};
+    const originalStart = String(v.originalStart || '');
+    const originalEnd = String(v.originalEnd || '');
+    const originalDay = Date.parse(`${originalStart.slice(0, 10)}T00:00Z`);
+    const originalEndDay = Date.parse(`${originalEnd.slice(0, 10)}T00:00Z`);
+    if (!Number.isFinite(originalDay) || !Number.isFinite(originalEndDay)
+      || (v.originalAllDay === true) !== (v.allDay === true)) {
+      return 0;
+    }
+    const days = Math.round((originalEndDay - originalDay) / DAY_MS);
+    const overnight = v.allDay !== true && days === 1
+      && originalEnd.slice(11, 16) < originalStart.slice(11, 16);
+    return overnight ? 0 : days;
+  }
+
+  function shiftLocalStamp(stamp, days) {
+    // UTC is only a wall-clock arithmetic coordinate; stored values stay local.
+    const clock = Date.parse(`${stamp}Z`);
+    return Number.isFinite(clock) ? new Date(clock + days * DAY_MS).toISOString().slice(0, 16) : '';
+  }
+
+  // "Save all events" opened from a clicked occurrence: the form showed that
+  // occurrence's date, so move the series anchor by the same day delta the user
+  // applied to the occurrence rather than re-anchoring the series on it.
+  function rebaseSeriesPayload(payload, values) {
+    const anchorDay = Date.parse(`${String(values?.originalStart || '').slice(0, 10)}T00:00Z`);
+    const occurrenceDay = Date.parse(`${String(values?.occurrenceStart || '').slice(0, 10)}T00:00Z`);
+    if (!payload || !Number.isFinite(anchorDay) || !Number.isFinite(occurrenceDay)) {
+      return payload;
+    }
+    const delta = Math.round((anchorDay - occurrenceDay) / DAY_MS);
+    const start = shiftLocalStamp(payload.start, delta);
+    const end = shiftLocalStamp(payload.end, delta);
+    return delta && start && end ? { ...payload, start, end } : payload;
+  }
+
+  // Create payload for a fully parsed quick-add phrase (no form involved).
+  function buildQuickAddPayload(parsed) {
+    const start = parsed.allDay ? `${parsed.date}T00:00` : `${parsed.date}T${parsed.start}`;
+    const end = parsed.allDay ? `${parsed.date}T00:00` : `${parsed.date}T${parsed.end}`;
+    return {
+      title: String(parsed.title || ''),
+      start,
+      end,
+      allDay: parsed.allDay === true,
+      categoryId: 'default',
+      recurrence: 'none',
+      notes: '',
+    };
+  }
+
   // Converts form values into a calendar.createEvent/updateEvent payload.
   // Returns { payload } or { error } — the schema-side normalizer is the
   // real validator; this only catches what would silently misfire.
@@ -219,13 +278,9 @@
         return { error: jt('dashboard.calendar.form.pickEndTimeError', 'Pick an end time (or mark the event all-day).') };
       }
     }
-    // The form shows one date, so a stored multi-day or overnight event keeps
-    // its hidden end-date offset (moved with the date); the typed times win.
-    const originalDay = Date.parse(`${String(v.originalStart || '').slice(0, 10)}T00:00Z`);
-    const originalEndDay = Date.parse(`${String(v.originalEnd || '').slice(0, 10)}T00:00Z`);
-    const keepsOffset = Number.isFinite(originalDay) && Number.isFinite(originalEndDay)
-      && (v.originalAllDay === true) === (v.allDay === true);
-    const endOffset = keepsOffset ? originalEndDay - originalDay : 0;
+    // A stored multi-day event keeps its hidden end-date offset (moved with
+    // the date); the typed times win.
+    const endOffset = endDayOffset(v) * DAY_MS;
     if (v.allDay !== true && String(v.end) === String(v.start) && endOffset === 0) {
       return { error: jt('dashboard.calendar.form.endAfterStartError', 'End time must be after start time.') };
     }
@@ -233,7 +288,7 @@
     // UTC is only a wall-clock arithmetic coordinate; stored values stay local.
     const startClock = Date.parse(`${start}Z`);
     let endClock = Date.parse(`${v.date}T${v.allDay === true ? '00:00' : v.end}Z`) + endOffset;
-    if (v.allDay !== true && endClock <= startClock) endClock += 86400000;
+    if (v.allDay !== true && endClock <= startClock) endClock += DAY_MS;
     if (!Number.isFinite(startClock) || !Number.isFinite(endClock)) {
       return { error: jt('dashboard.calendar.form.pickEndTimeError', 'Pick an end time (or mark the event all-day).') };
     }
@@ -330,13 +385,15 @@
   }
 
   return {
-    RECURRENCE_OPTIONS,
     buildDefaultCreateValues,
     buildEditValues,
     buildEventFormMarkup,
     buildEventPayload,
     buildFeedsPanelMarkup,
+    buildQuickAddPayload,
+    endDayOffset,
     readEventFormValues,
+    rebaseSeriesPayload,
     readFeedFormValues,
   };
 });

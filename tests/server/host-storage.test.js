@@ -9,6 +9,7 @@ const { writeJson, readJson } = require('../../services/host/durable-json');
 const { FileSecretStore } = require('../../server/file-secret-store');
 const { acquireProfile, assertDesktopProfile, claimDesktopProfile, claimProfileOwner } = require('../../services/host/profile-ownership');
 const { applySingleInstance } = require('../../services/apply-single-instance');
+const { fileSymlinkSkip, linuxOnly } = require('../helpers/platform-skips');
 
 function fixture(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-host-storage-'));
@@ -80,7 +81,7 @@ test('host admission also preserves legacy and not-yet-chatting desktop profiles
 });
 
 test('Linux profile lock survives helper exit and releases with its parent descriptor', {
-  skip: process.platform !== 'linux' ? 'Linux container qualification gate' : false,
+  skip: linuxOnly('flock profile lock through the python3 helper'),
 }, (t) => {
   const userDataPath = fixture(t);
   const options = { userDataPath, pythonExecutable: 'python3' };
@@ -163,27 +164,19 @@ test('desktop never replaces an unreadable owner marker', (t) => {
   assert.equal(fs.readFileSync(unreadableMarker, 'utf8'), '{torn');
 });
 
-test('desktop never replaces a symlinked owner marker', (t) => {
+test('desktop never replaces a symlinked owner marker', { skip: fileSymlinkSkip() }, (t) => {
   const linked = fixture(t);
   const target = path.join(linked, 'marker-target');
   const marker = path.join(linked, 'profile-owner.json');
   fs.writeFileSync(target, '{torn');
-  try {
-    fs.symlinkSync(target, marker, 'file');
-  } catch (error) {
-    if (['EPERM', 'EACCES', 'ENOTSUP'].includes(error.code)) {
-      t.skip(`symlink creation unavailable: ${error.code}`);
-      return;
-    }
-    throw error;
-  }
+  fs.symlinkSync(target, marker, 'file');
   assert.throws(() => claimDesktopProfile(linked));
   assert.equal(fs.lstatSync(marker).isSymbolicLink(), true);
   assert.equal(fs.readFileSync(target, 'utf8'), '{torn');
 });
 
 test('desktop refuses a special-file owner marker without blocking or replacing it', {
-  skip: process.platform !== 'linux' ? 'Linux special-file qualification' : false,
+  skip: linuxOnly('mkfifo special-file owner marker'),
 }, (t) => {
   const directory = fixture(t);
   const marker = path.join(directory, 'profile-owner.json');
@@ -251,7 +244,7 @@ test('mounted secret reads reject oversized, invalid UTF-8 and changing content'
 });
 
 test('a FIFO secret fails promptly without a writer', {
-  skip: process.platform !== 'linux' ? 'Linux mounted-file qualification' : false,
+  skip: linuxOnly('mkfifo mounted-file secret'),
 }, (t) => {
   const directory = fixture(t);
   require('node:child_process').execFileSync('mkfifo', [path.join(directory, 'model-api-key')]);

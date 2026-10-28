@@ -20,6 +20,11 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const EMPTY_STATE = { configs: [], history: { byConfig: {} }, activeRun: null, activeConfigId: null };
+  // abortRun answers that mean the activity path itself is off: Stop falls back to api.abort().
+  const ABORT_FALLBACK_REASONS = new Set(['feature_disabled', 'source_unavailable', 'invalid_request', 'invalid_scope', 'scope_unavailable']);
+  // ... and the ones that mean the run already ended (nothing left to stop, nothing to report).
+  const ABORT_ENDED_REASONS = new Set(['not_found', 'not_active', 'stale_run']);
+  const WORKSPACE_SCOPE = Object.freeze({ kind: 'workspace' });
 
   function asObject(value) {
     return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
@@ -61,6 +66,8 @@
     const RUN_OUTPUT_CAP = 8;
     const lastRunOutput = new Map();
     let loadedOnce = false;
+    // Bumped by resetForRoot: a run answer from the old root is dropped.
+    let rootEpoch = 0;
     let unsubscribe = null;
     let unsubscribeFeatures = null;
     let disposed = false;
@@ -141,68 +148,83 @@
       onOutputChange(configId);
     }
 
+    const stopFailedMessage = () => jt('ide.testRunner.stopFailed', 'Could not stop the test run.');
+
+    // Stop through the waiting activity IPC (abortAndWait: resolves once the process tree is
+    // dead). Resolves { activityAbort: 'aborted' | 'ended' | 'fallback' }; throws on any other
+    // failure so callMutation turns it into the stop-failed toast. A stale epoch retries once.
+    async function abortViaActivity(api, runId) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const snapshot = asObject(await win.jennyShell.activity.getSnapshot({ schema_version: 1, scope: WORKSPACE_SCOPE, epoch: '', after_revision: 0 }));
+        if (!snapshot || snapshot.available === false || typeof snapshot.epoch !== 'string') return { activityAbort: 'fallback' };
+        const result = asObject(await api.abortRun({ schema_version: 1, scope: WORKSPACE_SCOPE, epoch: snapshot.epoch, activity_id: `test:${runId}` }));
+        if (result && result.aborted === true) return { activityAbort: 'aborted' };
+        const reason = String((result && result.reason) || '');
+        if (reason === 'stale_epoch' && attempt === 0) continue;
+        if (ABORT_ENDED_REASONS.has(reason)) return { activityAbort: 'ended' };
+        if (ABORT_FALLBACK_REASONS.has(reason)) return { activityAbort: 'fallback' };
+        if (result && !reason && result.aborted === false && result.terminationConfirmed !== false) return { activityAbort: 'ended' };
+        break;
+      }
+      throw new Error(stopFailedMessage());
+    }
+
+    let abortInFlight = null;
+
+    async function abortActiveRun() {
+      const api = getApi();
+      const runId = cachedState.activeRun;
+      if (api && typeof api.abortRun === 'function' && typeof win.jennyShell?.activity?.getSnapshot === 'function' && typeof runId === 'string' && runId) {
+        const outcome = await callMutationAndToast((bridge) => abortViaActivity(bridge, runId), stopFailedMessage(), 'ide:test-runner:abort');
+        const how = outcome.ok && outcome.result.activityAbort;
+        if (how === 'ended') refresh();
+        if (how !== 'fallback') return outcome;
+      }
+      return callMutationAndToast((bridge) => bridge.abort(), stopFailedMessage(), 'ide:test-runner:abort');
+    }
+
     const panelActions = {
       showOutput: (configId) => onShowOutput(configId),
-      runConfig: (configId) => (onRunRequest(configId), callMutationAndToast(
-        (api) => api.run({ configId, includeOutput: true }),
-    jt('ide.testRunner.startFailed', 'Could not start the test run.'),
-        `ide:test-runner:run:${configId}`
-      ).then((outcome) => {
-        if (outcome.ok) recordRunOutput(outcome.result);
-        return outcome;
-      })),
-      abort: () => callMutationAndToast(
-        (api) => api.abort(),
-    jt('ide.testRunner.stopFailed', 'Could not stop the test run.'),
-        'ide:test-runner:abort'
-      ),
+      runConfig: (configId) => {
+        onRunRequest(configId);
+        const epoch = rootEpoch;
+        return callMutationAndToast(
+          (api) => api.run({ configId, includeOutput: true }),
+          jt('ide.testRunner.startFailed', 'Could not start the test run.'),
+          `ide:test-runner:run:${configId}`
+        ).then((outcome) => {
+          if (outcome.ok && epoch === rootEpoch) recordRunOutput(outcome.result);
+          return outcome;
+        });
+      },
+      // One Stop in flight at a time: a second click while the waiting abort runs is a no-op.
+      abort: () => {
+        if (!abortInFlight) abortInFlight = abortActiveRun().finally(() => { abortInFlight = null; });
+        return abortInFlight;
+      },
       // WIDE-032: a typed result ({ok, configs} or {ok:false, code, message})
       // so the panel can roll back its optimistic composition baseline instead
       // of silently swallowing a refusal (e.g. CONFIG_ACTIVE_RUN) or a
       // rejected bridge call. A successful save re-fetches so the panel's
       // overlay is replaced by the canonical, normalized set the store wrote.
-      saveConfigs: (configs) => {
-        const api = getApi();
-        if (!api || typeof api.saveConfigs !== 'function') {
-          const unavailable = { ok: false, code: '', message: jt('ide.testRunner.unavailable', 'Test runner is unavailable.') };
-          showShellErrorToast(unavailable.message, { title: jt('ide.testRunner.title', 'Test Runner'), dedupeKey: 'ide:test-runner:save' });
-          return Promise.resolve(unavailable);
-        }
-        return Promise.resolve(api.saveConfigs(configs))
-          .then((result) => {
-            const obj = asObject(result);
-            if (obj && obj.error) {
-              return {
-                ok: false,
-                code: String(obj.error.code || ''),
-      message: String(obj.error.message || jt('ide.testRunner.saveFailed', 'Could not save the test configurations.')),
-              };
-            }
-            if (obj && obj.available === false) {
-              return disabledOutcome(obj);
-            }
-            return refresh().then(() => ({
-              ok: true,
-              configs: obj && Array.isArray(obj.configs) ? obj.configs : configs,
-              // Entries the store dropped and why (invalid/duplicate id, ...),
-              // so the panel can say so instead of reporting a silent success.
-              rejected: obj && Array.isArray(obj.rejected) ? obj.rejected : [],
-            }));
-          })
-          .catch((error) => ({
-            ok: false,
-            code: '',
-    message: String(error?.message || error || jt('ide.testRunner.saveFailed', 'Could not save the test configurations.')),
-          }))
-          // Normalized save failures are toasted after the panel receives
-          // its rollback outcome.
-          .then((outcome) => {
-            if (!outcome.ok) {
-              showShellErrorToast(outcome.message, { title: jt('ide.testRunner.title', 'Test Runner'), dedupeKey: 'ide:test-runner:save' });
-            }
-            return outcome;
-          });
-      },
+      saveConfigs: (configs) => callMutationAndToast(
+        (api) => {
+          if (typeof api.saveConfigs !== 'function') throw new Error(jt('ide.testRunner.unavailable', 'Test runner is unavailable.'));
+          return api.saveConfigs(configs);
+        },
+        jt('ide.testRunner.saveFailed', 'Could not save the test configurations.'),
+        'ide:test-runner:save'
+      ).then((outcome) => {
+        if (!outcome.ok) return outcome;
+        const obj = asObject(outcome.result);
+        return refresh().then(() => ({
+          ok: true,
+          configs: obj && Array.isArray(obj.configs) ? obj.configs : configs,
+          // Entries the store dropped and why (invalid/duplicate id, ...),
+          // so the panel can say so instead of reporting a silent success.
+          rejected: obj && Array.isArray(obj.rejected) ? obj.rejected : [],
+        }));
+      }),
     };
 
     const panel = typeof panelFactory === 'function'
@@ -279,6 +301,8 @@
     // Live run-state push. 'started' badges the running config instantly (no
     // round-trip); 'finished' re-fetches to pull the completed run into the trend
     // and clear the badge; 'aborted' is informational — the finished follows.
+    // 'termination_failed' (main could not confirm the process tree died; it
+    // still holds the run) re-fetches so the panel shows 'stop unconfirmed'.
     function handleStateChange(payload) {
       if (disposed) return;
       const src = asObject(payload);
@@ -299,6 +323,8 @@
       }
       if (phase === 'finished') {
         refresh(true);
+      } else if (phase === 'termination_failed') {
+        refresh();
       }
     }
 
@@ -356,6 +382,7 @@
     function resetForRoot() {
       if (disposed) return Promise.resolve();
       stateSeq += 1;
+      rootEpoch += 1;
       cachedState = EMPTY_STATE;
       loadedOnce = false;
       lastRunOutput.clear(); // the old workspace's test output must not show in the new one

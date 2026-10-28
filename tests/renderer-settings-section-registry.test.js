@@ -29,6 +29,7 @@ test('settings section registry preserves ids and defaults', () => {
     'editor',
     'home',
     'notifications',
+    'dictation',
     'offline',
     'usage',
     'runtime',
@@ -84,7 +85,7 @@ test('settings section registry exposes six uniform ordered groups', () => {
     ['modelTools', 'Model & tools', ['readiness', 'models', 'offline', 'tools']],
     ['work', 'Work', ['runtime', 'usage']],
     ['context', 'Context & memory', ['context', 'memories', 'personality']],
-    ['app', 'App', ['appearance', 'editor', 'home', 'notifications']],
+    ['app', 'App', ['appearance', 'editor', 'home', 'notifications', 'dictation']],
     ['system', 'System', ['extensions', 'account']],
     ['developer', 'Developer', ['advanced']],
   ]);

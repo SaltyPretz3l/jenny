@@ -63,3 +63,16 @@ test('trusted archive restore rejects conflicting and malformed session identiti
       && error.reason === 'format_mismatch');
   }
 });
+
+test('a restored primary Jenny chat stays the primary; a plain import of it never is', () => {
+  const payload = JSON.parse(sessionPayload());
+  payload.session.session_role = 'primary';
+  const store = createStore();
+  importSession(store, JSON.stringify(payload), null, { trustedArchive: true, restoredSessionId: 'sess_primary_1' });
+  assert.equal(store.sessions.sess_primary_1.session_role, 'primary');
+  assert.equal(store.sessions.sess_primary_1.pinned, true);
+
+  const copyStore = createStore();
+  const copy = importSession(copyStore, JSON.stringify(payload), null, {});
+  assert.equal(copyStore.sessions[copy.id].session_role, null);
+});

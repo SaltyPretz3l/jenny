@@ -322,11 +322,101 @@
       sectionId: 'editor',
       keywords: [jt('settings.fieldCopy.editorInsertFinalNewlineToggle.keywords.finalNewline', 'final newline'), jt('settings.fieldCopy.editorInsertFinalNewlineToggle.keywords.endOfFileNewline', 'end of file newline'), 'eof'],
     },
-    editorAutoSaveToggle: {
-      label: jt('settings.fieldCopy.editorAutoSaveToggle.label', 'Auto-save files'),
-      description: jt('settings.fieldCopy.editorAutoSaveToggle.description', 'Write changes to disk automatically about a second after you stop typing.'),
+    editorFontFamilyField: {
+      label: jt('settings.fieldCopy.editorFontFamilyField.label', 'Font family'),
+      description: jt('settings.fieldCopy.editorFontFamilyField.description', 'A comma-separated list of fonts for the editor. Leave empty to use the app code font.'),
       sectionId: 'editor',
-      keywords: [jt('settings.fieldCopy.editorAutoSaveToggle.keywords.autoSave', 'auto save'), jt('settings.fieldCopy.editorAutoSaveToggle.keywords.saveAutomatically', 'save automatically')],
+      keywords: [jt('settings.fieldCopy.editorFontFamilyField.keywords.font', 'font'), jt('settings.fieldCopy.editorFontFamilyField.keywords.typeface', 'typeface'), 'monospace'],
+    },
+    editorCursorStyleSelect: {
+      label: jt('settings.fieldCopy.editorCursorStyleSelect.label', 'Cursor style'),
+      description: jt('settings.fieldCopy.editorCursorStyleSelect.description', 'The shape of the text cursor.'),
+      sectionId: 'editor',
+      keywords: [jt('settings.fieldCopy.editorCursorStyleSelect.keywords.caret', 'caret'), jt('settings.fieldCopy.editorCursorStyleSelect.keywords.blockCursor', 'block cursor')],
+    },
+    editorCursorBlinkingSelect: {
+      label: jt('settings.fieldCopy.editorCursorBlinkingSelect.label', 'Cursor blinking'),
+      description: jt('settings.fieldCopy.editorCursorBlinkingSelect.description', 'How the text cursor blinks. Solid never blinks.'),
+      sectionId: 'editor',
+      keywords: [jt('settings.fieldCopy.editorCursorBlinkingSelect.keywords.blink', 'blink'), jt('settings.fieldCopy.editorCursorBlinkingSelect.keywords.caret', 'caret')],
+    },
+    editorSmoothCaretToggle: {
+      label: jt('settings.fieldCopy.editorSmoothCaretToggle.label', 'Smooth caret animation'),
+      description: jt('settings.fieldCopy.editorSmoothCaretToggle.description', 'Animate the cursor as it moves.'),
+      sectionId: 'editor',
+      keywords: [jt('settings.fieldCopy.editorSmoothCaretToggle.keywords.cursorAnimation', 'cursor animation')],
+    },
+    editorFontLigaturesToggle: {
+      label: jt('settings.fieldCopy.editorFontLigaturesToggle.label', 'Font ligatures'),
+      description: jt('settings.fieldCopy.editorFontLigaturesToggle.description', 'Join character pairs such as => into one glyph when the font supports it.'),
+      sectionId: 'editor',
+      keywords: [jt('settings.fieldCopy.editorFontLigaturesToggle.keywords.ligatures', 'ligatures')],
+    },
+    editorInsertSpacesToggle: {
+      label: jt('settings.fieldCopy.editorInsertSpacesToggle.label', 'Insert spaces'),
+      description: jt('settings.fieldCopy.editorInsertSpacesToggle.description', 'Press Tab to insert spaces instead of a tab character.'),
+      sectionId: 'editor',
+      keywords: ['tabs', 'spaces', 'indentation', jt('settings.fieldCopy.editorInsertSpacesToggle.keywords.softTabs', 'soft tabs')],
+    },
+    editorDetectIndentationToggle: {
+      label: jt('settings.fieldCopy.editorDetectIndentationToggle.label', 'Detect indentation'),
+      description: jt('settings.fieldCopy.editorDetectIndentationToggle.description', 'Follow the indentation a file already uses when it opens.'),
+      sectionId: 'editor',
+      keywords: ['indentation', jt('settings.fieldCopy.editorDetectIndentationToggle.keywords.autoDetect', 'auto detect')],
+    },
+    editorAutoSaveModeSelect: {
+      label: jt('settings.fieldCopy.editorAutoSaveModeSelect.label', 'Auto save'),
+      description: jt('settings.fieldCopy.editorAutoSaveModeSelect.description', 'Write changes to disk without pressing Save. A file changed on disk by something else is never overwritten.'),
+      sectionId: 'editor',
+      keywords: [jt('settings.fieldCopy.editorAutoSaveModeSelect.keywords.autoSave', 'auto save'), jt('settings.fieldCopy.editorAutoSaveModeSelect.keywords.saveAutomatically', 'save automatically')],
+    },
+    editorAutoSaveDelayInput: {
+      label: jt('settings.fieldCopy.editorAutoSaveDelayInput.label', 'Auto save delay'),
+      description: jt('settings.fieldCopy.editorAutoSaveDelayInput.description', 'How long to wait after you stop typing before saving, when auto save runs after a delay.'),
+      sectionId: 'editor',
+      keywords: [jt('settings.fieldCopy.editorAutoSaveDelayInput.keywords.autoSaveDelay', 'auto save delay')],
+    },
+    editorBracketPairColorizationToggle: {
+      label: jt('settings.fieldCopy.editorBracketPairColorizationToggle.label', 'Bracket pair colors'),
+      description: jt('settings.fieldCopy.editorBracketPairColorizationToggle.description', 'Color matching brackets by nesting depth.'),
+      sectionId: 'editor',
+      keywords: [jt('settings.fieldCopy.editorBracketPairColorizationToggle.keywords.brackets', 'brackets'), jt('settings.fieldCopy.editorBracketPairColorizationToggle.keywords.rainbow', 'rainbow')],
+    },
+    editorIndentGuidesToggle: {
+      label: jt('settings.fieldCopy.editorIndentGuidesToggle.label', 'Indent guides'),
+      description: jt('settings.fieldCopy.editorIndentGuidesToggle.description', 'Draw vertical lines at each indentation level.'),
+      sectionId: 'editor',
+      keywords: [jt('settings.fieldCopy.editorIndentGuidesToggle.keywords.guides', 'guides'), 'indentation'],
+    },
+    editorStickyScrollToggle: {
+      label: jt('settings.fieldCopy.editorStickyScrollToggle.label', 'Sticky scroll'),
+      description: jt('settings.fieldCopy.editorStickyScrollToggle.description', 'Keep the enclosing function and class headers pinned at the top while you scroll.'),
+      sectionId: 'editor',
+      keywords: [jt('settings.fieldCopy.editorStickyScrollToggle.keywords.stickyHeaders', 'sticky headers')],
+    },
+    editorFoldingToggle: {
+      label: jt('settings.fieldCopy.editorFoldingToggle.label', 'Code folding'),
+      description: jt('settings.fieldCopy.editorFoldingToggle.description', 'Show controls in the gutter to collapse blocks of code.'),
+      sectionId: 'editor',
+      keywords: [jt('settings.fieldCopy.editorFoldingToggle.keywords.fold', 'fold'), jt('settings.fieldCopy.editorFoldingToggle.keywords.collapse', 'collapse')],
+    },
+    editorScrollBeyondLastLineToggle: {
+      label: jt('settings.fieldCopy.editorScrollBeyondLastLineToggle.label', 'Scroll past the last line'),
+      description: jt('settings.fieldCopy.editorScrollBeyondLastLineToggle.description', 'Let the editor scroll until the last line reaches the top.'),
+      sectionId: 'editor',
+      keywords: [jt('settings.fieldCopy.editorScrollBeyondLastLineToggle.keywords.scrollPastEnd', 'scroll past end')],
+    },
+    editorMouseWheelZoomToggle: {
+      label: jt('settings.fieldCopy.editorMouseWheelZoomToggle.label', 'Zoom with Ctrl and the mouse wheel'),
+      description: jt('settings.fieldCopy.editorMouseWheelZoomToggle.description', 'Change the editor text size with Ctrl and the mouse wheel.'),
+      sectionId: 'editor',
+      keywords: ['zoom', jt('settings.fieldCopy.editorMouseWheelZoomToggle.keywords.mouseWheel', 'mouse wheel')],
+    },
+    editorInlineBlameToggle: {
+      label: jt('settings.fieldCopy.editorInlineBlameToggle.label', 'Show inline blame'),
+      description: jt('settings.fieldCopy.editorInlineBlameToggle.description', 'Show who last changed the cursor line, and when, after the line’s text.'),
+      sectionId: 'editor',
+      keywords: ['git', 'blame', jt('settings.fieldCopy.editorInlineBlameToggle.keywords.author', 'author')],
     },
     // ── Home ─────────────────────────────────────────────────────────────
     homeScratchpadCaptureSelect: {
@@ -340,6 +430,14 @@
       description: jt('settings.fieldCopy.homeScratchpadGlobalCaptureToggle.description', 'Enable the app-wide shortcut while Jenny has keyboard focus.'),
       sectionId: 'home',
       keywords: [jt('settings.fieldCopy.homeScratchpadGlobalCaptureToggle.keywords.globalShortcut', 'global shortcut'), 'hotkey', jt('settings.fieldCopy.homeScratchpadGlobalCaptureToggle.keywords.quickCaptureShortcut', 'quick capture shortcut')],
+    },
+
+    // ── Dictation (row 84; renderer-settings-dictation-section.js) ──
+    dictationEnabledToggle: {
+      label: jt('settings.fieldCopy.dictationEnabledToggle.label', 'Dictation'),
+      description: jt('settings.fieldCopy.dictationEnabledToggle.description', 'Shows the mic in the message box.'),
+      sectionId: 'dictation',
+      keywords: [jt('settings.fieldCopy.dictationEnabledToggle.keywords.voice', 'voice'), jt('settings.fieldCopy.dictationEnabledToggle.keywords.speech', 'speech'), jt('settings.fieldCopy.dictationEnabledToggle.keywords.microphone', 'microphone'), jt('settings.fieldCopy.dictationEnabledToggle.keywords.pushToTalk', 'push to talk')],
     },
 
     // ── Notifications (desktop toasts; renderer-settings-notifications-section.js) ──

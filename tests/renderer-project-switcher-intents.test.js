@@ -288,6 +288,8 @@ test('Fork 2 A: a committed switch keeps the open chat and offers "Open latest c
       { id: 's1', project_id: 'project_ascend', updated_at: '2026-09-20T10:00:00Z' },
       { id: 's2', project_id: 'project_budget', updated_at: '2026-09-19T10:00:00Z' },
       { id: 's3', project_id: 'project_budget', updated_at: '2026-09-20T09:00:00Z' },
+      // Row 69: the pinned primary Jenny chat is newer but is never a project's "latest chat".
+      { id: 'sj', project_id: 'project_budget', session_role: 'primary', updated_at: '2026-09-21T09:00:00Z' },
     ],
   };
   const byId = Object.fromEntries(PROJECTS.map((project) => [project.id, project]));
@@ -309,7 +311,7 @@ test('Fork 2 A: a committed switch keeps the open chat and offers "Open latest c
   assert.equal(toast.message, 'Workspace is now Budget FY27. New chats start here.');
   assert.equal(toast.options.actions[0].label, 'Open latest chat');
   await toast.options.actions[0].onClick();
-  assert.deepEqual(calls.opened, ['s3'], 'the action runs the follow logic');
+  assert.deepEqual(calls.opened, ['s3'], 'the action runs the follow logic and skips the primary Jenny chat');
 
   byId.project_loose2 = { id: 'project_loose2', name: 'Empty', root_path: 'E:\\Empty', folder_exists: true };
   listed = Object.values(byId).map((project) => ({ ...project, is_current: project.id === 'project_budget' }));
@@ -364,6 +366,71 @@ test('D8: a switch sets the Chats filter only until the user picks one; "All pro
   assert.deepEqual(picked, ['']);
   await switcher.switchToProject('project_ascend');
   assert.equal(state.ui.chatsProjectFilter, '', 'the explicit "All projects" pick is respected');
+});
+
+function withFakeGroups(t, { prefers }) {
+  const calls = { prefers: [], expanded: [] };
+  const previous = globalThis.rendererChatsPanelProjects;
+  globalThis.rendererChatsPanelProjects = {
+    prefersProjectGroups: (windowRef) => { calls.prefers.push(windowRef); return prefers; },
+    expandProject: (windowRef, projectId) => { calls.expanded.push({ windowRef, projectId }); },
+  };
+  t.after(() => {
+    if (previous === undefined) delete globalThis.rendererChatsPanelProjects;
+    else globalThis.rendererChatsPanelProjects = previous;
+  });
+  return calls;
+}
+
+function switchRig(t, state) {
+  const rootService = { async switchToProject(id) { state.workspaceRoot.path = PROJECTS.find((project) => project.id === id).root_path; return { committed: true, changed: true }; } };
+  return makeSwitcher(t, {
+    state, rootService,
+    api: { async list() { return { projects: PROJECTS.map((project) => ({ ...project, is_current: undefined })) }; } },
+  });
+}
+
+test('D10: with project grouping preferred a switch leaves the Chats filter alone and expands the new project', async (t) => {
+  const calls = withFakeGroups(t, { prefers: true });
+  const state = { ui: { chatsProjectFilter: '' }, workspaceRoot: { path: 'D:\\Projects\\Ascend' }, sessions: [] };
+  const { dom, switcher } = switchRig(t, state);
+  await switcher.refreshProjects();
+  await switcher.switchToProject('project_budget');
+  assert.equal(state.ui.chatsProjectFilter, '', 'grouped mode does not narrow the list');
+  assert.deepEqual(calls.expanded.map((entry) => entry.projectId), ['project_budget']);
+  assert.equal(calls.expanded[0].windowRef, dom.window);
+});
+
+test('D10: with project grouping preferred, switching to General clears an unpicked filter and expands General', async (t) => {
+  const calls = withFakeGroups(t, { prefers: true });
+  const state = { ui: { chatsProjectFilter: 'project_ascend' }, workspaceRoot: { path: 'D:\\Projects\\Ascend' }, sessions: [] };
+  const { switcher } = makeSwitcher(t, {
+    state,
+    rootService: { async switchToProject() { state.workspaceRoot.path = ''; return { committed: true, changed: true }; } },
+    api: { async list() { return { projects: PROJECTS.map((project) => ({ ...project, is_current: undefined })) }; } },
+  });
+  await switcher.refreshProjects();
+  state.workspaceRoot.path = ''; // the Workspace folder was cleared: General is current
+  await switcher.afterTransition({ committed: true });
+  assert.equal(state.ui.chatsProjectFilter, '', 'a filter the user did not pick does not narrow the grouped list');
+  assert.deepEqual(calls.expanded.map((entry) => entry.projectId), ['project_general']);
+});
+
+test('D8 stays for By date: a preference of date, or no projects module, narrows exactly as before', async (t) => {
+  const calls = withFakeGroups(t, { prefers: false });
+  const state = { ui: {}, workspaceRoot: { path: 'D:\\Projects\\Ascend' }, sessions: [] };
+  const { switcher } = switchRig(t, state);
+  await switcher.refreshProjects();
+  await switcher.switchToProject('project_budget');
+  assert.equal(state.ui.chatsProjectFilter, 'project_budget');
+  assert.deepEqual(calls.expanded, []);
+
+  delete globalThis.rendererChatsPanelProjects;
+  const bare = { ui: {}, workspaceRoot: { path: 'D:\\Projects\\Ascend' }, sessions: [] };
+  const rig = switchRig(t, bare);
+  await rig.switcher.refreshProjects();
+  await rig.switcher.switchToProject('project_budget');
+  assert.equal(bare.ui.chatsProjectFilter, 'project_budget');
 });
 
 test('D7: ensureFilterShows narrows to the new chat\'s project only when the active filter would hide it', async (t) => {

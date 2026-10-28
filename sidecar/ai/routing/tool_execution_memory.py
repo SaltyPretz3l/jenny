@@ -27,8 +27,8 @@ from sidecar.ai.memory.contracts import (
 )
 from sidecar.ai.memory.service import MemoryService, approved_memory_api, pending_memory_api
 from sidecar.ai.routing import tool_execution_results as _results
-from sidecar.ai.routing import tool_observation as _tool_observation
 from sidecar.ai.routing.harness_helpers import MAX_RESPONSE_CHARS
+from sidecar.ai.routing.tool_execution_tool_handlers import audit_settled
 from sidecar.exceptions import MemoryStoreError
 from sidecar.runtime.tool_execution_support import (
     ToolCallRequest,
@@ -423,12 +423,19 @@ def _recall(request: _Request) -> _Result:
 
 
 def _list(request: _Request) -> _Result:
-    cursor = request.arguments.get("cursor")
-    rows, next_cursor = request.store.list_active(
-        project_id=request.project_id, scope_session_id=request.session_id,
-        include_general=True, cursor=cursor if isinstance(cursor, str) and cursor else None,
-        limit=LIST_PAGE_SIZE,
-    )
+    raw_cursor = request.arguments.get("cursor")
+    cursor = raw_cursor if isinstance(raw_cursor, str) and raw_cursor else None
+    try:
+        rows, next_cursor = request.store.list_active(
+            project_id=request.project_id, scope_session_id=request.session_id,
+            include_general=True, cursor=cursor, limit=LIST_PAGE_SIZE,
+        )
+    except ValueError as error:
+        if cursor is None:
+            raise
+        raise _invalid(
+            "memory list 'cursor' is not valid; omit it to start from the first page"
+        ) from error
     _record_rows(request, rows)
     return _Result(output=_rows_output(rows, next_cursor), status="ok")
 
@@ -521,16 +528,10 @@ def _execute_memory_tool(  # noqa: PLR0913 - the uniform synthetic-handler signa
             context=context, runtime=runtime,
         ))
     error_code = None if result.success else CMP_TOOL_EXECUTION_FAILED
-    if runtime is not None:
-        runtime.audit(
-            _tool_observation.KIND_TOOL_EXECUTION_OBSERVED
-            if result.success
-            else _tool_observation.KIND_TOOL_EXECUTION_FAILED,
-            tool_call_id=str(call.call_id or ""),
-            tool_name=TOOL_NAME,
-            error_code=error_code,
-            summary=f"tool_execution_observed memory {action} {result.status}",
-        )
+    audit_settled(
+        runtime, call, TOOL_NAME, succeeded=result.success, error_code=error_code,
+        summary=f"tool_execution_observed memory {action} {result.status}",
+    )
     return outcome_type(
         tool_name=TOOL_NAME,
         output=sanitize_tool_output(result.output, max_chars=MAX_RESPONSE_CHARS,

@@ -8,7 +8,6 @@ import hashlib
 import importlib
 import json
 import os
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -39,6 +38,7 @@ from sidecar.ai.tools.builtins.filesystem import (
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
 from sidecar.ai.tools.workspace import WorkspaceGuard
+from tests.sidecar._platform_skips import make_dir_link
 
 
 def _guard(tmp_path: Path) -> WorkspaceGuard:
@@ -119,15 +119,7 @@ def test_streaming_read_rejects_parent_swap_before_open(
         opened_paths.append(path)
         target.unlink()
         sub.rmdir()
-        try:
-            if os.name == "nt":
-                import _winapi
-
-                _winapi.CreateJunction(str(outside), str(sub))
-            else:
-                os.symlink(outside, sub, target_is_directory=True)
-        except (OSError, NotImplementedError) as error:
-            pytest.skip(f"directory link creation unsupported: {error}")
+        make_dir_link(sub, outside)
         return original_open(path, *args, **kwargs)
 
     monkeypatch.setattr(filesystem_module, "open_regular_file", swap_before_open)
@@ -167,8 +159,8 @@ def test_read_file_preserves_lf_line_endings(tmp_path: Path) -> None:
     assert "\r" not in result.output
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows junctions only")
-def test_read_capped_bytes_rejects_swapped_directory_junction(tmp_path: Path) -> None:
+def test_read_capped_bytes_rejects_swapped_directory_link(tmp_path: Path) -> None:
+    # make_dir_link swaps in a junction on Windows and a directory symlink elsewhere.
     workspace = tmp_path / "workspace"
     sub = workspace / "sub"
     sub.mkdir(parents=True)
@@ -182,37 +174,7 @@ def test_read_capped_bytes_rejects_swapped_directory_junction(tmp_path: Path) ->
     (outside / "file.txt").write_bytes(marker)
     inside.unlink()
     sub.rmdir()
-    junction = subprocess.run(
-        ["cmd", "/c", "mklink", "/J", str(sub), str(outside)],
-        capture_output=True,
-        check=False,
-        text=True,
-    )
-    if junction.returncode != 0:
-        pytest.skip(f"mklink /J not permitted: {junction.stderr.strip()}")
-
-    _assert_swapped_path_is_rejected(resolved, workspace, marker)
-
-
-@pytest.mark.skipif(os.name == "nt", reason="POSIX symlinks only")
-def test_read_capped_bytes_rejects_swapped_directory_symlink(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    sub = workspace / "sub"
-    sub.mkdir(parents=True)
-    inside = sub / "file.txt"
-    inside.write_bytes(b"inside")
-    resolved = WorkspaceGuard(str(workspace)).resolve_read_path("sub/file.txt")
-
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    marker = b"outside-marker"
-    (outside / "file.txt").write_bytes(marker)
-    inside.unlink()
-    sub.rmdir()
-    try:
-        os.symlink(outside, sub, target_is_directory=True)
-    except (OSError, NotImplementedError) as error:
-        pytest.skip(f"symlink creation not permitted: {error}")
+    make_dir_link(sub, outside)
 
     _assert_swapped_path_is_rejected(resolved, workspace, marker)
 
@@ -956,7 +918,6 @@ def test_read_file_image_support_stays_disabled_by_default(tmp_path: Path) -> No
 
 
 def test_read_file_can_return_bounded_image_payload_when_enabled(tmp_path: Path) -> None:
-    pytest.importorskip("PIL")
     from PIL import Image
 
     configure_filesystem_tools(
@@ -996,7 +957,6 @@ def test_read_file_image_preflight_refuses_oversize_before_pixel_load(
 ) -> None:
     """WIDE-021: the pixel-budget refusal must fire from the lazy header open,
     BEFORE Pillow ever decodes (allocates) the raster — spied via Image.load."""
-    pytest.importorskip("PIL")
     from PIL import Image
 
     configure_filesystem_tools(
@@ -1019,7 +979,6 @@ def test_read_file_image_preflight_refuses_oversize_before_pixel_load(
 
 
 def test_read_file_can_return_pdf_pages_when_enabled(tmp_path: Path) -> None:
-    pytest.importorskip("fitz")
     import fitz
 
     configure_filesystem_tools(
@@ -1063,7 +1022,6 @@ def test_read_file_pdf_preflight_refuses_huge_page_before_rasterization(
 ) -> None:
     """WIDE-021: a PDF page whose declared dimensions bust the pixel budget is
     refused from page metadata BEFORE get_pixmap rasterizes — spied loader."""
-    pytest.importorskip("fitz")
     import fitz
 
     configure_filesystem_tools(
@@ -1089,7 +1047,6 @@ def test_read_file_pdf_preflight_refuses_huge_page_before_rasterization(
 
 
 def test_read_file_rejects_invalid_pdf_page_ranges(tmp_path: Path) -> None:
-    pytest.importorskip("fitz")
     import fitz
 
     configure_filesystem_tools(
@@ -1106,7 +1063,6 @@ def test_read_file_rejects_invalid_pdf_page_ranges(tmp_path: Path) -> None:
 
 
 def test_read_file_reads_first_pages_of_an_over_limit_range(tmp_path: Path) -> None:
-    pytest.importorskip("fitz")
     import fitz
 
     configure_filesystem_tools(
@@ -1141,7 +1097,6 @@ def test_parse_pages_argument_caps_huge_ranges_without_expanding() -> None:
 
 
 def test_read_file_pdf_payload_stays_within_tool_output_budget(tmp_path: Path) -> None:
-    pytest.importorskip("fitz")
     import fitz
 
     configure_filesystem_tools(
@@ -1190,7 +1145,6 @@ def test_read_media_routes_decode_through_authorized_opener(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pytest.importorskip("PIL")
     from PIL import Image
 
     configure_filesystem_tools(
@@ -1223,7 +1177,6 @@ def test_read_file_image_support_rejects_pillow_pixel_limit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pytest.importorskip("PIL")
     from PIL import Image
 
     configure_filesystem_tools(
@@ -1273,7 +1226,6 @@ def _write_scanned_pdf(fitz, target: Path, *, pages: int = 1) -> None:
 def test_read_file_pdf_without_text_layer_uses_ocr(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pytest.importorskip("fitz")
     import fitz
 
     from sidecar.ai.tools.builtins import pdf_ocr
@@ -1325,7 +1277,6 @@ def test_read_file_pdf_without_text_layer_uses_ocr(
 def test_read_file_pdf_without_text_layer_reports_ocr_unavailable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pytest.importorskip("fitz")
     import fitz
 
     configure_filesystem_tools(
@@ -1349,7 +1300,6 @@ def test_read_file_pdf_without_text_layer_reports_ocr_unavailable(
 def test_read_file_pdf_with_text_layer_never_calls_ocr(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    pytest.importorskip("fitz")
     import fitz
 
     from sidecar.ai.tools.builtins import pdf_ocr
@@ -1396,3 +1346,112 @@ def test_read_file_pdf_three_dense_pages_fit_one_mcp_stdout_line() -> None:
     # And a worst-case single payload really does serialize under the cap.
     blob = _b64.b64encode(b"\xff" * TRUSTED_ATTACHMENTS_MAX_TOTAL_BYTES).decode()
     assert len(json.dumps({"data_base64": blob})) < transport_stdio.MCP_MAX_STDOUT_LINE_CHARS
+
+
+def _window(result: ToolHandlerResult) -> tuple[str, object, object]:
+    body = result.output.split("\n\n", 1)[1] if "\n\n" in result.output else ""
+    return body, result.metadata["total_lines"], result.metadata["returned_line_start"]
+
+
+def test_fast_and_streaming_windows_agree_on_form_feed_lines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # str.splitlines would break at \x0c, \x1c and U+2028; only \r\n, \r, \n end lines.
+    target = tmp_path / "ff.txt"
+    target.write_bytes("first page\x0cbreak\nsep\x1cx y\nthe last line\n".encode())
+    arguments = {"path": "ff.txt", "offset": 1, "limit": 2}
+
+    fast = read_file_tool(arguments, _guard(tmp_path))
+    monkeypatch.setattr(filesystem_module, "READ_WINDOW_FAST_PATH_MAX_BYTES", 1)
+    streamed = read_file_tool(arguments, _guard(tmp_path))
+
+    assert _window(fast) == ("sep\x1cx y\nthe last line\n", 3, 2)
+    assert _window(streamed) == _window(fast)
+
+
+def test_find_line_break_matches_the_streaming_contract() -> None:
+    find = filesystem_module._find_line_break
+    assert find(b"ab\ncd", 0) == (2, 1)
+    assert find(b"ab\r\ncd", 0) == (2, 2)
+    assert find(b"ab\rcd", 0) == (2, 1)
+    assert find(b"ab\ncd\r", 3) is None  # a lone trailing \r waits for the next chunk
+    assert find(b"ab\ncd\r\n", 3) == (5, 2)
+    assert find(b"abcd", 0) is None
+
+
+def test_streaming_window_stops_at_the_scan_cap_with_unknown_totals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "long.txt"
+    target.write_bytes(b"".join(b"line-%04d\n" % index for index in range(1000)))
+    monkeypatch.setattr(filesystem_module, "READ_WINDOW_FAST_PATH_MAX_BYTES", 1)
+    monkeypatch.setattr(filesystem_module, "READ_WINDOW_CHUNK_BYTES", 64)
+    monkeypatch.setattr(filesystem_module, "READ_WINDOW_MAX_SCAN_BYTES", 640)
+
+    beyond = read_file_tool({"path": "long.txt", "offset": 900, "limit": 1}, _guard(tmp_path))
+    within = read_file_tool({"path": "long.txt", "offset": 5, "limit": 1}, _guard(tmp_path))
+
+    assert beyond.metadata["returned_line_count"] == 0
+    assert beyond.metadata["totals_known"] is False
+    assert beyond.metadata["has_more"] is True
+    assert beyond.metadata["total_lines"] is None
+    assert beyond.metadata["lines_scanned"] == 64
+    assert within.output.endswith("line-0005\n")
+
+
+def test_read_file_binds_window_reads_to_the_workspace_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "sub" / "deep" / "big.txt"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"first\n" + b"x" * (MAX_READ_BYTES + 1))
+    roots: list[object] = []
+    original = filesystem_module.open_regular_file
+
+    def recording(path: Path, *args: object, **kwargs: object):
+        roots.append(kwargs.get("authorized_root"))
+        return original(path, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(filesystem_module, "open_regular_file", recording)
+    guard = _guard(tmp_path)
+
+    result = read_file_tool({"path": "sub/deep/big.txt", "offset": 0, "limit": 1}, guard)
+
+    assert result.output.endswith("first\n")
+    assert roots == [guard.root]
+
+
+def test_encode_complete_jpeg_never_mutates_its_input() -> None:
+    from PIL import Image as image_module
+
+    image = image_module.effect_noise((900, 600), 100).convert("RGB")
+
+    encoded, width, height = filesystem_content._encode_complete_jpeg(image, max_bytes=4096)
+
+    assert image.size == (900, 600)
+    assert encoded is None or (len(encoded) <= 4096 and max(width, height) <= 768)
+
+
+def test_pdf_page_render_uses_raw_rgb_samples_without_a_png_round_trip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        filesystem_content,
+        "_load_pymupdf",
+        lambda: SimpleNamespace(Matrix=lambda *_args: None),
+    )
+
+    def no_png(*_args: object) -> bytes:
+        raise AssertionError("RGB pixmaps must not be PNG-encoded")
+
+    pixmap = SimpleNamespace(
+        n=3, alpha=0, width=40, height=20, samples=bytes([200, 10, 10]) * 800, tobytes=no_png
+    )
+    page = SimpleNamespace(
+        rect=SimpleNamespace(width=32, height=16), get_pixmap=lambda **_kwargs: pixmap
+    )
+
+    encoded, width, height = filesystem_content._render_pdf_page_image(page, max_bytes=65536)
+
+    assert encoded is not None and encoded.startswith(b"\xff\xd8")
+    assert (width, height) == (40, 20)

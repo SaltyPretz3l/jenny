@@ -323,6 +323,25 @@ root.rendererRenderPipelineThreadDomUtils = factory();
       return first;
     }
 
+    // The first visible text line's centre, in viewport px: the axis the
+    // per-row dots use. Null without layout (jsdom, fakes), which keeps the
+    // top-align fallback.
+    function _firstTextLineCenter(target) {
+      const doc = target && target.ownerDocument;
+      if (!doc || typeof doc.createTreeWalker !== 'function' || typeof doc.createRange !== 'function') return null;
+      const walker = doc.createTreeWalker(target, 4 /* NodeFilter.SHOW_TEXT */);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (!node.nodeValue || !node.nodeValue.trim()) continue;
+        const parent = node.parentElement;
+        if (!parent || parent.closest('.sr-only, [hidden], .chat-row-node-dot')) continue;
+        const range = doc.createRange();
+        range.selectNodeContents(node);
+        const rect = range.getClientRects()[0];
+        if (rect && rect.width > 0 && rect.height > 0) return rect.top + rect.height / 2;
+      }
+      return null;
+    }
+
     // B2: small timer-based debounce around the ResizeObserver-driven rail
     // measurement. Streaming + expand/collapse oscillation can fire the
     // observer every frame; a plain rAF guard coalesces only adjacent
@@ -498,15 +517,23 @@ root.rendererRenderPipelineThreadDomUtils = factory();
           const article = row.querySelector('.chat-thread-node-article');
           const landmark = article ? _firstVisibleLandmark(article) : null;
 
-          if (landmark) {
-            const threadNode = dot.closest('.chat-thread-node');
-            const nodeKind = threadNode ? threadNode.dataset.threadNodeKind : '';
+          const threadNode = dot.closest('.chat-thread-node');
+          const nodeKind = threadNode && threadNode.dataset ? threadNode.dataset.threadNodeKind : '';
+          /* Response: dot centre on the first text line, the axis the per-row
+             dots below it use (cards such as the ask card match no landmark). */
+          const lineTarget = nodeKind === 'response' ? (landmark || (article && article.querySelector('.chat-row'))) : null;
+          const lineCenter = lineTarget ? _firstTextLineCenter(lineTarget) : null;
+          if (lineCenter !== null) {
+            const rowRect = row.getBoundingClientRect();
+            dotWrites.push({ dot, top: Math.round(lineCenter - rowRect.top - dot.offsetHeight / 2) });
+            dotCenters.push(lineCenter - rootRect.top);
+          } else if (landmark) {
             const rowRect = row.getBoundingClientRect();
             const lmRect = landmark.getBoundingClientRect();
             const dotHalf = dot.offsetHeight / 2;
 
             if (nodeKind === 'response') {
-              /* Top-align: dot centre sits at landmark top edge. */
+              /* No measurable text line: dot centre sits at landmark top edge. */
               const lmTop = lmRect.top - rowRect.top;
               dotWrites.push({ dot, top: Math.round(lmTop) });
               dotCenters.push(lmRect.top + dotHalf - rootRect.top);

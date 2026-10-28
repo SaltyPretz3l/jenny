@@ -112,10 +112,19 @@ async function getProcessCommandLine(pid) {
   return run('ps', ['-p', String(normalizedPid), '-o', 'command=']);
 }
 
+const IDENTITY_TIMEOUT_CEILING_MS = 30_000;
+
+function boundedIdentityTimeoutCeiling(value) {
+  return Math.min(Math.max(Number(value) || 0, 1), IDENTITY_TIMEOUT_CEILING_MS);
+}
+
 function getProcessCommandLineSync(pid, {
   platform = process.platform,
   spawnSyncImpl = spawnSync,
   timeoutMs = 500,
+  // Callers off the hot path (the cold-start harness) may raise the ceiling:
+  // a cold PowerShell CIM query often exceeds 1 s while Electron launches.
+  maxTimeoutMs = 1000,
 } = {}) {
   const normalizedPid = Number(pid);
   if (!Number.isInteger(normalizedPid) || normalizedPid <= 0) {
@@ -135,7 +144,7 @@ function getProcessCommandLineSync(pid, {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       windowsHide: true,
-      timeout: Math.min(Math.max(Number(timeoutMs) || 0, 1), 1000),
+      timeout: Math.min(Math.max(Number(timeoutMs) || 0, 1), boundedIdentityTimeoutCeiling(maxTimeoutMs)),
     });
     if (result?.error || (typeof result?.status === 'number' && result.status !== 0)) {
       return '';
@@ -160,6 +169,7 @@ function getProcessStartTimeSync(pid, {
   platform = process.platform,
   spawnSyncImpl = spawnSync,
   readFileSyncImpl = fs.readFileSync,
+  timeoutMs = 1000,
 } = {}) {
   if (!Number.isInteger(pid) || pid <= 0) return '';
   try {
@@ -171,7 +181,7 @@ function getProcessStartTimeSync(pid, {
       platform === 'win32' ? ['-NoProfile', '-NonInteractive', '-Command',
         `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CreationDate.ToUniversalTime().Ticks`]
         : ['-p', String(pid), '-o', 'lstart='],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, timeout: 1000 });
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, timeout: boundedIdentityTimeoutCeiling(timeoutMs) });
     return !result.error && result.status === 0 ? String(result.stdout || '').trim() : '';
   } catch (_error) {
     return '';

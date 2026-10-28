@@ -91,6 +91,7 @@ def test_brokered_keys_are_a_strict_subset_that_excludes_telemetry_dsn() -> None
     assert BROKERED_SECRET_KEYS == {
         "chatgpt_access_token",
         "openai_compatible_api_key",
+        "api_provider_key",
         "tools_web_search_provider_keys",
     }
 

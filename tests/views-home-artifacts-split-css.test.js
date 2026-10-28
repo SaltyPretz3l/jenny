@@ -291,10 +291,9 @@ test('the focused ask rule is the focus signal and is blended for contrast', () 
   assert.match(setupCss, /\n\.inv-text-field-control:focus,/, 'the unscoped focus rule is still there');
 });
 
-/* W13 - the model trigger stops being a chip parked inside the input and
- * becomes plain text on a meta row, and the settings panel becomes the ONE box
- * in the feature. Nothing inside it is boxed or divided by a rule. */
-test('the model trigger is plain text on the meta row and the panel is the one box', () => {
+/* W13 meta row; 2026-10-21 the config chip and its settings panel are gone,
+ * so the row carries only the hint and the send button. */
+test('the meta row reserves its height and no ask-config rules remain', () => {
   const heroCss = readRepoFile('styles/views-home-hero.css');
 
   const metaRule = heroCss.match(/\n\.home-ask__meta \{[\s\S]*?\n\}/)?.[0] || '';
@@ -303,52 +302,16 @@ test('the model trigger is plain text on the meta row and the panel is the one b
   assert.match(metaRule, /min-height:\s*20px;/);
   assert.match(metaRule, /position:\s*relative;/, 'it anchors the absolutely placed hint');
 
-  const triggerRule = heroCss.match(/\n\.home-ask__model \{[\s\S]*?\n\}/)?.[0] || '';
-  assert.match(triggerRule, /border:\s*0;/, 'no capsule around the model name');
-  assert.match(triggerRule, /background:\s*transparent;/, 'and no fill at rest - fills are reserved');
-  assert.match(triggerRule, /color:\s*var\(--text-muted\);/, 'information, legible at rest');
-
-  const labelRule = heroCss.match(/\n\.home-ask__model-label \{[\s\S]*?\n\}/)?.[0] || '';
-  assert.match(labelRule, /text-overflow:\s*ellipsis;/, 'a long model tag truncates, it does not stretch the row');
-
-  /* W11.1 owner live regression, RE-POINTED. A `transform` on the panel's
-   * ANCHOR makes it a stacking context, which TRAPS the panel's own z-index at
-   * the host's auto level - the sticky rail then painted its scratchpad card
-   * straight through the open panel. The redesign centers with flex instead, so
-   * the guard is now that there is NO transform here at all; the conditional is
-   * kept as the second arm so a future transform still has to pay for itself. */
-  const hostRule = heroCss.match(/\n\.home-ask-config \{[\s\S]*?\n\}/)?.[0] || '';
-  assert.ok(hostRule, 'the panel anchor has a rule');
-  assert.match(hostRule, /position:\s*relative;/, 'it is the panel\'s containing block');
-  assert.match(hostRule, /align-items:\s*center;/, 'centered with flex, not with a transform');
-  assert.equal(/transform:/.test(hostRule), false,
-    'a transformed anchor traps the panel z-index; center with flex instead');
-  if (/transform:/.test(hostRule)) {
-    assert.match(
-      hostRule,
-      /z-index:\s*var\(--z-popover\);/,
-      'a transformed anchor must lift itself to the popover layer or the rail paints over the open panel'
-    );
-  }
-
-  const panelRule = heroCss.match(/\n\.home-ask__panel \{[\s\S]*?\n\}/)?.[0] || '';
-  assert.match(panelRule, /top:\s*calc\(100% \+ var\(--space-3\)\);/, 'it hangs below the trigger');
-  assert.match(panelRule, /inset-inline-start:\s*0;/, 'inline-start-aligned to its trigger');
-  // The trigger anchors it at the LEFT edge now, so the narrow-shell override
-  // that once pulled it back on-screen is deliberately still absent.
+  assert.doesNotMatch(heroCss, /\.home-ask-config|\.home-ask__model|\.home-ask__panel/,
+    'the retired config chip and panel leave no rules behind');
   const narrowBlock = heroCss.match(/@media \(max-width: 720px\) \{[\s\S]*?\n\}/)?.[0] || '';
   assert.match(narrowBlock, /\.home-info-strip__ask \{/, 'the narrow-shell block still exists');
-  assert.equal(narrowBlock.includes('.home-ask__panel'), false);
-
-  // Home bans gradients; the panel inherits the popover primitive's solid fill.
-  const askConfigCss = heroCss.match(/\n\.home-ask-config[\s\S]*$/)?.[0] || '';
-  assert.doesNotMatch(askConfigCss, /gradient\(/, 'Home bans gradients');
 });
 
 /* Information is always visible; controls appear on demand. The hint applies
  * only while the field has focus and only until there is something to send;
  * the send button is the reverse. Neither may reserve width at rest - that was
- * the config chip's mistake. */
+ * the retired config chip's mistake. */
 test('the hint and the send button swap in the same slot without reserving a lane', () => {
   const heroCss = readRepoFile('styles/views-home-hero.css');
 
@@ -429,7 +392,7 @@ test('the page-menu trigger wears the pill idiom and its rows stay flat', () => 
 
   // The menu host anchors its popover WITHOUT a transform, so it must never
   // need the W11.1 z-index lift; if a transform ever lands here the host has
-  // to carry the popover layer itself (same bug class as the config chip).
+  // to carry the popover layer itself (the W11.1 transform bug class).
   const hostRule = heroCss.match(/\n\.home-page-menu \{[\s\S]*?\n\}/)?.[0] || '';
   assert.match(hostRule, /position:\s*relative;/);
   if (/transform:/.test(hostRule)) {
@@ -452,97 +415,6 @@ test('the page-menu trigger wears the pill idiom and its rows stay flat', () => 
   assert.match(stripRule, /gap:\s*var\(--space-5\);/, 'one gap value across the hero row');
   const askRule = heroCss.match(/\n\.home-info-strip__ask \{[\s\S]*?\n\}/)?.[0] || '';
   assert.match(askRule, /gap:\s*var\(--space-4\);/, 'pill-to-trigger matches the old toggle scale');
-});
-
-/* Ask menu interior: flat label-left / control-right rows. The generic field
- * chrome (border + fill box) comes from UNSCOPED setup-wizard rules in
- * views-home-setup.css — the panel restates it away at higher specificity,
- * which is what killed the "card in a card" look. ONE container only: no
- * hairline over the tools group, none over the footer — space separates them. */
-test('the ask panel flattens its fields and draws no internal dividers', () => {
-  const heroCss = readRepoFile('styles/views-home-hero.css');
-
-  const fieldRule = heroCss
-    .match(/\n\.home-ask__panel \.inv-select-field-control \{[\s\S]*?\n\}/)?.[0] || '';
-  assert.ok(fieldRule, 'the panel scopes its own select-control look');
-  assert.match(fieldRule, /border:\s*1px solid transparent;/, 'no field box inside the boxed panel');
-  assert.match(fieldRule, /background:\s*transparent;/);
-  assert.match(fieldRule, /text-align:\s*end;/, 'the value reads against its inline-start label');
-
-  const labelRule = heroCss
-    .match(/\n\.home-ask__panel \.inv-select-field-label \{[\s\S]*?\n\}/)?.[0] || '';
-  assert.match(labelRule, /text-transform:\s*none;/, 'no uppercase micro-label in the menu');
-  assert.match(labelRule, /color:\s*var\(--text-secondary\);/);
-
-  // Toggle rows flip to label-left / switch-right off the primitive's
-  // track-first markup, keeping the whole panel one column of quiet rows.
-  const toggleRule = heroCss.match(/\n\.home-ask-config__toggle \{[\s\S]*?\n\}/)?.[0] || '';
-  assert.match(toggleRule, /flex-direction:\s*row-reverse;/);
-  assert.match(toggleRule, /justify-content:\s*space-between;/);
-
-  // ONE container only: the internal hairlines are GONE, and space does the
-  // separating. The primitive ships a border-top on .inv-popover-footer, so the
-  // panel has to restate it away rather than simply omitting a rule.
-  const toolsRule = heroCss.match(/\n\.home-ask-config__tools \{[\s\S]*?\n\}/)?.[0] || '';
-  assert.doesNotMatch(toolsRule, /border-top:/, 'nothing is boxed or ruled inside the one box');
-  assert.match(toolsRule, /margin-top:\s*var\(--space-5\);/, 'space separates the groups');
-  const footerRule = heroCss
-    .match(/\n\.home-ask__panel \.inv-popover-footer \{[\s\S]*?\n\}/)?.[0] || '';
-  assert.match(footerRule, /border-top:\s*0;/, 'the primitive\'s hairline is restated away');
-  assert.match(footerRule, /line-height:\s*1\.5;/, 'the caption breathes instead of cramming');
-
-  // The popover primitive's open animation honors reduced motion (systemic:
-  // every .inv-popover consumer, not just Home).
-  const invCss = readRepoFile('renderer/inventory/inventory-chip-popover.css');
-  assert.match(
-    invCss,
-    /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.inv-popover \{\n\s*animation:\s*none;/,
-    'the popover open animation is disabled under prefers-reduced-motion'
-  );
-});
-
-/* A native <select> is intrinsically as wide as its WIDEST option - here full
- * model ids plus an unbounded "(unavailable: reason)" tail - and grid/flex items
- * floor at min-content. With an indefinite panel width that floor won: max-width
- * clamped only the PAINTED box, so the Model and Reasoning-effort controls drew
- * OUTSIDE the panel's own border, both right-aligned to the same over-wide
- * track. The fix is a definite width plus a min-width: 0 chain all the way down
- * to the control, which is also what finally arms its text-overflow. */
-test('the ask panel caps its own width and its selects ellipsize inside it', () => {
-  const heroCss = readRepoFile('styles/views-home-hero.css');
-
-  const panelRule = heroCss.match(/\n\.home-ask__panel \{[\s\S]*?\n\}/)?.[0] || '';
-  assert.ok(panelRule, 'the panel has a rule');
-  assert.match(panelRule, /\n\s*width:\s*320px;/, 'a DEFINITE width - a min/max pair leaves it indefinite');
-  assert.doesNotMatch(panelRule, /\n\s*min-width:/, 'the old min/max pair is gone');
-
-  const rowRule = heroCss.match(/\n\.home-ask-config__row \{[\s\S]*?\n\}/)?.[0] || '';
-  assert.match(rowRule, /grid-template-columns:\s*minmax\(0, 1fr\);/,
-    'a bare auto track floors at the widest option and overflows the panel');
-
-  const toolsRule = heroCss.match(/\n\.home-ask-config__tools \{[\s\S]*?\n\}/)?.[0] || '';
-  assert.match(toolsRule, /grid-template-columns:\s*minmax\(0, 1fr\);/);
-
-  const effortRule = heroCss.match(/\n\.home-ask-config__effort \{[\s\S]*?\n\}/)?.[0] || '';
-  assert.match(effortRule, /min-width:\s*0;/, 'the effort host is a grid item too');
-
-  const fieldRule = heroCss.match(/\n\.home-ask__panel \.inv-select-field \{[\s\S]*?\n\}/)?.[0] || '';
-  assert.match(fieldRule, /min-width:\s*0;/, 'the row must be allowed to shrink');
-
-  const controlRule = heroCss
-    .match(/\n\.home-ask__panel \.inv-select-field-control \{[\s\S]*?\n\}/)?.[0] || '';
-  assert.match(controlRule, /min-width:\s*0;/, 'max-width alone is not a floor release');
-  assert.match(controlRule, /overflow:\s*hidden;/, 'text-overflow is inert without it');
-  assert.match(controlRule, /white-space:\s*nowrap;/);
-  assert.match(controlRule, /text-overflow:\s*ellipsis;/, 'a long model id truncates, it does not spill');
-
-  /* Systemic, not Home-only: every popover-hosted select rides the same trap,
-   * so the floor is released on the unscoped primitive as well. */
-  const setupCss = readRepoFile('styles/views-home-setup.css');
-  const primitiveRule = setupCss
-    .match(/\n\.inv-select-field,\n\.inv-select-field-control \{[\s\S]*?\n\}/)?.[0] || '';
-  assert.ok(primitiveRule, 'the select primitive releases its min-width floor');
-  assert.match(primitiveRule, /min-width:\s*0;/);
 });
 
 /* W8-2: the rail pad auto-grows. The widget writes the height; the stylesheet

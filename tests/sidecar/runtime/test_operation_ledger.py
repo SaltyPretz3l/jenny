@@ -344,9 +344,10 @@ class TestCrossProcessSafety:
         ledger = _ledger(tmp_path)
         _create(ledger)
         ops_dir = ledger.root / LEDGER_OPERATIONS_DIR
-        # Atomic write discipline: no temp/partial artifacts left beside the receipt.
+        # Atomic write discipline: no temp/partial artifacts left beside the
+        # receipt; the stable advisory-lock file is the only other entry.
         leftovers = [p.name for p in ops_dir.iterdir() if not p.name.endswith(".json")]
-        assert leftovers == []
+        assert leftovers == [".lock"]
 
 
 class TestDegradedRoot:

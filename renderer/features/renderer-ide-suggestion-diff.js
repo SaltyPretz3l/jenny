@@ -22,9 +22,9 @@
 
   function noop() {}
 
-  function toLf(value) {
-    return String(value == null ? '' : value).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  }
+  // EOL normalization is owned by the find/replace util (loaded first).
+  const { toLf } = (globalThis.rendererIdeReplaceTextUtils
+    || (typeof require === 'function' ? require('./renderer-ide-replace-text-utils') : {}));
 
   /**
    * The suggested file text, mirroring the apply's single replacement (a
@@ -49,8 +49,13 @@
     const getDom = typeof deps.getDom === 'function' ? deps.getDom : () => ({});
     const editorHost = deps.editorHost || null;
     const showDiffTab = deps.showDiffTab || ((id) => editorHost.activateDocument(id));
+    // The diff controller passes its readCurrent(path); standalone callers may
+    // pass the file-operations / fs getters instead.
     const getFileOperations = typeof deps.getFileOperations === 'function' ? deps.getFileOperations : () => null;
     const getWorkspaceFsApi = typeof deps.getWorkspaceFsApi === 'function' ? deps.getWorkspaceFsApi : () => null;
+    const readCurrent = typeof deps.readCurrent === 'function'
+      ? deps.readCurrent
+      : (path) => (getFileOperations() ? getFileOperations().readForMutation(path) : getWorkspaceFsApi().readFile({ path }));
     const ideStateUtils = deps.ideStateUtils || {};
     const renderTabs = typeof deps.renderTabs === 'function' ? deps.renderTabs : noop;
     const appendClientLog = typeof deps.appendClientLog === 'function' ? deps.appendClientLog : noop;
@@ -88,10 +93,7 @@
     }
 
     async function readDisk(path) {
-      const api = getWorkspaceFsApi();
-      const payload = getFileOperations()
-        ? await getFileOperations().readForMutation(path)
-        : await api.readFile({ path });
+      const payload = await readCurrent(path);
       return toLf(payload && payload.content);
     }
 
@@ -173,11 +175,7 @@
       }
     }
 
-    /** Renders the bar when the active tab is a suggestion tab; false otherwise. */
-    function renderToolbar(el) {
-      return renderToolbarFor(el, getIde().activeTabPath);
-    }
-
+    /** Renders the bar when tab `id` is a suggestion tab; false otherwise. */
     function renderToolbarFor(el, id) {
       if (disposed || !el) return false;
       pruneClosed();
@@ -244,10 +242,8 @@
 
     return {
       dispose,
-      isSuggestionTab: (id) => contexts.has(id),
       openSuggestion,
       tabIdFor,
-      renderToolbar,
       renderToolbarFor,
       resetForRoot,
     };

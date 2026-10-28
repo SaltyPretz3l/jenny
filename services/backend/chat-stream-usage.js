@@ -1,5 +1,7 @@
 'use strict';
 
+const { normalizeContextCalibration } = require('./session-context-usage');
+
 const POSITIVE_TELEMETRY_FIELDS = Object.freeze([
   'generation_tokens',
   'generation_duration_ms',
@@ -33,6 +35,7 @@ function resolveCost(usage) {
 
 function rebuildChatDoneUsage(usage, fallbackModel = '') {
   const cost = resolveCost(usage);
+  const calibration = normalizeContextCalibration(usage?.context_calibration);
   return {
     input_tokens: Number(usage?.input_tokens || 0) || 0,
     output_tokens: Number(usage?.output_tokens || 0) || 0,
@@ -50,6 +53,7 @@ function rebuildChatDoneUsage(usage, fallbackModel = '') {
     cost_source: cost.source,
     model: String(usage?.model || fallbackModel),
     provider: String(usage?.provider || ''),
+    ...(calibration ? { context_calibration: calibration } : {}),
   };
 }
 

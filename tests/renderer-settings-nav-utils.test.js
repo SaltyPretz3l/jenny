@@ -399,10 +399,9 @@ test('setNavItemBadge paints a count with a tone, clears back to the empty slot,
   assert.equal(setNavItemBadge(null, 'readiness', '1', 'warning'), null);
 });
 
-test('the dirty dot is scoped away from Readiness so it never stacks with the count badge', () => {
+test('the nav count badge is a plain toned number and no dirty dot can stack with it', () => {
   const css = fs.readFileSync(path.join(__dirname, '..', 'styles', 'settings-nav.css'), 'utf8');
-  assert.match(css, /\.settings-nav-item:not\(\[data-settings-section="readiness"\]\)\[data-dirty="true"\]::after/);
-  assert.doesNotMatch(css, /\n\.settings-nav-item\[data-dirty="true"\]::after/, 'no unscoped dirty-dot rule remains');
+  assert.doesNotMatch(css, /\[data-dirty="true"\]::after/, 'no dirty-dot rule (nothing marks a nav item dirty)');
   assert.match(css, /\.settings-nav-item-badge\s*\{/, 'badge slot has a rule');
   // The count is a plain toned number, not a pill: the tone rules set color only.
   const toneRules = css.match(/\.settings-nav-item-badge\[data-tone="[a-z]+"\]\s*\{[^}]*\}/g) || [];
@@ -481,5 +480,35 @@ test('host navigation reveals both Profile companions and readies lazy Developer
     assert.deepEqual(readied, ['advanced', 'runtimeLimits'], 'lazy bindings run once');
     assert.deepEqual(shown, ['runtimeLimits', 'advanced', 'runtimeLimits', 'advanced'], 'companion refreshes on every reveal');
     controller.dispose();
+  } finally { harness.cleanup(); }
+});
+
+test('keyboard stepping and the picker skip rail items the search box filtered out', () => {
+  const harness = setupDom();
+  try {
+    document.querySelector('[data-settings-section="dev_diagnostics"]').remove();
+    const state = { ui: { activeSettingsSection: 'models' } };
+    const controller = createSettingsNavController({ state, settingsNav: document.querySelector('.settings-nav'), settingsContentScroll: document.querySelector('.settings-content-scroll') });
+    controller.bind();
+    const navItem = (id) => document.querySelector('.settings-nav [data-settings-section="' + id + '"]');
+    const kept = new Set(['models', 'tools', 'account']);
+    for (const item of document.querySelectorAll('.settings-nav [data-settings-section]')) {
+      item.classList.toggle('settings-nav-item-search-hidden', !kept.has(item.dataset.settingsSection));
+    }
+    for (const [from, key, to] of [
+      ['models', 'ArrowDown', 'tools'], ['tools', 'ArrowDown', 'account'], ['account', 'ArrowDown', 'models'],
+      ['models', 'ArrowUp', 'account'], ['tools', 'Home', 'models'], ['models', 'End', 'account'],
+    ]) {
+      navItem(from).dispatchEvent(new window.KeyboardEvent('keydown', { key, bubbles: true }));
+      assert.equal(state.ui.activeSettingsSection, to, `${key} from ${from}`);
+    }
+    // A filtered item still loses the active state when another page is picked.
+    navItem('context').classList.add('active');
+    controller.setActiveSection('tools');
+    assert.equal(navItem('context').classList.contains('active'), false);
+    const picker = document.getElementById('settingsNavPicker');
+    picker.dispatchEvent(new window.Event('focus'));
+    assert.equal(picker.querySelector('option[value="context"]').hidden, true);
+    assert.equal(picker.querySelector('option[value="account"]').hidden, false);
   } finally { harness.cleanup(); }
 });

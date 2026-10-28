@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from sidecar.protocol import SESSION_MAIL_CONSUMED_METHOD
+
 if TYPE_CHECKING:
     from sidecar.ai.engines.provider_metrics import InferencePerformance
 
@@ -33,6 +35,21 @@ class InferencePerformanceEvent(LoopEvent):
             **ctx, "schema_version": 1, "turn_id": self.turn_id,
             "provider_call_id": self.provider_call_id, **asdict(self.observation),
         }
+
+
+@dataclass
+class MailConsumedEvent(LoopEvent):
+    """Mid-turn mail (row 70 W2a) entered the working messages; ephemeral, never journaled.
+
+    Carries message ids only: the bodies are untrusted data Electron already holds.
+    """
+
+    message_ids: list[str]
+    iteration: int
+    method: ClassVar[str] = SESSION_MAIL_CONSUMED_METHOD
+
+    def notification_params(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        return {**ctx, "message_ids": list(self.message_ids), "iteration": int(self.iteration)}
 
 
 @dataclass

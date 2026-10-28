@@ -11,14 +11,12 @@
   const FALLBACK_LOG_WINDOW_MS = 2000;
 
   const normalizeId = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).normalizeId;
-
-  function escapeSelectorValue(value) {
-    const text = String(value || '');
-    if (typeof globalThis !== 'undefined' && globalThis.CSS && typeof globalThis.CSS.escape === 'function') {
-      return globalThis.CSS.escape(text);
-    }
-    return text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  }
+  const { formatToolDurationMs: formatDurationMs } = toolCallUtils;
+  const { escapeSelectorValue } = streamDomPatchUtils;
+  // An approved/denied/timed-out/cancelled call retracts its approval_gap row
+  // (the Allow/Deny block), which only a structural render can remove.
+  const APPROVAL_SETTLING_STATUSES = new Set(['approved', 'denied', 'timed_out', 'cancelled']);
+  const APPROVAL_GAP_ROW_SELECTOR = '[data-row-kind="approval_gap"]';
 
   function removeClassPrefix(node, prefix) {
     if (!node || !node.classList) return;
@@ -66,21 +64,6 @@
     }
   }
 
-  function findByAttribute(rootNode, selector, attribute, value) {
-    const normalizedValue = normalizeId(value);
-    if (!rootNode || !normalizedValue || typeof rootNode.querySelectorAll !== 'function') {
-      return null;
-    }
-    const nodes = Array.from(rootNode.querySelectorAll(selector));
-    for (let index = nodes.length - 1; index >= 0; index -= 1) {
-      const node = nodes[index];
-      if (normalizeId(node?.getAttribute?.(attribute)) === normalizedValue) {
-        return node;
-      }
-    }
-    return null;
-  }
-
   function resolveCallId(payload) {
     return normalizeId(
       payload && (
@@ -100,20 +83,14 @@
       return 'awaiting_approval';
     }
     if (type === 'tool_result') {
-      const approvalState = normalizeId(payload?.approvalState || payload?.approval_state).toLowerCase();
-      const isError = payload?.isError === true || payload?.is_error === true;
-      if (typeof toolCallUtils.statusForToolResult === 'function') {
-        // Only the result fields: the merged patch payload can carry an unrelated
-        // call status (running/success) that the helper would read as the verdict.
-        return toolCallUtils.statusForToolResult({
-          approval_state: approvalState,
-          is_error: isError,
-          error_code: normalizeId(payload?.errorCode || payload?.error_code),
-        });
-      }
-      if (approvalState === 'denied') return 'denied';
-      if (isError) return 'errored';
-      return 'completed';
+      // Only the result fields: the merged patch payload can carry an unrelated
+      // call status (running/success) that the helper would read as the verdict.
+      return toolCallUtils.statusForToolResult({
+        approval_state: normalizeId(payload?.approvalState || payload?.approval_state).toLowerCase(),
+        is_error: payload?.isError === true || payload?.is_error === true,
+        error_code: normalizeId(payload?.errorCode || payload?.error_code),
+        metadata: payload?.metadata || payload?.tool_result?.metadata,
+      });
     }
     const rawStatus = normalizeId(payload?.status || payload?.tool_call?.status || 'running').toLowerCase();
     if (rawStatus === 'pending_approval') return 'awaiting_approval';
@@ -123,33 +100,14 @@
     return rawStatus || 'running';
   }
 
+  // Canonical labels and tones live in tool-call-utils (always present via
+  // document load order / CommonJS require).
   function getStatusLabel(status) {
-    if (toolCallUtils && typeof toolCallUtils.getStatusLabel === 'function') {
-      return toolCallUtils.getStatusLabel(status);
-    }
-    // Canonical labels live in tool-call-utils.getStatusLabel (always present via
-    // document load order / CommonJS require). This branch is only reached if that
-    // module is somehow absent; degrade to a passthrough rather than re-introduce a
-    // divergent label set ('Errored'/'Completed' vs canonical 'Error'/'Success').
-    return String(status || '').trim() || 'Tool';
+    return toolCallUtils.getStatusLabel(status);
   }
 
   function getStatusTone(status) {
-    if (toolCallUtils && typeof toolCallUtils.statusToneFor === 'function') {
-      return toolCallUtils.statusToneFor(status, status === 'running');
-    }
-    if (status === 'completed') return 'success';
-    if (status === 'errored' || status === 'denied' || status === 'timed_out') return 'danger';
-    if (status === 'awaiting_approval') return 'warning';
-    if (status === 'running') return 'pending';
-    return 'muted';
-  }
-
-  function formatDurationMs(value) {
-    const durationMs = Number(value);
-    if (!Number.isFinite(durationMs) || durationMs <= 0) return '';
-    if (durationMs < 1000) return `${Math.round(durationMs)}ms`;
-    return `${(durationMs / 1000).toFixed(1)}s`;
+    return toolCallUtils.statusToneFor(status, status === 'running');
   }
 
   function resolveToolName(payload) {
@@ -203,36 +161,19 @@
       return null;
     }
     const escapedCallId = escapeSelectorValue(normalizedCallId);
-    let row = safeQuerySelectorLast(chatTimeline, `.chat-row[data-tool-call-id="${escapedCallId}"]`)
-      || findByAttribute(chatTimeline, '.chat-row[data-tool-call-id]', 'data-tool-call-id', normalizedCallId);
-    let block = row
-      ? (
-        safeQuerySelectorLast(row, `.tool-call-block[data-call-id="${escapedCallId}"]`)
-        || findByAttribute(row, '.tool-call-block[data-call-id]', 'data-call-id', normalizedCallId)
-        || safeQuerySelector(row, '.tool-call-block')
-      )
-      : (
-        safeQuerySelectorLast(chatTimeline, `.tool-call-block[data-call-id="${escapedCallId}"]`)
-        || findByAttribute(chatTimeline, '.tool-call-block[data-call-id]', 'data-call-id', normalizedCallId)
-      );
-    let toolCallRow = row
-      ? (
-        findByAttribute(row, '.tool-call-row[data-tool-call-id]', 'data-tool-call-id', normalizedCallId)
-        || safeQuerySelector(row, '.tool-call-row')
-      )
-      : (
-        safeQuerySelectorLast(chatTimeline, `.tool-call-row[data-tool-call-id="${escapedCallId}"]`)
-        || findByAttribute(chatTimeline, '.tool-call-row[data-tool-call-id]', 'data-tool-call-id', normalizedCallId)
-      );
-    let toolResultRow = row
-      ? (
-        findByAttribute(row, '.tool-result-row[data-tool-call-id]', 'data-tool-call-id', normalizedCallId)
-        || safeQuerySelector(row, '.tool-result-row')
-      )
-      : (
-        safeQuerySelectorLast(chatTimeline, `.tool-result-row[data-tool-call-id="${escapedCallId}"]`)
-        || findByAttribute(chatTimeline, '.tool-result-row[data-tool-call-id]', 'data-tool-call-id', normalizedCallId)
-      );
+    // The call's approval_gap row carries the same data-tool-call-id and sits
+    // after the call row: it is never the patch target (the call row is).
+    let row = safeQuerySelectorLast(
+      chatTimeline,
+      `.chat-row[data-tool-call-id="${escapedCallId}"]:not(${APPROVAL_GAP_ROW_SELECTOR})`
+    );
+    const scope = row || chatTimeline;
+    const block = safeQuerySelectorLast(scope, `.tool-call-block[data-call-id="${escapedCallId}"]`)
+      || (row ? safeQuerySelector(row, '.tool-call-block') : null);
+    const toolCallRow = safeQuerySelectorLast(scope, `.tool-call-row[data-tool-call-id="${escapedCallId}"]`)
+      || (row ? safeQuerySelector(row, '.tool-call-row') : null);
+    const toolResultRow = safeQuerySelectorLast(scope, `.tool-result-row[data-tool-call-id="${escapedCallId}"]`)
+      || (row ? safeQuerySelector(row, '.tool-result-row') : null);
     if (!row && block) {
       row = block.closest?.('.chat-row') || null;
     }
@@ -258,6 +199,23 @@
       }
     }
     return null;
+  }
+
+  // An approval verdict on a call still awaiting it, or any event for a call
+  // that still shows an unresolved approval_gap row, must reach a structural
+  // render: a field patch would settle the call row and leave the Allow/Deny
+  // block behind. A timeout or stop of a running call still patches in place.
+  function needsApprovalGapRender(chatTimeline, callId, payload, eventType, targets) {
+    const status = resolvePatchStatus(payload, eventType);
+    const currentStatus = (targets.toolCallRow || targets.block)?.getAttribute?.('data-tool-status') || '';
+    if (status === 'approved'
+      || (APPROVAL_SETTLING_STATUSES.has(status) && currentStatus === 'awaiting_approval')) {
+      return true;
+    }
+    return Boolean(safeQuerySelector(
+      chatTimeline,
+      `.chat-row${APPROVAL_GAP_ROW_SELECTOR}[data-tool-call-id="${escapeSelectorValue(callId)}"]:not([data-row-state="resolved"])`
+    ));
   }
 
   function isNodeAttachedToTimeline(chatTimeline, node) {
@@ -483,11 +441,13 @@
     const summary = resolveSummary(payload);
     const outputText = resolveOutputText(payload);
     const durationLabel = formatDurationMs(payload.durationMs || payload.duration_ms || payload.tool_result?.duration_ms);
-    patchStatus(targets, status, announcer ? { announcer, callId: entry?.callId, toolName } : null,
+    // The row's name label is fixed at render time (getToolDisplayName); the
+    // raw tool id is never written over it.
+    const announceCtx = announcer
+      ? { announcer, callId: entry?.callId, toolName: toolName ? toolCallUtils.getToolDisplayName(toolName) : '' }
+      : null;
+    patchStatus(targets, status, announceCtx,
       entry?.eventType === 'tool_result' || payload.type === 'tool_result' ? payload : null);
-    if (toolName) {
-      setTextIfPresent(targets.root, '.tool-call-name, .tool-result-label', toolName);
-    }
     if (summary) {
       setTextIfPresent(targets.root, '.tool-call-summary', summary);
     }
@@ -692,6 +652,10 @@
       const targets = findTargets(chatTimeline, callId, { timelineVirtualizer });
       if (!targets) {
         logFallback('missing_target', entry);
+        return false;
+      }
+      if (needsApprovalGapRender(chatTimeline, callId, payload, eventType, targets)) {
+        logFallback('approval_gap_render', entry);
         return false;
       }
       if (!areTargetsAttachedToTimeline(chatTimeline, targets)) {

@@ -13,6 +13,7 @@ const {
 const { WorkspaceIdeService } = require('../services/workspace-ide-service');
 const { WORKSPACE_FS_ERROR_CODES } = require('../services/workspace-ide-errors');
 const { WorkspaceRootCoordinator } = require('../services/workspace-root-coordinator');
+const { linkDirectory } = require('./helpers/platform-skips');
 
 function deferred() {
   let resolve;
@@ -194,26 +195,18 @@ test('a deleted configured root is refused after validation and never recreated'
   assert.equal(fs.existsSync(root), false);
 });
 
-test('a parent junction swap is rejected without touching its target', async (t) => {
+test('a parent junction swap is rejected without touching its target', async () => {
   const root = createTrackedTempDir('jenny-ide-');
   const outside = createTrackedTempDir('jenny-ide-outside-');
   const parent = path.join(root, 'src');
   const displaced = path.join(root, 'src-original');
   fs.mkdirSync(parent);
   fs.writeFileSync(path.join(outside, 'sentinel.txt'), 'outside', 'utf8');
-  try {
-    const probe = path.join(root, 'probe-junction');
-    fs.symlinkSync(outside, probe, process.platform === 'win32' ? 'junction' : 'dir');
-    fs.unlinkSync(probe);
-  } catch (error) {
-    t.skip(`directory-link race oracle unavailable: ${error.code || error.message}`);
-    return;
-  }
   const service = createService(root, {
     hooks: {
       async beforeLeafMutation() {
         fs.renameSync(parent, displaced);
-        fs.symlinkSync(outside, parent, process.platform === 'win32' ? 'junction' : 'dir');
+        linkDirectory(outside, parent);
       },
     },
   });

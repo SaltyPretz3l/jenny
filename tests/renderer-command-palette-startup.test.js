@@ -47,3 +47,23 @@ test('STA-007: Ctrl+K keeps the palette hidden while the startup curtain is moun
   assert.equal(palette.classList.contains('hidden'), false, 'Ctrl+K opens the palette once the curtain is gone');
   assert.equal(opened.defaultPrevented, true);
 });
+
+test('in the app: the palette paints its result count and live status (app.js forwards every palette node)', async (t) => {
+  const app = await loadRendererApp({
+    shell: { features: { state: { featureFlags: { command_palette: true } } } },
+  });
+  t.after(() => app.dispose());
+  const { window } = app;
+  const { document } = window;
+  await waitForUi(window, 80);
+  document.getElementById('startupOverlay')?.remove();
+
+  document.body.dispatchEvent(new window.KeyboardEvent('keydown', {
+    key: 'k', ctrlKey: true, bubbles: true, cancelable: true,
+  }));
+  await waitForUi(window, 20);
+
+  assert.equal(document.getElementById('commandPaletteOverlay').classList.contains('hidden'), false);
+  assert.match(document.getElementById('commandPaletteCount').textContent, /\d+ results?/);
+  assert.match(document.getElementById('commandPaletteStatus').textContent, /\d+ results?/);
+});

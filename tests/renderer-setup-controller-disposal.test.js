@@ -66,3 +66,22 @@ test('completeSetup defers route readiness to the backend and applies its verdic
   assert.equal(toasts.length, 0);
   controller.dispose();
 });
+
+test('an applied snapshot repaints the surface showing setup; a disposed controller does not', async () => {
+  let renders = 0;
+  const state = {};
+  const controller = createSetupController({
+    state,
+    setupService: { getState: async () => ({ steps: { workspaceRoot: 'done' } }) },
+    dom: {},
+    modules: {},
+    callbacks: { renderAfterSetupChange: () => { renders += 1; } },
+  });
+  controller.applySnapshot({ steps: { localModel: 'done' } });
+  assert.equal(renders, 1, 'Settings > Account repaints with the new step count');
+  await controller.refresh();
+  assert.equal(renders, 2, 'a status-driven refresh repaints too');
+  controller.dispose();
+  controller.applySnapshot({ steps: { endpoint: 'done' } });
+  assert.equal(renders, 2);
+});

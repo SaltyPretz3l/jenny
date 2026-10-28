@@ -86,6 +86,48 @@ class TestTestOutputFilter:
             result
         ) == PYTEST_LOG
 
+    def test_pytest_assertion_diff_block_survives(self) -> None:
+        # The `E` diff lines and the `>` source line carry no keep keyword of
+        # their own; dropping them leaves the model "assert {...} == {...}"
+        # with the actual difference cut out.
+        detail = [
+            "    def test_config():",
+            "        expected = {'mode': 'fast', 'workers': 4}",
+            ">       check(load_config(), expected)",
+            "",
+            "tests/test_cfg.py:12: ",
+            "_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _",
+            "",
+            "    def check(actual, wanted):",
+            ">       assert actual == wanted",
+            "E       AssertionError: assert {'mode': 'sl...'workers': 2} == {'mode': 'fa...'workers': 4}",
+            "E         ",
+            "E         Differing items:",
+            "E         {'mode': 'slow'} != {'mode': 'fast'}",
+            "E         {'workers': 2} != {'workers': 4}",
+            "E         Use -v to get more diff",
+        ]
+        raw = "\n".join(
+            [
+                *(f"tests/test_{index}.py ....                [ {index}%]" for index in range(12)),
+                "=================================== FAILURES ===================================",
+                "_________________________________ test_config _________________________________",
+                "",
+                *detail,
+                "",
+                "tests/test_cfg.py:20: AssertionError",
+                "1 failed, 48 passed in 0.40s",
+            ]
+        )
+
+        result = TestOutputFilter().distill(raw)
+
+        for line in detail:
+            if line.startswith(("E ", "> ")):
+                assert line in result.kept.split("\n"), line
+        assert result.omitted  # the progress parade still collapses
+        assert _reconstruct(result) == raw
+
     def test_all_pass_progress_is_collapsed(self) -> None:
         f = TestOutputFilter()
         raw = "\n".join(f"tests/test_{i}.py ..... [ {i}%]" for i in range(20))

@@ -12,8 +12,8 @@ from sidecar.ai.tools.builtins.rich_files.base import (
     RichFileSource,
     RichInspectResult,
     build_unsupported_result,
-    read_bounded_file_bytes,
     rich_inspect_result_to_tool_result,
+    source_bytes,
     string_argument,
     validate_rich_file_source,
 )
@@ -35,6 +35,8 @@ KNOWN_OUTPUT_TYPES = frozenset(
     {"display_data", "error", "execute_result", "stream", "update_display_data"}
 )
 DATA_URI_RE = re.compile(r"data:[^\s\"'<>)}\]]+", re.IGNORECASE)
+# Kernel and language names are short identifiers; anything longer is noise.
+MAX_METADATA_NAME_CHARS = 64
 
 
 def notebook_inspect_tool(
@@ -47,6 +49,7 @@ def notebook_inspect_tool(
         workspace=workspace,
         adapter="notebook",
         max_bytes=filesystem_content.MAX_MEDIA_FILE_BYTES,
+        supported_suffixes=SUPPORTED_NOTEBOOK_EXTENSIONS,
     )
     if source.absolute_path.suffix.lower() not in SUPPORTED_NOTEBOOK_EXTENSIONS:
         return rich_inspect_result_to_tool_result(
@@ -57,11 +60,12 @@ def notebook_inspect_tool(
             )
         )
 
+    # read_file's dispatcher forwards only path/pages/cursor: caps stay at their defaults.
     caps = _inspect_caps(arguments)
-    raw_notebook = read_bounded_file_bytes(
-        source.absolute_path,
+    raw_notebook = source_bytes(
+        source,
+        workspace=workspace,
         max_bytes=filesystem_content.MAX_MEDIA_FILE_BYTES,
-        authorized_root=workspace.require_root(),
         message="notebook source changed beyond rich-file size limit",
     )
     try:
@@ -274,12 +278,22 @@ def _outputs_hidden(metadata: dict[str, object]) -> bool:
 
 def _kernel_name(metadata: dict[str, object]) -> str:
     kernelspec = _dict_value(metadata.get("kernelspec"))
-    return str(kernelspec.get("name") or "")
+    return _metadata_name(kernelspec.get("name"))
 
 
 def _language_name(metadata: dict[str, object]) -> str:
     language_info = _dict_value(metadata.get("language_info"))
-    return str(language_info.get("name") or "")
+    return _metadata_name(language_info.get("name"))
+
+
+def _metadata_name(value: object) -> str:
+    # Untrusted notebook metadata: sanitized and capped like any other excerpt.
+    excerpt, _truncated = bounded_excerpt(
+        value or "",
+        tool_name="notebook_inspect",
+        max_chars=MAX_METADATA_NAME_CHARS,
+    )
+    return excerpt
 
 
 def _widgets_metadata_present(metadata: dict[str, object]) -> bool:

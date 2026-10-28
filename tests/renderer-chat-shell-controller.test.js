@@ -33,13 +33,19 @@ test('chat shell controller binds child wiring once', async () => {
   const calls = [];
   let eventCallbacks;
   const messageUpdates = [];
+  let handoffDeps = null;
+  const paneDrafts = [];
+  const firstTestDom = { chatInput: { value: '', disabled: false } };
 
   const controller = createChatShellController({
     state: { currentSessionId: 'session-1' },
     compactionCoordinator: {
       invoke(sessionId, options) { calls.push(`compact:${sessionId}:${options.source}`); return Promise.resolve({ accepted: true }); },
     },
-    windowRef: { jennyShell: { chat: {} } },
+    windowRef: {
+      jennyShell: { chat: {} },
+      rendererComposerSessionStateController: { capturePaneDraft(sessionId, input) { paneDrafts.push([sessionId, input.value]); } },
+    },
     composerInteractivePanel: {},
     slashDependencies: {
       estimateTokens() { return 0; },
@@ -50,9 +56,7 @@ test('chat shell controller binds child wiring once', async () => {
       isInteractiveOtherTrigger() { return false; },
       getInteractiveComposerStatusNotice() { return null; },
     },
-    dom: {
-      chatInput: { value: '', disabled: false },
-    },
+    dom: firstTestDom,
     constants: {
       MESSAGE_STATUS: {},
       TOAST_SOURCE: {},
@@ -77,6 +81,8 @@ test('chat shell controller binds child wiring once', async () => {
       getSessionMessages: () => ['pending question'],
       setSessionMessages: (...args) => { messageUpdates.push(args); return 'updated'; },
       renderWorkspaceChrome: (options) => messageUpdates.push(options),
+      syncComposerInputHeight() {},
+      syncComposerVisualState() {},
       appendClientLog(level, eventName, payload) {
         calls.push(`log:${level}:${eventName}:${payload?.message || ''}`);
       },
@@ -177,6 +183,12 @@ test('chat shell controller binds child wiring once', async () => {
       createContextCommand() {
         return async function noopContextCommand() {};
       },
+      createHandoffCommandHandler(deps) {
+        handoffDeps = deps;
+        const handler = async () => ({ ok: true });
+        handler.dispose = () => {};
+        return handler;
+      },
       createMemoryCommandHandlers(deps) {
         calls.push(`memoryCommands:${typeof deps.getMemoryApi}:${typeof deps.injectOutput}`);
         return { memoryHandler: () => { calls.push('memoryHandler'); return { ok: true }; } };
@@ -187,11 +199,20 @@ test('chat shell controller binds child wiring once', async () => {
   controller.bind();
   controller.bind();
 
+  // The handoff command gets what it needs to keep an unsent note with the right chat: the visible
+  // input, the pane's current-session test and the composer record owner.
+  assert.equal(handoffDeps.setComposerDraft('note for the visible chat'), true);
+  assert.equal(firstTestDom.chatInput.value, 'note for the visible chat');
+  assert.equal(handoffDeps.isSessionCurrent('session-1'), true);
+  assert.equal(handoffDeps.isSessionCurrent('session-2'), false);
+  handoffDeps.getComposerController().capturePaneDraft('session-2', { value: 'note for another chat' });
+  assert.deepEqual(paneDrafts, [['session-2', 'note for another chat']]);
+
   assert.deepEqual(eventCallbacks.getSessionMessages('session-1'), ['pending question']);
   assert.equal(eventCallbacks.setSessionMessages('session-1', ['resolved question']), 'updated');
   assert.deepEqual(messageUpdates, [['session-1', ['resolved question']], { runtimeOnly: true }]);
 
-  assert.deepEqual(controller.listSlashCommands(), ['/help', '/context', '/compact', '/note', '/linked', '/remember', '/forget', '/memory']);
+  assert.deepEqual(controller.listSlashCommands(), ['/help', '/context', '/compact', '/note', '/linked', '/handoff', '/remember', '/forget', '/memory', '/activity']);
   await controller.tryExecuteSlashCommand('/compact');
   await controller.tryExecuteSlashCommand('/memory');
 

@@ -14,6 +14,7 @@ holdEventLoopUntilTestsFinish(test);
 
 const { createContainedProcessRunner } = require('../services/backend/contained-process-runner');
 const { encodeFrame } = require('../services/backend/sidecar-client-transport-codec');
+const { windowsOnly } = require('./helpers/platform-skips');
 
 function fakeHelper(onRequest) {
   const child = new EventEmitter();
@@ -306,7 +307,7 @@ test('confirmed cleanup is retained when helper exit needs a later exact retry',
 });
 
 test('the real Windows helper preserves output and nonzero exit through the production transport',
-  { skip: process.platform !== 'win32' }, async () => {
+  { skip: windowsOnly('contained helper over Job objects') }, async () => {
     const python = path.join(__dirname, '..', '.venv', 'Scripts', 'python.exe');
     assert.equal(fs.existsSync(python), true, 'the worktree Python launch spec must exist');
     const result = await realWindowsRunner().runShell({
@@ -322,7 +323,7 @@ test('the real Windows helper preserves output and nonzero exit through the prod
   });
 
 test('the real Windows helper cancellation confirms Job cleanup of an identified descendant',
-  { skip: process.platform !== 'win32' }, async (t) => {
+  { skip: windowsOnly('Job-object cleanup') }, async (t) => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-contained-helper-'));
     assert.equal(path.dirname(tempRoot), path.resolve(os.tmpdir()));
     const childScript = path.join(tempRoot, 'owned-descendant.js');

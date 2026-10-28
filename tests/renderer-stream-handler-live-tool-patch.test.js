@@ -151,3 +151,29 @@ test('control: without chatTimeline the same tool events take the full-render fa
   assert.equal(block.getAttribute('data-tool-status'), 'running');
   assert.equal(block.querySelector('.tool-call-summary').textContent, 'Reading');
 });
+
+test('real createStreamHandler wiring: an approved tool_use queues a messages render so the approval card retracts', async (t) => {
+  const dom = createTimelineWindow();
+  const chatTimeline = dom.window.document.getElementById('chatTimeline');
+  const harness = createHarness({
+    domOverrides: { chatTimeline },
+    stateOverrides: { window: dom.window },
+  });
+  t.after(() => harness.restore());
+
+  const streamId = 'stream-approved';
+  await harness.emit({ type: 'started', sessionId: 'session-1', streamId });
+  await harness.emit({
+    type: 'tool_use', sessionId: 'session-1', streamId, callId: 'call-live-1',
+    toolName: 'read_file', summary: 'Reading file', status: 'pending_approval',
+  });
+  await flushMicrotasks(5);
+  const renderMessagesBefore = harness.calls.renderMessages;
+  await harness.emit({
+    type: 'tool_use', sessionId: 'session-1', streamId, callId: 'call-live-1',
+    toolName: 'read_file', summary: 'Reading file', status: 'approved',
+  });
+  await flushMicrotasks(5);
+
+  assert.ok(harness.calls.renderMessages - renderMessagesBefore >= 1, 'approved must queue a messages re-render');
+});

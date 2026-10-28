@@ -142,7 +142,8 @@ test('pane 1\'s attach button opens the picker for pane 1\'s session and the fil
   assert.ok(button && button !== doc.getElementById('composerAttachShortcut'), 'precondition: pane 1 carries its own attach button');
   assert.equal(button.getAttribute('aria-label'), 'Attach file');
   assert.equal(button.hasAttribute('aria-haspopup'), false);
-  assert.equal(button.innerHTML.replace(/\s+/g, ''), doc.getElementById('composerAttachShortcut').innerHTML.replace(/\s+/g, ''), 'the same icon');
+  // Row 63: pane 0's + opens a menu; pane 1's button attaches directly, so it keeps the paperclip.
+  assert.notEqual(button.innerHTML.replace(/\s+/g, ''), doc.getElementById('composerAttachShortcut').innerHTML.replace(/\s+/g, ''), 'a paperclip, not the + glyph');
   focusIn(window, button);
   assert.equal(state.currentSessionId, 'session-b', 'precondition: the pointerdown focused pane 1');
   button.click();
@@ -374,8 +375,8 @@ function bindingDeps(doc, calls, extra = {}) {
       cancelAttachmentToken: () => false,
       handleAttachmentPicker: record('handleAttachmentPicker'),
       queueInlineImageAttachment: record('queueInlineImageAttachment'),
-      renderComposerPopover() {}, renderCommandPopover() {}, updateComposerSafeOffset() {},
-      closeComposerPopover() {}, closeCommandPopover() {}, showToastMessage() {}, toErrorMessage: (error) => String(error),
+      renderComposerPopover() {}, updateComposerSafeOffset() {},
+      closeComposerPopover() {}, showToastMessage() {}, toErrorMessage: (error) => String(error),
     },
     ...(extra.pane ? { sessionContext: { paneId: 1, getSessionId: () => 'session-b', setSessionId() {}, isCurrent: () => false } } : {}),
   };

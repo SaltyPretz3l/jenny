@@ -64,7 +64,7 @@ test('migrateStorePayload from v24 adds coordination defaults to every session a
     },
   };
   const migrated = migrateStorePayload(payload);
-  assert.equal(migrated.schema_version, 25);
+  assert.equal(migrated.schema_version, 26);
   assert.deepEqual(migrated.sessions.s1.workspace_view, COORDINATION_DEFAULTS.workspace_view);
   assert.equal(migrated.sessions.s1.title, 'One');
   assert.deepEqual(migrated.sessions.s1.linked_session_ids, ['x']);

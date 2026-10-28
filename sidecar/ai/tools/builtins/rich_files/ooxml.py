@@ -17,9 +17,12 @@ from sidecar.ai.tools.sanitization import (
 
 MAX_OOXML_ZIP_ENTRIES = 4096
 MAX_OOXML_UNCOMPRESSED_BYTES = 80 * 1024 * 1024
-MAX_OOXML_XML_PART_BYTES = 8 * 1024 * 1024
+MAX_OOXML_XML_PART_BYTES = 4 * 1024 * 1024
 MAX_TEXT_EXCERPT_CHARS = 400
 RELATIONSHIP_LOCAL_NAME = "Relationship"
+# Macro-enabled OOXML suffixes across Word, Excel and PowerPoint; each adapter
+# only accepts its own family, so one set serves all three.
+MACRO_ENABLED_EXTENSIONS = frozenset({".docm", ".dotm", ".xlsm", ".xltm", ".pptm", ".potm"})
 
 
 def load_defused_element_tree() -> Any:
@@ -151,6 +154,20 @@ def has_part(
         name.lower() for name in archive.namelist()
     }
     return part_name.lower() in names
+
+
+def macro_enabled(
+    path: Path,
+    archive: zipfile.ZipFile,
+    *,
+    vba_part: str,
+    lower_names: set[str] | None = None,
+) -> bool:
+    """True for a macro-enabled suffix or a package carrying a VBA project part."""
+
+    return path.suffix.lower() in MACRO_ENABLED_EXTENSIONS or has_part(
+        archive, vba_part, lower_names=lower_names
+    )
 
 
 def sorted_numbered_parts(

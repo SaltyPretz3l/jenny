@@ -1,0 +1,6 @@
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[],"stop_reason":null,"usage":{"input_tokens":12,"cache_creation_input_tokens":5,"cache_read_input_tokens":30,"output_tokens":1}}}
+
+event: error
+data: {"type":"error","error":{"type":"weird type!","message":"x"}}
+

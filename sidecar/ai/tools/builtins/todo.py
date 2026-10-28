@@ -21,6 +21,9 @@ from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
 from sidecar.ai.tools.workspace import WorkspaceGuard
 
 MAX_TODO_ITEMS = 50
+# Bounds a persisted list: 50 items x 500 chars is ~100 KB worst case in UTF-8,
+# far under MAX_PERSISTED_BYTES, so a list that was accepted is always reloadable.
+MAX_TODO_CONTENT_CHARS = 500
 MAX_SESSION_ENTRIES = 1000
 # A persisted list is at most 50 short items; anything larger is not ours.
 MAX_PERSISTED_BYTES = 1024 * 1024
@@ -200,6 +203,14 @@ def _validate_items(raw_todos: object) -> list[dict[str, str]]:
             raise ToolExecutionFailure(
                 code=CMP_TOOL_TODO_INVALID,
                 message=f"todo item {i} has empty or missing 'content'",
+            )
+        if len(content.strip()) > MAX_TODO_CONTENT_CHARS:
+            raise ToolExecutionFailure(
+                code=CMP_TOOL_TODO_INVALID,
+                message=(
+                    f"todo item {i} 'content' exceeds maximum of "
+                    f"{MAX_TODO_CONTENT_CHARS} characters"
+                ),
             )
         status = item.get("status", "pending")
         if not isinstance(status, str) or status not in _VALID_STATUSES:

@@ -603,7 +603,7 @@
       withdraw, resume, pauseSession: sessionId => pauses.pauseSession(sessionId), // F9: the key of the run a restart paused for a stream
       interruptedReplyKey: async (id, stream) => { const workId = await pauses.pausedWorkForStream(id, stream); return workId ? DETACHED_PREFIX + workId : ''; },
       refreshSessionRows, getSessionRuntimeState, ownsStream, listStuckSends, restartEngine,
-      openChat: sessionId => (sessionId ? c.activateWorkspaceSession?.(sessionId) : undefined),
+      openChat: sessionId => (sessionId ? c.activateWorkspaceSession?.(sessionId) : undefined), stopChat: sessionId => (sessionId ? c.stopSessionStream?.(sessionId) : undefined),
       dispose, hasCapacity: () => pending.size < 128 };
     state.runtimeSendController = api;
     return api;

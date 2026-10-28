@@ -1,10 +1,10 @@
 'use strict';
 
-/* Editor tab-strip overflow scroller: the "show all tabs" overflow affordance
- * appears only when the strip overflows, the active tab is scrolled into view
- * on (re)render, and the overflow quick-pick lists every open tab. jsdom has no
- * real layout, so overflow is driven by stubbing the strip's scrollWidth /
- * clientWidth and the affordance is asserted via emitted markup / class. */
+/* Editor tab-strip overflow: the "+N" count chip (the strip's next sibling)
+ * shows only while tabs are cut off by the strip, the active tab is scrolled
+ * into view when the selection moves, and the open-tabs quick-pick lists every
+ * open tab. jsdom has no real layout, so overflow is driven by stubbing the
+ * strip's and tabs' bounding rects. */
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -14,6 +14,7 @@ const {
   settle,
 } = require('./helpers/renderer-ide-harness');
 const { createIdeTabsController } = require('../renderer/features/renderer-ide-tabs-controller');
+const ideTabs = require('../renderer/features/renderer-ide-tabs');
 
 const FILES = { 'a.js': '1', 'b.js': '2', 'c.js': '3' };
 
@@ -25,12 +26,17 @@ async function openAll(harness) {
   await settle();
 }
 
-// Stub the strip's layout metrics so syncOverflow sees it as overflowing
-// (overflow=true) or fitting (overflow=false) regardless of jsdom's 0/0.
-function stubOverflow(strip, { scrollWidth, clientWidth }) {
-  Object.defineProperty(strip, 'scrollWidth', { configurable: true, get: () => scrollWidth });
-  Object.defineProperty(strip, 'clientWidth', { configurable: true, get: () => clientWidth });
+// Stub bounding rects so syncTabOverflow sees a 240 px strip with 100 px tabs
+// laid out end to end: tabs past the strip's right edge count as hidden.
+function stubOverflow(strip, { stripWidth = 240, tabWidth = 100 } = {}) {
+  const rect = (left, width) => ({ left, right: left + width, width, top: 0, bottom: 32, height: 32 });
+  strip.getBoundingClientRect = () => rect(0, stripWidth);
+  [...strip.querySelectorAll('.ide-tab')].forEach((tab, index) => {
+    tab.getBoundingClientRect = () => rect(index * tabWidth, tabWidth);
+  });
 }
+
+const countChip = (strip) => strip.parentElement.querySelector('.ide-tabstrip-count');
 
 test('empty strip renders no overflow control and stays :empty', async (t) => {
   const harness = createHarness({ bridgeOptions: { files: { ...FILES } } });
@@ -38,7 +44,7 @@ test('empty strip renders no overflow control and stays :empty', async (t) => {
   await harness.controller.activateIde();
   await settle();
   const strip = harness.getDom().ideTabStrip;
-  assert.equal(strip.querySelector('[data-ide-tab-overflow]'), null);
+  assert.equal(countChip(strip), null, 'no count chip before any tab opens');
   assert.equal(strip.children.length, 0, 'no children -> :empty styling preserved');
 });
 
@@ -57,30 +63,33 @@ test('each tab is a tab pointing at the editor stage tabpanel', async (t) => {
   );
 });
 
-test('overflow affordance is absent when tabs fit, present when they overflow', async (t) => {
+test('count chip is hidden when tabs fit and shows +N when tabs are cut off', async (t) => {
   const harness = createHarness({ bridgeOptions: { files: { ...FILES } } });
   t.after(() => harness.dispose());
   await openAll(harness);
   const strip = harness.getDom().ideTabStrip;
 
-  // The control is always rendered (hidden) once tabs exist, but the
-  // overflowing CLASS - the actual affordance - stays off while tabs fit.
-  assert.ok(strip.querySelector('[data-ide-tab-overflow]'), 'overflow trigger rendered with tabs');
-  assert.equal(strip.classList.contains('ide-tabstrip--overflowing'), false);
+  const chip = countChip(strip);
+  assert.ok(chip, 'count chip rendered once tabs exist');
+  assert.equal(chip.hidden, true, 'nothing is cut off in an unlaid-out strip');
+  assert.equal(strip.querySelector('[data-ide-tab-overflow]'), null, 'the old in-strip chevron is gone');
 
-  // Now make the strip overflow and re-render (opening a 4th file re-runs
-  // renderTabs -> syncOverflow, which reads the stubbed metrics).
-  stubOverflow(strip, { scrollWidth: 800, clientWidth: 240 });
+  // Four 100 px tabs in a 240 px strip: the third and fourth are cut off.
   harness.bridge.state.files['d.js'] = '4';
   await harness.controller.openFile('d.js');
   await settle();
-  assert.equal(strip.classList.contains('ide-tabstrip--overflowing'), true);
-
-  // And it clears again when the tabs fit.
-  stubOverflow(strip, { scrollWidth: 200, clientWidth: 240 });
+  stubOverflow(strip);
   harness.getDom().ideTabStrip.querySelector('[data-ide-tab-path="a.js"]').click();
   await settle();
-  assert.equal(strip.classList.contains('ide-tabstrip--overflowing'), false);
+  stubOverflow(strip);
+  ideTabs.syncTabOverflow(strip);
+  assert.equal(chip.hidden, false);
+  assert.equal(chip.textContent, '+2');
+
+  // Wide enough for all of them: the chip hides again.
+  stubOverflow(strip, { stripWidth: 800 });
+  ideTabs.syncTabOverflow(strip);
+  assert.equal(chip.hidden, true);
 });
 
 test('transient file preview tabs expose a distinct visual and accessible state', async (t) => {
@@ -118,43 +127,29 @@ test('active tab is scrolled into view and carries the active class', async (t) 
   assert.ok(calls.includes(active), 'scrollIntoView called for the active tab');
 });
 
-test('overflow menu lists every open tab with active/dirty state', async (t) => {
+// The open-tabs list (count chip click, "more" action) is built and tested by the
+// tab-strip events module (tests/renderer-ide-tab-strip-events.test.js); this file
+// keeps the markup side of a dirty tab.
+test('a dirty tab renders the mark and the shared close title', async (t) => {
   const harness = createHarness({ bridgeOptions: { files: { ...FILES } } });
   t.after(() => harness.dispose());
   await openAll(harness);
-  const doc = harness.dom.window.document;
   const strip = harness.getDom().ideTabStrip;
 
-  // Make b.js dirty so the quick-pick reflects its state.
   strip.querySelector('[data-ide-tab-path="b.js"]').click();
   await settle();
   const textarea = harness.getDom().ideEditorFallback;
   textarea.value = 'edited';
   textarea.dispatchEvent(new harness.dom.window.Event('input', { bubbles: true }));
   await settle();
+  const tab = strip.querySelector('[data-ide-tab="b.js"]');
+  assert.ok(tab.classList.contains('ide-tab--dirty'));
+  assert.ok(tab.querySelector('.ide-tab-slot .ide-tab-mark'), 'dirty tabs show the mark in the slot');
   assert.equal(
-    strip.querySelector('[data-ide-tab="b.js"] .ide-tab-close').title,
-    'Close b.js — discards unsaved changes (Ctrl+F4)'
+    tab.querySelector('.ide-tab-close').title,
+    'Close b.js (Ctrl+F4)',
+    'a dirty tab carries the same close title as a clean one'
   );
-
-  stubOverflow(strip, { scrollWidth: 900, clientWidth: 200 });
-  strip.querySelector('[data-ide-tab-overflow]').click();
-  await settle();
-
-  const items = [...doc.body.querySelectorAll('.inv-context-menu-item')];
-  assert.equal(items.length, 3, 'one row per open tab');
-  const labels = items.map((item) => item.textContent);
-  assert.ok(labels.some((label) => label.includes('a.js')));
-  assert.ok(labels.some((label) => label.includes('c.js')));
-  // Dirty tab carries the ● prefix; active tab (b.js) carries the active hint.
-  const dirtyRow = items.find((item) => item.textContent.includes('b.js'));
-  assert.ok(dirtyRow.textContent.includes('●'), 'dirty marker shown');
-  assert.ok(dirtyRow.textContent.includes('active'), 'active hint shown');
-
-  // Clicking a row activates that tab.
-  items.find((item) => item.textContent.includes('c.js')).click();
-  await settle();
-  assert.equal(harness.state.ui.ide.activeTabPath, 'c.js');
 });
 
 // ── Pinned tabs ──────────────────────────────────────────────────────────────
@@ -227,7 +222,7 @@ test('the tab context menu toggles between Pin and Unpin', async (t) => {
   assert.ok(unpinItem, 'a pinned tab offers "Unpin"');
 });
 
-// reorderTabs + togglePin are unit-tested directly against a fake ide (same
+// reorderTabToIndex + togglePin are unit-tested directly against a fake ide (same
 // pattern as the close-orchestrator unit tests) - the harness does not expose
 // the tab-strip controller, and jsdom's DragEvent/dataTransfer is unreliable.
 test('drag-reorder stays within the pinned / unpinned group', () => {
@@ -243,13 +238,34 @@ test('drag-reorder stays within the pinned / unpinned group', () => {
     callbacks: { renderTabs() {}, schedulePersist() {} },
   });
 
-  // Pinned a.js dragged after the unpinned c.js: rejected, no move.
-  assert.equal(controller.reorderTabs('a.js', 'c.js', { placeAfter: true }), false);
+  // Pinned a.js dropped past the unpinned tabs clamps to the end of the pinned block: no move.
+  assert.equal(controller.reorderTabToIndex('a.js', 2), false);
   assert.deepEqual(ide.openTabs.map((tab) => tab.path), ['a.js', 'b.js', 'c.js']);
 
   // Within-group (both unpinned) reorder still works: b after c.
-  assert.equal(controller.reorderTabs('b.js', 'c.js', { placeAfter: true }), true);
+  assert.equal(controller.reorderTabToIndex('b.js', 2), true);
   assert.deepEqual(ide.openTabs.map((tab) => tab.path), ['a.js', 'c.js', 'b.js']);
+});
+
+test('an unpinned tab dropped at the end stays after a pinned tab of another group', () => {
+  const ide = {
+    openTabs: [
+      { path: 'a.js', kind: 'file', pinned: true },
+      { path: 'g.js', kind: 'file', pinned: true, group: 'editor-2' },
+      { path: 'b.js', kind: 'file' },
+    ],
+  };
+  let persists = 0;
+  const controller = createIdeTabsController({
+    getIde: () => ide,
+    callbacks: { renderTabs() {}, schedulePersist() { persists += 1; } },
+  });
+
+  // b.js is already last among the primary tabs: the drop is a no-op and the
+  // global pinned-first order (a, g pinned before b) holds.
+  assert.equal(controller.reorderTabToIndex('b.js', 1), false);
+  assert.deepEqual(ide.openTabs.map((tab) => tab.path), ['a.js', 'g.js', 'b.js']);
+  assert.equal(persists, 0);
 });
 
 test('togglePin flips the flag, clamps pinned-first, and persists', () => {

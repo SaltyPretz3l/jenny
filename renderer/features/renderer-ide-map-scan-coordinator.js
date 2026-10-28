@@ -161,10 +161,6 @@
         // invalidate any in-flight old-root scan.
         revision += 1;
       },
-      _internals: {
-        get committed() { return committed; },
-        get revision() { return revision; },
-      },
     };
   }
 
@@ -194,7 +190,6 @@
 
     async function start(kind) {
       const run = { kind: normalizeKind(kind), binding: currentBinding() };
-      let settled;
       const promise = (async () => {
         let result;
         try {
@@ -203,29 +198,25 @@
           appendClientLog('WARN', 'ide_map.scan_execute_failed', {
             message: String((error && error.message) || error || '').slice(0, 200),
           });
-          settled = outcome(false, 'execute_threw', run.kind);
-          return settled;
+          return outcome(false, 'execute_threw', run.kind);
         }
         if (disposed) {
           safeDropHook(run, 'disposed');
-          settled = outcome(false, 'disposed', run.kind);
-          return settled;
+          return outcome(false, 'disposed', run.kind);
         }
         if (!bindingsMatch(run.binding, currentBinding())) {
           safeDropHook(run, 'stale_binding');
-          settled = outcome(false, 'stale_binding', run.kind);
-          return settled;
+          return outcome(false, 'stale_binding', run.kind);
         }
         try {
           applyResult(result, { kind: run.kind, binding: run.binding });
-          settled = outcome(true, 'applied', run.kind);
+          return outcome(true, 'applied', run.kind);
         } catch (error) {
           appendClientLog('WARN', 'ide_map.scan_apply_failed', {
             message: String((error && error.message) || error || '').slice(0, 200),
           });
-          settled = outcome(false, 'apply_failed', run.kind);
+          return outcome(false, 'apply_failed', run.kind);
         }
-        return settled;
       })();
       run.promise = promise;
       inFlight = run;
@@ -287,10 +278,6 @@
       dispose,
       isInFlight: () => !!inFlight,
       hasPending: () => !!pending,
-      _internals: {
-        get inFlight() { return inFlight; },
-        get pending() { return pending; },
-      },
     };
   }
 
@@ -298,7 +285,5 @@
     createMapScanCoordinator,
     createRootBindingTracker,
     classifyWorkspaceInvalidation,
-    normalizeBinding,
-    bindingsMatch,
   };
 });

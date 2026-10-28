@@ -42,9 +42,6 @@
   var WAVE_CORE_WIDTH = 2;
   var WAVE_CORE_ALPHA = 0.6;
 
-  var PARALLAX_BY_DEPTH = [4, 9, 18];
-  var PARALLAX_LERP_MS = 140;
-  var PARALLAX_REST_PX = 0.05;
   var DEPTH_ZERO_ALPHA_FLOOR = 0.36;
   var BREATH_ALPHA_MIN = 0.55;
   var BREATH_SCALE_MIN = 0.85;
@@ -149,7 +146,6 @@
       waveSequence: 0,
       /* The one pointer state: scene coordinates, plus the eased hover fade. */
       pointer: { active: false, fade: 0, x: 0, y: 0, sceneX: 0, sceneY: 0 },
-      parallaxOffset: [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }],
       avoidRects: new Float64Array(0),
       avoidCount: 0,
       flareCount: 0,
@@ -271,32 +267,19 @@
   }
 
   /* Hard reset: dispose-adjacent paths only (reduced-motion switch, frame-clock
-     long gaps). Pointer/parallax are cleared only when asked. */
+     long gaps). The pointer is cleared only when asked. */
   function resetMotion(state, options) {
     var opts = options || {};
     state.waves.length = 0;
     for (var i = 0; i < state.sparkles.length; i += 1) { state.sparkles[i].flareStart = -1; }
     state.flareCount = 0;
-    if (opts.clearParallax) {
-      for (var depth = 0; depth < DEPTH_COUNT; depth += 1) {
-        state.parallaxOffset[depth].x = 0;
-        state.parallaxOffset[depth].y = 0;
-      }
-    }
     if (opts.clearPointer) { state.pointer.active = false; state.pointer.fade = 0; }
   }
 
   /* What must keep painting at full rate: anything the user can see answering
      them. A resting field with no pointer is ambient-only. */
   function isResponding(state) {
-    if (state.pointer.active || state.pointer.fade > 0.01 || state.waves.length > 0 || state.flareCount > 0) {
-      return true;
-    }
-    for (var depth = 0; depth < DEPTH_COUNT; depth += 1) {
-      var offset = state.parallaxOffset[depth];
-      if (Math.abs(offset.x) > PARALLAX_REST_PX || Math.abs(offset.y) > PARALLAX_REST_PX) { return true; }
-    }
-    return false;
+    return state.pointer.active || state.pointer.fade > 0.01 || state.waves.length > 0 || state.flareCount > 0;
   }
 
   function updatePointerFade(state, deltaMs, reducedMotion) {
@@ -312,20 +295,6 @@
       if (pointer.fade < 0.001) { pointer.fade = 0; }
     } else {
       pointer.fade = 0;
-    }
-  }
-
-  function updateParallax(state, deltaMs, sceneWidth, sceneHeight) {
-    var pointer = state.pointer, nx = 0, ny = 0;
-    if (pointer.active && sceneWidth > 0 && sceneHeight > 0) {
-      nx = clamp((pointer.x / sceneWidth) * 2 - 1, -1, 1);
-      ny = clamp((pointer.y / sceneHeight) * 2 - 1, -1, 1);
-    }
-    var blend = 1 - Math.exp(-Math.max(deltaMs, 0) / PARALLAX_LERP_MS);
-    for (var depth = 0; depth < DEPTH_COUNT; depth += 1) {
-      var offset = state.parallaxOffset[depth];
-      offset.x += (-nx * PARALLAX_BY_DEPTH[depth] - offset.x) * blend;
-      offset.y += (-ny * PARALLAX_BY_DEPTH[depth] - offset.y) * blend;
     }
   }
 
@@ -366,10 +335,9 @@
     var env = environment || {}, state = entry.simulation, config = entry.config;
     var reduced = Boolean(env.reducedMotion);
     var now = Number(env.timestamp) || 0;
-    if (env.longGap) { resetMotion(state, { clearPointer: true, clearParallax: true }); }
+    if (env.longGap) { resetMotion(state, { clearPointer: true }); }
     var deltaMs = env.dtMs > 0 ? Math.min(env.dtMs, MAX_DT_MS) : 16.67;
     updatePointerFade(state, deltaMs, reduced);
-    if (!reduced) { updateParallax(state, deltaMs, entry.w, entry.h); }
     prepareWaves(state, now);
     if (reduced) { state.waves.length = 0; }
 
@@ -396,15 +364,13 @@
     state.haloCount.fill(0);
 
     for (var i = 0; i < state.count; i += 1) {
-      var sparkle = state.sparkles[i], offset = state.parallaxOffset[sparkle.depth];
-      var x = sparkle.x + offset.x, y = sparkle.y + offset.y;
+      var sparkle = state.sparkles[i], x = sparkle.x, y = sparkle.y;
       state.drawX[i] = x;
       state.drawY[i] = y;
       state.groupOf[i] = -1;
       state.haloOf[i] = -1;
       if (state.avoidCount && isAvoided(state, x, y)) { continue; }
 
-      /* Ring crossing is tested against the drawn (parallaxed) position. */
       if (waveCount) {
         for (var w = 0; w < waveCount; w += 1) {
           var wave = waves[w], wx = x - wave.x, wy = y - wave.y, wd2 = wx * wx + wy * wy;
@@ -594,8 +560,8 @@
   function inspectSimulation(state) {
     var avoided = 0;
     for (var i = 0; i < state.sparkles.length; i += 1) {
-      var sparkle = state.sparkles[i], offset = state.parallaxOffset[sparkle.depth];
-      if (state.avoidCount && isAvoided(state, sparkle.x + offset.x, sparkle.y + offset.y)) { avoided += 1; }
+      var sparkle = state.sparkles[i];
+      if (state.avoidCount && isAvoided(state, sparkle.x, sparkle.y)) { avoided += 1; }
     }
     return {
       pointerActive: state.pointer.active,
@@ -604,7 +570,6 @@
       pointerY: state.pointer.y,
       pointerSceneX: state.pointer.sceneX,
       pointerSceneY: state.pointer.sceneY,
-      parallaxOffsets: state.parallaxOffset.map(function (offset) { return { x: offset.x, y: offset.y }; }),
       waveCapacity: MAX_ATOMIC_WAVES,
       waveCount: state.waves.length,
       waveOrigins: state.waves.map(function (wave) { return { x: wave.x, y: wave.y, kind: wave.kind }; }),

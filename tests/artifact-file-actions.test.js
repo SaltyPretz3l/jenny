@@ -154,6 +154,13 @@ test('copyImage decodes the resolved image and writes it to the clipboard', asyn
   ]);
 });
 
+test('copyImage awaits the async clipboard write and surfaces its rejection', async () => {
+  const { actions } = createHarness({
+    clipboard: { writeImage: async () => { throw new Error('clipboard busy'); } },
+  });
+  await assert.rejects(actions.copyImage('session-a', 'artifact-a'), /clipboard busy/);
+});
+
 test('copyImage refuses a non-image artifact before decoding', async () => {
   const { actions, calls } = createHarness({
     artifactService: { resolveArtifact: async () => ({ ...artifact, artifact_kind: 'text' }) },

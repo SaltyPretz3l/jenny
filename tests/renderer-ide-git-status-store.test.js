@@ -309,3 +309,115 @@ test('dispose stops further refreshes and clears subscribers', async () => {
   assert.equal(client.state.count, baseline, 'no fetch after dispose');
   assert.equal(notifications, 1, 'no notify after dispose');
 });
+
+// A failed getStatus ({ ok:false, available:true, isRepo:true } from the
+// service's _execFailure or the client's callFailed) used to build a CLEAN
+// snapshot: Source Control said "working tree is clean" and the branch
+// switcher's dirty guard was skipped. It is transient: the previous snapshot
+// stays (no notify) and a bounded debounced retry follows.
+test('a failed getStatus keeps the previous snapshot and retries instead of reading as clean', async () => {
+  const failed = { ok: false, available: true, isRepo: true, op: 'getStatus', reason: 'git_failed' };
+  const client = fakeClient([repoResult(), failed, failed, repoResult({ branch: 'dev' })]);
+  const store = createIdeGitStatusStore({ client, debounceMs: 1, minIntervalMs: 0 });
+  let notifications = 0;
+  store.subscribe(() => { notifications += 1; });
+  await store.refreshNow();
+  assert.equal(notifications, 1);
+  await store.refreshNow();
+  assert.equal(store.getDirtyCount(), 3, 'dirty count survives the failed read');
+  assert.equal(store.getBranch(), 'main');
+  assert.equal(store.getSnapshot().files.length, 4);
+  assert.equal(notifications, 1, 'a failed read never notifies');
+  await settle(30);
+  assert.equal(client.state.count, 4, 'retried through the debounce path until a good read');
+  assert.equal(store.getBranch(), 'dev');
+});
+
+test('a persistently failing getStatus stops retrying after a bounded number of attempts', async () => {
+  const failed = { ok: false, available: true, isRepo: true, op: 'getStatus', reason: 'call_failed' };
+  const client = fakeClient([repoResult(), failed]);
+  const store = createIdeGitStatusStore({ client, debounceMs: 1, minIntervalMs: 0 });
+  await store.refreshNow();
+  await store.refreshNow();
+  await settle(60);
+  assert.ok(client.state.count <= 6, `bounded retries (saw ${client.state.count} reads)`);
+  assert.equal(store.getDirtyCount(), 3);
+  const before = client.state.count;
+  await settle(30);
+  assert.equal(client.state.count, before, 'no further polling once the retry budget is spent');
+});
+
+test('a refresh after a spent retry budget gets its own bounded retries', async () => {
+  const failed = { ok: false, available: true, isRepo: true, op: 'getStatus', reason: 'call_failed' };
+  const client = fakeClient([repoResult(), failed]);
+  const store = createIdeGitStatusStore({ client, debounceMs: 1, minIntervalMs: 0 });
+  await store.refreshNow();
+  await store.refreshNow();
+  await settle(60);
+  const spent = client.state.count;
+  store.refresh();
+  await settle(60);
+  assert.ok(client.state.count - spent > 1, `the new trigger retried (saw ${client.state.count - spent} reads)`);
+  assert.ok(client.state.count - spent <= 5, 'still bounded');
+  assert.equal(store.getDirtyCount(), 3, 'the last good snapshot stays');
+});
+
+// Perf: the fs watcher fires refresh() after every batch; a build streams
+// batches back-to-back. refresh() is throttled to one status per minInterval
+// (leading + trailing) instead of a pure trailing debounce.
+test('refresh is throttled to one status per min interval under a continuous event stream', async () => {
+  let clock = 0;
+  const timers = [];
+  const client = fakeClient(repoResult());
+  const store = createIdeGitStatusStore({
+    client,
+    debounceMs: 100,
+    minIntervalMs: 1000,
+    now: () => clock,
+    setTimeoutFn: (fn, ms) => { const t = { fn, at: clock + ms }; timers.push(t); return t; },
+    clearTimeoutFn: (t) => { const i = timers.indexOf(t); if (i >= 0) timers.splice(i, 1); },
+  });
+  async function advance(ms) {
+    const end = clock + ms;
+    for (;;) {
+      timers.sort((a, b) => a.at - b.at);
+      const next = timers[0];
+      if (!next || next.at > end) break;
+      timers.shift();
+      clock = next.at;
+      next.fn();
+      await settle(0);
+    }
+    clock = end;
+  }
+  // 30 watcher batches, one every 50 ms, over 1.5 s.
+  for (let i = 0; i < 30; i += 1) {
+    store.refresh();
+    await advance(50);
+  }
+  await advance(2000);
+  assert.ok(client.state.count >= 2, 'leading + trailing runs happen');
+  assert.ok(client.state.count <= 3, `at most one status per second (saw ${client.state.count})`);
+});
+
+test('refresh with unlessRefreshedWithinMs skips right after an eager refresh only', async () => {
+  let clock = 0;
+  const client = fakeClient(repoResult());
+  const store = createIdeGitStatusStore({ client, debounceMs: 1, minIntervalMs: 0, now: () => clock });
+  await store.stage({ paths: ['src/a.js'] });
+  const afterMutation = client.state.count;
+  clock = 200;
+  store.refresh({ unlessRefreshedWithinMs: 1000 });
+  await settle(10);
+  assert.equal(client.state.count, afterMutation, 'the git-meta echo of our own mutation is skipped');
+  clock = 5000;
+  store.refresh({ unlessRefreshedWithinMs: 1000 });
+  await settle(10);
+  assert.equal(client.state.count, afterMutation + 1, 'an external change later still refreshes');
+});
+
+test('T7: the store exports its ancestor walk for the tree badges', () => {
+  const store = require('../renderer/features/renderer-ide-git-status-store');
+  assert.deepEqual(store.parentDirsOf('a/b/c.js'), ['a', 'a/b']);
+  assert.deepEqual(store.parentDirsOf('top.js'), []);
+});

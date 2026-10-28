@@ -28,25 +28,6 @@
   min-height: 0;
 }
 
-/* The tab row: open-file tabs, then the Preview / File map toggles at the end. */
-.ide-tabbar {
-  display: flex;
-  align-items: stretch;
-  flex-shrink: 0;
-  min-height: 36px;
-  background: var(--bg-surface-2);
-  border-bottom: 1px solid var(--line);
-}
-
-.ide-tabstrip {
-  display: flex;
-  align-items: stretch;
-  flex: 1;
-  min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: thin;
-}
-
 .ide-restore-strip {
   display: flex;
   align-items: center;
@@ -73,144 +54,6 @@
 .ide-restore-strip-dismiss:hover,
 .ide-restore-strip-dismiss:focus-visible {
   color: var(--text-primary);
-}
-
-.ide-stage-switch {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-  gap: 2px;
-  padding: 0 6px;
-}
-
-.ide-stage-switch:empty {
-  display: none;
-}
-
-/* An active Preview / File map reads as the group's last tab (row 40 W5). */
-.ide-stage-switch > .ide-tab--surface {
-  align-self: stretch;
-  margin-inline-start: -6px;
-}
-
-.ide-tab--surface .ide-tab-label {
-  cursor: default;
-}
-
-.ide-stage-switch-btn {
-  padding: 4px 8px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: var(--font-size-caption);
-  font-weight: 500;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background-color var(--transition-fast), color var(--transition-fast);
-}
-
-.ide-stage-switch-btn:hover {
-  color: var(--text-primary);
-}
-
-.ide-stage-switch-btn--active {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  color: var(--text-primary);
-}
-
-.ide-stage-switch-btn:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
-.ide-tab {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-  max-width: 220px;
-  border-inline-end: 1px solid var(--line);
-  background: transparent;
-  color: var(--text-secondary);
-}
-
-.ide-tab--active {
-  background: var(--bg-base);
-  color: var(--text-primary);
-  box-shadow: inset 0 2px 0 var(--accent);
-}
-
-.ide-tab-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  padding-block: 8px; padding-inline-end: 4px; padding-inline-start: 12px;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font-size: var(--font-size-body);
-  cursor: pointer;
-}
-
-.ide-tab-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-
-.ide-tab--preview .ide-tab-name {
-  font-style: italic;
-}
-
-.ide-tab-dirty-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent);
-  flex-shrink: 0;
-  visibility: hidden;
-}
-
-.ide-tab--dirty .ide-tab-dirty-dot {
-  visibility: visible;
-}
-
-.ide-tab-close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  margin-block: 0; margin-inline-end: 6px; margin-inline-start: 2px;
-  padding: 0;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: var(--font-size-body);
-  line-height: 1;
-  cursor: pointer;
-  opacity: 0;
-}
-
-.ide-tab:hover .ide-tab-close,
-.ide-tab--active .ide-tab-close,
-.ide-tab-close:focus-visible {
-  opacity: 1;
-}
-
-.ide-tab-close:hover {
-  background: var(--bg-panel);
-  color: var(--text-primary);
-}
-
-.ide-tab-label:focus-visible,
-.ide-tab-close:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
 }
 
 .ide-editor-stage {
@@ -307,19 +150,6 @@
   gap: 6px;
 }
 
-.ide-rail-placeholder-title {
-  color: var(--text-primary);
-  font-size: var(--font-size-caption);
-  font-weight: 500;
-}
-
-.ide-rail-placeholder-copy {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: var(--font-size-footnote);
-  line-height: 1.5;
-}
-
 /* ── Explorer tree (W3) ── */
 
 .ide-tree {
@@ -373,10 +203,6 @@
 .ide-tree-row:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
-}
-
-.ide-tree-choose-root {
-  padding: 6px 12px;
 }
 
 .ide-tree-row--directory {
@@ -441,14 +267,6 @@
   outline-offset: -1px;
 }
 
-/* Dirty buffer whose file changed on disk: a hollow danger-hued ring (distinct
- * shape, not just color) keeps it readable next to the filled dirty dot. */
-.ide-tab--stale .ide-tab-dirty-dot {
-  visibility: visible;
-  background: transparent;
-  box-shadow: inset 0 0 0 2px var(--state-danger);
-}
-
 /* ── Find-in-files panel (W4) ── */
 
 .ide-search {
@@ -459,11 +277,13 @@
   font-size: var(--font-size-body);
 }
 
-.ide-search-field {
+.ide-search-field,
+.ide-search-replace-field {
   display: block;
 }
 
-.ide-search-field .inv-text-field-control {
+.ide-search-field .inv-text-field-control,
+.ide-search-replace-field .inv-text-field-control {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
@@ -476,7 +296,8 @@
   line-height: 1.4;
 }
 
-.ide-search-field .inv-text-field-control:focus-visible {
+.ide-search-field .inv-text-field-control:focus-visible,
+.ide-search-replace-field .inv-text-field-control:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
 }
@@ -494,12 +315,6 @@
 }
 
 /* ── Diff review surface (W5) ── */
-
-/* Diff review tabs reuse the tab strip; an accent tint marks them read-only. */
-.ide-tab--diff .ide-tab-name {
-  color: var(--accent);
-  font-style: italic;
-}
 
 /* Overlay pane inside #ideEditorHost hosting the reused Monaco diff editor
    (or the plain-text hunks-summary placeholder when a snapshot is gone). */

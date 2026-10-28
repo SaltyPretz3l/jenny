@@ -286,6 +286,21 @@ test('without an *_inspect deny the rich-files toggle keeps its default', (t) =>
   assert.equal(services.shellConfigService.getState().tools.richFiles, true);
 });
 
+test('a corrupt permission file logs the deny-all fallback through the composition logger', (t) => {
+  const { deps, tmpDir } = buildDeps();
+  const logged = [];
+  deps.log = (level, event, details) => logged.push({ level, event, details });
+  fs.writeFileSync(path.join(tmpDir, 'tool-permissions.json'), '{not json', 'utf8');
+  const services = createRuntimeServicesWithDeps(deps);
+  t.after(() => {
+    try { services.systemStats?.stop?.(); } catch { /* best-effort */ }
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+  });
+  const entry = logged.find((candidate) => candidate.event === 'permission_store.read_only');
+  assert.equal(entry?.level, 'WARN');
+  assert.equal(entry.details.reason, 'unreadable_or_corrupt');
+});
+
 // Top chrome (area 1, 2026-09-29): nothing on screen, nothing sampled.
 test('the stats monitor pauses while the window is hidden or minimised and resumes with a fresh tick', (t) => {
   const { services, calls } = makeContext(t);

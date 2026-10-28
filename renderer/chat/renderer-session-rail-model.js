@@ -17,11 +17,11 @@
    Copy goes through jt('chat.sessionRail.*', 'English default'). */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory();
+    module.exports = factory(require('./renderer-context-preview'));
     return;
   }
-  root.rendererSessionRailModel = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  root.rendererSessionRailModel = factory(root.rendererContextPreview);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (contextPreview) {
   'use strict';
 
   const SECTION_KEYS = Object.freeze(['environment', 'context', 'outputs', 'changes', 'background_tasks']);
@@ -87,11 +87,12 @@
     return `${scaled.toFixed(digits).replace(/\.0$/, '')}${suffix}`;
   }
 
+  /* Percent of the auto-compact point when the next-send estimate carries one, else of the
+     window: the composer ring uses the same projection and the same rounding (row 63). */
   function contextPercent(data) {
-    const used = count(data?.used_tokens);
-    const capacity = count(data?.capacity_tokens);
-    if (used === null || capacity === null || capacity <= 0) return null;
-    return Math.min(999, Math.round((used / capacity) * 100));
+    const { used, target } = contextPreview.project(data);
+    if (used === null || !target) return null;
+    return contextPreview.formatPercent(used, target);
   }
 
   function runModeLabel(mode, jt) {
@@ -179,26 +180,10 @@
     return { valueText: executionLabel(data.execution_environment, jt), parts: null, dot: null, rows, defaultOpen: true };
   }
 
-  function contextBreakdown(data, jt) {
-    const capacity = count(data.capacity_tokens);
-    const labels = [
-      ['messages', jt('chat.messages.review.eyebrow', 'Messages')],
-      ['system_prompt', jt('chat.sessionRail.context.systemPrompt', 'System prompt')],
-      ['tools', jt('chat.sessionRail.context.tools', 'Tool definitions')],
-      ['instructions', jt('chat.sessionRail.context.instructions', 'Workspace instructions')],
-      ['skills', jt('composer.slash.skills', 'Skills')],
-      ['other', jt('chat.sessionRail.context.other', 'Other context')],
-    ];
-    const rows = labels.map(([key, label]) => ({
-      kind: 'category', key, text: label, tokens: count(data.breakdown?.[key]),
-      capacity, meta: count(data.breakdown?.[key]) === null ? '—' : formatTokens(data.breakdown[key]),
-    }));
-    rows.unshift({ kind: 'bar', key: 'bar', capacity, categories: rows.map((row) => ({ key: row.key, tokens: row.tokens })) });
-    rows.push({ kind: 'category', key: 'free', text: jt('chat.sessionRail.context.available', 'Available'),
-      tokens: count(data.available_tokens), capacity, meta: count(data.available_tokens) === null ? '—' : formatTokens(data.available_tokens) });
-    rows.push({ kind: 'fact', key: 'reserve', text: jt('chat.sessionRail.context.reserve', 'Compaction reserve'),
-      meta: count(data.reserve_tokens) === null ? '—' : formatTokens(data.reserve_tokens) });
-    return rows;
+  /* The shared breakdown (window bar, compaction marker, category rows): the composer ring's
+     details popover renders the same markup from the same projection. */
+  function contextBreakdown(data) {
+    return [{ kind: 'breakdown', key: 'breakdown', projection: contextPreview.project(data) }];
   }
 
   function buildContext(data, jt) {
@@ -206,19 +191,24 @@
     const capacity = count(data.capacity_tokens);
     const available = count(data.available_tokens);
     const percent = contextPercent(data);
-    const rows = data.scope === 'next_send' ? contextBreakdown(data, jt) : [];
+    const nextSend = data.scope === 'next_send';
+    const projection = contextPreview.project(data);
+    const rows = nextSend ? contextBreakdown(data) : [];
     let valueText;
     let dot = null;
     if (percent !== null) {
-      valueText = `${percent}%`;
-      if (used / capacity >= CONTEXT_WARN_RATIO) dot = { tone: 'warn', pulse: false };
+      valueText = percent;
+      if (used / projection.target >= CONTEXT_WARN_RATIO) dot = { tone: 'warn', pulse: false };
     } else if (used !== null) {
       valueText = jt('chat.sessionRail.context.tokens', '{count} tokens', { count: formatTokens(used) });
     } else {
       valueText = data.status === 'unavailable' ? jt('chat.sessionRail.state.unavailable', 'Unavailable')
         : data.scope === 'next_send' ? jt('chat.sessionRail.state.checking', 'Checking…') : jt('chat.sessionRail.state.unknown', 'Unknown');
     }
-    if (used !== null) {
+    if (used !== null && nextSend) {
+      const line = contextPreview.describeLine(projection);
+      if (line) rows.unshift({ kind: 'note', key: 'used', text: line });
+    } else if (used !== null) {
       const meta = capacity !== null
         ? jt('chat.sessionRail.context.usedOf', '{used} of {capacity}', { used: formatTokens(used), capacity: formatTokens(capacity) })
         : formatTokens(used);
@@ -384,12 +374,12 @@
   };
 
   function checkingSection(key, jt) {
-    return { key, title: sectionTitle(key, jt), state: 'checking', stateWord: jt('chat.sessionRail.state.checking', 'Checking…'), valueText: jt('chat.sessionRail.state.checking', 'Checking…'), parts: null, dot: null, rows: key === 'context' ? contextBreakdown({}, jt) : [], defaultOpen: false, stale: false };
+    return { key, title: sectionTitle(key, jt), state: 'checking', stateWord: jt('chat.sessionRail.state.checking', 'Checking…'), valueText: jt('chat.sessionRail.state.checking', 'Checking…'), parts: null, dot: null, rows: key === 'context' ? contextBreakdown({}) : [], defaultOpen: false, stale: false };
   }
 
   function unavailableSection(key, jt, state, reason) {
     let word = jt('chat.sessionRail.state.unavailable', 'Unavailable');
-    const rows = key === 'context' ? contextBreakdown({}, jt) : [];
+    const rows = key === 'context' ? contextBreakdown({}) : [];
     if (state === 'not_applicable') {
       word = reason === 'not_a_git_repository'
         ? jt('chat.sessionRail.changes.notGit', 'Not a Git repository')

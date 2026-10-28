@@ -26,6 +26,14 @@ _BASE64_TOKEN_RE = re.compile(r"[A-Za-z0-9+/]+={0,2}")
 _MIN_QUOTED_TOKEN_CHARS = 2
 _MIN_POWERSHELL_SWITCH_CHARS = 2
 _MIN_BASE64_TOKEN_CHARS = 4
+# Script spellings of an executable name: a file, not the tool on PATH.
+_SCRIPT_SUFFIXES: tuple[str, ...] = (".bat", ".cmd", ".ps1", ".sh", ".command")
+# Absolute executable paths under these roots are the system tools the
+# allowlist means; every other pathed spelling needs approval.
+_TRUSTED_EXECUTABLE_PREFIXES: tuple[str, ...] = (
+    "/bin/", "/usr/bin/", "/usr/local/bin/", "/opt/homebrew/bin/",
+    "c:/windows/system32/", "c:/program files/", "c:/program files (x86)/",
+)
 
 
 def _strip_surrounding_quotes(raw: str) -> str:
@@ -37,6 +45,26 @@ def _strip_surrounding_quotes(raw: str) -> str:
     ):
         return stripped[1:-1]
     return stripped
+
+
+def _pathed_or_script_executable(raw_executable: str) -> str | None:
+    r"""A path or script spelling of an allowlisted name is not the allowlisted tool.
+
+    The allowlist admits ``ls``, ``cat`` and ``git`` by name, resolved from PATH.
+    ``.\ls.exe``, ``subdir\cat.bat``, ``C:\x\git.exe`` or a bare ``git.bat`` name
+    a file the model or an opened repository may have written, so they are
+    classified fail-closed and go to the user for approval.
+    """
+    token = _strip_surrounding_quotes(raw_executable)
+    if "/" in token or "\\" in token:
+        normalized = token.replace("\\", "/").lower()
+        if normalized.startswith(_TRUSTED_EXECUTABLE_PREFIXES) and ".." not in normalized:
+            if not normalized.endswith(_SCRIPT_SUFFIXES):
+                return None
+        return f"pathed executable: {token}"
+    if token.lower().endswith(_SCRIPT_SUFFIXES):
+        return f"script executable: {token}"
+    return None
 
 
 def _path_basename(raw: str) -> str:

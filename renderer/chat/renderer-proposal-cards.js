@@ -45,6 +45,9 @@
       actionButton: d.actionButton || globalThis.inventoryActionButton || inv.actionButton || requireOptional('../inventory/action-button'),
       checkbox: d.checkbox || (typeof checkboxModule === 'function' ? checkboxModule : checkboxModule && checkboxModule.checkbox),
       codeblock: d.codeblock || (codeModule && codeModule.codeblock),
+      // Row 76: the offer card's "Always allow" row appears only for the primary chat (default: never).
+      isPrimarySession: typeof d.isPrimarySession === 'function' ? d.isPrimarySession : () => false,
+      launchPermissionEnabled: d.launchPermissionEnabled !== false,
     };
   }
 
@@ -283,8 +286,8 @@
     });
   }
 
-  function elapsedMarkup(deps, proposal) {
-    const accepted = Date.parse(String(asObject(proposal.decision) && proposal.decision.accepted_at || ''));
+  function elapsedMarkup(deps, proposal, startedAt) {
+    const accepted = Date.parse(String(startedAt || (asObject(proposal.decision) && proposal.decision.accepted_at) || ''));
     if (!Number.isFinite(accepted)) return '';
     const total = Math.max(0, Math.floor((Date.now() - accepted) / 1000));
     const label = `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
@@ -301,6 +304,9 @@
       controls += linkButton(deps, 'cancel', view.withdraw ? jt('chat.proposal.withdraw', 'Withdraw') : jt('chat.proposal.cancel', 'Cancel'));
     }
     if (view.retry && view.retryAvailable) controls += linkButton(deps, 'retry', jt('chat.proposal.retry', 'Retry'));
+    if (view.retryChild && links.child_session_id) {
+      controls += linkButton(deps, 'retry-child', jt('chat.proposal.retry', 'Retry'), { 'proposal-child-id': links.child_session_id, 'proposal-message-id': view.retryChild });
+    }
     if (view.confirm && view.confirmAvailable) {
       controls += deps.actionButton({
         plain: true, className: 'proposal-link', label: jt('chat.proposal.confirmRestored', 'Confirm'),
@@ -311,9 +317,8 @@
     if (view.openChild && links.child_session_id) {
       controls += linkButton(deps, 'open-child', jt('chat.proposal.session.open', 'Open'), { 'proposal-child-id': links.child_session_id });
     }
-    if (view.replyLink && links.continuation_turn_id) {
-      controls += linkButton(deps, 'jump-reply', jt('chat.proposal.seeReply', 'See the reply'), { 'proposal-turn-id': links.continuation_turn_id });
-    }
+    const replyTurnId = view.replyTurnId || (view.replyLink && links.continuation_turn_id) || '';
+    if (replyTurnId) controls += linkButton(deps, 'jump-reply', jt('chat.proposal.seeReply', 'See the reply'), { 'proposal-turn-id': replyTurnId });
     if (view.output && links.command_tool_call_id) {
       controls += linkButton(deps, 'jump-tool', jt('chat.proposal.viewOutput', 'View output'), { 'proposal-tool-call-id': links.command_tool_call_id });
     }

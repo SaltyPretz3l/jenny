@@ -5,7 +5,8 @@
  * into the rail panel. Literal find debounces workspaceFs.searchInFiles; regex
  * find + every replace/undo is delegated to the panel-owned replace controller
  * (renderer-ide-replace-controller). Search + replace state lives on the
- * runtime ide.search slice and never persists. */
+ * runtime ide.search slice and never persists; query history is the root-bound
+ * ide.searchHistory (helpers in renderer-ide-search-filters). */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory();
@@ -20,14 +21,15 @@
 
   const SEARCH_DEBOUNCE_MS = 300;
   const MIN_QUERY_LENGTH = 2;
+  // Regex before/after previews run on the main thread: one render expands at
+  // most this many rows (the rest show the plain hit).
+  const PREVIEW_EXPANSIONS_PER_RENDER = 200;
 
-  function resolveTextField() {
-    if (typeof globalRef.inventoryTextField === 'function') {
-      return globalRef.inventoryTextField;
-    }
+  function resolveModule(globalName, requirePath) {
+    if (globalRef[globalName]) return globalRef[globalName];
     if (typeof require === 'function') {
       try {
-        return require('../inventory/text-field');
+        return require(requirePath);
       } catch (_error) {
         /* unavailable */
       }
@@ -35,32 +37,12 @@
     return null;
   }
 
-  function resolveActionButton() {
-    if (typeof globalRef.inventoryActionButton === 'function') {
-      return globalRef.inventoryActionButton;
-    }
-    if (typeof require === 'function') {
-      try {
-        return require('../inventory/action-button');
-      } catch (_error) {
-        /* unavailable */
-      }
-    }
-    return null;
-  }
-
-  function resolveReplaceController() {
-    if (globalRef.rendererIdeReplaceController) {
-      return globalRef.rendererIdeReplaceController;
-    }
-    if (typeof require === 'function') {
-      try {
-        return require('./renderer-ide-replace-controller');
-      } catch (_error) {
-        /* unavailable */
-      }
-    }
-    return null;
+  // Clamped [start, end) of a preview's hit inside its text.
+  function previewBounds(preview) {
+    const text = String(preview?.text ?? '');
+    const start = Math.max(0, Math.min(text.length, Number(preview?.matchStart) || 0));
+    const end = Math.max(start, Math.min(text.length, Number(preview?.matchEnd) || 0));
+    return { text, start, end };
   }
 
   function fileNameOf(path) {
@@ -74,7 +56,6 @@
   }
 
   function createIdeSearchPanel(deps) {
-    const getDom = typeof deps?.getDom === 'function' ? deps.getDom : () => ({});
     const getIde = typeof deps?.getIde === 'function' ? deps.getIde : () => ({});
     const getApi = typeof deps?.getWorkspaceFsApi === 'function' ? deps.getWorkspaceFsApi : () => null;
     // Host + active-gate are injectable so the single search instance can render
@@ -95,14 +76,15 @@
     // Find-in-Folder activates the search rail via the controller (which owns rail
     // state + renderIde); noop in standalone use where the panel is already shown.
     const onActivateSearch = typeof deps?.onActivateSearch === 'function' ? deps.onActivateSearch : noop;
-    const textField = resolveTextField();
-    const actionButton = resolveActionButton();
+    const textField = resolveModule('inventoryTextField', '../inventory/text-field');
+    const actionButton = resolveModule('inventoryActionButton', '../inventory/action-button');
+    const searchFilters = resolveModule('rendererIdeSearchFilters', './renderer-ide-search-filters') || {};
 
     // The panel owns its replace controller (keeps the IDE controller under the
     // line cap). renderSearchPanel/runSearch are hoisted declarations, so the
     // callback arrows below resolve fine even though they are referenced here
     // before those functions appear textually.
-    const replaceControllerUtils = resolveReplaceController();
+    const replaceControllerUtils = resolveModule('rendererIdeReplaceController', './renderer-ide-replace-controller');
     const replaceController = replaceControllerUtils?.createIdeReplaceController?.({
       getIde: () => getIde(),
       getWorkspaceFsApi: () => getApi(),
@@ -129,6 +111,12 @@
       if (isMountedIn(event.currentTarget)) ownScrollTop = event.currentTarget.scrollTop;
     }
     let debounceTimer = null;
+    // Coalesces Replace-field keystrokes into one preview repaint per frame.
+    let previewFrame = null;
+    let previewFrameWindow = null;
+    // The results markup and what it was built from: a status-only change
+    // (busy, summary, error) reuses it instead of rebuilding every row.
+    let resultsCache = { results: null, key: '', markup: '' };
     let searchSeq = 0;
     // Set once dispose() runs: makes the "don't act after teardown" intent
     // explicit at the top of the async/render entry points, on top of the
@@ -138,6 +126,9 @@
     // The query/replace input with an open IME composition (null otherwise):
     // its input events defer to compositionend and a re-render never writes it.
     let composingEl = null;
+    // ArrowUp/Down history browsing: index into ide.searchHistory (-1 = the user's draft).
+    let historyCursor = -1;
+    let historyDraft = '';
     // What this instance last painted in full: { root, scope, toolbar, tail }.
     let painted = null;
 
@@ -156,6 +147,10 @@
       // Find-in-Folder scope: a workspace-root-relative folder path that narrows
       // the search; '' = whole workspace. Runtime-only (never persisted).
       if (typeof search.scope !== 'string') search.scope = '';
+      if (typeof search.wholeWord !== 'boolean') search.wholeWord = false;
+      if (typeof search.detailsOpen !== 'boolean') search.detailsOpen = false;
+      if (typeof search.includeText !== 'string') search.includeText = '';
+      if (typeof search.excludeText !== 'string') search.excludeText = '';
       return search;
     }
 
@@ -166,13 +161,39 @@
         replaceText: search.replaceText,
         useRegex: search.useRegex,
         caseSensitive: search.caseSensitive,
+        wholeWord: search.wholeWord,
       };
     }
 
+    // Options sent with a find (both paths), set-only: { wholeWord?, include?, exclude? }.
+    const searchOptionsOf = (search) => searchFilters.buildSearchOptions?.(search) || {};
+
+    // Remember the current query (Enter / opening a result); persists only on a change.
+    function commitHistory() {
+      const ide = getIde();
+      const before = Array.isArray(ide.searchHistory) ? ide.searchHistory : [];
+      const next = searchFilters.pushSearchHistory?.(before, getSearchState().query);
+      historyCursor = -1;
+      if (!next || (next.length === before.length && next.every((entry, index) => entry === before[index]))) return;
+      ide.searchHistory = next;
+      deps?.schedulePersist?.();
+    }
+
+    function stepHistory(direction) {
+      const search = getSearchState();
+      if (historyCursor === -1) historyDraft = String(search.query || '');
+      const step = searchFilters.stepSearchHistory?.(getIde().searchHistory, historyCursor, direction, historyDraft);
+      if (!step) return false;
+      historyCursor = step.cursor;
+      search.query = step.value;
+      search.replaceSummary = '';
+      search.replaceError = '';
+      runSearch();
+      return true;
+    }
+
     function buildPreviewMarkup(preview) {
-      const text = String(preview?.text ?? '');
-      const start = Math.max(0, Math.min(text.length, Number(preview?.matchStart) || 0));
-      const end = Math.max(start, Math.min(text.length, Number(preview?.matchEnd) || 0));
+      const { text, start, end } = previewBounds(preview);
       return escapeHtml(text.slice(0, start))
         + `<span class="ide-search-hit">${escapeHtml(text.slice(start, end))}</span>`
         + escapeHtml(text.slice(end));
@@ -181,19 +202,12 @@
     // Before/after preview: struck old hit + green replacement, computed through
     // the replace controller. Falls back to the plain hit when the controller
     // cannot compute (e.g. mid-edit invalid regex).
-    function buildReplacePreviewMarkup(match, search) {
+    function buildReplacePreviewMarkup(match, budget) {
       const preview = match.preview || {};
-      const text = String(preview.text ?? '');
-      const start = Math.max(0, Math.min(text.length, Number(preview.matchStart) || 0));
-      const end = Math.max(start, Math.min(text.length, Number(preview.matchEnd) || 0));
+      const { text, start, end } = previewBounds(preview);
       let replacement;
       try {
-        replacement = String(replaceController?.computeReplacementForMatch?.(match, {
-          query: search.ranQuery || search.query,
-          replaceText: search.replaceText,
-          useRegex: search.useRegex,
-          caseSensitive: search.caseSensitive,
-        }) ?? '');
+        replacement = String(replaceController?.computeReplacementForMatch?.(match, { ...currentReplaceOpts(), budget }) ?? '');
       } catch (_error) {
         return buildPreviewMarkup(preview);
       }
@@ -243,22 +257,19 @@
       // results are stale mid-find, so acting on them could replace text the
       // panel isn't currently showing.
       const replaceDisabled = !hasResults || !hasFind || search.replacing === true || search.busy === true;
-      const caseChip = actionButton({
+      const toggleChip = (active, label, title, action, extra = {}) => actionButton({
         plain: true,
-        className: `ide-search-toggle${search.caseSensitive ? ' ide-search-toggle--active' : ''}`,
-        ariaPressed: search.caseSensitive === true,
-        label: jt('ide.search.matchCaseGlyph', 'Aa'),
-        title: jt('ide.search.matchCase', 'Match case'),
-        dataset: { 'ide-replace-action': 'toggle-case' },
+        className: `ide-search-toggle${active ? ' ide-search-toggle--active' : ''}`,
+        ariaPressed: active === true,
+        label,
+        title,
+        dataset: { 'ide-replace-action': action },
+        ...extra,
       });
-      const regexChip = actionButton({
-        plain: true,
-        className: `ide-search-toggle${search.useRegex ? ' ide-search-toggle--active' : ''}`,
-        ariaPressed: search.useRegex === true,
-        label: '.*',
-        title: jt('ide.search.useRegularExpression', 'Use regular expression'),
-        dataset: { 'ide-replace-action': 'toggle-regex' },
-      });
+      const caseChip = toggleChip(search.caseSensitive, jt('ide.search.matchCaseGlyph', 'Aa'), jt('ide.search.matchCase', 'Match case'), 'toggle-case');
+      const wordChip = toggleChip(search.wholeWord, jt('ide.search.matchWholeWordGlyph', 'a\u0332b\u0332'), jt('ide.search.matchWholeWord', 'Match whole word'), 'toggle-word');
+      const regexChip = toggleChip(search.useRegex, '.*', jt('ide.search.useRegularExpression', 'Use regular expression'), 'toggle-regex');
+      const detailsChip = toggleChip(search.detailsOpen, '\u2026', jt('ide.search.toggleDetails', 'Toggle search details'), 'toggle-details', { ariaPressed: undefined, ariaExpanded: search.detailsOpen === true });
       const replaceAll = actionButton({
         label: jt('ide.search.replaceAll', 'Replace All'),
         variant: 'primary',
@@ -274,9 +285,22 @@
         })
         : '';
       return '<div class="ide-search-toolbar">'
-        + `<span class="ide-search-toggles">${caseChip}${regexChip}</span>`
+        + `<span class="ide-search-toggles">${caseChip}${wordChip}${regexChip}${detailsChip}</span>`
         + `<span class="ide-search-actions">${replaceAll}${undo}</span>`
         + '</div>';
+    }
+
+    // Rebuilt only when the rows, the collapsed set or the replace options
+    // changed; a status-only render reuses the cached markup.
+    function resultsMarkupFor(search) {
+      const opts = currentReplaceOpts();
+      // The translated row title rides along so a locale switch rebuilds the rows.
+      const key = [jt('ide.search.replaceOccurrence', 'Replace this occurrence'), opts.query, opts.replaceText,
+        opts.useRegex, opts.caseSensitive, opts.wholeWord, ...collapsedFiles].join('\u0000');
+      if (resultsCache.results !== search.results || resultsCache.key !== key) {
+        resultsCache = { results: search.results, key, markup: buildResultsMarkup(search) };
+      }
+      return resultsCache.markup;
     }
 
     function buildResultsMarkup(search) {
@@ -284,6 +308,7 @@
         return '';
       }
       const hasReplace = typeof actionButton === 'function';
+      const budget = { remaining: PREVIEW_EXPANSIONS_PER_RENDER };
       const byFile = new Map();
       for (const result of search.results) {
         if (!byFile.has(result.path)) {
@@ -330,7 +355,7 @@
             + ` data-ide-search-line="${Number(match.line) || 1}"`
             + ` data-ide-search-column="${Number(match.column) || 1}">`
             + `<span class="ide-search-match-line">${Number(match.line) || 1}</span>`
-            + `<span class="ide-search-match-preview">${hasReplace ? buildReplacePreviewMarkup(match, search) : buildPreviewMarkup(match.preview)}</span>`
+            + `<span class="ide-search-match-preview">${hasReplace ? buildReplacePreviewMarkup(match, budget) : buildPreviewMarkup(match.preview)}</span>`
             + '</span>'
             + (hasReplace ? actionButton({
               plain: true,
@@ -389,20 +414,29 @@
           dataset: { 'ide-replace-input': '1' },
         })
         : '';
+      const filterField = (kind, value, text) => textField({ className: `ide-search-${kind}-field`, value, placeholder: text, ariaLabel: text, maxLength: 1024, dataset: { [`ide-search-${kind}`]: '1' } });
+      const details = search.detailsOpen && typeof textField === 'function'
+        ? '<div class="ide-search-details">'
+          + filterField('include', search.includeText, jt('ide.search.filesToInclude', 'files to include'))
+          + filterField('exclude', search.excludeText, jt('ide.search.filesToExclude', 'files to exclude'))
+          + '</div>'
+        : '';
       return {
         search,
         placeholder,
         field,
         scopeChip,
         replaceField,
+        details,
         toolbar: buildReplaceToolbarMarkup(search),
-        tail: buildStatusMarkup(search) + buildResultsMarkup(search),
+        status: buildStatusMarkup(search),
+        results: resultsMarkupFor(search),
       };
     }
 
     function panelMarkupOf(parts) {
       return `<div class="ide-search">${parts.field}${parts.scopeChip}${parts.replaceField}`
-        + `${parts.toolbar}${parts.tail}</div>`;
+        + `${parts.toolbar}${parts.details}${parts.status}${parts.results}</div>`;
     }
 
     // Attribute/text morph for the small toolbar: the toggle chips and Replace
@@ -451,9 +485,31 @@
         probe.innerHTML = parts.toolbar;
         if (probe.content.firstElementChild) morphElement(toolbarEl, probe.content.firstElementChild);
       }
-      if (painted.tail !== parts.tail) {
-        while (toolbarEl.nextSibling) toolbarEl.nextSibling.remove();
-        toolbarEl.insertAdjacentHTML('afterend', parts.tail);
+      // The details region appears/disappears whole; its two inputs keep their nodes like the
+      // query/replace inputs (value written only on a programmatic change, never mid-composition).
+      let detailsEl = root.querySelector(':scope > .ide-search-details');
+      if (Boolean(detailsEl) !== Boolean(parts.details)) {
+        if (detailsEl) detailsEl.remove();
+        if (parts.details) toolbarEl.insertAdjacentHTML('afterend', parts.details);
+        detailsEl = parts.details ? toolbarEl.nextElementSibling : null;
+        if (composingEl && !composingEl.isConnected) composingEl = null;
+      } else if (detailsEl) {
+        [['[data-ide-search-include]', parts.search.includeText], ['[data-ide-search-exclude]', parts.search.excludeText]].forEach(([sel, value]) => {
+          const input = detailsEl.querySelector(`label > ${sel}`);
+          if (input && input !== composingEl && input.value !== value) input.value = value;
+        });
+      }
+      const anchorEl = detailsEl || toolbarEl;
+      const statusEl = anchorEl.nextElementSibling;
+      if (painted.results === parts.results && statusEl?.classList.contains('ide-search-status')) {
+        // Status-only change: the result rows keep their nodes.
+        if (painted.status !== parts.status) {
+          statusEl.insertAdjacentHTML('afterend', parts.status);
+          statusEl.remove();
+        }
+      } else if (painted.status !== parts.status || painted.results !== parts.results) {
+        while (anchorEl.nextSibling) anchorEl.nextSibling.remove();
+        anchorEl.insertAdjacentHTML('afterend', parts.status + parts.results);
       }
       return true;
     }
@@ -476,7 +532,7 @@
         // Full paint (first paint, or another panel painted this host). A focused
         // query/replace input (the panel moved hosts) takes focus + selection back.
         const activeEl = panel.ownerDocument?.activeElement || null;
-        const activeKey = ['[data-ide-replace-input]', '[data-ide-search-input]'].find((sel) => activeEl?.closest?.(sel)) || null;
+        const activeKey = ['[data-ide-replace-input]', '[data-ide-search-input]', '[data-ide-search-include]', '[data-ide-search-exclude]'].find((sel) => activeEl?.closest?.(sel)) || null;
         const selection = activeKey ? [activeEl.selectionStart, activeEl.selectionEnd] : null;
         const previousScrollTop = isMountedIn(panel) ? panel.scrollTop : ownScrollTop;
         panel.innerHTML = markup;
@@ -496,7 +552,7 @@
           }
         }
       }
-      Object.assign(painted, { scope: parts.scopeChip, toolbar: parts.toolbar, tail: parts.tail });
+      Object.assign(painted, { scope: parts.scopeChip, toolbar: parts.toolbar, status: parts.status, results: parts.results });
       panel.__jennyIdeRailMarkup = markup;
     }
 
@@ -533,7 +589,7 @@
         searchSeq += 1; // invalidate any in-flight literal search
         collapsedFiles.clear();
         // Regex scan is client-side, so scope is a path-prefix filter the controller applies.
-        await replaceController.runRegexFind({ query, caseSensitive: search.caseSensitive, scope: search.scope || '' });
+        await replaceController.runRegexFind({ query, caseSensitive: search.caseSensitive, scope: search.scope || '', ...searchOptionsOf(search) });
         return;
       }
       const api = getApi();
@@ -554,6 +610,7 @@
         // keeps callers/tests stable. Scope is added only for a Find-in-Folder.
         const payload = search.caseSensitive ? { query, caseSensitive: true } : { query };
         if (search.scope) payload.scope = search.scope;
+        Object.assign(payload, searchOptionsOf(search));
         const result = await api.searchInFiles(payload);
         if (seq !== searchSeq) {
           return; // a newer query superseded this one
@@ -608,9 +665,32 @@
       return replaceController?.replaceInFile?.(path, currentReplaceOpts());
     }
 
+    // The row's preview pins the occurrence: an edited buffer may hold another
+    // match at the same disk-derived line/column.
     function requestReplaceMatch(path, line, column) {
       if (replaceBlocked()) return undefined;
-      return replaceController?.replaceMatch?.(path, line, column, currentReplaceOpts());
+      const match = getSearchState().results.find((result) => result.path === path
+        && (Number(result.line) || 1) === line && (Number(result.column) || 1) === column);
+      return replaceController?.replaceMatch?.(path, line, column, { ...currentReplaceOpts(), expectedPreview: match?.preview || null });
+    }
+
+    function cancelPreviewFrame() {
+      if (previewFrame === null) return;
+      if (typeof previewFrameWindow?.cancelAnimationFrame === 'function') previewFrameWindow.cancelAnimationFrame(previewFrame);
+      else clearTimeout(previewFrame);
+      previewFrame = null;
+    }
+
+    function schedulePreviewRender() {
+      if (previewFrame !== null) return;
+      const windowRef = getMountEl()?.ownerDocument?.defaultView || null;
+      const run = () => {
+        previewFrame = null;
+        renderSearchPanel();
+      };
+      previewFrameWindow = windowRef;
+      previewFrame = typeof windowRef?.requestAnimationFrame === 'function'
+        ? windowRef.requestAnimationFrame(run) : setTimeout(run, 0);
     }
 
     function requestUndo() {
@@ -626,15 +706,20 @@
       const replaceInput = event.target?.closest?.('[data-ide-replace-input]');
       if (replaceInput) {
         getSearchState().replaceText = String(replaceInput.value || '');
-        renderSearchPanel(); // refresh before/after previews; no new search
+        schedulePreviewRender(); // before/after previews, one repaint per frame; no new search
         return;
       }
-      const input = event.target?.closest?.('[data-ide-search-input]');
+      const filterInput = event.target?.closest?.('[data-ide-search-include], [data-ide-search-exclude]');
+      const input = filterInput || event.target?.closest?.('[data-ide-search-input]');
       if (!input) {
         return;
       }
       const search = getSearchState();
-      search.query = String(input.value || '');
+      if (filterInput) search[filterInput.hasAttribute('data-ide-search-include') ? 'includeText' : 'excludeText'] = String(input.value || '');
+      else {
+        search.query = String(input.value || '');
+        historyCursor = -1; // typing leaves history browsing
+      }
       search.replaceSummary = ''; // a stale replace summary clears on a new query
       search.replaceError = '';
       search.busy = true;
@@ -642,7 +727,7 @@
     }
 
     function isPanelInput(target) {
-      return Boolean(target?.closest?.('[data-ide-replace-input], [data-ide-search-input]'));
+      return Boolean(target?.closest?.('[data-ide-replace-input], [data-ide-search-input], [data-ide-search-include], [data-ide-search-exclude]'));
     }
 
     function handleCompositionStart(event) {
@@ -669,11 +754,22 @@
         }
         return;
       }
+      if (event.target?.closest?.('[data-ide-search-include], [data-ide-search-exclude]')) {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          runSearch();
+        }
+        return;
+      }
       const input = event.target?.closest?.('[data-ide-search-input]');
       if (input) {
         if (event.key === 'Enter') {
           event.preventDefault();
+          commitHistory();
           runSearch();
+        } else if ((event.key === 'ArrowUp' || event.key === 'ArrowDown')
+          && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+          if (stepHistory(event.key === 'ArrowUp' ? 'up' : 'down')) event.preventDefault();
         } else if (event.key === 'Escape') {
           event.preventDefault();
           const search = getSearchState();
@@ -718,13 +814,12 @@
       if (toolbarBtn) {
         const kind = toolbarBtn.dataset.ideReplaceAction;
         const search = getSearchState();
-        if (kind === 'toggle-case') {
-          search.caseSensitive = !search.caseSensitive;
-          search.replaceSummary = '';
-          search.replaceError = '';
-          runSearch();
-        } else if (kind === 'toggle-regex') {
-          search.useRegex = !search.useRegex;
+        if (kind === 'toggle-details') {
+          search.detailsOpen = !search.detailsOpen;
+          renderSearchPanel();
+        } else if (kind === 'toggle-case' || kind === 'toggle-regex' || kind === 'toggle-word') {
+          const option = { 'toggle-case': 'caseSensitive', 'toggle-regex': 'useRegex', 'toggle-word': 'wholeWord' }[kind];
+          search[option] = !search[option];
           search.replaceSummary = '';
           search.replaceError = '';
           runSearch();
@@ -762,6 +857,7 @@
       }
       const matchRow = event.target?.closest?.('[data-ide-search-path]');
       if (matchRow) {
+        commitHistory();
         onOpenResult(
           matchRow.dataset.ideSearchPath,
           Number(matchRow.dataset.ideSearchLine) || 1,
@@ -797,6 +893,7 @@
         debounceTimer = null;
       }
       collapsedFiles.clear();
+      historyCursor = -1;
       const search = getSearchState();
       search.query = '';
       search.ranQuery = '';
@@ -815,6 +912,7 @@
       // Cancel any in-flight replace/undo loop so it stops writing further
       // files once this panel (and the controller that owns it) is torn down.
       replaceController?.dispose?.();
+      cancelPreviewFrame();
       if (debounceTimer) {
         clearTimeout(debounceTimer);
         debounceTimer = null;
@@ -862,9 +960,5 @@
     };
   }
 
-  return {
-    MIN_QUERY_LENGTH,
-    SEARCH_DEBOUNCE_MS,
-    createIdeSearchPanel,
-  };
+  return { createIdeSearchPanel };
 });

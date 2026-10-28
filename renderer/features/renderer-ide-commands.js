@@ -1,16 +1,20 @@
 /* renderer/features/renderer-ide-commands.js
  *
- * Workspace IDE command source for the global command palette plus the IDE "?"
- * shortcuts overlay. Two jobs, one module so they share the shortcut catalog:
+ * Workspace IDE command source for the global command palette, the "?"
+ * shortcuts overlay and the view keydown dispatcher (row 82: one command
+ * registry, renderer-ide-command-registry, behind all three):
  *
- *   1. getCommandItems() - palette rows (group 'Workspace') that surface the
- *      Monaco built-ins users otherwise can't discover (Format Document, Go to
- *      Symbol, Find All References, Toggle Minimap) plus Reopen Closed Tab.
- *      Returns [] off the IDE view so chat/home palettes stay uncluttered.
+ *   1. createIdeCommands() owns the registry and registers the palette-only
+ *      rows (Monaco built-ins users otherwise can't discover, the File Map,
+ *      Preview and layout rows). getCommandItems() is registry.list({ ctx }),
+ *      empty off the IDE view so chat/home palettes stay uncluttered.
  *   2. openHelpOverlay() - the "?" overlay, built on the inventory help-overlay
- *      primitive (focus trap / Esc / scrim) with the body HTML from
- *      renderer-ide-shortcuts (shared with the Welcome cheat-sheet so the two
- *      never drift). This file carries no raw HTML primitives.
+ *      primitive with the body HTML from renderer-ide-shortcuts (generated from
+ *      the registry's bindings). This file carries no raw HTML primitives.
+ *   3. createViewKeydownHandler() registers the keymap (renderer-ide-keymap),
+ *      the palette rows (renderer-ide-palette-commands) and the status-bar rows
+ *      (the chip picker) into the same registry, then resolves every keydown
+ *      on #ideView through registry.resolveChord.
  *
  * Monaco actions run through editorHost.runAction(id) (a no-op on the fallback
  * textarea path); the palette items stay listed regardless so discoverability
@@ -24,30 +28,25 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
+  function resolveModule(globalName, requirePath) {
+    if (globalRef[globalName]) return globalRef[globalName];
+    if (typeof require === 'function') {
+      try { return require(requirePath); } catch (_error) { /* unavailable */ }
+    }
+    return {};
+  }
+  const registryUtils = resolveModule('rendererIdeCommandRegistry', './renderer-ide-command-registry');
+  const keymapUtils = resolveModule('rendererIdeKeymap', './renderer-ide-keymap');
+  // Pending first step of a two-step chord (Ctrl+K ...) and the Esc Esc window.
+  const CHORD_PENDING_MS = 1500;
+  const DOUBLE_ESCAPE_MS = 500;
+
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   // Monaco built-in action ids surfaced as palette rows. Stable across 0.52.
   const ACTION_FORMAT = 'editor.action.formatDocument';
   const ACTION_SYMBOL = 'editor.action.quickOutline';
   const ACTION_REFERENCES = 'editor.action.referenceSearch.trigger';
-
-  // Open the project Search view (Find in Files), then focus its input. The
-  // controller-wired showPanel reveals Search wherever it lives (the workbench,
-  // row 40 W3) and renders synchronously; Search is a single instance, so its
-  // input is the only one in the document. Without showPanel this degrades to
-  // focusing an already-mounted input. Shared by the keydown handler
-  // (windowRef.document) and the palette item (doc).
-  function openSearchPanel(doc, showPanel) {
-    if (!doc || typeof doc.querySelector !== 'function') {
-      return;
-    }
-    if (typeof showPanel === 'function') {
-      showPanel('search');
-    }
-    const input = doc.querySelector('[data-ide-search-input]');
-    if (input && typeof input.focus === 'function') {
-      input.focus();
-    }
-  }
 
   function createIdeCommands(deps) {
     const options = deps || {};
@@ -59,47 +58,15 @@
     const toggleMinimap = typeof options.toggleMinimap === 'function'
       ? options.toggleMinimap
       : () => {};
-    const reopenClosedTab = typeof options.reopenClosedTab === 'function'
-      ? options.reopenClosedTab
-      : () => {};
-    const workspaceSymbolPicker = typeof options.workspaceSymbolPicker === 'function'
-      ? options.workspaceSymbolPicker
-      : () => {};
-    // Optional panel router (controller): reveals a view wherever it lives.
-    const showPanel = typeof options.showPanel === 'function' ? options.showPanel : null;
-    // Workbench layout actions (row 40 W3): each row shows only when wired.
+    // Workbench layout actions (row 40 W3) that have no chord; each row shows only when wired.
     const layoutActions = options.layoutActions || {};
-    function layoutPaletteItems() {
-      return [
-        ['togglePrimarySide', 'ide:toggle-primary-side', () => jt('ide.commands.togglePrimarySide', 'Toggle Files Side'), () => jt('ide.commands.togglePrimarySideDescription', 'Show or hide the side that holds Files'), 'Ctrl+B'],
-        ['togglePanel', 'ide:toggle-panel', () => jt('ide.commands.togglePanel', 'Toggle Panel'), () => jt('ide.commands.togglePanelDescription', 'Show or hide the panel that holds Terminal'), 'Ctrl+`'],
-        // Offered only while the terminal header's + is (a getter: under four terminals).
-        ['newTerminal', 'ide:new-terminal', () => jt('ide.terminal.new', 'New Terminal'), () => jt('ide.commands.newTerminalDescription', 'Open and start another terminal beside the current one'), 'Ctrl+Shift+`'],
-        ['toggleChat', 'ide:toggle-chat', () => jt('ide.commands.toggleChat', 'Toggle Chat'), () => jt('ide.commands.toggleChatDescription', 'Show or hide the Workspace chat'),'Ctrl+\\'],
-        ['moveView', 'ide:move-view', () => jt('ide.commands.moveView', 'Move View to…'), () => jt('ide.commands.moveViewDescription', 'Move the panel you were last in to another place'), null],
-        ['resetLayout', 'ide:reset-layout', () => jt('ide.commands.resetLayout', 'Reset Layout'), () => jt('ide.commands.resetLayoutDescription', 'Put every Workspace panel back where it started'), null],
-        ['splitRight', 'ide:split-editor-right', () => jt('ide.commands.splitRight', 'Split Editor Right'), () => jt('ide.commands.splitRightDescription', 'Move the current file into a new editor group on the right'), null],
-        ['splitDown', 'ide:split-editor-down', () => jt('ide.commands.splitDown', 'Split Editor Down'), () => jt('ide.commands.splitDownDescription', 'Move the current file into a new editor group below'), null],
-        ['focusNextGroup', 'ide:focus-next-editor-group', () => jt('ide.commands.focusNextGroup', 'Focus Next Editor Group'), () => jt('ide.commands.focusNextGroupDescription', 'Move focus to the next editor group'), null],
-      ].filter(([action]) => typeof layoutActions[action] === 'function').map(([action, id, label, description, hint]) => ({
-        id,
-        group: 'Workspace',
-        label: label(),
-        description: description(),
-        hint,
-        run: () => layoutActions[action](),
-      }));
-    }
+    const getIde = typeof options.getIde === 'function' ? options.getIde : () => ({});
+    const isRepo = typeof options.isRepo === 'function' ? options.isRepo : () => false;
     const openFileMap = typeof options.openFileMap === 'function' ? options.openFileMap : () => {};
     const revealInMap = typeof options.revealInMap === 'function' ? options.revealInMap : () => {};
     const showBlastRadius = typeof options.showBlastRadius === 'function' ? options.showBlastRadius : () => {};
     const openPreviewSurface = typeof options.openPreviewSurface === 'function' ? options.openPreviewSurface : () => {};
-    const previewActiveFile = typeof options.previewActiveFile === 'function' ? options.previewActiveFile : () => {};
     const toggleExplodedView = typeof options.toggleExplodedView === 'function' ? options.toggleExplodedView : () => {};
-    const toggleBookmark = typeof options.toggleBookmark === 'function' ? options.toggleBookmark : () => {};
-    const nextBookmark = typeof options.nextBookmark === 'function' ? options.nextBookmark : () => {};
-    const prevBookmark = typeof options.prevBookmark === 'function' ? options.prevBookmark : () => {};
-    const listBookmarks = typeof options.listBookmarks === 'function' ? options.listBookmarks : () => {};
     const helpOverlayFactory = typeof options.helpOverlayFactory === 'function'
       ? options.helpOverlayFactory
       : null;
@@ -110,15 +77,8 @@
     const appendClientLog = typeof options.appendClientLog === 'function' ? options.appendClientLog : () => {};
     // Palette commands call into other controllers; a throw must not escape the
     // palette, but it stays visible in the client log.
-    function logIgnoredError(site, error) {
-      appendClientLog('DEBUG', 'ide.command_ignored_error', { site, error: String(error?.message || error || '') });
-    }
-
-    function guarded(site, fn) {
-      return () => {
-        try { fn(); } catch (error) { logIgnoredError(site, error); }
-      };
-    }
+    const logIgnoredError = (site, error) => registryUtils.logIgnoredCommandError(appendClientLog, site, error);
+    const guarded = (site, fn) => registryUtils.guardCommand(appendClientLog, site, () => fn());
 
     function runAction(id) {
       try {
@@ -128,151 +88,63 @@
       }
     }
 
+    const registry = options.registry || registryUtils.createIdeCommandRegistry();
+
+    // The `when` context (plan 5.1) for a key event's target or, from the palette,
+    // the element that had focus.
+    function getContext(target) {
+      return keymapUtils.buildCommandContext({
+        activeView: getActiveView(),
+        ide: getIde(),
+        isRepo: (() => { try { return isRepo() === true; } catch (_error) { return false; } })(),
+        target: target === undefined ? doc?.activeElement || null : target,
+      });
+    }
+
+    // One palette-only Workspace row (the chorded rows live in renderer-ide-keymap).
+    function row(id, label, description, hint, run, when) {
+      registry.register({ id, group: 'Workspace', label, description, hint, run, when });
+    }
+    const ide = registryUtils.inIde;
+    const layoutRow = (action) => (ctx) => ide(ctx) && typeof layoutActions[action] === 'function';
+
+    row('ide:format-document', jt('ide.commands.formatDocument', 'Format Document'),
+      jt('ide.commands.formatDocumentDescription', 'Reformat the active file with the language formatter'), 'Shift+Alt+F', () => runAction(ACTION_FORMAT));
+    row('ide:go-to-symbol', jt('ide.commands.goToSymbolInEditor', 'Go to Symbol in Editor...'),
+      jt('ide.commands.goToSymbolInFileDescription', 'Jump to a function, class, or symbol in the active file'), 'Ctrl+Shift+O', () => runAction(ACTION_SYMBOL));
+    row('ide:find-references', jt('ide.commands.findAllReferences', 'Find All References'),
+      jt('ide.commands.findAllReferencesDescription', 'Show every reference to the symbol under the cursor'), 'Shift+F12', () => runAction(ACTION_REFERENCES));
+    row('ide:move-view', jt('ide.commands.moveView', 'Move View to…'),
+      jt('ide.commands.moveViewDescription', 'Move the panel you were last in to another place'), null, guarded('moveView', () => layoutActions.moveView()), layoutRow('moveView'));
+    row('ide:reset-layout', jt('ide.commands.resetLayoutView', 'View: Reset Layout'),
+      jt('ide.commands.resetLayoutDescription', 'Put every Workspace panel back where it started'), null, guarded('resetLayout', () => layoutActions.resetLayout()), layoutRow('resetLayout'));
+    row('ide:focus-next-editor-group', jt('ide.commands.focusNextGroup', 'Focus Next Editor Group'),
+      jt('ide.commands.focusNextGroupDescription', 'Move focus to the next editor group'), null, guarded('focusNextGroup', () => layoutActions.focusNextGroup()), layoutRow('focusNextGroup'));
+    row('ide:open-file-map', jt('ide.commands.openFileMap', 'Open File Map'),
+      jt('ide.commands.openFileMapDescription', 'Open the workspace file map (dependency graph)'), null, guarded('openFileMap', openFileMap));
+    row('ide:reveal-in-map', jt('ide.commands.revealActiveFileInMap', 'Reveal Active File in Map'),
+      jt('ide.commands.revealActiveFileInMapDescription', 'Frame and focus the active file on the workspace file map'), null, guarded('revealInMap', revealInMap));
+    row('ide:show-blast-radius', jt('ide.commands.showBlastRadius', 'Show Blast Radius of Active File'),
+      jt('ide.commands.showBlastRadiusDescription', 'Light every file that depends on the active file (transitive importers)'), null, guarded('showBlastRadius', showBlastRadius));
+    row('ide:open-preview', jt('ide.commands.openPreview', 'Open Preview'),
+      jt('ide.commands.openPreviewDescription', 'Open the workspace Preview stage surface'), null, guarded('openPreviewSurface', openPreviewSurface));
+    row('ide:toggle-exploded-view', jt('ide.commands.toggleExplodedView', 'Toggle Exploded View'),
+      jt('ide.commands.toggleExplodedViewDescription', 'Switch the active TS/JS file between code and an exploded node graph'), null, guarded('toggleExplodedView', toggleExplodedView));
+    row('ide:toggle-minimap', jt('ide.commands.toggleMinimapView', 'View: Toggle Minimap'),
+      jt('ide.commands.toggleMinimapDescription', 'Show or hide the editor minimap'), null, guarded('toggleMinimap', toggleMinimap));
+
     // Palette rows for the active Workspace view. Empty elsewhere so the
     // command palette stays scoped to the surface the user is looking at.
     function getCommandItems() {
       if (getActiveView() !== 'ide') {
         return [];
       }
-      return [
-        {
-          id: 'ide:format-document',
-          group: 'Workspace',
-          label: jt('ide.commands.formatDocument', 'Format Document'),
-          description: jt('ide.commands.formatDocumentDescription', 'Reformat the active file with the language formatter'),
-          hint: 'Shift+Alt+F',
-          run: () => runAction(ACTION_FORMAT),
-        },
-        {
-          id: 'ide:go-to-symbol',
-          group: 'Workspace',
-          label: jt('ide.commands.goToSymbolInFile', 'Go to Symbol in File'),
-          description: jt('ide.commands.goToSymbolInFileDescription', 'Jump to a function, class, or symbol in the active file'),
-          hint: 'Ctrl+Shift+O',
-          run: () => runAction(ACTION_SYMBOL),
-        },
-        {
-          id: 'ide:go-to-symbol-workspace',
-          group: 'Workspace',
-          label: jt('ide.commands.goToSymbolInWorkspace', 'Go to Symbol in Workspace'),
-          description: jt('ide.commands.goToSymbolInWorkspaceDescription', 'Search for a function, class, or symbol across open TS/JS files'),
-          hint: 'Ctrl+T',
-          run: guarded('workspaceSymbolPicker', workspaceSymbolPicker),
-        },
-        {
-          id: 'ide:find-references',
-          group: 'Workspace',
-          label: jt('ide.commands.findAllReferences', 'Find All References'),
-          description: jt('ide.commands.findAllReferencesDescription', 'Show every reference to the symbol under the cursor'),
-          hint: 'Shift+F12',
-          run: () => runAction(ACTION_REFERENCES),
-        },
-        {
-          id: 'ide:find-in-files',
-          group: 'Workspace',
-          label: jt('ide.commands.findInFiles', 'Find in Files'),
-          description: jt('ide.commands.findInFilesDescription', 'Search across every file in the workspace'),
-          hint: 'Ctrl+Shift+F',
-          run: () => openSearchPanel(doc, showPanel),
-        },
-        ...layoutPaletteItems(),
-        {
-          id: 'ide:open-file-map',
-          group: 'Workspace',
-          label: jt('ide.commands.openFileMap', 'Open File Map'),
-          description: jt('ide.commands.openFileMapDescription', 'Open the workspace file map (dependency graph)'),
-          hint: null,
-          run: guarded('openFileMap', openFileMap),
-        },
-        {
-          id: 'ide:reveal-in-map',
-          group: 'Workspace',
-          label: jt('ide.commands.revealActiveFileInMap', 'Reveal Active File in Map'),
-          description: jt('ide.commands.revealActiveFileInMapDescription', 'Frame and focus the active file on the workspace file map'),
-          hint: null,
-          run: guarded('revealInMap', revealInMap),
-        },
-        {
-          id: 'ide:show-blast-radius',
-          group: 'Workspace',
-          label: jt('ide.commands.showBlastRadius', 'Show Blast Radius of Active File'),
-          description: jt('ide.commands.showBlastRadiusDescription', 'Light every file that depends on the active file (transitive importers)'),
-          hint: null,
-          run: guarded('showBlastRadius', showBlastRadius),
-        },
-        {
-          id: 'ide:open-preview',
-          group: 'Workspace',
-          label: jt('ide.commands.openPreview', 'Open Preview'),
-          description: jt('ide.commands.openPreviewDescription', 'Open the workspace Preview stage surface'),
-          hint: null,
-          run: guarded('openPreviewSurface', openPreviewSurface),
-        },
-        {
-          id: 'ide:preview-active-file',
-          group: 'Workspace',
-          label: jt('ide.commands.previewActiveFile', 'Preview Active File'),
-          description: jt('ide.commands.previewActiveFileDescription', 'Preview the active file in the Preview stage surface'),
-          hint: null,
-          run: guarded('previewActiveFile', previewActiveFile),
-        },
-        {
-          id: 'ide:toggle-exploded-view',
-          group: 'Workspace',
-          label: jt('ide.commands.toggleExplodedView', 'Toggle Exploded View'),
-          description: jt('ide.commands.toggleExplodedViewDescription', 'Switch the active TS/JS file between code and an exploded node graph'),
-          hint: null,
-          run: guarded('toggleExplodedView', toggleExplodedView),
-        },
-        {
-          id: 'ide:toggle-minimap',
-          group: 'Workspace',
-          label: jt('ide.commands.toggleMinimap', 'Toggle Minimap'),
-          description: jt('ide.commands.toggleMinimapDescription', 'Show or hide the editor minimap'),
-          hint: null,
-          run: guarded('toggleMinimap', toggleMinimap),
-        },
-        {
-          id: 'ide:reopen-closed-tab',
-          group: 'Workspace',
-          label: jt('ide.commands.reopenClosedTab', 'Reopen Closed Tab'),
-          description: jt('ide.commands.reopenClosedTabDescription', 'Reopen the most recently closed editor tab'),
-          hint: 'Ctrl+Shift+T',
-          run: guarded('reopenClosedTab', reopenClosedTab),
-        },
-        {
-          id: 'ide:toggle-bookmark',
-          group: 'Workspace',
-          label: jt('ide.commands.toggleBookmark', 'Toggle Bookmark'),
-          description: jt('ide.commands.toggleBookmarkDescription', 'Add or remove a line bookmark on the active line'),
-          hint: 'Ctrl+Alt+K',
-          run: guarded('toggleBookmark', toggleBookmark),
-        },
-        {
-          id: 'ide:next-bookmark',
-          group: 'Workspace',
-          label: jt('ide.commands.nextBookmark', 'Next Bookmark'),
-          description: jt('ide.commands.nextBookmarkDescription', 'Jump to the next bookmark in the active file'),
-          hint: 'Ctrl+Alt+L',
-          run: guarded('nextBookmark', nextBookmark),
-        },
-        {
-          id: 'ide:prev-bookmark',
-          group: 'Workspace',
-          label: jt('ide.commands.previousBookmark', 'Previous Bookmark'),
-          description: jt('ide.commands.previousBookmarkDescription', 'Jump to the previous bookmark in the active file'),
-          hint: 'Ctrl+Alt+J',
-          run: guarded('prevBookmark', prevBookmark),
-        },
-        {
-          id: 'ide:list-bookmarks',
-          group: 'Workspace',
-          label: jt('ide.commands.listAllBookmarks', 'List All Bookmarks'),
-          description: jt('ide.commands.listAllBookmarksDescription', 'Pick from every bookmark and jump to it'),
-          hint: 'Ctrl+Alt+P',
-          run: guarded('listBookmarks', listBookmarks),
-        },
-      ];
+      return registry.list({ ctx: getContext() });
+    }
+
+    // Monaco owns its Ctrl+K prefix: bind the two-step chords as editor actions (onMonacoReady).
+    function registerMonacoKeymap(monacoApi) {
+      return keymapUtils.bindMonacoKeymap(registry, { editorHost, monacoApi, getContext: () => getContext() });
     }
 
     let overlay = null;
@@ -297,7 +169,7 @@
       inst.open({
         title: jt('ide.commands.workspaceShortcuts', 'Workspace shortcuts'),
         titleId: 'ideHelpOverlayTitle',
-        bodyHtml: buildShortcutsHtml(),
+        bodyHtml: buildShortcutsHtml(registry),
         closeLabel: jt('ide.commands.closeShortcuts', 'Close shortcuts'),
       });
     }
@@ -310,199 +182,163 @@
     }
 
     return {
+      registry,
+      getContext,
       getCommandItems,
+      registerMonacoKeymap,
       openHelpOverlay,
       isHelpOpen,
       disposeHelp,
     };
   }
 
-  // View-scoped IDE keydown handler (capture phase on #ideView), extracted from
-  // the controller for the file-size ceiling. The controller still owns the
-  // addEventListener/removeEventListener wiring and only sources the handler
-  // reference from here. Ctrl+W is Electron-reserved (its default-menu
-  // close-window accelerator fires before the renderer), so tab close rides
-  // Ctrl+F4 (the Windows document-close standard) and reopen-closed rides
-  // Ctrl+Shift+T.
+  // View-scoped IDE keydown dispatcher (capture phase on #ideView), extracted from
+  // the controller for the file-size ceiling; the controller keeps the
+  // addEventListener/removeEventListener wiring. Every chord resolves through the
+  // command registry: the keymap, palette and status-bar rows register into it here
+  // (deps is one bag; each registrar reads the names it needs). Ctrl+Tab (it commits
+  // on Ctrl keyup), "?" and Esc stay outside the registry.
   function createViewKeydownHandler(deps) {
     const options = deps || {};
     const state = options.state || {};
-    const saveActiveFile = typeof options.saveActiveFile === 'function'
-      ? options.saveActiveFile
-      : () => {};
-    const tabsController = options.tabsController || null;
-    const quickOpen = options.quickOpen || null;
-    const bottomPanel = options.bottomPanel || null;
-    const chatDock = options.chatDock || null;
-    const isChatDockEnabled = typeof options.isChatDockEnabled === 'function' ? options.isChatDockEnabled : () => Boolean(chatDock);
-    const reopenClosedTab = typeof options.reopenClosedTab === 'function'
-      ? options.reopenClosedTab
-      : () => {};
-    const workspaceSymbolPicker = typeof options.workspaceSymbolPicker === 'function'
-      ? options.workspaceSymbolPicker
-      : () => {};
-    const showPanel = typeof options.showPanel === 'function' ? options.showPanel : null;
-    const navBack = typeof options.navBack === 'function' ? options.navBack : () => {};
-    const navForward = typeof options.navForward === 'function' ? options.navForward : () => {};
-    const toggleBookmark = typeof options.toggleBookmark === 'function' ? options.toggleBookmark : () => {};
-    const nextBookmark = typeof options.nextBookmark === 'function' ? options.nextBookmark : () => {};
-    const prevBookmark = typeof options.prevBookmark === 'function' ? options.prevBookmark : () => {};
-    const listBookmarks = typeof options.listBookmarks === 'function' ? options.listBookmarks : () => {};
-    const newTerminal = typeof options.newTerminal === 'function' ? options.newTerminal : () => {};
     const ideCommands = options.ideCommands || null;
     const keyboardUtils = options.keyboardUtils || {};
     const windowRef = options.windowRef || (typeof window !== 'undefined' ? window : {});
     const mruSwitcher = options.mruSwitcher || null;
     const getStageSurface = typeof options.getStageSurface === 'function' ? options.getStageSurface : () => 'editor';
     const exitStageSurface = typeof options.exitStageSurface === 'function' ? options.exitStageSurface : () => {};
-    // Secondary editor groups (row 40 W5): save, close and tab cycling act on the group the key came from.
-    const editorGroups = options.editorGroups || null;
+    const getWorkbench = () => options.workbenchWiring || globalRef.rendererIdeWorkbenchWiring?.getActive?.() || null;
+    const registry = options.registry || ideCommands?.registry || registryUtils.createIdeCommandRegistry();
+    const bag = Object.assign({ document: windowRef.document || null }, options, {
+      openKeyboardShortcuts: options.openKeyboardShortcuts || (ideCommands ? () => ideCommands.openHelpOverlay() : undefined),
+    });
+    keymapUtils.registerIdeKeymapCommands?.(registry, bag);
+    resolveModule('rendererIdePaletteCommands', './renderer-ide-palette-commands').registerIdePaletteCommands?.(registry, bag);
+    options.chipPicker?.registerCommands?.(registry);
+
+    function getContext(target) {
+      if (ideCommands?.getContext) return ideCommands.getContext(target);
+      return keymapUtils.buildCommandContext({
+        activeView: state.ui?.activeView,
+        ide: typeof options.getIde === 'function' ? options.getIde() : {},
+        isRepo: typeof options.isRepo === 'function' && options.isRepo() === true,
+        target,
+      });
+    }
+
+    let pending = null;
+    let pendingAt = 0;
+    let lastEscapeAt = 0;
+
+    // Esc exits the Preview stage surface; Esc Esc leaves Zen Mode. Scoped: this
+    // listener is capture-phase on #ideView, so an unscoped Esc would swallow the
+    // File Map's own Esc handlers (map-a11y focus-return; map-controller clear ladder).
+    function handleEscape(event) {
+      const workbench = getWorkbench();
+      if (workbench?.isZen?.() === true) {
+        const now = Date.now();
+        if (now - lastEscapeAt <= DOUBLE_ESCAPE_MS) {
+          lastEscapeAt = 0;
+          event.preventDefault();
+          workbench.toggleZen();
+          return;
+        }
+        lastEscapeAt = now;
+      }
+      if (getStageSurface() === 'preview' && !keyboardUtils.isTextInputFocused?.(windowRef.document)) {
+        event.preventDefault();
+        exitStageSurface();
+      }
+    }
+
+    // A chord: single steps run at once (and never reach Monaco or the shell when
+    // they fire there); Ctrl+K starts a two-step chord, which Monaco resolves itself
+    // through the keymap's editor actions when one of its editors has focus.
+    function dispatchChord(event) {
+      const step = registryUtils.stepFromEvent(event);
+      if (!step) return;
+      const now = Date.now();
+      const prefix = pending && now - pendingAt <= CHORD_PENDING_MS ? pending : null;
+      pending = null;
+      const target = event.target || null;
+      const ctx = getContext(target);
+      const result = registry.resolveChord(event, prefix, ctx);
+      if (!result) return;
+      const inKeymapEditor = keymapUtils.isKeymapEditor(target);
+      if (result.pending) {
+        if (ctx.focused === 'terminal') return; // Ctrl+K is the shell's kill-line
+        pending = result.pending;
+        pendingAt = now;
+        if (!inKeymapEditor) {
+          event.preventDefault();
+          if (ctx.focused === 'editor') event.stopPropagation(); // a diff editor never enters its own chord
+        }
+        return;
+      }
+      if (prefix && inKeymapEditor) return;
+      if (!prefix && ctx.focused === 'terminal' && keymapUtils.TERMINAL_PASSTHROUGH.has(step)) return;
+      event.preventDefault();
+      if (ctx.focused === 'editor' || ctx.focused === 'terminal') event.stopPropagation();
+      registry.run(result.id, ctx);
+    }
 
     return function handleViewKeydown(event) {
-      if (state.ui.activeView !== 'ide') {
+      if (state.ui?.activeView !== 'ide' || event.defaultPrevented || event.isComposing) {
         return;
       }
       const ctrl = event.ctrlKey || event.metaKey;
       const key = String(event.key).toLowerCase();
-      const group = editorGroups?.groupOfTarget?.(event.target) || '';
-      if (ctrl && key === 's' && !event.shiftKey && !event.altKey) {
-        event.preventDefault();
-        // Pane-owned saves run in the bubble phase after in-pane editors commit.
-        if (event.target?.closest?.('[data-ide-save-shortcut="pane"]')) return;
-        if (group) editorGroups.saveActive(group);
-        else saveActiveFile();
-        return;
-      }
-      if (ctrl && key === 'f4' && !event.shiftKey && !event.altKey) {
-        event.preventDefault();
-        if (group) editorGroups.closeActive(group);
-        else tabsController?.closeActiveTab();
-        return;
-      }
-      if (ctrl && (key === 'pageup' || key === 'pagedown') && !event.shiftKey && !event.altKey) {
-        event.preventDefault();
-        if (group) editorGroups.cycle(group, key === 'pageup' ? -1 : 1);
-        else tabsController?.cycleTab(key === 'pageup' ? -1 : 1);
-        return;
-      }
-      if (ctrl && key === 'p' && !event.shiftKey && !event.altKey) {
-        event.preventDefault();
-        quickOpen?.toggle();
-        return;
-      }
-      // Ctrl+E opens the recently-edited jump list (open files in activation
-      // order, most-recent first) - the Quick Open sibling on the same chrome.
-      if (ctrl && key === 'e' && !event.shiftKey && !event.altKey) {
-        event.preventDefault();
-        quickOpen?.toggleRecent();
-        return;
-      }
-      // Alt+Left / Alt+Right navigate the cross-file cursor history. Guard on
-      // altKey AND not-ctrl so they never collide with the Ctrl bindings above.
-      if (event.altKey && !ctrl && !event.shiftKey && key === 'arrowleft') {
-        event.preventDefault();
-        navBack();
-        return;
-      }
-      if (event.altKey && !ctrl && !event.shiftKey && key === 'arrowright') {
-        event.preventDefault();
-        navForward();
-        return;
-      }
-      // Four Ctrl+Alt chords manage line bookmarks: K toggles, L selects the next,
-      // J selects the previous, and P lists them. Guarded on ctrl AND altKey so they never collide with the
-      // plain-Ctrl (P/E/T) or plain-Alt (arrows) bindings above.
-      if (ctrl && event.altKey && !event.shiftKey) {
-        if (key === 'k') { event.preventDefault(); toggleBookmark(); return; }
-        if (key === 'l') { event.preventDefault(); nextBookmark(); return; }
-        if (key === 'j') { event.preventDefault(); prevBookmark(); return; }
-        if (key === 'p') { event.preventDefault(); listBookmarks(); return; }
-      }
-      // Ctrl+` toggles the bottom panel (Terminal / Problems / Run output).
-      if (ctrl && key === '`' && !event.shiftKey && !event.altKey) {
-        event.preventDefault();
-        bottomPanel?.toggle();
-        return;
-      }
-      // Ctrl+Shift+` opens a new terminal (VS Code's chord); Shift makes the key
-      // '~' on US layouts, so match the physical Backquote too.
-      if (ctrl && event.shiftKey && !event.altKey && (event.code === 'Backquote' || key === '~' || key === '`')) {
-        event.preventDefault();
-        newTerminal();
-        return;
-      }
-      // Ctrl+\ toggles the Workspace Chat Dock (ide_chat_dock; the live getter
-      // keeps the binding inert flag-off). Disjoint from
-      // Ctrl+` by design — the dock and the bottom panel are fully independent.
-      if (ctrl && key === '\\' && !event.shiftKey && !event.altKey && isChatDockEnabled()) {
-        event.preventDefault();
-        chatDock?.toggle();
-        return;
-      }
-      // Ctrl+Shift+G switches the dock between Chat and Changes (row 34 S5).
-      if (ctrl && event.shiftKey && key === 'g' && !event.altKey && isChatDockEnabled() && chatDock?.toggleChangesTab) {
-        event.preventDefault();
-        chatDock.toggleChangesTab();
-        return;
-      }
       // Ctrl+Tab (forward) / Ctrl+Shift+Tab (backward) opens the most-recently-used
       // tab switcher. Guard !altKey (Ctrl+Alt+Tab is a Windows system hotkey). The
-      // overlay owns its own Ctrl-keyup commit + Esc cancel once open; 'tab' is a
-      // distinct key from the 't' (Ctrl+T) and Shift+'t' (reopen) branches below.
+      // overlay owns its own Ctrl-keyup commit + Esc cancel once open.
       if (ctrl && key === 'tab' && !event.altKey) {
         event.preventDefault();
         mruSwitcher?.handleTabKey(!event.shiftKey);
         return;
       }
-      // Ctrl+Shift+F opens workspace search. The Search rail has no other
-      // keyboard entry. The
-      // 'f4' tab-close branch above keys on 'f4', so plain 'f' never collides.
-      if (ctrl && event.shiftKey && key === 'f' && !event.altKey) {
-        event.preventDefault();
-        openSearchPanel(windowRef.document, showPanel);
-        return;
-      }
-      // Ctrl+W is Electron-reserved, so reopen-closed-tab rides Ctrl+Shift+T.
-      if (ctrl && event.shiftKey && key === 't' && !event.altKey) {
-        event.preventDefault();
-        reopenClosedTab();
-        return;
-      }
-      // Ctrl+T (no Shift) opens the workspace symbol picker. Plain Ctrl+T is
-      // otherwise unbound; the Shift+T branch above keeps reopen-closed-tab.
-      if (ctrl && key === 't' && !event.shiftKey && !event.altKey) {
-        event.preventDefault();
-        workspaceSymbolPicker();
-        return;
-      }
       // "?" opens the IDE shortcuts overlay (the chat handler stands down while
       // the IDE is active). Skip when a text input owns focus so the literal
       // "?" still types - this capture-phase listener fires before Monaco's, and
-      // isTextInputFocused (the same guard the chat "?" handler uses) covers
-      // Monaco's hidden textarea while letting buttons/tree rows open it.
-      // Scoped to in-#ideView focus by design: this listener is bound on #ideView
-      // and the chat document-listener stands down on the IDE view, so "?" with
-      // focus parked outside #ideView is a no-op - the command palette's
-      // "Keyboard shortcuts" entry is the always-available fallback.
+      // isTextInputFocused covers Monaco's hidden textarea while letting
+      // buttons/tree rows open it. With focus parked outside #ideView "?" is a
+      // no-op; Ctrl+K Ctrl+S and the palette's "Keyboard shortcuts" entry remain.
       if (!ctrl && !event.altKey && key === '?') {
         if (!keyboardUtils.isTextInputFocused?.(windowRef.document)) {
           event.preventDefault();
           ideCommands?.openHelpOverlay();
         }
-      }
-      // Esc exits the Preview stage surface. Scoped to preview ONLY: this listener
-      // is capture-phase on #ideView, so an unscoped Esc would swallow the File
-      // Map's own Esc handlers (map-a11y focus-return; map-controller clear ladder).
-      // The map's exit rung lives in the map controller.
-      if (!ctrl && !event.altKey && !event.shiftKey && key === 'escape'
-        && getStageSurface() === 'preview'
-        && !keyboardUtils.isTextInputFocused?.(windowRef.document)) {
-        event.preventDefault();
-        exitStageSurface();
         return;
       }
+      if (!ctrl && !event.altKey && !event.shiftKey && key === 'escape') {
+        handleEscape(event);
+        return;
+      }
+      dispatchChord(event);
     };
   }
 
-  return { createIdeCommands, createViewKeydownHandler };
+  // Binds the view handler capture-phase on #ideView, plus a document listener for
+  // focus parked outside it: on the page body (Close All Editors leaves it there) or
+  // the top rail's tabs (a click on Workspace keeps it). VS Code's chords work from
+  // anywhere in the window; overlays and other surfaces keep their own keys, and an open
+  // modal owns every key (focus drops to the body on a click in its dead space).
+  const MODAL_SELECTOR = '[aria-modal="true"], dialog[open]';
+  function bindViewKeydown(viewEl, handler) {
+    const doc = viewEl?.ownerDocument;
+    if (!doc || typeof handler !== 'function') return () => {};
+    // Runs on every key in the window: the cheap identity checks go before the rail walk.
+    const parked = (event) => {
+      const target = event.target;
+      const parkedTarget = target === doc.body || target === doc.documentElement || target === doc || target?.closest?.('#topRail');
+      if (parkedTarget && !doc.querySelector(MODAL_SELECTOR)) handler(event);
+    };
+    viewEl.addEventListener('keydown', handler, true);
+    doc.addEventListener('keydown', parked);
+    return () => {
+      viewEl.removeEventListener('keydown', handler, true);
+      doc.removeEventListener('keydown', parked);
+    };
+  }
+
+  return { createIdeCommands, createViewKeydownHandler, bindViewKeydown };
 });

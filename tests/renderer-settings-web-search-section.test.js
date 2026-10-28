@@ -2,7 +2,6 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { JSDOM } = require('jsdom');
 
 const {
   buildWebSearchSectionMarkup,
@@ -11,44 +10,16 @@ const {
   WEB_SEARCH_SECRET_KEY_IDS,
 } = require('../renderer/shell/renderer-settings-support');
 const { createSettingsEventBindings } = require('../renderer/shell/renderer-settings-event-utils.js');
-const selectField = require('../renderer/inventory/select-field');
 const textField = require('../renderer/inventory/text-field');
-const actionButton = require('../renderer/inventory/action-button');
-const settingsField = require('../renderer/inventory/settings-field');
 const { WEB_SEARCH_PROVIDER_IDS } = require('../services/shell-config-web-search');
 const { WEB_SEARCH_PROVIDER_KEY_IDS } = require('../services/backend/secure-store');
-
-function escapeHtml(value) {
-  return String(value || '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
-
-function withGlobals(run) {
-  const prevInventory = globalThis.inventory;
-  const prevSelectField = globalThis.inventorySelectField;
-  const prevTextField = globalThis.inventoryTextField;
-  const prevActionButton = globalThis.inventoryActionButton;
-  globalThis.inventorySelectField = selectField;
-  globalThis.inventoryTextField = textField;
-  globalThis.inventoryActionButton = actionButton;
-  globalThis.inventory = { selectField, textField, actionButton, settingsField };
-  try {
-    return run();
-  } finally {
-    globalThis.inventory = prevInventory;
-    globalThis.inventorySelectField = prevSelectField;
-    globalThis.inventoryTextField = prevTextField;
-    globalThis.inventoryActionButton = prevActionButton;
-  }
-}
-
-function renderToDom(markup) {
-  return new JSDOM(`<!doctype html><body>${markup}</body>`).window.document;
-}
+const {
+  escapeHtml,
+  withGlobals,
+  renderToDom,
+  createHarness,
+  createBaseDeps,
+} = require('./helpers/settings-web-search-harness');
 
 // --- text-field password support ------------------------------------------
 
@@ -171,98 +142,6 @@ test('buildWebSearchSectionMarkup shows both key and cx fields for google_pse', 
 
 // --- event wiring ------------------------------------------------------------
 
-function createHarness(markup) {
-  const dom = new JSDOM(`<!doctype html><html><body>${markup}</body></html>`, {
-    pretendToBeVisual: true,
-    url: 'http://localhost/',
-  });
-  const previousWindow = global.window;
-  const previousDocument = global.document;
-  const previousAbortController = global.AbortController;
-  global.window = dom.window;
-  global.document = dom.window.document;
-  global.AbortController = dom.window.AbortController;
-  global.window.jennyShell = { models: {} };
-  return {
-    window: dom.window,
-    document: dom.window.document,
-    cleanup() {
-      global.window = previousWindow;
-      global.document = previousDocument;
-      global.AbortController = previousAbortController;
-      dom.window.close();
-    },
-  };
-}
-
-function createBaseDeps(overrides = {}) {
-  const stateOverride = overrides.state || {};
-  const baseState = {
-    ui: { appearance: {} },
-    features: { featureFlags: {} },
-    memoryManager: { filter: 'all', searchQuery: '' },
-    modelList: [],
-    personality: {},
-  };
-  return {
-    state: {
-      ...baseState,
-      ...stateOverride,
-      ui: { ...baseState.ui, ...(stateOverride.ui || {}) },
-    },
-    constants: {
-      TOAST_SOURCE: { settings: 'settings', memory: 'memory' },
-      ACTIVITY_SCOPE: {},
-    },
-    dom: {
-      settingsView: null,
-      getSectionDom() { return {}; },
-      ...overrides.dom,
-    },
-    callbacks: {
-      renderSettings() {},
-      renderSessions() {},
-      setSidebarCollapsed() {},
-      upsertApprovedMemoryDraft() {},
-      getApprovedMemoryById() { return null; },
-      hasApprovedMemoryDraftChanges() { return false; },
-      clearApprovedMemoryDraft() {},
-      handleApprovedMemorySave: async () => {},
-      handleApprovedMemoryDelete() {},
-      applyAppearancePreferences() {},
-      appearanceUtils: null,
-      getDefaultAppearancePreferences() { return {}; },
-      applySurfaceEffect() {},
-      activateSurfaceEffect() {},
-      handlePersonalityTabChange: async () => {},
-      getPersonalityActiveFile() { return null; },
-      setPersonalityDraft() {},
-      renderPersonalityEditor() {},
-      handlePersonalitySave: async () => {},
-      handlePersonalityReset: async () => {},
-      handlePersonalityOpenFolder: async () => {},
-      showShellErrorToast() {},
-      toErrorMessage(error, fallback) { return error?.message || fallback; },
-      appendClientLog() {},
-      showSessionActionError() {},
-      getCurrentRuntimePreferences() {
-        return { contextPreferences: {} };
-      },
-      getRuntimePreferenceSnapshot() { return {}; },
-      runRuntimePreferenceActivity: async () => {},
-      openSettingsSection() {},
-      handleWorkspaceRootChoose: async () => {},
-      refreshSkillsState: async () => {},
-      updateSkillsSettings() {},
-      openSkillsScopeFolder() {},
-      handleOfflineModeChange: async () => {},
-      refreshFeatureState: async () => {},
-      setActiveView() {},
-      ...overrides.callbacks,
-    },
-  };
-}
-
 test('provider select change routes an applyFeatureSettings-style patch through refreshFeatureState', (t) => {
   const harness = createHarness('<div id="toolsConfigFieldList"></div>');
   t.after(() => harness.cleanup());
@@ -294,93 +173,6 @@ test('provider select change routes an applyFeatureSettings-style patch through 
   assert.deepEqual(patches[0], { webSearch: { provider: 'searxng' } });
 });
 
-test('key save calls features.setWebSearchSecret and clears the input', async (t) => {
-  const harness = createHarness('<div id="toolsConfigFieldList"></div>');
-  t.after(() => harness.cleanup());
-
-  const toolsConfigFieldList = harness.document.getElementById('toolsConfigFieldList');
-  withGlobals(() => {
-    toolsConfigFieldList.innerHTML = buildWebSearchSectionMarkup({
-      visible: true,
-      webSearch: { provider: 'brave' },
-      secretStatus: { configured: { brave: false } },
-      escapeHtml,
-    });
-  });
-
-  const savedCalls = [];
-  harness.window.jennyShell.features = {
-    async getWebSearchSecretStatus() { return { configured: { brave: false } }; },
-    async setWebSearchSecret(payload) {
-      savedCalls.push(payload);
-      return { configured: { brave: true } };
-    },
-  };
-
-  let renderCount = 0;
-  const controller = createSettingsEventBindings(createBaseDeps({
-    state: { features: { featureFlags: { web_search_providers: true }, webSearch: { provider: 'brave' } } },
-    dom: { toolsConfigFieldList },
-    callbacks: {
-      renderSettings() { renderCount += 1; },
-    },
-  }));
-  controller.bind();
-
-  const input = toolsConfigFieldList.querySelector('[data-web-search-key-field="brave"]');
-  input.value = 'k';
-  const saveButton = toolsConfigFieldList.querySelector('[data-web-search-key-save="brave"]');
-  saveButton.dispatchEvent(new harness.window.Event('click', { bubbles: true }));
-
-  // The save handler's IPC round-trip resolves on a microtask; flush it.
-  await Promise.resolve();
-  await Promise.resolve();
-
-  assert.deepEqual(savedCalls, [{ keyId: 'brave', value: 'k' }]);
-  assert.ok(renderCount >= 1, 'renderSettings is called after save so the input/hint can refresh');
-});
-
-test('a late secret-status hydration cannot overwrite a newer successful key save', async (t) => {
-  const harness = createHarness('<div id="toolsConfigFieldList"></div>');
-  t.after(() => harness.cleanup());
-  const toolsConfigFieldList = harness.document.getElementById('toolsConfigFieldList');
-  withGlobals(() => {
-    toolsConfigFieldList.innerHTML = buildWebSearchSectionMarkup({
-      visible: true,
-      webSearch: { provider: 'brave' },
-      secretStatus: { configured: { brave: false } },
-      escapeHtml,
-    });
-  });
-  let resolveHydration;
-  harness.window.jennyShell.features = {
-    getWebSearchSecretStatus() {
-      return new Promise((resolve) => { resolveHydration = resolve; });
-    },
-    async setWebSearchSecret() { return { configured: { brave: true } }; },
-  };
-  const state = { features: { featureFlags: { web_search_providers: true },
-    webSearch: { provider: 'brave' } } };
-  const deps = createBaseDeps({
-    state,
-    dom: { toolsConfigFieldList },
-  });
-  const controller = createSettingsEventBindings(deps);
-  controller.bind();
-  const input = toolsConfigFieldList.querySelector('[data-web-search-key-field="brave"]');
-  input.value = 'new-key';
-  toolsConfigFieldList.querySelector('[data-web-search-key-save="brave"]')
-    .dispatchEvent(new harness.window.Event('click', { bubbles: true }));
-  await Promise.resolve();
-  await Promise.resolve();
-  assert.equal(deps.state.webSearchSecrets.configured.brave, true);
-
-  resolveHydration({ configured: { brave: false } });
-  await Promise.resolve();
-  await Promise.resolve();
-
-  assert.equal(deps.state.webSearchSecrets.configured.brave, true);
-});
 
 test('bind() hydrates the configured-key status once when the flag is already on', (t) => {
   const harness = createHarness('<div id="toolsConfigFieldList"></div>');

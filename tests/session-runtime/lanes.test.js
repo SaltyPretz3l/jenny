@@ -25,6 +25,40 @@ test('local serialization and independent cloud providers preserve per-session e
   assert.equal(lanes.tryAcquireTurn({ sessionId: 'd', route: other }).status, 'granted');
 });
 
+test('a priority turn takes one extra slot per lane; ordinary turns never borrow it', () => {
+  const lanes = new RuntimeLaneAdmission();
+  const local = route();
+  assert.equal(lanes.tryAcquireTurn({ sessionId: 'worker', route: local }).status, 'granted');
+  assert.equal(lanes.tryAcquireTurn({ sessionId: 'other', route: local }).reason, 'lane_capacity');
+  const primary = lanes.tryAcquireTurn({ sessionId: 'jenny', route: local, priority: true });
+  assert.equal(primary.status, 'granted', 'the primary runs beside the worker');
+  assert.equal(lanes.tryAcquireTurn({ sessionId: 'jenny2', route: local, priority: true }).reason, 'lane_capacity',
+    'one priority slot per lane');
+  assert.equal(lanes.tryAcquireTurn({ sessionId: 'other', route: local }).reason, 'lane_capacity',
+    'the worker slot is still taken');
+  assert.equal(lanes.tryAcquireTurn({ sessionId: 'jenny', route: local, priority: true }).reason, 'session_busy');
+  assert.equal(lanes.snapshot().active_leases, 2);
+  // Generation stays serialized: the inference lane has no priority slot.
+  assert.equal(lanes.tryAcquireInference({ ownerId: 'w', route: local }).status, 'granted');
+  assert.equal(lanes.tryAcquireInference({ ownerId: 'j', route: local }).reason, 'lane_capacity');
+  // The primary alone never blocks an ordinary turn, and a priority turn cannot exceed the downstream capacity.
+  assert.equal(lanes.release(primary.lease, { producerSettled: true }), true);
+  assert.equal(lanes.tryAcquireTurn({ sessionId: 'jenny', route: local, priority: true }).status, 'granted');
+  assert.equal(lanes.tryAcquireTurn({ sessionId: 'other', route: local }).reason, 'lane_capacity',
+    'the worker still holds the ordinary slot');
+  const tight = new RuntimeLaneAdmission({ maxRunnableTurns: 1 });
+  assert.equal(tight.tryAcquireTurn({ sessionId: 'worker', route: local }).status, 'granted');
+  assert.equal(tight.tryAcquireTurn({ sessionId: 'jenny', route: local, priority: true }).reason, 'downstream_capacity');
+  // Two priority sessions never add up to two extra slots: the first takes the single extra slot, the
+  // second an ordinary slot, and the third turn (priority or not) waits.
+  const two = new RuntimeLaneAdmission();
+  assert.equal(two.tryAcquireTurn({ sessionId: 'p1', route: local, priority: true }).status, 'granted');
+  assert.equal(two.tryAcquireTurn({ sessionId: 'p2', route: local, priority: true }).status, 'granted');
+  assert.equal(two.tryAcquireTurn({ sessionId: 'p3', route: local, priority: true }).reason, 'lane_capacity');
+  assert.equal(two.tryAcquireTurn({ sessionId: 'o1', route: local }).reason, 'lane_capacity');
+  assert.equal(two.snapshot().active_leases, 2);
+});
+
 test('inference limits are independent from runnable turns and bounded by downstream capacity', () => {
   const lanes = new RuntimeLaneAdmission({ maxInferenceRequests: 5 });
   const cloud = route('chatgpt', 'cloud');
@@ -126,4 +160,65 @@ test('routes require trusted capture and cloud metadata cannot request the local
   const snapshot = lanes.snapshot();
   snapshot.configured.local.runnable_turns = 16;
   assert.equal(lanes.snapshot().configured.local.runnable_turns, 1);
+});
+
+test('an inference waiter names the chat whose generation holds the lane', () => {
+  const lanes = new RuntimeLaneAdmission();
+  const local = route();
+  assert.equal(lanes.tryAcquireInference({ ownerId: 'work_beta', sessionId: 'sess_beta', route: local }).status, 'granted');
+  const waiting = lanes.tryAcquireInference({ ownerId: 'work_jenny', sessionId: 'sess_jenny', route: local });
+  assert.equal(waiting.reason, 'lane_capacity');
+  assert.deepEqual(waiting.blockers.map(blocker => blocker.session_id), ['sess_beta']);
+  // An auxiliary owner without a chat, or a malformed id, still blocks but names nobody.
+  const aux = new RuntimeLaneAdmission();
+  aux.tryAcquireInference({ ownerId: 'aux_compaction', sessionId: 'bad id!', route: local });
+  assert.deepEqual(aux.tryAcquireInference({ ownerId: 'w', route: local }).blockers.map(b => b.session_id), [null]);
+  // The session id never turns an inference lease into a turn: the same chat's turn is not session_busy.
+  assert.equal(lanes.tryAcquireTurn({ sessionId: 'sess_beta', route: local }).status, 'granted');
+});
+
+test('queued inference re-admits are granted oldest first; stale waiters expire', () => {
+  let now = 1_000;
+  const lanes = new RuntimeLaneAdmission({ now: () => now });
+  const local = route();
+  const held = lanes.tryAcquireInference({ ownerId: 'woken', route: local, queue: true });
+  assert.equal(held.status, 'granted');
+  // The primary polls while the woken chat generates.
+  assert.equal(lanes.tryAcquireInference({ ownerId: 'primary', route: local, queue: true }).reason, 'lane_capacity');
+  lanes.release(held.lease, { producerSettled: true });
+  // The woken chat's tool finished in milliseconds: it must not cut in front of the waiting primary.
+  const cutIn = lanes.tryAcquireInference({ ownerId: 'woken', route: local, queue: true });
+  assert.equal(cutIn.status, 'waiting');
+  assert.equal(cutIn.queued, true, 'held back by the queue, not by a holder');
+  now += 500;
+  const primary = lanes.tryAcquireInference({ ownerId: 'primary', route: local, queue: true });
+  assert.equal(primary.status, 'granted');
+  lanes.release(primary.lease, { producerSettled: true });
+  assert.equal(lanes.tryAcquireInference({ ownerId: 'woken', route: local, queue: true }).status, 'granted');
+});
+
+test('the inference queue ignores unqueued callers, expired waiters and forgotten owners', () => {
+  let now = 1_000;
+  const lanes = new RuntimeLaneAdmission({ now: () => now });
+  const local = route();
+  const acquire = (ownerId, queue = true) => lanes.tryAcquireInference({ ownerId, route: local, queue });
+  const held = acquire('a', false);
+  assert.equal(acquire('b').status, 'waiting');
+  lanes.release(held.lease, { producerSettled: true });
+  // A turn start (unqueued) is not held behind the poller.
+  const start = acquire('c', false);
+  assert.equal(start.status, 'granted');
+  lanes.release(start.lease, { producerSettled: true });
+  // 'b' stopped polling (its turn was cancelled): after the TTL it no longer holds the queue.
+  now += 3_001;
+  const next = acquire('d');
+  assert.equal(next.status, 'granted');
+  lanes.release(next.lease, { producerSettled: true });
+  // A closed gateway forgets its waiter at once.
+  const held2 = acquire('x', false);
+  assert.equal(acquire('f').status, 'waiting');
+  lanes.release(held2.lease, { producerSettled: true });
+  assert.equal(acquire('g').status, 'waiting', "'f' is still ahead");
+  lanes.forgetInferenceWaiter('f');
+  assert.equal(acquire('g').status, 'granted');
 });

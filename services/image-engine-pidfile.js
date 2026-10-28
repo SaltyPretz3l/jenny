@@ -5,6 +5,7 @@ const path = require('path');
 const child_process = require('child_process');
 const { isProcessAlive, getProcessCommandLine, getProcessCommandLineSync } = require('./backend/process-utils');
 const treeTools = require('./backend/process-tree-tools');
+const { listPreviewFrames } = require('./image-render-preview');
 
 const IMAGE_ENGINE_PID_FILENAME = 'image-engine.pid';
 
@@ -165,7 +166,8 @@ function removeOrphanOutput(record, userDataPath, fsImpl, referenceOnly = false)
   try {
     if (fsImpl.lstatSync(scratch).isSymbolicLink() || fsImpl.realpathSync(scratch) !== scratch) return;
   } catch (_error) { return; }
-  for (const output of [...(referenceOnly ? [] : [path.resolve(record.output)]), path.join(scratch, `${record.opId}-reference.png`)]) {
+  const previews = listPreviewFrames(scratch, record.opId, fsImpl);
+  for (const output of [...(referenceOnly ? [] : [path.resolve(record.output)]), path.join(scratch, `${record.opId}-reference.png`), ...previews]) {
     try {
       if (path.dirname(output) === scratch && output.endsWith('.png') && fsImpl.lstatSync(output).isFile()) fsImpl.unlinkSync(output);
     } catch (_error) { /* Missing files are already clean. */ }

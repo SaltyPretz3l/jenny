@@ -350,19 +350,14 @@ def decode_text_bytes(raw_bytes: bytes) -> str:
     return raw_bytes.decode("utf-8", errors="replace")
 
 
-def decode_text_bytes_strict(raw_bytes: bytes, *, relative_path: str) -> str:
-    """Decode ``raw_bytes`` as UTF-8, refusing to swallow decode errors.
+def decode_text_state_strict(raw_bytes: bytes, *, relative_path: str) -> DecodedTextState:
+    """Decode valid UTF-8 while treating a leading UTF-8 BOM as encoding metadata.
 
     Lossy replacement is never safe for an editable/read-authorizing view:
     silently replacing invalid bytes with U+FFFD would permanently bake
-    corruption into the file on the next write. A leading UTF-8 BOM is handled
-    explicitly as metadata; UTF-16/32 markers remain outside the text contract.
+    corruption into the file on the next write. UTF-16/32 markers remain
+    outside the text contract.
     """
-    return decode_text_state_strict(raw_bytes, relative_path=relative_path).text
-
-
-def decode_text_state_strict(raw_bytes: bytes, *, relative_path: str) -> DecodedTextState:
-    """Decode valid UTF-8 while treating a leading UTF-8 BOM as encoding metadata."""
     _reject_unsupported_bom(raw_bytes, relative_path=relative_path)
     has_utf8_bom = raw_bytes.startswith(UTF8_BOM)
     payload = raw_bytes[len(UTF8_BOM) :] if has_utf8_bom else raw_bytes
@@ -460,14 +455,22 @@ def _encoding_failure(relative_path: str) -> ToolExecutionFailure:
     )
 
 
-def refuse_reserved_internal_path(path: str, *, action: str) -> None:
+def is_reserved_internal_path(path: str) -> bool:
+    """True when a workspace-relative path is ``.jenny`` or lies under it."""
     normalized = path.strip().replace("\\", "/")
     while normalized.startswith("./"):
         normalized = normalized[2:]
     # Case-insensitive: Windows/macOS filesystems fold case, so ".JENNY/x" would
     # otherwise land inside the reserved store.
-    normalized = normalized.lower()
-    if normalized == ".jenny" or normalized.startswith(".jenny/"):
+    normalized = normalized.casefold()
+    # Fold the Win32 rewrites the kernel applies (trailing dot/space dropped,
+    # ':' opens a stream) so ".jenny./x" and ".jenny:x" stay reserved (C7 #2).
+    first_segment = normalized.partition("/")[0].partition(":")[0].rstrip(" .")
+    return first_segment == ".jenny"
+
+
+def refuse_reserved_internal_path(path: str, *, action: str) -> None:
+    if is_reserved_internal_path(path):
         raise ToolExecutionFailure(
             code=CMP_TOOL_INVALID_PATH,
             message=f"Ordinary file tools cannot {action} reserved .jenny internal state.",
@@ -738,6 +741,7 @@ def load_existing_text_state_for_mutation(  # noqa: PLR0913 - shared mutation se
     action: str,
     require_read_snapshot: bool = True,
     strict_decode: bool = True,
+    compute_digest: bool = True,
 ) -> ExistingTextState:
     """Load the on-disk bytes/text of an existing file ahead of a mutation.
 
@@ -748,26 +752,22 @@ def load_existing_text_state_for_mutation(  # noqa: PLR0913 - shared mutation se
     A caller that never writes decoded text back (currently apply_patch delete
     metadata only) may pass ``strict_decode=False`` explicitly. Read views that
     authorize later writes and every existing-file text mutator remain strict.
+
+    ``compute_digest=False`` is for a caller that never uses the returned
+    snapshot's digest (propose_change): when no expected snapshot needs
+    validating, the full-content sha256 is skipped and ``snapshot`` is
+    partial-scope. A present expected snapshot always gets its digest check.
     """
+    # The extension check is free, so it runs before reading up to max_bytes.
+    if is_binary_extension(path):
+        raise _binary_refusal(action, relative_path)
     stat_result, raw_bytes = read_capped_bytes(
         path,
         max_bytes=max_bytes,
         relative_path=relative_path,
     )
-
-    if is_binary_extension(path) or is_binary_content(raw_bytes):
-        raise ToolExecutionFailure(
-            code=CMP_TOOL_IO_FAILED,
-            message=f"binary files are not supported for {action}: {relative_path}",
-            retryable=False,
-        )
-
-    current_snapshot = build_read_snapshot(
-        relative_path=relative_path,
-        scope=READ_SNAPSHOT_SCOPE_FULL,
-        stat_result=stat_result,
-        raw_bytes=raw_bytes,
-    )
+    if is_binary_content(raw_bytes):
+        raise _binary_refusal(action, relative_path)
 
     if require_read_snapshot:
         expected_snapshot: ReadSnapshot | None = require_full_read_snapshot(
@@ -784,6 +784,13 @@ def load_existing_text_state_for_mutation(  # noqa: PLR0913 - shared mutation se
             relative_path=relative_path,
         )
 
+    full_snapshot = compute_digest or expected_snapshot is not None
+    current_snapshot = build_read_snapshot(
+        relative_path=relative_path,
+        scope=READ_SNAPSHOT_SCOPE_FULL if full_snapshot else READ_SNAPSHOT_SCOPE_PARTIAL,
+        stat_result=stat_result,
+        raw_bytes=raw_bytes if full_snapshot else None,
+    )
     if expected_snapshot is not None:
         validate_current_snapshot(
             expected_snapshot=expected_snapshot,
@@ -807,6 +814,40 @@ def load_existing_text_state_for_mutation(  # noqa: PLR0913 - shared mutation se
     )
 
 
+def build_rename_diff(*, source: str, destination: str, operation_index: int) -> dict[str, Any]:
+    """The V1 diff record for a content-preserving rename: no hunks, no line counts.
+
+    Identical to ``compute_structured_diff`` over two empty texts with status
+    ``renamed``, plus the rename's paths, without running the diff machinery.
+    """
+    empty_hash = structured_diff.sha256_text("")
+    return {
+        "diff_id": "",
+        "operation_index": operation_index,
+        "status": "renamed",
+        "review_state": "summary_only",
+        "body_kind": "none",
+        "additions": 0,
+        "deletions": 0,
+        "truncated": False,
+        "truncation_reason": None,
+        "before_hash": empty_hash,
+        "after_hash": empty_hash,
+        "hash_kind": "diff_input_text",
+        "hunks": [],
+        "path": destination,
+        "old_path": source,
+    }
+
+
+def _binary_refusal(action: str, relative_path: str) -> ToolExecutionFailure:
+    return ToolExecutionFailure(
+        code=CMP_TOOL_IO_FAILED,
+        message=f"binary files are not supported for {action}: {relative_path}",
+        retryable=False,
+    )
+
+
 def attach_structured_diff_metadata(  # noqa: PLR0913 - metadata context seam.
     metadata: dict[str, object],
     *,
@@ -817,9 +858,17 @@ def attach_structured_diff_metadata(  # noqa: PLR0913 - metadata context seam.
     logger: Any,
     pre_change_snapshot_root: str | None = None,
 ) -> None:
+    # Normalize and hash the old text once for both the snapshot and the diff.
+    normalized_old = (
+        structured_diff.normalized_text(old_text)
+        if status != "created" and isinstance(old_text, str)
+        else None
+    )
     if status != "created":
         try:
-            pre_change_snapshot.capture(pre_change_snapshot_root, path, old_text)
+            pre_change_snapshot.capture(
+                pre_change_snapshot_root, path, old_text, normalized_content=normalized_old
+            )
         except Exception:  # noqa: BLE001 - capture is strictly fail-open.
             pass
     diff: dict[str, Any] | None
@@ -830,6 +879,7 @@ def attach_structured_diff_metadata(  # noqa: PLR0913 - metadata context seam.
             new_text,
             status=status,
             logger=logger,
+            normalized_old=normalized_old,
         )
     except Exception as error:  # noqa: BLE001
         structured_diff.log_diff_failure(logger, path, error)

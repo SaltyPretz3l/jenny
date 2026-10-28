@@ -6,8 +6,8 @@ import hashlib
 import json
 import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
-from typing import Any, TypeAlias
+from dataclasses import dataclass, field, fields
+from typing import Any, TypeAlias, TypeVar
 
 from sidecar.ai.error_codes import CMP_RESOURCE_EXCEEDED
 from sidecar.ai.routing.auto_checkpoint import should_create_checkpoint
@@ -325,14 +325,16 @@ def first_batch_deferral_eligible(  # noqa: PLR0913
     preview_count: int,
     has_images: bool,
     mutation_started: bool,
-    approval_resume: bool,
     auto_checkpoint_pending: bool,
     contains_delegate: bool,
     ordered_call_ids: Sequence[str],
     pending_call_id: str,
-    pending_tool_id: str,
 ) -> bool:
-    """Return whether this is exactly the closed v1 first-call suspension state."""
+    """Return whether this is exactly the closed v1 first-call suspension state.
+
+    ``iteration_base == 0`` already excludes an approval resume, and the pending
+    call is ``ordered_call_ids[0]`` so ``contains_delegate`` covers its tool id.
+    """
 
     return bool(
         callable(callback)
@@ -345,9 +347,7 @@ def first_batch_deferral_eligible(  # noqa: PLR0913
         and preview_count == 0
         and not has_images
         and not mutation_started
-        and not approval_resume
         and not auto_checkpoint_pending
-        and pending_tool_id != "delegate"
         and not contains_delegate
         and ordered_call_ids
         and ordered_call_ids[0] == pending_call_id
@@ -424,6 +424,25 @@ def build_before_tool_dispatch_continuation(  # noqa: PLR0913
     )
 
 
+_Continuation = TypeVar("_Continuation", bound="BeforeToolDispatchContinuation")
+
+
+def canonical_json_bytes(value: Any) -> bytes:
+    """The one canonical JSON encoding for checkpoint effect and predecessor refs."""
+
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+
+
+def extend_continuation(
+    base: BeforeToolDispatchContinuation, cls: type[_Continuation], **extra: Any
+) -> _Continuation:
+    """Copy a built base continuation into a subclass, overriding/adding ``extra``."""
+
+    values = {item.name: getattr(base, item.name) for item in fields(base)}
+    values.update(extra)
+    return cls(**values)
+
+
 def first_batch_deferral_eligible_for_loop(
     loop_run: Any,
     *,
@@ -457,7 +476,6 @@ def first_batch_deferral_eligible_for_loop(
             getattr(loop_run, "_jenny_change_set_id", "")
             or getattr(runtime, "mutation_started", False)
         ),
-        approval_resume=bool(getattr(loop_run, "iteration_base", 0)),
         auto_checkpoint_pending=auto_checkpoint_pending,
         contains_delegate=any(
             str(getattr(call, "tool_id", "") or "").strip() == "delegate"
@@ -465,7 +483,6 @@ def first_batch_deferral_eligible_for_loop(
         ),
         ordered_call_ids=ordered_ids,
         pending_call_id=str(getattr(pending, "call_id", "") or "").strip(),
-        pending_tool_id=str(getattr(pending, "tool_id", "") or "").strip(),
     )
 
 
@@ -533,7 +550,9 @@ __all__ = [
     "ToolResourceDeferred",
     "ToolResourceWait",
     "build_before_tool_dispatch_continuation",
+    "canonical_json_bytes",
     "continuation_from_loop",
+    "extend_continuation",
     "first_batch_deferral_eligible",
     "first_batch_deferral_eligible_for_loop",
     "resource_wait_failure",

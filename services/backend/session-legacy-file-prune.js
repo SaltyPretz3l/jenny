@@ -35,8 +35,9 @@ function classifyLegacyFile(name, baseName) {
 }
 
 // `<anything>.json.<Date.now()>.<12 hex>.tmp` inside the split sessions
-// directory: the atomic-write temp of a chat file or of `_index.json`.
-const SPLIT_TMP_NAME = /\.json\.(\d{10,16})\.[0-9a-f]{12}\.tmp$/;
+// directory: the atomic-write temp of a chat file, of `_index.json` or of the
+// active-turn marker `_active_turns.state`.
+const SPLIT_TMP_NAME = /(?:\.json|^_active_turns\.state)\.(\d{10,16})\.[0-9a-f]{12}\.tmp$/;
 
 function classifySplitStoreTmp(name) {
   const tmp = SPLIT_TMP_NAME.exec(name);

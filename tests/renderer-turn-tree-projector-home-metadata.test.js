@@ -135,13 +135,15 @@ test('projectTurnTree preserves bounded home calendar metadata from persisted to
 });
 
 test('cloneSubagentReportMetadata keeps non-home and user question behavior unchanged', () => {
-  assert.equal(cloneSubagentReportMetadata({
+  // A task_board result keeps only its header scalars (the reopened row's
+  // "task added" meta); home calendar payloads never ride a non-home kind.
+  assert.deepEqual(cloneSubagentReportMetadata({
     result_kind: 'task_board',
     action: 'calendar_list',
     status: 'ok',
     calendar: { instances: [{ id: 'event_1' }] },
     calendar_receipt: { event_id: 'event_1' },
-  }), null);
+  }), { result_kind: 'task_board', action: 'calendar_list', status: 'ok' });
 
   const answers = Array.from({ length: 9 }, (_, index) => ({
     question_id: `question_${index + 1}`,

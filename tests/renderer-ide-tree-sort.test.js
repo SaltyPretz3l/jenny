@@ -78,7 +78,7 @@ test('sort control cycles name to type to modified to name and persists once per
   assert.deepEqual(
     [...harness.panel.querySelectorAll('[data-ide-tree-action]')]
       .map((button) => button.dataset.ideTreeAction),
-    ['new-file', 'new-folder', 'cycle-sort', 'toggle-generated', 'refresh', 'collapse-all']
+    ['new-file', 'new-folder', 'cycle-sort', 'toggle-filter', 'toggle-generated', 'refresh', 'collapse-all']
   );
 
   sortButton(harness).click();
@@ -139,4 +139,24 @@ test('renderer and schema normalizers agree on every sort mode (drift pin)', () 
       `schema accepts ${mode}`);
   }
   assert.equal(normalizeWorkspaceIde({ explorerSortMode: 'size' }).explorerSortMode, 'name');
+});
+
+test('a directory listing is sorted once per sort mode and reused across renders', () => {
+  const { sortEntries } = require('../renderer/features/renderer-ide-tree-markup');
+  const listing = [...RAW_ENTRIES];
+  const byName = sortEntries(listing, 'name');
+  assert.equal(sortEntries(listing, 'name'), byName, 'the cached sorted copy is reused');
+  assert.deepEqual(listing, RAW_ENTRIES, 'the cached listing itself is never reordered');
+  assert.deepEqual(byName.map((entry) => entry.name), ['alpha', 'Beta', 'Alpha.js', 'alpha.txt', 'beta.js', 'README', 'zeta.js']);
+  const byModified = sortEntries(listing, 'modified');
+  assert.notEqual(byModified, byName);
+  assert.equal(byModified[2].name, 'zeta.js');
+});
+
+test('an unset sort mode still sorts (and caches) by name', () => {
+  const { sortEntries } = require('../renderer/features/renderer-ide-tree-markup');
+  const listing = [...RAW_ENTRIES];
+  const sorted = sortEntries(listing, undefined);
+  assert.equal(sorted[0].name, 'alpha');
+  assert.equal(sortEntries(listing, undefined), sorted);
 });

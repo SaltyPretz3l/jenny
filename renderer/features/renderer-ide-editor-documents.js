@@ -67,11 +67,24 @@
       return applyingValue;
     }
 
+    // Runs `fn` with the applying flag raised (a programmatic setModel/setValue
+    // the content listeners must ignore) and restores the previous value, so a
+    // nested call never lowers an outer caller's flag.
+    function runApplying(fn) {
+      const previous = applyingValue;
+      applyingValue = true;
+      try {
+        return fn();
+      } finally {
+        applyingValue = previous;
+      }
+    }
+
     // Creates (or refreshes) a file document. `monacoApi` is the live Monaco
     // API when the host runs Monaco (null on the textarea fallback path).
     // Content comes from workspaceFs.readFile; the store owns the buffer from
     // here until the document is deleted.
-    function openFile({ path, content, mtimeMs, eol, monacoApi = null }) {
+    function openFile({ path, content, mtimeMs, eol, encoding, monacoApi = null }) {
       const normalizedPath = String(path || '');
       const text = String(content ?? '');
       let doc = getDoc(normalizedPath); const wasDirty = doc?.dirty === true;
@@ -86,6 +99,9 @@
           mtimeMs: Number(mtimeMs) || 0,
           eol: eol === 'crlf' ? 'crlf' : 'lf',
           dirty: false,
+          // Session-only per-model overrides (status-bar pickers); never persisted.
+          languageOverride: null,
+          indent: null,
         };
         docs.set(normalizedPath, doc);
       } else {
@@ -94,6 +110,8 @@
         doc.mtimeMs = Number(mtimeMs) || doc.mtimeMs;
         doc.eol = eol === 'crlf' ? 'crlf' : 'lf';
       }
+      // The desktop read keeps a UTF-8 BOM as a leading U+FEFF; the versioned read reports it.
+      doc.bom = encoding === 'utf-8-bom' || text.charCodeAt(0) === 0xfeff;
       // Large/minified files: degrade Monaco chrome + exclude from auto-context.
       // Cache the O(n) classification per-doc keyed by a content fingerprint (not
       // just length, so a same-length rewrite recomputes); re-scan only on change.
@@ -107,14 +125,10 @@
         if (!doc.model) {
           const uri = monacoApi.Uri.parse(monacoUtils.workspacePathToMonacoUriString(normalizedPath));
           doc.model = monacoApi.editor.getModel?.(uri)
-            || monacoApi.editor.createModel(text, languageForPath(normalizedPath), uri);
+            || monacoApi.editor.createModel(text, doc.languageOverride || languageForPath(normalizedPath), uri);
+          if (doc.indent) doc.model.updateOptions?.({ insertSpaces: doc.indent.insertSpaces, tabSize: doc.indent.tabSize });
         } else if (doc.model.getValue() !== text) {
-          applyingValue = true;
-          try {
-            doc.model.setValue(text);
-          } finally {
-            applyingValue = false;
-          }
+          runApplying(() => doc.model.setValue(text));
         }
         // Monaco owns the text now; every remaining doc.buffer reader is fallback-only.
         doc.buffer = null;
@@ -252,6 +266,64 @@
       return true;
     }
 
+    // Per-tab language mode. null = Auto Detect (back to the extension's language).
+    // Session-only: a re-opened document starts clean.
+    function setLanguage(path, languageId, monacoApi = null) {
+      const doc = getDoc(path);
+      if (!doc || doc.kind !== 'file') {
+        return false;
+      }
+      doc.languageOverride = languageId ? String(languageId) : null;
+      const target = doc.languageOverride || languageForPath(path);
+      if (doc.model && typeof monacoApi?.editor?.setModelLanguage === 'function') {
+        monacoApi.editor.setModelLanguage(doc.model, target);
+      }
+      return true;
+    }
+
+    // Records the model's live indentation as the doc override (source 'file').
+    function syncIndent(path, source = 'file') {
+      const doc = getDoc(path);
+      const options = doc?.model?.getOptions?.();
+      if (!options) {
+        return false;
+      }
+      doc.indent = { insertSpaces: options.insertSpaces !== false, tabSize: Number(options.tabSize) || 2, source };
+      return true;
+    }
+
+    // Per-tab indentation (spaces/tabs + display width); applies to the model now.
+    function setIndent(path, { insertSpaces, tabSize, source = 'file' } = {}) {
+      const doc = getDoc(path);
+      if (!doc || doc.kind !== 'file') {
+        return false;
+      }
+      const size = Number(tabSize) > 0 ? Number(tabSize) : (doc.indent?.tabSize || Number(doc.model?.getOptions?.()?.tabSize) || 2);
+      doc.indent = { insertSpaces: insertSpaces !== false, tabSize: size, source };
+      doc.model?.updateOptions?.({ insertSpaces: doc.indent.insertSpaces, tabSize: size });
+      return true;
+    }
+
+    // Monaco's own detector over the document text; falls back to the given defaults.
+    function detectIndentation(path, insertSpaces = true, tabSize = 2) {
+      const doc = getDoc(path);
+      if (!doc?.model || typeof doc.model.detectIndentation !== 'function') {
+        return false;
+      }
+      doc.model.detectIndentation(insertSpaces, tabSize);
+      return syncIndent(path);
+    }
+
+    function getIndentInfo(path, defaultTabSize = 2) {
+      const doc = getDoc(path);
+      const options = doc?.model?.getOptions?.() || {};
+      return {
+        insertSpaces: doc?.indent ? doc.indent.insertSpaces : options.insertSpaces !== false,
+        tabSize: Number(options.tabSize) > 0 ? Number(options.tabSize) : (doc?.indent?.tabSize || defaultTabSize),
+        source: doc?.indent?.source || 'default',
+      };
+    }
+
     // Monaco 0.52 asserts when a TextModel still attached to a diff editor is
     // disposed, so the host detaches views first and then calls this.
     function disposeModels(doc) {
@@ -280,6 +352,7 @@
       docs,
       clear,
       deleteDocument,
+      detectIndentation,
       disposeAllModels,
       disposeModels,
       docText,
@@ -287,16 +360,21 @@
       getDoc,
       getDocumentKind,
       getEol,
+      getIndentInfo,
       getMtime,
       hasDocument,
       isApplyingValue,
       isDirty,
+      runApplying,
       languageForPath,
       markSaved,
       openDiff,
       openFile,
       setEol,
+      setIndent,
+      setLanguage,
       syncDirty,
+      syncIndent,
       withEol,
     };
   }

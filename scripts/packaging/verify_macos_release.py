@@ -23,6 +23,7 @@ VERIFIED_APP_FILES = (
     "Contents/Resources/app.asar",
     "Contents/Resources/sidecar/sidecar",
     "Contents/Resources/sidecar/manifest.json",
+    "Contents/Resources/bin/jenny",
 )
 
 

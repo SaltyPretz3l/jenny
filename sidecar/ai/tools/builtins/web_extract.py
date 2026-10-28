@@ -37,6 +37,10 @@ _SELF_CLOSING_TAGS = frozenset({"br", "hr", "img"})
 _SAFE_LINK_SCHEMES = frozenset({"", "http", "https", "mailto"})
 _SAFE_IMAGE_SCHEMES = frozenset({"", "http", "https"})
 HTML_SANITIZE_MAX_BYTES = 1_048_576
+_HTML_CONTENT_TYPES = frozenset({"application/xhtml+xml", "text/html"})
+# Untyped bodies: a NUL in the first bytes means binary; these markers mean HTML.
+_UNTYPED_SNIFF_BYTES = 512
+_UNTYPED_HTML_MARKERS = (b"<!doctype", b"<html", b"<head", b"<body", b"<script")
 
 _TEXT_CONTENT_TYPES = frozenset(
     {
@@ -50,6 +54,8 @@ _TEXT_CONTENT_TYPES = frozenset(
         "text/xml",
     }
 )
+_TEXT_SUFFIX_TOP_LEVELS = frozenset({"application", "text"})
+_TEXT_SYNTAX_SUFFIXES = ("+json", "+xml")
 
 
 def _is_safe_attr_value(name: str, value: str) -> bool:
@@ -229,8 +235,52 @@ def convert_html_to_markdown(
     return _collapse_markdown(markdown), truncated
 
 
+def _content_type_mime(content_type: str) -> str:
+    return str(content_type or "").split(";", 1)[0].strip().lower()
+
+
+def is_html_content_type(content_type: str) -> bool:
+    """Return True for HTML and XHTML, which must go through the HTML sanitizer."""
+    return _content_type_mime(content_type) in _HTML_CONTENT_TYPES
+
+
+def decode_text_body(payload: bytes, content_type: str) -> str:
+    """Decode with the Content-Type charset when Python knows it, else UTF-8 with replacement."""
+    for param in str(content_type or "").split(";")[1:]:
+        name, _, value = param.partition("=")
+        if name.strip().lower() != "charset":
+            continue
+        charset = value.strip().strip("\"'").strip()
+        try:
+            return payload.decode(charset, errors="replace")
+        except (LookupError, UnicodeError):
+            # Unknown label, or a non-text codec such as "base64" or strict-only "idna".
+            break
+    return payload.decode("utf-8", errors="replace")
+
+
+def sniff_untyped_body(payload: bytes) -> str:
+    """Classify a body that arrived without Content-Type: "binary", "html" or "text"."""
+    head = payload[:_UNTYPED_SNIFF_BYTES]
+    if b"\x00" in head:
+        return "binary"
+    lowered = head.lower()
+    if any(marker in lowered for marker in _UNTYPED_HTML_MARKERS):
+        return "html"
+    return "text"
+
+
 def is_text_content_type(content_type: str) -> bool:
     """Return True if the content type is a text-like type we can process."""
     raw = str(content_type or "").strip().lower()
     mime = raw.split(";", 1)[0].strip()
-    return mime in _TEXT_CONTENT_TYPES
+    if mime in _TEXT_CONTENT_TYPES:
+        return True
+    # RFC 6839 +json/+xml suffixes are JSON/XML text (e.g. NWS application/geo+json).
+    top_level, _, subtype = mime.partition("/")
+    return (
+        top_level in _TEXT_SUFFIX_TOP_LEVELS
+        and "/" not in subtype
+        and subtype.endswith(_TEXT_SYNTAX_SUFFIXES)
+        and subtype not in _TEXT_SYNTAX_SUFFIXES
+    )

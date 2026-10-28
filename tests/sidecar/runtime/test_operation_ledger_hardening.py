@@ -1,8 +1,8 @@
 """Red-first: ledger hardening from the W5 adversarial review.
 
-Three confirmed defect classes: (1) releasing the advisory lock unconditionally
-can delete a successor's lock after a stale steal, re-opening the mutual
-exclusion it exists for; (2) `_valid_receipt` accepts unparseable timestamps, so
+Three confirmed defect classes: (1) releasing the lock must let the next
+writer in (the O_EXCL lock whose stale-steal race this once covered is now an
+OS advisory lock); (2) `_valid_receipt` accepts unparseable timestamps, so
 a tampered `retain_until` neutralizes expiry and a structurally corrupt receipt
 can still authorize a `committed` replay — the JS reference schema-validates
 timestamps at read; (3) compaction sorts `updated_at` lexically, which orders
@@ -31,52 +31,18 @@ def _operations_dir(tmp_path: Path) -> Path:
     return tmp_path / "runtime-root" / LEDGER_OPERATIONS_DIR
 
 
-class TestLockReleaseOwnership:
-    def test_release_leaves_a_stolen_successor_lock_in_place(self, tmp_path: Path) -> None:
-        ledger = _ledger(tmp_path)
-        lock_path = _operations_dir(tmp_path) / ".lock"
-        with ledger._locked():  # the lock protocol is the unit under test
-            # Simulate a successor that (rightly or wrongly) stole the lock while
-            # this holder stalled: our lock file is gone, theirs is in place.
-            lock_path.unlink()
-            lock_path.write_text("successor-token", encoding="utf-8")
-        assert lock_path.exists(), "release must never delete a lock it does not own"
-        assert lock_path.read_text(encoding="utf-8") == "successor-token"
-
-    def test_release_removes_its_own_lock(self, tmp_path: Path) -> None:
-        ledger = _ledger(tmp_path)
-        lock_path = _operations_dir(tmp_path) / ".lock"
-        with ledger._locked():
-            assert lock_path.exists()
-        assert not lock_path.exists()
-
-
-    def test_a_lock_file_pending_deletion_is_waited_out(
+class TestLockRelease:
+    def test_release_lets_the_next_writer_in(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Windows refuses O_EXCL creation of a file another process is still
-        # deleting with PermissionError, not FileExistsError. That is the
-        # previous holder releasing the lock, so the writer must retry instead
-        # of reporting the ledger unavailable (seen under contention in CI).
         ledger = _ledger(tmp_path)
-        real_open = ledger_module.os.open
-        refusals = []
-
-        def open_once_pending_delete(path, flags, *args, **kwargs):
-            if str(path).endswith(".lock") and not refusals:
-                refusals.append(path)
-                raise PermissionError(13, "Permission denied", str(path))
-            return real_open(path, flags, *args, **kwargs)
-
-        monkeypatch.setattr(ledger_module.os, "open", open_once_pending_delete)
-        created = ledger.create_pending(
-            operation_id="idem_eeeeeeeeeeeeeeeeeeeeeeee",
-            request_fingerprint="fp_pending_delete",
-            generation_id="gen_live",
-            now_iso=NOW,
-        )
-        assert refusals, "the pending-delete refusal was exercised"
-        assert created["ok"] is True, created
+        monkeypatch.setattr(ledger_module, "_LOCK_TIMEOUT_SECONDS", 0.2)
+        with ledger._locked():
+            with pytest.raises(TimeoutError):
+                with ledger._locked():
+                    pass
+        with ledger._locked():
+            pass
 
 
 class TestCorruptReceiptsNeverAuthorize:

@@ -24,6 +24,7 @@ _ELECTRON_RESOURCE_START_TOOLS = frozenset({
     "home", "task_board", "project_notes", "verify", "image_generate", "run_command",
     "propose_git_action", "propose_command", "propose_session",
     "session_message", "conversations_recent", "conversation_open", "conversations_search",
+    "sessions_list", "session_status", "session_transcript", "session_stop", "jenny_help",
 })
 _CLEANUP_FIELDS = frozenset({
     "cleanup", "output_readers_terminated", "process_tree_terminated", "reason",
@@ -215,7 +216,6 @@ def dispatch_tool_call(  # noqa: PLR0913
         admit_call()
     dispatch_kwargs = {"on_output_chunk": on_output_chunk} if on_output_chunk else {}
     if descriptor is not None and getattr(descriptor, "server_name", "") == electron_server_name:
-        request_context = getattr(runtime, "request_context", None)
         if call.tool_id == "run_command":
             tool_arguments = {
                 key: value for key, value in tool_arguments.items()
@@ -245,7 +245,8 @@ def dispatch_tool_call(  # noqa: PLR0913
             decision_snapshot=decision_snapshot,
             before_resource_start=resource_start,
             plan_decision=str(getattr(request_context, "plan_decision", "") or ""),
-            plan_feedback=str(getattr(request_context, "plan_feedback", "") or "")[:800],
+            # The bridge owns the single 800-char wire bound for plan_feedback.
+            plan_feedback=str(getattr(request_context, "plan_feedback", "") or ""),
             edited_plan=(
                 getattr(request_context, "edited_plan", None)
                 if call.tool_id == "exit_plan_mode" else None
@@ -260,7 +261,6 @@ def dispatch_tool_call(  # noqa: PLR0913
     # Row 34 S5: builtin scripted calls carry the run's user-only restore point
     # (after admission, so only the transport sees it).
     inject_restore_point(tool_arguments, call=call, descriptor=descriptor)
-    request_context = getattr(runtime, "request_context", None)
     if getattr(request_context, "execution_context", None) is None:
         _dispatch_ready(on_dispatch_ready)
         return kernel._mcp_client.execute_tool(

@@ -6,7 +6,9 @@ import hashlib
 import json
 import logging
 import re
+import threading
 import unicodedata
+from collections import OrderedDict
 from dataclasses import dataclass
 
 from sidecar.ai.tools.error_paths import (  # noqa: F401 - HB-017 re-export for existing callers.
@@ -14,6 +16,9 @@ from sidecar.ai.tools.error_paths import (  # noqa: F401 - HB-017 re-export for 
     PathKeeper,
     error_path_keeper,
     redact_error_paths,
+)
+from sidecar.ai.tools.failure_taxonomy import (
+    failure_log_level,  # noqa: F401 - router log re-export.
 )
 from sidecar.ai.tools.prompt_marker_guard import neutralize_prompt_markers
 
@@ -80,14 +85,31 @@ def _is_tool_call_blocks_only(text: str) -> bool:
     return True
 
 _SECRET_PATTERNS = (
+    # Provider keys with dashes/underscores in the body (sk-ant-api03-..., sk-proj-...).
+    re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"),
     re.compile(r"\bsk-[A-Za-z0-9]{8,}\b"),
     re.compile(r"\b(?:ghp|gho|ghs|ghr|ghu)_[A-Za-z0-9]{16,}\b"),
     re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),
+    # PEM private-key blocks, whole.
+    # The body never re-enters a header and is bounded (an 8192-bit RSA key is
+    # ~6.5 KiB), so thousands of unmatched headers scan linearly.
     re.compile(
-        r"(?i)\b(api[_-]?key|api-key|authorization|token|secret|password|dsn)"
-        r"\s*[:=]\s*(?:Bearer\s+)?([^\s,;'\"{}]+)"
+        r"-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----(?:(?!-----BEGIN)[\s\S]){0,16384}?"
+        r"-----END [A-Z ]{0,40}PRIVATE KEY-----"
+    ),
+    # URL userinfo: the user:password between the scheme and the host.
+    re.compile(r"(?i)(?<=://)[^\s/:@]+:[^\s/@]+(?=@)"),
+    # Named credentials, including JSON/quoted keys and values and compound
+    # names such as aws_secret_access_key (tool review C7 #3). The match
+    # starts at the keyword (`aws_` survives, the value never does) and the
+    # suffix is bounded: an optional prefix group made `token_token_...`
+    # cubic.
+    re.compile(
+        r"(?i)(?<![A-Za-z0-9])"
+        r"(api[_-]?key|api-key|authorization|token|secret|password|passwd|dsn)"
+        r"(?:_[a-z0-9_]{1,48})?[\"']?\s*[:=]\s*(?:Bearer\s+)?[\"']?([^\s,;'\"{}]+)"
     ),
     re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b"),
     re.compile(
@@ -294,7 +316,7 @@ def sanitize_assistant_output(output: object, *, max_chars: int = 4000) -> str:
     Also strips post-response analysis blocks (e.g. ``### Tool Call Analysis``)
     that some local models append after their actual response.
     """
-    return _truncate(_sanitize_assistant_body(output), max_chars)
+    return truncate_text(_sanitize_assistant_body(output), max_chars)
 
 
 def sanitize_visible_reply(output: object, *, max_chars: int) -> tuple[str, bool]:
@@ -429,14 +451,67 @@ def _argument_preview(arguments: object) -> str:
         return str(arguments or "")
 
 
+# One call's arguments are scanned at the policy filter, the approval gate and
+# dispatch (each site pinned by the phase-3 invariant), so identical arguments
+# reuse the last scan: the normalizers and regexes cost ~0.1 s on a large write
+# body. Keyed by a digest of the serialized arguments, so a mutated dict rescans.
+_TOOL_ARGUMENT_SCAN_CACHE_SIZE = 32
+_TOOL_ARGUMENT_SCAN_CACHE: OrderedDict[
+    tuple[str | None, int, str], tuple[ToolArgumentScanResult, int, str]
+] = OrderedDict()
+_TOOL_ARGUMENT_SCAN_LOCK = threading.Lock()
+
+
+def clear_tool_argument_scan_cache() -> None:
+    with _TOOL_ARGUMENT_SCAN_LOCK:
+        _TOOL_ARGUMENT_SCAN_CACHE.clear()
+
+
 def scan_tool_arguments(
     arguments: object,
     *,
     tool_name: str | None = None,
     max_preview_chars: int = 500,
 ) -> ToolArgumentScanResult:
-    """Scan model-provided tool arguments before dispatch without mutating them."""
+    """Scan model-provided tool arguments before dispatch without mutating them.
+
+    A flagged scan logs on every call, including one served from the cache.
+    """
     raw = _argument_preview(arguments)
+    key = (
+        tool_name,
+        max_preview_chars,
+        hashlib.sha256(raw.encode("utf-8", "surrogatepass")).hexdigest(),
+    )
+    with _TOOL_ARGUMENT_SCAN_LOCK:
+        scanned = _TOOL_ARGUMENT_SCAN_CACHE.get(key)
+        if scanned is not None:
+            _TOOL_ARGUMENT_SCAN_CACHE.move_to_end(key)
+    if scanned is None:
+        scanned = _scan_argument_text(raw, tool_name, max_preview_chars)
+        with _TOOL_ARGUMENT_SCAN_LOCK:
+            _TOOL_ARGUMENT_SCAN_CACHE[key] = scanned
+            while len(_TOOL_ARGUMENT_SCAN_CACHE) > _TOOL_ARGUMENT_SCAN_CACHE_SIZE:
+                _TOOL_ARGUMENT_SCAN_CACHE.popitem(last=False)
+    result, content_length, content_digest_prefix = scanned
+    if result.matched:
+        logger.info(
+            "Flagged suspicious tool arguments before dispatch.",
+            extra={
+                "event": _TOOL_ARGUMENT_SCAN_LOG_EVENT,
+                "component": "ai.tools.sanitization",
+                "tool_name": tool_name or "",
+                "pattern_families": result.pattern_families,
+                "content_length": content_length,
+                "content_sha256_prefix": content_digest_prefix,
+            },
+        )
+    return result
+
+
+def _scan_argument_text(
+    raw: str, tool_name: str | None, max_preview_chars: int
+) -> tuple[ToolArgumentScanResult, int, str]:
     normalized = _normalize_whitespace_and_control(raw)
     normalized = _normalize_prompt_text(normalized)
     families = list(_matched_prompt_injection_families_normalized(normalized))
@@ -448,28 +523,17 @@ def scan_tool_arguments(
         tool_name=tool_name,
     )
     unique_families = tuple(dict.fromkeys(families))
-    if unique_families:
-        logger.info(
-            "Flagged suspicious tool arguments before dispatch.",
-            extra={
-                "event": _TOOL_ARGUMENT_SCAN_LOG_EVENT,
-                "component": "ai.tools.sanitization",
-                "tool_name": tool_name or "",
-                "pattern_families": unique_families,
-                "content_length": len(normalized),
-                "content_sha256_prefix": hashlib.sha256(
-                    normalized.encode("utf-8", errors="replace")
-                ).hexdigest()[:16],
-            },
-        )
-    return ToolArgumentScanResult(
+    result = ToolArgumentScanResult(
         matched=bool(unique_families),
         pattern_families=unique_families,
         sanitized_preview=sanitized_preview,
     )
+    digest_prefix = hashlib.sha256(normalized.encode("utf-8", errors="replace")).hexdigest()[:16]
+    return result, len(normalized), digest_prefix
 
 
-def _truncate(text: str, max_chars: int) -> str:
+def truncate_text(text: str, max_chars: int) -> str:
+    """Cut ``text`` to ``max_chars`` with the shared ``" [truncated]"`` marker."""
     limit = max(1, int(max_chars))
     if len(text) <= limit:
         return text
@@ -534,7 +598,7 @@ def sanitize_tool_output(
     max_chars: int = 4000,
     tool_name: str | None = None,
 ) -> str:
-    return _truncate(
+    return truncate_text(
         sanitize_tool_output_no_truncate(output, tool_name=tool_name),
         max_chars,
     )

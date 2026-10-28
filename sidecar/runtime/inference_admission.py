@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import logging
 import secrets
 import threading
 import time
@@ -33,6 +34,17 @@ _CONTROL_CODE_BOUNDARY = 32
 _RESULT_FIELDS = frozenset({"schema_version", "operation_id", "status", "reason"})
 _REQUIRED_RESULT_FIELDS = _RESULT_FIELDS - {"reason"}
 _ADMIT_TIMEOUT_SECONDS = 30.0
+# A chat turn re-admits every model generation; the lane may be busy with
+# another chat between two iterations, so it waits (bounded) instead of failing.
+# The cap stays under Electron's local stream idle watchdog (660 s + margin,
+# services/backend/chat-stream-admission.js), which a silent wait would trip.
+_MAX_CAPACITY_WAIT_SECONDS = 10 * 60.0
+_CAPACITY_WAIT_REASONS = frozenset({"lane_capacity", "downstream_capacity"})
+_CAPACITY_BACKOFF_START_SECONDS = 0.1
+_CAPACITY_BACKOFF_MAX_SECONDS = 1.0
+_sleep = time.sleep
+_monotonic = time.monotonic
+_LOGGER = logging.getLogger(__name__)
 _SETTLE_TIMEOUT_SECONDS = 5.0
 _INFERENCE_CONTEXT_FIELDS = frozenset(
     {"schema_version", "request_id", "session_id", "authority_revision", "engine_type"}
@@ -175,6 +187,18 @@ def _cancelled(cancel_handle: Any) -> bool:
     return cancel_handle is not None and bool(getattr(cancel_handle, "cancelled", False))
 
 
+def _sleep_unless_cancelled(cancel_handle: Any, seconds: float) -> None:
+    # TurnCancellationHandle.wait wakes at once on chat.cancel; duck-typed
+    # handles without it fall back to a plain sleep.
+    wait = getattr(cancel_handle, "wait", None)
+    if callable(wait):
+        wait(seconds)
+    else:
+        _sleep(seconds)
+    if _cancelled(cancel_handle):
+        raise InferenceAdmissionRefused("inference_admission_cancelled")
+
+
 class RuntimeInferenceLease:
     """Settle one granted inference operation over an uncancelled control read."""
 
@@ -250,6 +274,46 @@ def _reservation_maxima(context: InferenceAttemptContext) -> dict[str, int]:
     return {"inference_requests": 1, "input_tokens": input_tokens, "output_tokens": output_tokens}
 
 
+def _admit_waiting_for_capacity(
+    attempt: Callable[[], tuple[dict[str, Any], dict[str, Any]]],
+    *,
+    cancel_handle: Any,
+    wait_for_capacity: bool,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Run admit attempts until one is not a capacity wait (or the wait gives up)."""
+    waited_since: float | None = None
+    outcome = "cancelled"
+    backoff = _CAPACITY_BACKOFF_START_SECONDS
+    try:
+        if _cancelled(cancel_handle):
+            raise InferenceAdmissionRefused("inference_admission_cancelled")
+        while True:
+            base_params, result = attempt()
+            if result["status"] != "waiting":
+                outcome = str(result["status"])
+                return base_params, result
+            reason = _reason(result.get("reason"), "inference_capacity_waiting")
+            if not wait_for_capacity or reason not in _CAPACITY_WAIT_REASONS:
+                outcome = reason
+                raise InferenceAdmissionDeferred(reason)
+            now = _monotonic()
+            if waited_since is None:
+                waited_since = now
+                _LOGGER.info("inference admission waiting for capacity: reason=%s", reason)
+            remaining = _MAX_CAPACITY_WAIT_SECONDS - (now - waited_since)
+            if remaining <= 0:
+                outcome = "timed_out"
+                raise InferenceAdmissionDeferred(reason)
+            _sleep_unless_cancelled(cancel_handle, min(backoff, remaining))
+            backoff = min(backoff * 2, _CAPACITY_BACKOFF_MAX_SECONDS)
+    finally:
+        if waited_since is not None:
+            _LOGGER.info(
+                "inference admission wait ended: outcome=%s waited_seconds=%.1f",
+                outcome, _monotonic() - waited_since,
+            )
+
+
 def _build_callback(  # noqa: PLR0913
     *,
     request_id: str,
@@ -261,6 +325,7 @@ def _build_callback(  # noqa: PLR0913
     cancel_handle: Any,
     attempt_request_id: str | None = None,
     require_budget: bool = False,
+    wait_for_capacity: bool = False,
 ) -> Callable[[InferenceAttemptContext], RuntimeInferenceLease]:
     trusted_request_id = _token(request_id, "request_id", _MAX_REQUEST_TOKEN_CHARS)
     trusted_session_id = (
@@ -285,38 +350,41 @@ def _build_callback(  # noqa: PLR0913
             or context.provider != trusted_engine_type
         ):
             raise InferenceAdmissionRefused("inference_route_context_mismatch")
-        operation_id = f"inference_{secrets.token_hex(16)}"
-        base_params = {
-            "api_version": API_VERSION,
-            "schema_version": 1,
-            "kind": "inference",
-            "request_id": trusted_request_id,
-            "session_id": trusted_session_id,
-            "authority_revision": trusted_authority_revision,
-            "operation_id": operation_id,
-        }
-        if _cancelled(cancel_handle):
-            raise InferenceAdmissionRefused("inference_admission_cancelled")
-        result = _exchange(
-            params={
-                **base_params,
-                "phase": "admit",
-                "engine_type": trusted_engine_type,
-                **({"maxima": _reservation_maxima(context)} if require_budget else {}),
-            },
-            operation_id=operation_id,
-            expected_statuses=frozenset({"granted", "waiting", "rejected"}),
-            write_message=write_message,
-            response_reader_factory=response_reader_factory,
-            # Electron answers an admit at once. Reading its answer through a
-            # cancel means a grant is never left unsettled (stranded capacity).
-            cancel_handle=None,
-            timeout_seconds=_ADMIT_TIMEOUT_SECONDS,
-        )
-        if result["status"] == "waiting":
-            raise InferenceAdmissionDeferred(
-                _reason(result.get("reason"), "inference_capacity_waiting")
+
+        def _attempt() -> tuple[dict[str, Any], dict[str, Any]]:
+            # Electron discards a waiting operation, so every attempt is fresh.
+            operation_id = f"inference_{secrets.token_hex(16)}"
+            base_params = {
+                "api_version": API_VERSION,
+                "schema_version": 1,
+                "kind": "inference",
+                "request_id": trusted_request_id,
+                "session_id": trusted_session_id,
+                "authority_revision": trusted_authority_revision,
+                "operation_id": operation_id,
+            }
+            result = _exchange(
+                params={
+                    **base_params,
+                    "phase": "admit",
+                    "engine_type": trusted_engine_type,
+                    **({"maxima": _reservation_maxima(context)} if require_budget else {}),
+                },
+                operation_id=operation_id,
+                expected_statuses=frozenset({"granted", "waiting", "rejected"}),
+                write_message=write_message,
+                response_reader_factory=response_reader_factory,
+                # Electron answers an admit at once. Reading its answer through a
+                # cancel means a grant is never left unsettled (stranded capacity).
+                cancel_handle=None,
+                timeout_seconds=_ADMIT_TIMEOUT_SECONDS,
             )
+            return base_params, result
+
+        base_params, result = _admit_waiting_for_capacity(
+            _attempt, cancel_handle=cancel_handle, wait_for_capacity=wait_for_capacity
+        )
+        operation_id = base_params["operation_id"]
         if result["status"] == "rejected":
             raise InferenceAdmissionRefused(
                 _reason(result.get("reason"), "inference_capacity_rejected")
@@ -349,6 +417,7 @@ def _build_callback(  # noqa: PLR0913
             cancel_handle=cancel_handle,
             attempt_request_id=request_id,
             require_budget=require_budget,
+            wait_for_capacity=wait_for_capacity,
         )
 
     _admit.requires_budget = require_budget  # type: ignore[attr-defined]
@@ -360,7 +429,7 @@ def _build_callback(  # noqa: PLR0913
             authority_revision=trusted_authority_revision, engine_type=provider,
             write_message=write_message, response_reader_factory=response_reader_factory,
             cancel_handle=cancel_handle, attempt_request_id=expected_attempt_request_id,
-            require_budget=require_budget)
+            require_budget=require_budget, wait_for_capacity=wait_for_capacity)
     _admit.bind_provider = _bind_provider  # type: ignore[attr-defined]
     return _admit
 
@@ -394,6 +463,8 @@ def build_inference_admission_callback(  # noqa: PLR0913
         response_reader_factory=response_reader_factory,
         cancel_handle=cancel_handle,
         require_budget=require_budget,
+        # Mid-turn iterations wait for the lane instead of ending the turn.
+        wait_for_capacity=True,
     )
 
 

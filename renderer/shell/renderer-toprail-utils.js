@@ -340,5 +340,5 @@
     };
   }
 
-  return { createTopRailController, VIEW_TAB_ORDER, getSettingsGearMarkup };
+  return { createTopRailController, VIEW_TAB_ORDER };
 });

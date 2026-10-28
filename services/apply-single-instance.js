@@ -44,6 +44,23 @@ function applySingleInstance(app, onSecondInstance, dependencies = {}) {
   return true;
 }
 
+// A second launch (or a macOS dock activate) surfaces the running window: show
+// it when hidden (not yet revealed at boot, or hidden by the user), restore it
+// when minimized, then focus. focus() alone leaves a hidden window hidden.
+function revealExistingWindow(windowRef) {
+  if (!windowRef || windowRef.isDestroyed()) {
+    return false;
+  }
+  if (windowRef.isMinimized()) {
+    windowRef.restore();
+  }
+  if (!windowRef.isVisible()) {
+    windowRef.show();
+  }
+  windowRef.focus();
+  return true;
+}
+
 function startWhenSingleInstanceAvailable({
   acquireLock = () => true,
   onStart = () => {},
@@ -59,5 +76,6 @@ function startWhenSingleInstanceAvailable({
 
 module.exports = {
   applySingleInstance,
+  revealExistingWindow,
   startWhenSingleInstanceAvailable,
 };

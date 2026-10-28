@@ -57,3 +57,41 @@ test('macOS helper uses the same fixed profile-child allowlist', () => {
   const children = [...source.matchAll(/^\s+remove_profile_child "([^"]+)"/gm)].map((match) => match[1]);
   assert.deepEqual(children.sort(), [...KNOWN_USER_DATA_CHILDREN].sort());
 });
+
+test('NSIS uninstall drops the CLI bin directory from the user Path on every real uninstall without touching the profile', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'build', 'installer.nsh'), 'utf8');
+  const start = source.indexOf('!macro RemoveJennyCliPathEntry');
+  assert.ok(start >= 0, 'the PATH removal macro exists');
+  const macro = source.slice(start, source.indexOf('!macroend', start));
+  // Skipped on update (the next version reuses the directory), HKCU only.
+  assert.match(macro, /\$\{ifNot\} \$\{isUpdated\}/);
+  assert.match(macro, /ReadRegStr \$R0 HKCU "Environment" "Path"/);
+  assert.match(macro, /WriteRegExpandStr HKCU "Environment" "Path" \$R4/);
+  assert.match(macro, /DeleteRegValue HKCU "Environment" "Path"/);
+  assert.doesNotMatch(macro, /HKLM|SYSTEM\\CurrentControlSet/i);
+  // Compares against the installed shim directory, tolerating %VAR% and trailing backslashes.
+  assert.match(macro, /StrCmp \$R7 "\$INSTDIR\\resources\\bin"/);
+  assert.match(macro, /ExpandEnvStrings \$R7 \$R3/);
+  assert.match(macro, /StrCmp \$R1 "\\"/);
+  // A value that may have been truncated by the NSIS buffer is never written back.
+  assert.match(source, /!define \/math JennyCliPathReadLimit \$\{NSIS_MAX_STRLEN\} - 1/);
+  assert.match(macro, /IntCmp \$R1 \$\{JennyCliPathReadLimit\} jenny_cli_path_restore 0 jenny_cli_path_restore/);
+  assert.match(macro, /SendMessage 0xFFFF 0x1A 0 "STR:Environment"/);
+  // It never reaches the profile and adds no profile child.
+  assert.doesNotMatch(macro, /\$APPDATA|RemoveJennyProfileChild|RMDir|Delete "/);
+  // Every register it uses is saved and restored in reverse order.
+  const pushes = [...macro.matchAll(/^\s*Push (\$R\d)$/gm)].map((match) => match[1]);
+  const pops = [...macro.matchAll(/^\s*Pop (\$R\d)$/gm)].map((match) => match[1]);
+  assert.deepEqual(pops, [...pushes].reverse());
+  // Every jump target is defined once.
+  const labels = [...macro.matchAll(/^\s*(jenny_cli_path_[a-z_]+):$/gm)].map((match) => match[1]);
+  assert.equal(new Set(labels).size, labels.length);
+  for (const target of new Set([...macro.matchAll(/\b(jenny_cli_path_[a-z_]+)\b(?!:)/g)].map((match) => match[1]))) {
+    assert.ok(labels.includes(target), `label ${target} is defined`);
+  }
+  // Inserted first in customUnInstall, before the cleanup-mode gate, so it runs in every mode.
+  const hook = source.slice(source.indexOf('!macro customUnInstall'));
+  const insert = hook.indexOf('!insertmacro RemoveJennyCliPathEntry');
+  assert.ok(insert > 0, 'customUnInstall inserts the PATH removal');
+  assert.ok(insert < hook.indexOf('StrCmp $JennyRemovalMode "cleanup"'), 'it runs before the cleanup-mode gate');
+});

@@ -26,6 +26,9 @@ function stubService(overrides = {}) {
     calls,
     async open(options) {
       calls.push(['open', options]);
+      if (overrides.openHandler) {
+        return overrides.openHandler(options);
+      }
       if (overrides.openError) {
         throw overrides.openError;
       }
@@ -37,6 +40,9 @@ function stubService(overrides = {}) {
     },
     async click(sessionId, options) {
       calls.push(['click', sessionId, options]);
+      if (overrides.clickError) {
+        throw overrides.clickError;
+      }
       return overrides.clickResult || { status: 'clicked' };
     },
     async type(sessionId, options) {
@@ -62,8 +68,8 @@ function stubService(overrides = {}) {
       }
       return overrides.inspectResult || { console_messages: [], page_errors: [] };
     },
-    async screenshot(sessionId) {
-      calls.push(['screenshot', sessionId]);
+    async screenshot(sessionId, options) {
+      calls.push(['screenshot', sessionId, options]);
       if (overrides.screenshotError) {
         throw overrides.screenshotError;
       }
@@ -97,8 +103,11 @@ function makeContext(root, service, overrides = {}) {
       resolvePath(relPath) {
         return path.resolve(root, relPath);
       },
+      // Mirrors ToolPathPolicy: a missing leaf resolves through its real parent.
       async assertInsideRoot(resolved) {
-        const real = fs.realpathSync(resolved);
+        const real = fs.existsSync(resolved)
+          ? fs.realpathSync(resolved)
+          : path.join(fs.realpathSync(path.dirname(resolved)), path.basename(resolved));
         const relative = path.relative(root, real);
         if (relative.startsWith('..') || path.isAbsolute(relative)) {
           throw new Error('outside root');

@@ -9,7 +9,7 @@ to execute — zero files — instead of running uncovered.
 
 from __future__ import annotations
 
-import os
+import time
 from pathlib import Path
 
 import pytest
@@ -17,6 +17,7 @@ import pytest
 from sidecar.ai.mcp import builtin_server
 from sidecar.ai.tools.workspace import WorkspaceGuard
 from sidecar.runtime import operation_ledger as ledger_module
+from sidecar.runtime.advisory_file_lock import advisory_file_lock
 from sidecar.runtime.operation_ledger import LEDGER_OPERATIONS_DIR
 
 ARTIFACT_KEY = "idem_a1a1a1a1a1a1a1a1a1a1a1a1"
@@ -90,16 +91,10 @@ def test_lock_contention_refuses_and_creates_nothing(
     builtin_server.configure_operation_ledger(root)
     monkeypatch.setattr(ledger_module, "_LOCK_TIMEOUT_SECONDS", 0.2)
     try:
-        # A live (fresh-mtime) foreign lock holds the ledger for the whole call.
-        operations = root / LEDGER_OPERATIONS_DIR
-        operations.mkdir(parents=True)
-        lock_path = operations / ".lock"
-        fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
-        try:
+        # A foreign holder keeps the ledger lock for the whole call.
+        lock_path = root / LEDGER_OPERATIONS_DIR / ".lock"
+        with advisory_file_lock(lock_path, time.monotonic() + 5):
             response = _call_create_artifact(workspace_root, _arguments(key=ARTIFACT_KEY))
-        finally:
-            os.close(fd)
-            lock_path.unlink()
     finally:
         builtin_server.configure_operation_ledger(None)
     assert "error" in response

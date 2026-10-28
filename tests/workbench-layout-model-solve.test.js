@@ -294,6 +294,28 @@ test('solveLayout keeps the primary editor group when two groups cannot both kee
   assert.equal(solveLayout(layout, { width: 2560, height: 1360, lastUsed: {} }).sizes['editor-2'], 480);
 });
 
+test('solveLayout keeps the most recently used editor group visible when the extra groups must give way', () => {
+  const ops = require('../renderer/shared/workbench-layout-ops');
+  let layout = ops.addEditorGroup(createDefaultLayout(), 'editor-1', 'right', 480, 'editor-2');
+  layout = ops.addEditorGroup(layout, 'editor-2', 'right', 480, 'editor-3');
+  layout = ops.addEditorGroup(layout, 'editor-3', 'right', 480, 'editor-4');
+  // 1100 leaves the four groups about two floors. The group just used (editor-4, the one a
+  // file opens into) keeps its room and the least recently used gives way first. Yielding
+  // last-first left the active group 0 px wide, so a file opened from the tree landed out of
+  // sight (real-app gate 2026-10-26).
+  const groups = ['editor-1', 'editor-2', 'editor-3', 'editor-4'];
+  const area = (s) => groups.reduce((sum, id) => sum + s[id], 0);
+  const plain = solveLayout(layout, { width: 1100, height: 860, lastUsed: {} }).sizes;
+  const solved = solveLayout(layout, { width: 1100, height: 860, lastUsed: { 'editor-2': 1, 'editor-3': 2, 'editor-4': 9 } }).sizes;
+  assert.equal(solved['editor-1'], EDITOR_MIN_WIDTH, 'the primary group keeps its floor');
+  assert.equal(solved['editor-4'], EDITOR_MIN_WIDTH, `the group just used keeps its room (${JSON.stringify(solved)})`);
+  assert.equal(solved['editor-2'], 0, 'the least recently used group gives way first');
+  assert.equal(area(solved), area(plain), 'the editor area is unchanged');
+  // Without recency the last group still gives way first.
+  assert.equal(plain['editor-4'], 0);
+  assert.equal(plain['editor-2'], EDITOR_MIN_WIDTH);
+});
+
 test('solveLayout opens the most recently used side stack beside two editor groups in a narrow window', () => {
   const ops = require('../renderer/shared/workbench-layout-ops');
   const layout = ops.addEditorGroup(expanded(createDefaultLayout()), 'editor-1', 'right', 480, 'editor-2');

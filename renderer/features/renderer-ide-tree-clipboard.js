@@ -8,14 +8,23 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
+  const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
 
-  function filterAncestorPaths(paths) {
-    const unique = [...new Set((Array.isArray(paths) ? paths : []).map(String).filter(Boolean))];
-    return unique.filter((path) => !unique.some(
-      (candidate) => candidate !== path && path.startsWith(`${candidate}/`)
-    ));
+  function resolveModule(globalName, requirePath) {
+    if (globalRef[globalName]) return globalRef[globalName];
+    if (typeof require === 'function') {
+      try {
+        return require(requirePath);
+      } catch (_error) {
+        /* unavailable */
+      }
+    }
+    return {};
   }
+
+  const { filterAncestorPaths } = resolveModule('rendererIdeTreeSelection', './renderer-ide-tree-selection');
+  const { isExistsError } = resolveModule('rendererIdeTreeMutations', './renderer-ide-tree-mutations');
 
   function createIdeTreeClipboard(deps) {
     const selection = deps?.selection || {};
@@ -26,8 +35,10 @@
       ? deps.getRenderedRows : () => [];
     const moveEntry = typeof deps?.moveEntry === 'function' ? deps.moveEntry : async () => false;
     const getApi = typeof deps?.getApi === 'function' ? deps.getApi : () => null;
-    const getMutationContext = typeof deps?.getMutationContext === 'function'
-      ? deps.getMutationContext : async () => null;
+    // The tree's fenced copy (tree-mutations): refuses without a ready root context.
+    const copyEntry = typeof deps?.copyEntry === 'function' ? deps.copyEntry : async () => {
+      throw new Error('Workspace file access is unavailable; nothing was copied.');
+    };
     const refreshDirectory = typeof deps?.refreshDirectory === 'function'
       ? deps.refreshDirectory : async () => {};
     const deleteEntry = typeof deps?.deleteEntry === 'function' ? deps.deleteEntry : async () => false;
@@ -59,10 +70,14 @@
       return filterAncestorPaths(selection.resolveTargets(getFocusedPath()));
     }
 
+    // Kinds are captured while the rows are still rendered: a later paste must
+    // not guess them from rows a collapse may have removed.
     function store(mode) {
       const paths = resolveTargets();
       if (!paths.length) return;
-      content = { mode, paths, epoch: getRootEpoch() };
+      const rendered = renderedKinds();
+      const kinds = new Map(paths.filter((path) => rendered.get(path)).map((path) => [path, rendered.get(path)]));
+      content = { mode, paths, kinds, cutPaths: mode === 'cut' ? new Set(paths) : null, epoch: getRootEpoch() };
       render();
     }
 
@@ -74,11 +89,16 @@
       store('cut');
     }
 
+    // Per-row check: the path itself or any ancestor directory was cut.
     function isCut(path) {
-      const active = currentContent();
-      return Boolean(active?.mode === 'cut' && active.paths.some(
-        (cutPath) => path === cutPath || String(path || '').startsWith(`${cutPath}/`)
-      ));
+      const cutPaths = currentContent()?.cutPaths;
+      if (!cutPaths) return false;
+      const value = String(path || '');
+      if (cutPaths.has(value)) return true;
+      for (let slash = value.indexOf('/'); slash !== -1; slash = value.indexOf('/', slash + 1)) {
+        if (cutPaths.has(value.slice(0, slash))) return true;
+      }
+      return false;
     }
 
     function hasContent() {
@@ -101,11 +121,6 @@
       return row.kind === 'directory' ? focusedPath : parentDirOf(focusedPath);
     }
 
-    function isExistsError(error) {
-      const code = String(error?.code || '').toUpperCase();
-      return code === 'CMP-WORKSPACEFS-0030' || code === 'EXISTS';
-    }
-
     function reportFailure(error, path, dest) {
       const message = isExistsError(error)
         ? jt('ide.clipboard.fileExists', 'A file named {name} already exists in {destination}.', { name: nameOf(path), destination: dest || jt('ide.clipboard.workspaceRoot', 'the workspace root') })
@@ -113,19 +128,16 @@
       showError(message, { title: jt('ide.explorer.workspace', 'Workspace'), dedupeKey: 'ide:tree:paste' });
     }
 
-    async function copyEntry(from, to) {
-      const api = getApi();
-      if (typeof api?.copyEntry !== 'function') {
-        throw new Error('Workspace file access is unavailable; nothing was copied.');
+    // The stored kind, else what the filesystem says now; '' when neither knows.
+    async function resolveKind(active, path) {
+      const known = active.kinds.get(path);
+      if (known) return known;
+      try {
+        const info = await getApi()?.stat?.({ path });
+        return info?.exists === true && (info.kind === 'directory' || info.kind === 'file') ? info.kind : '';
+      } catch (_error) {
+        return '';
       }
-      const context = await getMutationContext();
-      return api.copyEntry({
-        from,
-        to,
-        onCollision: 'auto-rename',
-        ...(Number.isSafeInteger(context?.generation)
-          ? { expectedGeneration: context.generation } : {}),
-      });
     }
 
     // Identity of a just-pasted destination, so undo can tell the item it made
@@ -169,60 +181,55 @@
         || context.rootEpoch !== getRootEpoch();
     }
 
-    async function undoMoves(moves, context) {
+    // Reverses `items` newest-first. `fields` decide whether the destination is
+    // still the pasted item; `restore(item)` resolves false when it did nothing.
+    async function undoItems(items, context, { fields, restore, dedupeKey }) {
       if (undoIsStale(context)) return;
       let restored = 0;
-      for (const move of [...moves].reverse()) {
+      for (const item of [...items].reverse()) {
         if (undoIsStale(context)) return;
         try {
-          // The same item (even edited) is moved back; a replacement is not.
-          const changed = await identityChanged(move.to, move.identity, ['kind', 'dev', 'ino']);
+          const changed = await identityChanged(item.to, item.identity, fields);
           if (undoIsStale(context)) return;
           if (changed) {
-            reportUndoSkipped(move.to);
+            reportUndoSkipped(item.to);
             continue;
           }
-          const didMove = await moveEntry(move.to, move.from, move.kind);
+          const didRestore = await restore(item);
           if (undoIsStale(context)) return;
-          if (didMove !== false) restored += 1;
+          if (didRestore !== false) restored += 1;
         } catch (error) {
           if (undoIsStale(context)) return;
-        showError(String(error?.message || error || jt('ide.clipboard.restoreFailed', 'Could not restore an item.')), {
-            title: jt('ide.explorer.workspace', 'Workspace'), dedupeKey: 'ide:tree:move-undo',
+          showError(String(error?.message || error || jt('ide.clipboard.restoreFailed', 'Could not restore an item.')), {
+            title: jt('ide.explorer.workspace', 'Workspace'), dedupeKey,
           });
         }
       }
       if (undoIsStale(context)) return;
-      showUndoToast(restored === moves.length ? jtn('ide.clipboard.restoredItems', moves.length, { count: moves.length }, 'Restored {count} item', 'Restored {count} items') : jt('ide.clipboard.restoredPartial', 'Restored {restored} of {total}', { restored, total: moves.length }));
+      showUndoToast(restored === items.length
+        ? jtn('ide.clipboard.restoredItems', items.length, { count: items.length }, 'Restored {count} item', 'Restored {count} items')
+        : jt('ide.clipboard.restoredPartial', 'Restored {restored} of {total}', { restored, total: items.length }));
     }
 
-    async function undoCopies(copies, context) {
-      if (undoIsStale(context)) return;
-      let restored = 0;
-      for (const copy of [...copies].reverse()) {
-        if (undoIsStale(context)) return;
-        try {
-          // An edited or replaced copy is never trashed.
-          const changed = await identityChanged(copy.to, copy.identity, ['kind', 'dev', 'ino', 'size', 'mtimeMs']);
-          if (undoIsStale(context)) return;
-          if (changed) {
-            reportUndoSkipped(copy.to);
-            continue;
-          }
-          const didDelete = await deleteEntry(copy.to, copy.kind, { skipConfirm: true });
-          if (undoIsStale(context)) return;
-          if (didDelete !== false) restored += 1;
-        } catch (error) {
-          if (undoIsStale(context)) return;
-        showError(String(error?.message || error || jt('ide.clipboard.restoreFailed', 'Could not restore an item.')), {
-            title: jt('ide.explorer.workspace', 'Workspace'), dedupeKey: 'ide:tree:copy-undo',
-          });
-        }
-      }
-      if (undoIsStale(context)) return;
-      showUndoToast(restored === copies.length
-        ? jtn('ide.clipboard.restoredItems', copies.length, { count: copies.length }, 'Restored {count} item', 'Restored {count} items')
-        : jt('ide.clipboard.restoredPartial', 'Restored {restored} of {total}', { restored, total: copies.length }));
+    // The same item (even edited) is moved back; a replacement is not.
+    const undoMoves = (moves, context) => undoItems(moves, context, {
+      fields: ['kind', 'dev', 'ino'], dedupeKey: 'ide:tree:move-undo',
+      restore: (move) => moveEntry(move.to, move.from, move.kind),
+    });
+
+    // An edited or replaced copy is never trashed.
+    const undoCopies = (copies, context) => undoItems(copies, context, {
+      fields: ['kind', 'dev', 'ino', 'size', 'mtimeMs'], dedupeKey: 'ide:tree:copy-undo',
+      restore: (copy) => deleteEntry(copy.to, copy.kind, { skipConfirm: true }),
+    });
+
+    // A copy whose kind nobody reports stays out of the undo batch rather than
+    // being trashed as the wrong kind.
+    async function recordCopy(succeeded, from, result, knownKind) {
+      if (typeof result?.to !== 'string' || !result.to) return;
+      const identity = await captureIdentity(result.to);
+      const kind = result.kind || knownKind || identity?.kind || '';
+      if (kind === 'file' || kind === 'directory') succeeded.push({ from, to: result.to, kind, identity });
     }
 
     async function paste(destDirOverride) {
@@ -234,7 +241,6 @@
       onNotify(jt('ide.clipboard.itemsAlreadyHere', 'Items are already here.'));
         return;
       }
-      const kinds = renderedKinds();
       const succeeded = [];
       for (const path of active.paths) {
         if (operationEpoch !== getRootEpoch()) {
@@ -244,16 +250,16 @@
         const to = dest ? `${dest}/${nameOf(path)}` : nameOf(path);
         try {
           if (active.mode === 'cut') {
-            const kind = kinds.get(path) || 'file';
+            const kind = await resolveKind(active, path);
+            if (operationEpoch !== getRootEpoch()) continue;
+            if (!kind) {
+              reportFailure(null, path, dest);
+              continue;
+            }
             const didMove = await moveEntry(path, to, kind);
             if (didMove !== false) succeeded.push({ from: path, to, kind, identity: await captureIdentity(to) });
           } else {
-            const result = await copyEntry(path, to);
-            if (typeof result?.to === 'string' && result.to) {
-              succeeded.push({
-                from: path, to: result.to, kind: result.kind || kinds.get(path) || 'file', identity: await captureIdentity(result.to),
-              });
-            }
+            await recordCopy(succeeded, path, await copyEntry(path, to), active.kinds.get(path));
           }
         } catch (error) {
           reportFailure(error, path, dest);
@@ -294,10 +300,7 @@
         const parent = parentDirOf(path);
         parents.add(parent);
         try {
-          const result = await copyEntry(path, path);
-          if (typeof result?.to === 'string' && result.to) {
-            succeeded.push({ from: path, to: result.to, kind: result.kind || 'file', identity: await captureIdentity(result.to) });
-          }
+          await recordCopy(succeeded, path, await copyEntry(path, path), renderedKinds().get(path));
         } catch (error) {
           reportFailure(error, path, parent);
         }

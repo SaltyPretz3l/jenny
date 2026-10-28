@@ -54,6 +54,7 @@ function fixture({ coordinator } = {}) {
 }
 
 function dispose(f) {
+  f.backendService.semanticCatalogService?.dispose?.();
   f.backendService.imageEngine?.dispose();
   f.backendService.dispose();
 }
@@ -67,6 +68,8 @@ test('wiring starts the image engine, attaches shutdown and handoff, and forward
   try {
     const { backendService: backend } = f;
     assert.ok(backend.imageEngine instanceof ImageEngineService);
+    assert.equal(starts, 0, 'the image engine starts after the window, not at construction');
+    f.startPostWindowServices();
     assert.equal(starts, 1);
     assert.equal(backend.imageEngine.userDataPath, f.userDataPath);
     assert.ok(backend.exclusiveGpuCoordinator instanceof ExclusiveGpuCoordinator);

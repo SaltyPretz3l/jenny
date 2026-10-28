@@ -6,6 +6,8 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
+const { linkDirectory } = require('../helpers/platform-skips');
+
 const {
   PhysicalPathResolver,
   physicalPathsConflict,
@@ -140,19 +142,13 @@ test('valid inode identity detects hardlinks while fallback explicitly remains p
   assert.equal(fallbackA.identity_complete, false);
 });
 
-test('real junction or symlink aliases resolve to one physical directory', (t) => {
+test('real junction or symlink aliases resolve to one physical directory', () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-resource-path-'));
   const target = path.join(tempRoot, 'target');
   const alias = path.join(tempRoot, 'alias');
   fs.mkdirSync(target);
   try {
-    fs.symlinkSync(target, alias, process.platform === 'win32' ? 'junction' : 'dir');
-  } catch (error) {
-    fs.rmSync(tempRoot, { recursive: true, force: true });
-    t.skip(`junction creation unavailable: ${error.code || error.message}`);
-    return;
-  }
-  try {
+    linkDirectory(target, alias);
     const resolver = new PhysicalPathResolver();
     const canonical = resolver.resolve(target);
     const linked = resolver.resolve(alias);

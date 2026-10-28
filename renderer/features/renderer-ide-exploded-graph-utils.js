@@ -18,7 +18,7 @@
  *      function/method, used by the caller to turn a reference site into a
  *      "who calls/reads this" edge endpoint.
  *   4. finalizeGraph(nodes, edges)    - prune leaf data/import nodes with no
- *      inbound edge and no export, then compute degrees/callDepth/importance/
+ *      inbound edge and no export, then compute degrees/callDepth/
  *      zone/rank and return both arrays in a deterministic sort order. Pixel
  *      layout (x/y) is the caller's concern - see renderer-ide-explode-layout.js.
  *
@@ -38,8 +38,6 @@
   // Left-to-right reading order: what a file imports, what data it holds,
   // its internal helpers, then the exported surface that ties it together.
   const ZONE_ORDER = ['imports', 'data', 'functions', 'entry'];
-
-  const IMPORTANCE_PRECISION = 4;
 
   const IDENTIFIER_RE = /^[A-Za-z_$][\w$]*$/;
   const PRIMITIVE_KEYWORDS = new Set(['true', 'false', 'null', 'undefined']);
@@ -351,33 +349,21 @@
     return headEnd;
   }
 
-  // `a, b as c` (import) -> local binding names are a, c. Used for both the
-  // named-import list and (indirectly) for export lists elsewhere.
-  function parseAsBindings(body, bodyStart, source, out) {
-    let cursor = 0;
-    body.split(',').forEach((part) => {
-      const partStart = bodyStart + cursor;
-      cursor += part.length + 1;
-      const trimmed = part.trim();
-      if (!trimmed) return;
-      const asMatch = /^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/.exec(trimmed);
-      const localName = asMatch ? asMatch[2] : trimmed;
-      if (!IDENTIFIER_RE.test(localName)) return;
-      const localOffset = part.lastIndexOf(localName);
-      out.push({ name: localName, nameOffset: partStart + localOffset, source });
-    });
-  }
+  // Renamed entries in a binding list: `a as c` (named-import list) and
+  // `a: c` (object destructure); either way the local name is c.
+  const AS_RENAME_RE = /^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/;
+  const COLON_RENAME_RE = /^([A-Za-z_$][\w$]*)\s*:\s*([A-Za-z_$][\w$]*)$/;
 
-  // `a, b: c` (object destructure) -> local binding names are a, c.
-  function parseColonBindings(body, bodyStart, source, out) {
+  // `a, b <rename> c` -> local binding names a, c (renameRe picks the form).
+  function parseBindings(body, bodyStart, source, out, renameRe) {
     let cursor = 0;
     body.split(',').forEach((part) => {
       const partStart = bodyStart + cursor;
       cursor += part.length + 1;
       const trimmed = part.trim();
       if (!trimmed) return;
-      const colonMatch = /^([A-Za-z_$][\w$]*)\s*:\s*([A-Za-z_$][\w$]*)$/.exec(trimmed);
-      const localName = colonMatch ? colonMatch[2] : trimmed;
+      const renamed = renameRe.exec(trimmed);
+      const localName = renamed ? renamed[2] : trimmed;
       if (!IDENTIFIER_RE.test(localName)) return;
       const localOffset = part.lastIndexOf(localName);
       out.push({ name: localName, nameOffset: partStart + localOffset, source });
@@ -401,7 +387,7 @@
     if (braceIdx !== -1) {
       const closeIdx = clause.indexOf('}', braceIdx);
       const body = clause.slice(braceIdx + 1, closeIdx === -1 ? undefined : closeIdx);
-      parseAsBindings(body, clauseStart + braceIdx + 1, source, out);
+      parseBindings(body, clauseStart + braceIdx + 1, source, out, AS_RENAME_RE);
     }
   }
 
@@ -483,7 +469,7 @@
       const source = m[3];
       const patternStart = m.index + m[0].indexOf(pattern);
       if (pattern[0] === '{') {
-        parseColonBindings(pattern.slice(1, -1), patternStart + 1, source, out);
+        parseBindings(pattern.slice(1, -1), patternStart + 1, source, out, COLON_RENAME_RE);
       } else {
         out.push({ name: pattern, nameOffset: patternStart, source });
       }
@@ -677,7 +663,7 @@
    * buildSymbolNodes(tree, text) - steps 2-6: walk + classify the nav tree,
    * merge overload duplicates, scan + dedupe imports, resolve exported flags,
    * and emit full Node-shaped objects. Wiring fields (degreeIn/degreeOut/
-   * callDepth/importance/zone/rank) start at their zero value; the caller
+   * callDepth/zone/rank) start at their zero value; the caller
    * fills them in via finalizeGraph() once edges exist.
    * @returns {Array<Object>} nodes sorted by nameOffset (document order)
    */
@@ -737,7 +723,6 @@
         degreeIn: 0,
         degreeOut: 0,
         callDepth: null,
-        importance: 0,
         zone: null,
         rank: 0,
       };
@@ -798,7 +783,7 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Step 9-10 - prune, degrees, callDepth, importance, zone/rank
+  // Step 9-10 - prune, degrees, callDepth, zone/rank
   // ---------------------------------------------------------------------------
 
   function pruneGraph(nodes, edges) {
@@ -855,20 +840,6 @@
       });
     }
     nodes.forEach((n) => { n.callDepth = depth.has(n.id) ? depth.get(n.id) : null; });
-  }
-
-  function computeImportanceScores(nodes) {
-    if (nodes.length === 0) return;
-    const values = nodes.map((n) => n.degreeIn);
-    const max = Math.max(...values);
-    const min = Math.min(...values);
-    const span = max - min;
-    const factor = 10 ** IMPORTANCE_PRECISION;
-    nodes.forEach((n) => {
-      const norm = span === 0 ? 0 : (n.degreeIn - min) / span;
-      const rounded = Math.round(norm * factor) / factor;
-      n.importance = rounded === 0 ? 0 : rounded;
-    });
   }
 
   function assignZones(nodes) {
@@ -934,14 +905,13 @@
   /**
    * finalizeGraph(nodes, edges) - steps 9-10. Prunes leaf data/import nodes
    * with no inbound edge and no export, computes degreeIn/degreeOut/callDepth/
-   * importance/zone/rank, and returns both arrays in the deterministic
+   * zone/rank, and returns both arrays in the deterministic
    * (zone, rank, id) / (from, to, kind) sort order.
    */
   function finalizeGraph(nodes, edges) {
     const pruned = pruneGraph(Array.isArray(nodes) ? nodes : [], Array.isArray(edges) ? edges : []);
     computeDegrees(pruned.nodes, pruned.edges);
     computeCallDepth(pruned.nodes, pruned.edges);
-    computeImportanceScores(pruned.nodes);
     assignZones(pruned.nodes);
     assignRanks(pruned.nodes);
     return sortFinal(pruned.nodes, pruned.edges);

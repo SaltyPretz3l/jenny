@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import fnmatch
 import json
 import logging
-import os
 import queue
 import re
 import subprocess
@@ -13,7 +11,7 @@ import sys
 import threading
 import time
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import IO, Callable, Iterator, Sequence
 
 from sidecar.ai.error_codes import (
@@ -23,33 +21,29 @@ from sidecar.ai.error_codes import (
 )
 from sidecar.ai.tools.argument_coercion import bounded_int as _bounded_int
 from sidecar.ai.tools.builtins.grep_search_file import (
+    MATCH_SUMMARY_OP,  # noqa: F401 - re-export for knowledge search
     MAX_BRACE_EXPANSIONS,
     MAX_RENDERED_LINE_CHARS,
-    SEARCH_IGNORE_DIRS,
     BraceExpansionLimitError,
+    FileSearchResult,
     expand_brace_patterns,
     is_binary_file,
+    iter_candidate_files,
+    matches_relative_glob,
+    run_lines_request,
+    search_file,
+    worker_error_response,
+    worker_ok_response,
 )
 from sidecar.ai.tools.builtins.grep_search_file import (
-    FileSearchResult as _FileSearchResult,
-)
-from sidecar.ai.tools.builtins.grep_search_file import (
-    search_file as _search_file,
+    search_result_from_response as _response_to_search_result,
 )
 from sidecar.ai.tools.builtins.grep_search_settings import (
     _SEARCH_SETTINGS,
-)
-from sidecar.ai.tools.builtins.grep_search_settings import (
-    DEFAULT_MAX_SEARCH_FILE_BYTES as _DEFAULT_MAX_SEARCH_FILE_BYTES,
-)
-from sidecar.ai.tools.builtins.grep_search_settings import (
-    MAX_CONFIGURED_SEARCH_FILE_BYTES as _MAX_CONFIGURED_SEARCH_FILE_BYTES,
-)
-from sidecar.ai.tools.builtins.grep_search_settings import (
-    MIN_CONFIGURED_SEARCH_FILE_BYTES as _MIN_CONFIGURED_SEARCH_FILE_BYTES,
-)
-from sidecar.ai.tools.builtins.grep_search_settings import (
-    configure_grep_search as _configure_grep_search,
+    DEFAULT_MAX_SEARCH_FILE_BYTES,  # noqa: F401 - re-export
+    MAX_CONFIGURED_SEARCH_FILE_BYTES,  # noqa: F401 - re-export
+    MIN_CONFIGURED_SEARCH_FILE_BYTES,  # noqa: F401 - re-export
+    configure_grep_search,  # noqa: F401 - re-export
 )
 from sidecar.ai.tools.builtins.regex_safety import compile_safe_pattern
 from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
@@ -59,11 +53,6 @@ from sidecar.runtime.diagnostics import log_event
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_SEARCH_FILE_BYTES = _DEFAULT_MAX_SEARCH_FILE_BYTES
-MIN_CONFIGURED_SEARCH_FILE_BYTES = _MIN_CONFIGURED_SEARCH_FILE_BYTES
-MAX_CONFIGURED_SEARCH_FILE_BYTES = _MAX_CONFIGURED_SEARCH_FILE_BYTES
-configure_grep_search = _configure_grep_search
-
 DEFAULT_MAX_RESULTS = 100
 MAX_CONTEXT_LINES = 10
 MAX_RESULTS = 500
@@ -71,6 +60,8 @@ REGEX_SEARCH_TIMEOUT_SECONDS = 5.0
 REGEX_WORKER_STARTUP_TIMEOUT_SECONDS = 15.0
 MAX_TOTAL_RUNTIME_SECONDS = 30.0
 MAX_TIMED_OUT_FILES = 3
+# Per-file read failures are skipped; this many in a row is a systemic failure.
+MAX_CONSECUTIVE_UNREADABLE_FILES = 25
 MAX_OUTPUT_BYTES = 20_000
 LARGE_FILE_HINT = "Use paginated read_file with offset/limit to inspect large files."
 _WORKER_JOIN_TIMEOUT_SECONDS = 0.2
@@ -98,46 +89,36 @@ def grep_search_tool(arguments: dict[str, object], workspace: WorkspaceGuard) ->
     )
     started_at = _monotonic_seconds()
     worker = _RegexSearchWorker()
+
+    def walk_budget_exhausted() -> bool:
+        if _runtime_budget_exhausted(started_at):
+            search_state.aborted_by_runtime_budget = True
+        return search_state.aborted_by_runtime_budget
+
     try:
-        for candidate in _iter_candidate_files(search_root, workspace, include_patterns):
+        for candidate in _iter_candidate_files(
+            search_root, workspace, include_patterns, budget_exhausted=walk_budget_exhausted
+        ):
             if _runtime_budget_exhausted(started_at):
                 search_state.aborted_by_runtime_budget = True
                 break
             search_state.selected_files += 1
-            if is_binary_file(candidate):
-                search_state.skipped_binary_files += 1
-                continue
             try:
-                workspace.check_file_size(
-                    candidate,
-                    _max_search_file_bytes(),
-                    hint=LARGE_FILE_HINT,
-                )
-            except ToolExecutionFailure as error:
-                if error.retryable:
-                    raise
-                search_state.skipped_large_files += 1
-                search_state.record_large_file_message(error.message)
-                continue
-            search_state.candidate_files += 1
-            try:
-                result = _search_file_with_timeout(
+                keep_going = _search_candidate(
                     candidate,
                     compiled,
                     workspace=workspace,
                     context_lines=context_lines,
-                    max_output_matches=search_state.remaining_output_matches,
-                    max_output_bytes=search_state.remaining_output_bytes,
+                    state=search_state,
                     worker=worker,
+                    started_at=started_at,
                 )
-            except FutureTimeoutError:
-                search_state.timed_out_files += 1
-                _log_timeout(candidate)
-                if search_state.timed_out_files >= MAX_TIMED_OUT_FILES:
-                    search_state.aborted_by_timeout_cap = True
-                    break
+            except ToolExecutionFailure as error:
+                _skip_unreadable(search_state, error)
                 continue
-            search_state.consume(result)
+            search_state.consecutive_unreadable_files = 0
+            if not keep_going:
+                break
     finally:
         worker.close()
 
@@ -145,6 +126,74 @@ def grep_search_tool(arguments: dict[str, object], workspace: WorkspaceGuard) ->
         pattern=compiled.pattern,
         state=search_state,
     )
+
+
+def _search_candidate(
+    candidate: Path,
+    compiled: re.Pattern[str],
+    *,
+    workspace: WorkspaceGuard,
+    context_lines: int,
+    state: _SearchState,
+    worker: _RegexSearchWorker,
+    started_at: float,
+) -> bool:
+    """Search one candidate file; False when the whole scan must stop."""
+
+    if candidate.suffix.lower() == ".pdf":
+        return _search_pdf_candidate(
+            candidate,
+            compiled,
+            workspace=workspace,
+            context_lines=context_lines,
+            state=state,
+            worker=worker,
+            started_at=started_at,
+        )
+    if is_binary_file(candidate):
+        state.skipped_binary_files += 1
+        return True
+    if _skip_if_oversized(state, candidate, workspace, _max_search_file_bytes(), LARGE_FILE_HINT):
+        return True
+    try:
+        result: FileSearchResult | None = _search_file_with_timeout(
+            candidate,
+            compiled,
+            workspace=workspace,
+            context_lines=context_lines,
+            max_output_matches=state.remaining_output_matches,
+            max_output_bytes=state.remaining_output_bytes,
+            worker=worker,
+        )
+    except FutureTimeoutError:
+        result = None
+    state.candidate_files += 1
+    if result is None:
+        return _record_timeout(state, candidate)
+    state.consume(result)
+    return True
+
+
+def _skip_unreadable(state: _SearchState, error: ToolExecutionFailure) -> None:
+    """Count one per-file read failure; re-raise anything systemic.
+
+    Worker failures and other error codes propagate, and so does a long run of
+    failures. The error message is never kept: it can carry an absolute path.
+    """
+
+    if error.code != CMP_TOOL_IO_FAILED or isinstance(error, _WorkerUnavailable):
+        raise error
+    state.skipped_unreadable_files += 1
+    state.consecutive_unreadable_files += 1
+    if state.consecutive_unreadable_files >= MAX_CONSECUTIVE_UNREADABLE_FILES:
+        raise ToolExecutionFailure(
+            code=CMP_TOOL_IO_FAILED,
+            message=(
+                f"grep_search stopped after {MAX_CONSECUTIVE_UNREADABLE_FILES} files in a row "
+                f"could not be read below '{state.searched_root}'."
+            ),
+            retryable=True,
+        ) from error
 
 
 class _SearchState:
@@ -160,6 +209,9 @@ class _SearchState:
         self.timed_out_files = 0
         self.skipped_binary_files = 0
         self.skipped_large_files = 0
+        self.skipped_pdf_pages = 0
+        self.skipped_unreadable_files = 0
+        self.consecutive_unreadable_files = 0
         self.candidate_files = 0
         self.selected_files = 0
         self.aborted_by_runtime_budget = False
@@ -180,7 +232,7 @@ class _SearchState:
         if self.large_file_message is None:
             self.large_file_message = message
 
-    def consume(self, result: "_FileSearchResult") -> None:
+    def consume(self, result: FileSearchResult) -> None:
         if result.total_match_count:
             self.total_match_count += result.total_match_count
             self.returned_match_count += result.returned_match_count
@@ -192,6 +244,81 @@ class _SearchState:
         self.truncated_by_line_length = (
             self.truncated_by_line_length or result.truncated_by_line_length
         )
+
+
+def _search_pdf_candidate(
+    candidate: Path,
+    compiled: re.Pattern[str],
+    *,
+    workspace: WorkspaceGuard,
+    context_lines: int,
+    state: _SearchState,
+    worker: _RegexSearchWorker,
+    started_at: float,
+) -> bool:
+    """Search one PDF by page text; False when the whole scan must stop."""
+
+    # Lazy: the PDF stack stays out of the sidecar.server import graph.
+    from sidecar.ai.tools.builtins import grep_search_pdf
+
+    if _skip_if_oversized(
+        state,
+        candidate,
+        workspace,
+        grep_search_pdf.MAX_PDF_SEARCH_BYTES,
+        grep_search_pdf.LARGE_PDF_HINT,
+    ):
+        return True
+    outcome = grep_search_pdf.search_pdf(
+        candidate,
+        compiled,
+        workspace_root=workspace.root,
+        context_lines=context_lines,
+        max_output_matches=state.remaining_output_matches,
+        max_output_bytes=state.remaining_output_bytes,
+        deadline=started_at + MAX_TOTAL_RUNTIME_SECONDS,
+        send=lambda request: worker.request(request, REGEX_SEARCH_TIMEOUT_SECONDS),
+    )
+    if outcome is None:
+        # No PDF reading add-on, or a PDF PyMuPDF cannot read: the old binary skip.
+        state.skipped_binary_files += 1
+        return True
+    state.candidate_files += 1
+    state.skipped_pdf_pages += outcome.skipped_pages
+    state.consume(outcome.result)
+    if outcome.timed_out and not _record_timeout(state, candidate):
+        return False
+    if outcome.runtime_exhausted:
+        state.aborted_by_runtime_budget = True
+        return False
+    return True
+
+
+def _skip_if_oversized(
+    state: _SearchState, path: Path, workspace: WorkspaceGuard, limit: int, hint: str
+) -> bool:
+    """Count ``path`` as a skipped large file when it exceeds ``limit``."""
+
+    try:
+        workspace.check_file_size(path, limit, hint=hint)
+    except ToolExecutionFailure as error:
+        if error.retryable:
+            raise
+        state.skipped_large_files += 1
+        state.record_large_file_message(error.message)
+        return True
+    return False
+
+
+def _record_timeout(state: _SearchState, path: Path) -> bool:
+    """Count one regex timeout; False once the cap stops the whole scan."""
+
+    state.timed_out_files += 1
+    _log_timeout(path)
+    if state.timed_out_files >= MAX_TIMED_OUT_FILES:
+        state.aborted_by_timeout_cap = True
+        return False
+    return True
 
 
 def _compile_pattern(arguments: dict[str, object]) -> re.Pattern[str]:
@@ -261,70 +388,18 @@ def _iter_candidate_files(
     search_root: Path,
     workspace: WorkspaceGuard,
     include_patterns: Sequence[str] | None,
+    *,
+    budget_exhausted: Callable[[], bool] | None = None,
 ) -> Iterator[Path]:
-    if search_root.is_file():
-        if include_patterns and not any(
-            _matches_glob(search_root, search_root=search_root.parent, pattern=pattern)
-            for pattern in include_patterns
-        ):
-            return
-        yield search_root
-        return
-
-    for current_root, dir_names, file_names in os.walk(search_root, followlinks=False):
-        current_path = Path(current_root)
-        dir_names[:] = _filter_dir_names(current_path, dir_names, workspace)
-        for file_name in sorted(file_names, key=str.lower):
-            candidate = current_path / file_name
-            if candidate.is_symlink():
-                continue
-            try:
-                resolved = workspace.ensure_within_root(candidate)
-            except ToolExecutionFailure:
-                continue
-            if not resolved.is_file():
-                continue
-            if include_patterns and not any(
-                _matches_glob(resolved, search_root=search_root, pattern=pattern)
-                for pattern in include_patterns
-            ):
-                continue
-            yield resolved
-
-
-def _filter_dir_names(
-    current_path: Path,
-    dir_names: list[str],
-    workspace: WorkspaceGuard,
-) -> list[str]:
-    kept: list[str] = []
-    for name in sorted(dir_names, key=str.lower):
-        if name in SEARCH_IGNORE_DIRS:
-            continue
-        candidate = current_path / name
-        if candidate.is_symlink():
-            continue
-        try:
-            workspace.ensure_within_root(candidate)
-        except ToolExecutionFailure:
-            continue
-        kept.append(name)
-    return kept
+    """The candidate walk (``grep_search_file``); knowledge search shares it."""
+    return iter_candidate_files(
+        search_root, workspace, include_patterns, budget_exhausted=budget_exhausted
+    )
 
 
 def _matches_glob(path: Path, *, search_root: Path, pattern: str) -> bool:
-    relative_path = path.relative_to(search_root).as_posix()
-    normalized_pattern = pattern.replace("\\", "/")
-    if "/" not in normalized_pattern:
-        return fnmatch.fnmatch(path.name, normalized_pattern)
-    relative = PurePosixPath(relative_path)
-    if relative.match(normalized_pattern):
-        return True
-    # Git/ripgrep-style leading **/ also matches a file at the search root;
-    # pathlib's matcher otherwise requires at least one directory segment.
-    if normalized_pattern.startswith("**/"):
-        return relative.match(normalized_pattern[3:])
-    return False
+    """``include_glob`` matching, shared with ``glob_files`` (``**`` spans directories)."""
+    return matches_relative_glob(path.relative_to(search_root).as_posix(), pattern)
 
 
 _GREP_WORKER_FLAG = "--grep-search-worker"
@@ -337,6 +412,10 @@ def _grep_worker_command() -> list[str]:
     if getattr(sys, "frozen", False):
         return [sys.executable, _GREP_WORKER_FLAG]
     return [sys.executable, "-m", "sidecar", _GREP_WORKER_FLAG]
+
+
+class _WorkerUnavailable(ToolExecutionFailure):
+    """The regex worker itself failed (start, pipes, exit); never one file's error."""
 
 
 class _RegexSearchWorker:
@@ -373,22 +452,29 @@ class _RegexSearchWorker:
         max_output_matches: int,
         max_output_bytes: int,
         timeout_seconds: float,
-    ) -> _FileSearchResult:
+    ) -> FileSearchResult:
+        return self.request(
+            {
+                "path": str(path),
+                "pattern": compiled.pattern,
+                "flags": int(compiled.flags),
+                "workspace_root": str(workspace_root) if workspace_root is not None else "",
+                "hosted_file_io": hosted_file_io_enabled(),
+                "context_lines": context_lines,
+                "max_output_matches": max_output_matches,
+                "max_output_bytes": max_output_bytes,
+            },
+            timeout_seconds,
+        )
+
+    def request(self, request: dict[str, object], timeout_seconds: float) -> FileSearchResult:
+        """Send one search request (a file path, or a ``lines`` chunk) to the worker."""
+
         self._ensure_started()
-        request = {
-            "path": str(path),
-            "pattern": compiled.pattern,
-            "flags": int(compiled.flags),
-            "workspace_root": str(workspace_root) if workspace_root is not None else "",
-            "hosted_file_io": hosted_file_io_enabled(),
-            "context_lines": context_lines,
-            "max_output_matches": max_output_matches,
-            "max_output_bytes": max_output_bytes,
-        }
         process = self._process
         responses = self._responses
         if process is None or process.stdin is None or responses is None:
-            raise ToolExecutionFailure(
+            raise _WorkerUnavailable(
                 code=CMP_TOOL_IO_FAILED,
                 message="grep worker failed to start",
                 retryable=True,
@@ -398,7 +484,7 @@ class _RegexSearchWorker:
             process.stdin.flush()
         except (BrokenPipeError, OSError, ValueError) as error:
             self._reset(force=True)
-            raise ToolExecutionFailure(
+            raise _WorkerUnavailable(
                 code=CMP_TOOL_IO_FAILED,
                 message=f"grep worker communication failed: {error}",
                 retryable=True,
@@ -409,7 +495,7 @@ class _RegexSearchWorker:
             detail = self._bounded_stderr_detail()
             self._reset(force=True)
             suffix = f": {detail}" if detail else ""
-            raise ToolExecutionFailure(
+            raise _WorkerUnavailable(
                 code=CMP_TOOL_IO_FAILED,
                 message=f"grep worker exited unexpectedly{suffix}",
                 retryable=True,
@@ -418,7 +504,7 @@ class _RegexSearchWorker:
             alive = process.poll() is None
             self._reset(force=True)
             if not alive:
-                raise ToolExecutionFailure(
+                raise _WorkerUnavailable(
                     code=CMP_TOOL_IO_FAILED,
                     message="grep worker exited unexpectedly",
                     retryable=True,
@@ -445,7 +531,7 @@ class _RegexSearchWorker:
                 bufsize=1,
             )
         except (OSError, ValueError) as error:
-            raise ToolExecutionFailure(
+            raise _WorkerUnavailable(
                 code=CMP_TOOL_IO_FAILED,
                 message=f"grep worker failed to start: {error}",
                 retryable=True,
@@ -453,7 +539,7 @@ class _RegexSearchWorker:
         if process.stdin is None or process.stdout is None or process.stderr is None:
             process.kill()
             process.wait(timeout=_WORKER_JOIN_TIMEOUT_SECONDS)
-            raise ToolExecutionFailure(
+            raise _WorkerUnavailable(
                 code=CMP_TOOL_IO_FAILED,
                 message="grep worker failed to create dedicated protocol pipes",
                 retryable=True,
@@ -483,7 +569,7 @@ class _RegexSearchWorker:
                 else "grep worker startup timed out"
             )
             self._reset(force=True)
-            raise ToolExecutionFailure(
+            raise _WorkerUnavailable(
                 code=CMP_TOOL_IO_FAILED,
                 message=message,
                 retryable=True,
@@ -492,14 +578,14 @@ class _RegexSearchWorker:
             detail = self._bounded_stderr_detail()
             self._reset(force=True)
             suffix = f": {detail}" if detail else ""
-            raise ToolExecutionFailure(
+            raise _WorkerUnavailable(
                 code=CMP_TOOL_IO_FAILED,
                 message=f"grep worker exited during startup{suffix}",
                 retryable=True,
             )
         if ready_message != _WORKER_READY_MESSAGE:
             self._reset(force=True)
-            raise ToolExecutionFailure(
+            raise _WorkerUnavailable(
                 code=CMP_TOOL_IO_FAILED,
                 message="grep worker returned an invalid readiness response",
                 retryable=True,
@@ -611,7 +697,7 @@ def _search_file_with_timeout(
     max_output_matches: int,
     max_output_bytes: int,
     worker: _RegexSearchWorker | None = None,
-) -> _FileSearchResult:
+) -> FileSearchResult:
     active_worker = worker or _RegexSearchWorker()
     try:
         return active_worker.search(
@@ -648,7 +734,7 @@ def _grep_search_worker_main(
         if not line:
             return 0
         if len(line) > _WORKER_PROTOCOL_MAX_LINE_CHARS or not line.endswith("\n"):
-            response = _worker_error_response(
+            response = worker_error_response(
                 code=CMP_TOOL_IO_FAILED,
                 message="grep worker request exceeded its protocol limit",
                 retryable=True,
@@ -657,7 +743,7 @@ def _grep_search_worker_main(
             try:
                 request = json.loads(line)
             except json.JSONDecodeError:
-                response = _worker_error_response(
+                response = worker_error_response(
                     code=CMP_TOOL_IO_FAILED,
                     message="grep worker received invalid JSON",
                     retryable=True,
@@ -672,11 +758,13 @@ def _grep_search_worker_main(
 
 def _run_worker_request(request: object) -> dict[str, object]:
     if not isinstance(request, dict):
-        return _worker_error_response(
+        return worker_error_response(
             code=CMP_TOOL_IO_FAILED,
             message="grep worker received an invalid request payload",
             retryable=True,
         )
+    if "lines" in request:
+        return run_lines_request(request)
     try:
         path_value = request.get("path")
         pattern_value = request.get("pattern")
@@ -701,7 +789,7 @@ def _run_worker_request(request: object) -> dict[str, object]:
             str(workspace_root) if workspace_root else None,
             enabled=request.get("hosted_file_io") is True,
         )
-        result = _search_file(
+        result = search_file(
             Path(path_value),
             compiled,
             workspace_root,
@@ -710,72 +798,25 @@ def _run_worker_request(request: object) -> dict[str, object]:
             int(max_output_bytes_value),
         )
     except ToolExecutionFailure as error:
-        return _worker_error_response(
+        return worker_error_response(
             code=error.code,
             message=error.message,
             retryable=error.retryable,
         )
     except Exception as error:  # noqa: BLE001
-        return _worker_error_response(
+        return worker_error_response(
             code=CMP_TOOL_IO_FAILED,
             message=f"grep worker failed: {error}",
             retryable=True,
         )
-    return {
-        "status": "ok",
-        "lines": list(result.lines),
-        "returned_match_count": result.returned_match_count,
-        "total_match_count": result.total_match_count,
-        "truncated": result.truncated,
-        "truncated_by_bytes": result.truncated_by_bytes,
-        "truncated_by_line_length": result.truncated_by_line_length,
-        "output_bytes_used": result.output_bytes_used,
-    }
-
-
-def _worker_error_response(*, code: str, message: str, retryable: bool) -> dict[str, object]:
-    return {
-        "status": "error",
-        "error_code": code,
-        "message": message,
-        "retryable": retryable,
-    }
-
-
-def _response_to_search_result(response: object) -> _FileSearchResult:
-    if not isinstance(response, dict):
-        raise ToolExecutionFailure(
-            code=CMP_TOOL_IO_FAILED,
-            message="grep worker returned an invalid response payload",
-            retryable=True,
-        )
-    if response.get("status") != "ok":
-        raise ToolExecutionFailure(
-            code=str(response.get("error_code") or CMP_TOOL_IO_FAILED),
-            message=str(response.get("message") or "grep worker failed"),
-            retryable=bool(response.get("retryable", True)),
-        )
-    lines = response.get("lines")
-    if not isinstance(lines, list) or not all(isinstance(line, str) for line in lines):
-        raise ToolExecutionFailure(
-            code=CMP_TOOL_IO_FAILED,
-            message="grep worker returned invalid search lines",
-            retryable=True,
-        )
-    return _FileSearchResult(
-        lines=list(lines),
-        returned_match_count=int(response.get("returned_match_count", 0)),
-        total_match_count=int(response.get("total_match_count", 0)),
-        truncated=bool(response.get("truncated", False)),
-        truncated_by_bytes=bool(response.get("truncated_by_bytes", False)),
-        truncated_by_line_length=bool(response.get("truncated_by_line_length", False)),
-        output_bytes_used=int(response.get("output_bytes_used", 0)),
-    )
+    return worker_ok_response(result)
 
 
 def _build_result(*, pattern: str, state: _SearchState) -> ToolHandlerResult:
     scan_complete = not (
-        state.aborted_by_runtime_budget or state.aborted_by_timeout_cap
+        state.aborted_by_runtime_budget
+        or state.aborted_by_timeout_cap
+        or state.skipped_pdf_pages
     )
     narrowing_hint = (
         f"Narrow path below '{state.searched_root}' or add include_glob, then retry."
@@ -793,6 +834,8 @@ def _build_result(*, pattern: str, state: _SearchState) -> ToolHandlerResult:
         "timed_out_files": state.timed_out_files,
         "skipped_binary_files": state.skipped_binary_files,
         "skipped_large_files": state.skipped_large_files,
+        "skipped_pdf_pages": state.skipped_pdf_pages,
+        "skipped_unreadable_files": state.skipped_unreadable_files,
         "selected_files": state.selected_files,
         "candidate_files": state.candidate_files,
         "aborted_by_runtime_budget": state.aborted_by_runtime_budget,
@@ -902,6 +945,15 @@ def _result_notes(state: _SearchState) -> str:
         notes.append(
             f"Skipped {state.skipped_large_files} file(s) larger than "
             f"{_max_search_file_bytes()} bytes."
+        )
+    if state.skipped_unreadable_files:
+        notes.append(f"Skipped {state.skipped_unreadable_files} file(s) that could not be read.")
+    if state.skipped_pdf_pages:
+        notes.append(
+            f"Skipped {state.skipped_pdf_pages} PDF page(s) (uncached scanned pages, or the "
+            "tail of a long PDF) to stay within the per-PDF time budget, so they were not "
+            "searched. Retry grep_search to cover more of them, or read them with read_file; "
+            "extracted pages are cached for later searches."
         )
     return "\n".join(notes)
 

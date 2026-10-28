@@ -14,8 +14,11 @@
      where the reply will appear names that chat and links to it. It wears the
      in-stream waiting line's grammar (renderer-stream-waiting-line.js); the
      queue strip keeps Withdraw. It goes once the wait ends: admitted work is
-     no longer pending, so its wait is null. */
+     no longer pending, so its wait is null. Q13 (owner, 2026-10-20): a known
+     blocker also gets "Stop it", the same path as that chat's Stop button, so
+     a send can get past a long reply without leaving this chat. */
   const LINE_ATTR = 'data-admission-wait-line';
+  const mountedLines = new WeakMap(); // timeline -> the line this module mounted there
   // Stands in for the title inside the translated sentence (see the waiting line).
   const TITLE_TOKEN = '';
 
@@ -64,7 +67,24 @@
     return copy.before + copy.linked + copy.after;
   }
 
-  function buildLine(documentRef, copy, blockingSessionId, onOpenChat) {
+  // "Stop it": stops the blocking chat's reply (its Stop button's path). One
+  // press; the line goes or rebuilds when the wait ends or changes.
+  function stopButton(documentRef, blockingSessionId, onStopChat) {
+    const wrapper = documentRef.createElement('span');
+    wrapper.innerHTML = actionButton({ label: jt('chat.admissionWait.stopIt', 'Stop it'), className: 'turn-activity-wait-action',
+      title: jt('chat.admissionWait.stopItTitle', 'Stop that chat’s reply so this one can go next'), plain: true });
+    const button = wrapper.firstElementChild;
+    button.setAttribute('data-wait-stop', 'true');
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      if (button.disabled) return;
+      button.disabled = true;
+      try { onStopChat(blockingSessionId); } catch (_error) { /* affordance only */ }
+    });
+    return button;
+  }
+
+  function buildLine(documentRef, copy, blockingSessionId, onOpenChat, onStopChat) {
     const node = documentRef.createElement('div');
     node.className = 'turn-activity-row';
     node.setAttribute(LINE_ATTR, 'true');
@@ -92,6 +112,10 @@
       why.appendChild(documentRef.createTextNode(copy.after));
     }
     label.appendChild(why);
+    if (blockingSessionId && typeof onStopChat === 'function') {
+      label.appendChild(documentRef.createTextNode(' '));
+      label.appendChild(stopButton(documentRef, blockingSessionId, onStopChat));
+    }
     node.appendChild(label);
     return node;
   }
@@ -102,25 +126,29 @@
    * `wait` is already past its grace). Rebuilt only when its words change, so a
    * render never replaces the link under the pointer or the keyboard.
    */
-  function syncAdmissionWaitLine({ timeline, state, rows, onOpenChat } = {}) {
+  function syncAdmissionWaitLine({ timeline, state, rows, onOpenChat, onStopChat } = {}) {
     if (!timeline || typeof timeline.querySelector !== 'function') return null;
-    const existing = timeline.querySelector(`[${LINE_ATTR}]`);
     const held = (Array.isArray(rows) ? rows : []).find((row) => row?.wait?.reason === 'model_busy');
     if (!held) {
-      existing?.remove();
+      // This runs on every composer render (each keystroke); only this function
+      // mounts the line, so with none mounted there is nothing to look up.
+      mountedLines.get(timeline)?.remove();
+      mountedLines.delete(timeline);
       return null;
     }
+    const existing = timeline.querySelector(`[${LINE_ATTR}]`);
     const blockingSessionId = normalizeId(held.wait.blockingSessionId);
     const copy = waitCopy(state, blockingSessionId);
     const key = [blockingSessionId, copy.before, copy.linked, copy.after].join('\n');
     let node = existing;
     if (!node || node.getAttribute('data-wait-key') !== key) {
       existing?.remove();
-      node = buildLine(timeline.ownerDocument, copy, blockingSessionId, onOpenChat);
+      node = buildLine(timeline.ownerDocument, copy, blockingSessionId, onOpenChat, onStopChat);
       node.setAttribute('data-wait-key', key);
     }
     // Where the reply will appear: after everything the timeline renders.
     if (node.parentNode !== timeline || node !== timeline.lastElementChild) timeline.appendChild(node);
+    mountedLines.set(timeline, node);
     return node;
   }
 

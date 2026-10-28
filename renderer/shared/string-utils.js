@@ -217,6 +217,19 @@
     return source ? clipTitleAtWordBoundary(source, budget) : '';
   }
 
+  /** The profile-wide primary chat ("Jenny", row 69): a session summary with session_role 'primary'. */
+  function isPrimarySession(session) {
+    return Boolean(session) && typeof session === 'object' && session.session_role === 'primary';
+  }
+
+  /** Is the session with this id, among these session summaries, the primary chat? */
+  function isPrimarySessionId(sessions, id) {
+    if (!id || !Array.isArray(sessions)) return false;
+    return sessions.some(function matchesPrimary(session) {
+      return Boolean(session) && session.id === id && isPrimarySession(session);
+    });
+  }
+
   return {
     normalizeString,
     normalizeId,
@@ -228,5 +241,7 @@
     selectLinkedRecallSessions,
     SESSION_TITLE_MAX_LENGTH,
     deriveSessionTitleFromMessage,
+    isPrimarySession,
+    isPrimarySessionId,
   };
 });

@@ -241,3 +241,15 @@ def test_blob_family_cap_covers_the_shell_fan_out() -> None:
     blob_family = family_by_method[MODELS_OLLAMA_BLOB_METHOD]
     assert blob_family != family_by_method[MODELS_LIST_METHOD]
     assert server_auxiliary_workers.DEFAULT_MAX_WORKERS_BY_FAMILY[blob_family] >= batch
+
+
+def test_resident_read_is_not_starved_by_two_slow_model_lists() -> None:
+    """listModels makes two engine reads; with a model server down each one waits.
+
+    Sharing the "models" cap of 2 rejected the quick models.resident poll at every
+    such launch (owner log 2026-10-20: models_worker_limit_exceeded + WARN).
+    """
+    family_by_method = server_auxiliary_workers.AUXILIARY_FAMILY_BY_METHOD
+    resident_family = family_by_method[MODELS_RESIDENT_METHOD]
+    assert resident_family != family_by_method[MODELS_LIST_METHOD]
+    assert server_auxiliary_workers.DEFAULT_MAX_WORKERS_BY_FAMILY[resident_family] >= 1

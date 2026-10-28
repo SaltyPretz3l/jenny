@@ -65,10 +65,9 @@
     const sessionDisplayTitle = (sessionId) => resolveDefaultTitle(getSessionSummary(sessionId)?.title);
 
     // "Show in Chats": focus the evicted chat's sidebar row (still listed there).
-    // The row may be filtered out (search, project, the archived scope) or sit
-    // past the rendered page: widen the list until it is mounted, bounded by
-    // a page count so a missing session cannot loop.
-    const REVEAL_MAX_PAGES = 20;
+    // The row may be filtered out (search, project, the archived scope), sit in
+    // a collapsed project or past its page: the panel's revealSession widens
+    // exactly what hides it (project grouping ignores the flat page limit).
     function findChatsRow(doc, sessionId) {
       const rows = doc?.querySelectorAll?.('#conversationGroups .conversation-item[data-session-id]') || [];
       return Array.from(rows).find((element) => normalizeSessionId(element?.dataset?.sessionId) === sessionId) || null;
@@ -80,24 +79,13 @@
       // open it the way the strip's own expand does, filters cleared.
       if (callbacks.isChatsPanelCollapsed?.() === true) {
         panel?.prepareForStripExpansion?.();
-        panel?.setProjectFilter?.('');
         callbacks.expandChatsPanel?.();
         panel?.renderNow?.();
       }
       let row = findChatsRow(doc, sessionId);
       if (!row) {
-        const search = doc?.getElementById?.('conversationSearch');
-        if (search && search.value) search.value = '';
-        if (panel?.getScope?.() === 'archived') panel.setScope?.('recent');
-        if (panel?.getProjectFilter?.()) panel.setProjectFilter?.('');
-        panel?.resetQuery?.();
-        panel?.renderNow?.();
+        panel?.revealSession?.(sessionId);
         row = findChatsRow(doc, sessionId);
-        for (let page = 0; !row && page < REVEAL_MAX_PAGES && typeof panel?.loadMore === 'function'; page += 1) {
-          panel.loadMore();
-          panel.renderNow?.();
-          row = findChatsRow(doc, sessionId);
-        }
       }
       const target = row?.querySelector?.('[data-session-open]') || row;
       if (!target) return;
@@ -317,10 +305,14 @@
       } catch (_error) { /* chrome only: a failed digest read never breaks a pass */ }
     };
 
-    const renderWorkspaceSidebarBadges = (sessionElements, visibleSessions) => {
+    // `runtimeOnly` (a runtime-only chrome pass) lets the chrome controller
+    // skip rows whose runtime facts did not change since their last paint. It
+    // passes no linked counts: each row keeps the one its last paint derived.
+    const paintSidebarBadges = (sessionElements, visibleSessions, runtimeOnly) => {
       renderAttentionInbox();
       const approvalIds = getApprovalSessionIds();
-      const linkedCounts = Array.isArray(visibleSessions)
+      const streamingIds = getStreamingSessionIds();
+      const linkedCounts = runtimeOnly === true ? null : Array.isArray(visibleSessions)
         ? visibleSessions.reduce((m, s) => {
           const id = normalizeSessionId(s?.id);
           if (id) m[id] = Array.isArray(s?.linked_session_ids) ? s.linked_session_ids.filter(Boolean).length : 0;
@@ -331,11 +323,14 @@
           if (id) m[id] = Math.max(Number(element?.dataset?.sessionLinkedCount || 0), 0);
           return m;
         }, {});
-      getWorkspaceChromeController()?.renderSidebarBadges(sessionElements, state.workspace?.openSessionIds || [], getStreamingSessionIds(), approvalIds, linkedCounts,
-        getAttentionStates(Array.from(sessionElements || [], (element) => element.dataset?.sessionId)), state.awayDigest?.digest?.outcomeBySession || null);
+      getWorkspaceChromeController()?.renderSidebarBadges(sessionElements, state.workspace?.openSessionIds || [], streamingIds, approvalIds, linkedCounts,
+        // Attention (approval, plan review, question) only exists on a streaming or approval-pending chat.
+        getAttentionStates([...streamingIds, ...approvalIds]), state.awayDigest?.digest?.outcomeBySession || null,
+        runtimeOnly === true ? { runtimeOnly: true } : undefined);
       // A sessions render (auto-title, rename) must reach the tab titles too.
       getWorkspaceChromeController()?.syncTabTitles?.();
     };
+    const renderWorkspaceSidebarBadges = (sessionElements, visibleSessions) => paintSidebarBadges(sessionElements, visibleSessions, false);
 
     async function handleLinkedSessionsChanged(sessionId, linkedSessionIds) {
       const normalizedSessionId = normalizeSessionId(sessionId);
@@ -369,9 +364,15 @@
       const sessionElements = workspaceRailShell.ownerDocument?.querySelectorAll?.(
         '#conversationGroups .conversation-item[data-session-id]'
       ) || [];
-      renderWorkspaceSidebarBadges(sessionElements);
-      if (options.runtimeOnly === true) patchChatsStripRuntime?.();
-      else syncChatsStrip?.();
+      paintSidebarBadges(sessionElements, undefined, options.runtimeOnly === true);
+      if (options.runtimeOnly === true) {
+        patchChatsStripRuntime?.();
+        // A background stream's only signal for a collapsed project's dot or a
+        // collapsed parent's chip: structural passes re-render the panel.
+        controllers.getChatsPanelController?.()?.patchRuntimeState?.();
+      } else {
+        syncChatsStrip?.();
+      }
       const visible = options.visible !== false && state.ui.activeView === 'chat';
       workspaceRailShell.classList.toggle('hidden', !visible);
       workspaceRailShell.hidden = !visible;

@@ -5,6 +5,7 @@ import json
 import pytest
 
 from sidecar.ai.error_codes import (
+    CMP_TOOL_MERMAID_FORMAT,
     CMP_TOOL_MERMAID_UNSUPPORTED_TYPE,
     CMP_TOOL_MERMAID_VALIDATION,
 )
@@ -154,8 +155,63 @@ def test_mermaid_generate_omits_artifact_without_session_or_workspace() -> None:
 @pytest.mark.parametrize("source", [
     "stateDiagram-v2\n    [*] --> Ready\n    Ready --> Done",
     "%% diagram comment\nflowchart TD\n    A --> B",
-    "  unknownDiagram\n    preserve  this indentation  ",
+    "unknownDiagram\n    preserve  this indentation",
 ])
 def test_mermaid_source_is_preserved_without_placeholder(source):
+    # No diagram_type declared: the flowchart default is only a label, so any
+    # source passes through untouched.
     result = mermaid_generate_tool({"prompt": source}, _workspace())
     assert json.loads(result.output)["mermaid"] == source
+
+
+def test_mermaid_source_is_saved_stripped() -> None:
+    result = mermaid_generate_tool(
+        {"prompt": "\n  flowchart TD\n    A --> B  \n\n", "diagram_type": "flowchart"},
+        _workspace(),
+    )
+    assert json.loads(result.output)["mermaid"] == "flowchart TD\n    A --> B"
+
+
+@pytest.mark.parametrize(
+    ("diagram_type", "source"),
+    [
+        ("flowchart", "flowchart TD\n  A --> B"),
+        ("flowchart", "graph LR\n  A --> B"),
+        ("flowchart", "flowchart-elk TD\n  A --> B"),
+        ("sequence", "sequenceDiagram\n  A->>B: hi"),
+        ("class", "classDiagram\n  class A"),
+        ("state", "stateDiagram-v2\n  [*] --> A"),
+        ("er", "erDiagram\n  A ||--o{ B : has"),
+        ("pie", "pie showData\n  \"a\" : 1"),
+        ("gitGraph", "gitGraph:\n  commit"),
+        ("flowchart", "%% note\nflowchart TD\n  A --> B"),
+        ("flowchart", "%%{init: {'theme': 'dark'}}%%\nflowchart TD\n  A --> B"),
+        ("flowchart", "---\ntitle: Flow\n---\nflowchart TD\n  A --> B"),
+    ],
+)
+def test_declared_diagram_type_accepts_its_keyword(diagram_type: str, source: str) -> None:
+    result = mermaid_generate_tool({"prompt": source, "diagram_type": diagram_type}, _workspace())
+    assert json.loads(result.output)["mermaid"] == source
+
+
+@pytest.mark.parametrize(
+    ("diagram_type", "source"),
+    [
+        ("flowchart", "sequenceDiagram\n  A->>B: hi"),
+        ("sequence", "flowchart TD\n  A --> B"),
+        ("flowchart", "Generate a diagram of the login flow."),
+        ("state", "statement\n  A"),
+        ("flowchart", "%% only a comment"),
+    ],
+)
+def test_declared_diagram_type_rejects_a_mismatched_source(
+    diagram_type: str, source: str
+) -> None:
+    with pytest.raises(ToolExecutionFailure) as excinfo:
+        mermaid_generate_tool({"prompt": source, "diagram_type": diagram_type}, _workspace())
+
+    assert excinfo.value.code == CMP_TOOL_MERMAID_FORMAT
+    payload = json.loads(excinfo.value.message)
+    assert payload["reason"] == "mermaid source does not start with the declared diagram_type"
+    assert payload["diagram_type"] == diagram_type
+    assert payload["expected_first_keyword"]

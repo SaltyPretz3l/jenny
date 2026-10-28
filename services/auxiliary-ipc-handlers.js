@@ -810,10 +810,14 @@ function registerAuxiliaryIpcHandlers({
         : ''
     ),
     'chat.compactNow': (_, sessionId) => backendService.compactContextNow(sessionId),
+    // Row 73: only a bounded project id crosses (the primary chat's one-project handoff).
+    'handoff.generateNote': (_, sessionId, options) => backendService.generateHandoffNote(sessionId, {
+      projectId: typeof options?.projectId === 'string' ? options.projectId.slice(0, 128) : undefined,
+    }),
     ...createAttachmentIpcHandlers({ backendService, shellConfigService, dialog, getMainWindow,
       prepareAttachmentEntries, attachmentAssetStore, processRef, isChildPath, log }),
-    'clipboard.writeText': (_, text) => {
-      clipboard.writeText(String(text || ''));
+    'clipboard.writeText': async (_, text) => {
+      await clipboard.writeText(String(text || ''));
       return { ok: true };
     },
     'window.getState': () => getWindowStatePayload(),

@@ -1,8 +1,13 @@
 /**
  * renderer/features/renderer-ide-xterm-loader.js – Lazy xterm.js runtime.
  *
- * The terminal and fit addon load sequentially on the first explicit terminal
- * start. An already-ready runtime is a no-op.
+ * On the first explicit terminal start xterm.js loads, then the fit addon and the
+ * optional search and web-links addons (find bar, URL links) load concurrently. An
+ * optional addon that fails to load does not fail the runtime: its feature degrades.
+ * The terminal's theme stylesheet (styles/ide-terminal-theme.css: ANSI palette, find
+ * bar) is not part of the eager styles.css: the first start injects one <link> and
+ * waits for it (bounded), so the first theme read sees the palette tokens.
+ * An already-ready runtime is a no-op.
  */
 /* global window, document */
 
@@ -46,6 +51,15 @@
     const candidate = window.FitAddon && window.FitAddon.FitAddon
       ? window.FitAddon.FitAddon
       : window.FitAddon;
+    return typeof candidate === 'function';
+  }
+
+  // The search / web-links UMD globals carry a class of the same name.
+  function isAddonReady(name) {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+    const candidate = window[name] && window[name][name] ? window[name][name] : window[name];
     return typeof candidate === 'function';
   }
 
@@ -102,25 +116,80 @@
     }
   }
 
-  function loadSequential(loader) {
+  function publishAddon(name) {
+    return function publish(mod) {
+      const candidate = mod && typeof mod[name] === 'function' ? mod : (typeof mod === 'function' ? mod : null);
+      if (candidate) {
+        window[name] = candidate;
+      }
+    };
+  }
+
+  // Optional addon: any failure (including a rejected load) resolves false, never throws.
+  function loadOptionalAddon(loader, path, name) {
+    return Promise.resolve().then(function load() {
+      return loadOne(loader, resolveUrl(path), function ready() { return isAddonReady(name); }, publishAddon(name));
+    }).catch(function onAddonError() {
+      return false;
+    });
+  }
+
+  // xterm.js first (the addons are useless without it), then the three addons at once;
+  // only the fit addon is required.
+  function loadRuntime(loader) {
     return loadOne(
       loader, resolveUrl('node_modules/@xterm/xterm/lib/xterm.js'), isTerminalReady, publishTerminal
     ).then(function afterTerminal(terminalOk) {
       if (!terminalOk) {
         return false;
       }
-      return loadOne(
-        loader, resolveUrl('node_modules/@xterm/addon-fit/lib/addon-fit.js'), isFitAddonReady, publishFitAddon
-      );
+      return Promise.all([
+        loadOne(loader, resolveUrl('node_modules/@xterm/addon-fit/lib/addon-fit.js'), isFitAddonReady, publishFitAddon),
+        loadOptionalAddon(loader, 'node_modules/@xterm/addon-search/lib/addon-search.js', 'SearchAddon'),
+        loadOptionalAddon(loader, 'node_modules/@xterm/addon-web-links/lib/addon-web-links.js', 'WebLinksAddon'),
+      ]).then(function afterAddons(results) {
+        return results[0] === true;
+      });
     });
   }
 
-  function ensureXtermRuntime() {
-    if (isXtermRuntimeReady()) {
-      return Promise.resolve(true);
+  const THEME_HREF = 'styles/ide-terminal-theme.css';
+  const THEME_WAIT_MS = 1500;
+  let themePromise = null;
+
+  // Injects the terminal theme <link> once per document and resolves when it loads or
+  // fails (a missing sheet only leaves xterm on its default colours), or after a bounded
+  // wait so a stalled stylesheet never blocks Start.
+  function ensureThemeStylesheet() {
+    const doc = typeof window !== 'undefined' ? window.document : null;
+    const head = doc && (doc.head || doc.documentElement);
+    if (!head || typeof doc.createElement !== 'function') {
+      return Promise.resolve(false);
     }
+    if (themePromise && doc.querySelector('link[data-ide-terminal-theme]')) {
+      return themePromise;
+    }
+    const link = doc.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = resolveUrl(THEME_HREF);
+    link.setAttribute('data-ide-terminal-theme', '');
+    themePromise = new Promise(function waitForTheme(resolve) {
+      const timer = setTimeout(function themeTimeout() { resolve(false); }, THEME_WAIT_MS);
+      const settle = function settle(ok) { clearTimeout(timer); resolve(ok); };
+      link.addEventListener('load', function onThemeLoad() { settle(true); }, { once: true });
+      link.addEventListener('error', function onThemeError() { settle(false); }, { once: true });
+    });
+    head.appendChild(link);
+    return themePromise;
+  }
+
+  function ensureXtermRuntime() {
     if (typeof window === 'undefined') {
       return Promise.resolve(false);
+    }
+    const theme = ensureThemeStylesheet();
+    if (isXtermRuntimeReady()) {
+      return theme.then(function ready() { return true; });
     }
     if (xtermRuntimePromise) {
       return xtermRuntimePromise;
@@ -129,7 +198,8 @@
     if (!hasAmdLoader() && (!loader || typeof loader.ensureScript !== 'function')) {
       return Promise.resolve(false);
     }
-    xtermRuntimePromise = loadSequential(loader).then(function afterLoad(ok) {
+    xtermRuntimePromise = Promise.all([loadRuntime(loader), theme]).then(function afterLoad(results) {
+      const ok = results[0];
       if (!ok) {
         // Let a later Start attempt retry a runtime that failed to load.
         xtermRuntimePromise = null;
@@ -149,6 +219,7 @@
 
   function _resetForTests() {
     xtermRuntimePromise = null;
+    themePromise = null;
   }
 
   return {

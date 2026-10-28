@@ -30,6 +30,7 @@ HOST_ALLOWED_TOOL_NAMES: frozenset[str] = frozenset(
         "propose_change",
         "create_artifact",
         "mermaid_generate",
+        "report_findings",
         "ask_user",
         "exit_plan_mode",
     }

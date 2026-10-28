@@ -1,17 +1,8 @@
-/* Workspace IDE DOCX editor pane. Loaded lazily by editor-host-panes. */
+/* Workspace IDE DOCX editor pane. Loaded lazily by editor-host-panes after
+ * ide-document-pane.css, which holds the pane box, clipping, button
+ * hover/pressed/focus and separator basics shared with the PDF pane. */
 
 .ide-docx-pane {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-  flex-direction: column;
-  /* Keep a squeezed editor column's toolbar from painting over the chat dock. */
-  overflow: hidden;
-  background: var(--bg-base);
-  color: var(--text-primary);
   font-family: var(--font-family-body);
 }
 
@@ -42,13 +33,6 @@
 .ide-docx-action:hover,
 .ide-docx-action[aria-pressed="true"] {
   border-color: var(--line);
-  background: color-mix(in srgb, var(--accent) 14%, var(--bg-panel));
-  color: var(--text-primary);
-}
-
-.ide-docx-action:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
 }
 
 .ide-docx-action:disabled {
@@ -57,10 +41,8 @@
 }
 
 .ide-docx-toolbar-separator {
-  width: 1px;
   height: 18px;
   margin: 0 3px;
-  background: var(--line);
 }
 
 .ide-docx-notes {
@@ -71,6 +53,29 @@
   color: var(--text-muted);
   font-size: var(--font-size-footnote);
   line-height: 1.45;
+}
+
+/* Review lock: a tracked-changes document opens read-only until "Edit anyway". */
+.ide-docx-review-lock {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  color: var(--text-primary);
+}
+
+.ide-docx-review-lock-text {
+  min-width: 0;
+  flex: 1 1 240px;
+}
+
+.ide-docx-review-unlock {
+  border-color: var(--line);
+  color: var(--text-primary);
+}
+
+.ide-docx-doc[contenteditable="false"] {
+  cursor: default;
 }
 
 .ide-docx-documents {

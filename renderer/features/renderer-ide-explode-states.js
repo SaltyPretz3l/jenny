@@ -23,10 +23,7 @@
     return {};
   }
 
-  const inventoryButton = resolveModule('inventoryActionButton', '../inventory/action-button');
-  const actionButton = typeof inventoryButton === 'function'
-    ? inventoryButton
-    : inventoryButton.actionButton || inventoryButton.default || null;
+  const actionButton = resolveModule('inventoryActionButton', '../inventory/action-button');
 
   // createExplodeStates({ host, onRetry? }) — host is the .ide-exploded-host.
   function createExplodeStates(deps) {

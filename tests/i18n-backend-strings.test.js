@@ -132,6 +132,7 @@ test('every approval policy scope resolves through its static translation key', 
     'Jenny content': 'approval.scope.jennyContent',
     'Local computer': 'approval.scope.localComputer',
     'Requested tool': 'approval.scope.requestedTool',
+    'Another chat': 'approval.scope.anotherChat',
   };
   const catalog = Object.fromEntries(Object.entries(keys).map(([member, key]) => [key, `[${member}]`]));
   const strings = loadBackendStrings('qps-ploc', catalog);

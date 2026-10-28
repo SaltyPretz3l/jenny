@@ -1,8 +1,14 @@
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const Module = require('module');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { getBridgeChannel } = require('../services/ipc-contract');
+
+// main.js claims the desktop profile under userData at load: keep that marker out of the repo.
+const USER_DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-startup-lifecycle-userdata-'));
+test.after(() => fs.rmSync(USER_DATA, { recursive: true, force: true }));
 
 function loadWithElectronMock(modulePath, electronMock) {
   const resolvedPath = require.resolve(modulePath);
@@ -25,7 +31,7 @@ function loadWithElectronMock(modulePath, electronMock) {
 function createElectronMock() {
   return {
     app: {
-      getPath: () => path.join(process.cwd(), 'tmp'),
+      getPath: () => USER_DATA,
       // Real Electron has setPath, and main.js calls it when JENNY_USER_DATA_DIR
       // is set -- which dev:agent, smoke:gui and capture-ui all export. getPath
       // stays fixed on purpose: nothing here tests profile overriding.
@@ -290,11 +296,100 @@ test('stale startup callbacks do not reveal or log against a replacement window'
   ipcMain.emit(readyChannel, { sender: newWindow.webContents });
 
   assert.deepEqual(readyEvents, [{
-    source: 'renderer-ready',
+    source: 'ready-to-show',
     id: 'window-new',
   }]);
   assert.equal(newWindow.showCalls, 1);
   assert.equal(oldWindow.showCalls, 0);
   assert.equal(timers.count(), 0);
   assert.equal(ipcMain.listenerCount(readyChannel), 0);
+});
+
+test('the window reveals at its first paint without waiting for the renderer ready signal', () => {
+  const { createMainWindowStartupLifecycle } = loadWithElectronMock('../main.js', createElectronMock());
+  const readyChannel = getBridgeChannel('lifecycle.signalReady', 'send');
+  const timers = createFakeTimers();
+  const ipcMain = new FakeEmitter();
+  const windowRef = createFakeWindow('window-first-paint');
+  const readyEvents = [];
+
+  createMainWindowStartupLifecycle({
+    windowRef,
+    ipcMainRef: ipcMain,
+    readyChannel,
+    setTimeoutImpl: timers.setTimeout.bind(timers),
+    clearTimeoutImpl: timers.clearTimeout.bind(timers),
+    logReady: (source, activeWindow) => readyEvents.push({ source, id: activeWindow.id }),
+    logLoadFailure() {},
+    onWindowClosed() {},
+  });
+
+  // Red before 2026-10-19: ready-to-show alone left the window hidden until
+  // the renderer's ready signal (every script plus the first full render).
+  windowRef.emit('ready-to-show');
+  assert.equal(windowRef.showCalls, 1, 'shown at first paint');
+  assert.deepEqual(readyEvents, [{ source: 'ready-to-show', id: 'window-first-paint' }]);
+  assert.equal(timers.count(), 0, 'the reveal backstop is cleared');
+  assert.equal(ipcMain.listenerCount(readyChannel), 0, 'the ready listener is detached');
+
+  ipcMain.emit(readyChannel, { sender: windowRef.webContents });
+  windowRef.webContents.emit('did-finish-load');
+  assert.equal(windowRef.showCalls, 1, 'later load signals never reveal twice');
+  assert.equal(readyEvents.length, 1);
+});
+
+test('a renderer ready signal before any paint does not reveal an unpainted window', () => {
+  const { createMainWindowStartupLifecycle } = loadWithElectronMock('../main.js', createElectronMock());
+  const readyChannel = getBridgeChannel('lifecycle.signalReady', 'send');
+  const timers = createFakeTimers();
+  const ipcMain = new FakeEmitter();
+  const windowRef = createFakeWindow('window-unpainted');
+
+  createMainWindowStartupLifecycle({
+    windowRef,
+    ipcMainRef: ipcMain,
+    readyChannel,
+    setTimeoutImpl: timers.setTimeout.bind(timers),
+    clearTimeoutImpl: timers.clearTimeout.bind(timers),
+    logReady() {},
+    logLoadFailure() {},
+    onWindowClosed() {},
+  });
+
+  ipcMain.emit(readyChannel, { sender: windowRef.webContents });
+  assert.equal(windowRef.showCalls, 0);
+  windowRef.webContents.emit('did-finish-load');
+  assert.equal(windowRef.showCalls, 1, 'the load completing reveals it');
+});
+
+test('a saved maximized state is restored at reveal, never before first paint', () => {
+  const { createMainWindowStartupLifecycle } = loadWithElectronMock('../main.js', createElectronMock());
+  const readyChannel = getBridgeChannel('lifecycle.signalReady', 'send');
+  const timers = createFakeTimers();
+  const ipcMain = new FakeEmitter();
+  const windowRef = createFakeWindow('window-maximized');
+  let maximizeCalls = 0;
+  let focusCalls = 0;
+  windowRef.maximize = () => { maximizeCalls += 1; windowRef.showInactive(); windowRef.showInactiveCalls -= 1; };
+  windowRef.focus = () => { focusCalls += 1; };
+
+  createMainWindowStartupLifecycle({
+    windowRef,
+    ipcMainRef: ipcMain,
+    readyChannel,
+    revealMaximized: true,
+    setTimeoutImpl: timers.setTimeout.bind(timers),
+    clearTimeoutImpl: timers.clearTimeout.bind(timers),
+    logReady() {},
+    logLoadFailure() {},
+    onWindowClosed() {},
+  });
+  assert.equal(maximizeCalls, 0, 'maximize() shows a hidden window, so it waits for the first paint');
+
+  windowRef.emit('ready-to-show');
+  windowRef.webContents.emit('did-finish-load');
+
+  assert.equal(maximizeCalls, 1, 'maximized once, at reveal');
+  assert.equal(focusCalls, 1, 'an active reveal focuses the window maximize() showed');
+  assert.equal(windowRef.showCalls, 0, 'maximize() replaces show()');
 });

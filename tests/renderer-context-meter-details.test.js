@@ -136,6 +136,11 @@ test('next-turn detail copy distinguishes estimate and discloses narrowing', () 
   assert.match(copy, /Automatic narrowing will omit 18 older message/);
   assert.match(copy, /bounded compacted snapshot/);
   assert.doesNotMatch(copy, /tool output/i);
+  // Row 63: the breakdown carries the numbers; a full, unnarrowed session needs no note.
+  assert.equal(details.formatSummary({
+    status: 'estimated', history_scope: 'session', history_message_count: 4,
+    available_history_message_count: 4, automatic_narrowing: false, context_categories: { attachments: 2 },
+  }), '');
 });
 
 test('malformed summary fails closed without rendering supplied content', () => {
@@ -155,24 +160,32 @@ test('preview passes only bounded live draft metadata to canonical request shapi
       status: 'estimated', history_scope: 'session', history_message_count: 2,
       available_history_message_count: 2, automatic_narrowing: false,
       context_categories: { attachments: 64, active_file: true, mentions: true },
+      preview: { status: 'estimated', used_tokens: 900, capacity_tokens: 4000, compact_at_tokens: 3000,
+        breakdown: { messages: 100, system_prompt: 800, tools: 0, instructions: 0, skills: 0, other: 0 } },
     };
   } } };
+  const contextPreview = require('../renderer/chat/renderer-context-preview');
+  contextPreview.resetForTests();
+  global.rendererContextPreview = contextPreview;
   global.rendererIdeActiveFileContext = { isArmed: () => true };
   global.rendererIdeMentionAutocomplete = { collectMentionPaths: () => ['src/app.js'] };
   t.after(() => {
     delete global.jennyShell;
+    delete global.rendererContextPreview;
     delete global.rendererIdeActiveFileContext;
     delete global.rendererIdeMentionAutocomplete;
+    contextPreview.resetForTests();
   });
   const state = { currentSessionId: 'session-1', attachments: { queued: Array(80).fill({}) } };
   await details.loadPreview(dom.window.document.getElementById('popover'), state);
   assert.deepEqual(calls[0], ['session-1', {
     attachment_count: 64, has_active_file: true, has_mentions: true,
   }]);
-  assert.match(dom.window.document.querySelector('[data-next-turn-context-summary]').textContent,
-    /64 attachment/i);
-  assert.equal(dom.window.document.querySelector('[data-next-turn-context-summary]')
-    .hasAttribute('data-context-preview-pending'), false);
+  const note = dom.window.document.querySelector('[data-next-turn-context-summary]');
+  assert.equal(note.textContent, '', 'a full session needs no scope note');
+  assert.equal(note.hidden, true);
+  assert.equal(note.hasAttribute('data-context-preview-pending'), false);
+  assert.equal(contextPreview.latest('session-1').data.used_tokens, 900, 'the loaded estimate is shared with the ring and the rail');
 });
 
 test('rejected preview cannot overwrite a newly active session', async (t) => {
@@ -213,9 +226,9 @@ test('dispose fences a delayed preview result', async (t) => {
   assert.equal(output.dataset.contextPreviewPending, 'true');
   details.dispose();
   release({
-    status: 'estimated', history_scope: 'session', history_message_count: 99,
+    status: 'estimated', history_scope: 'recent', history_message_count: 99,
     available_history_message_count: 99, context_categories: {},
   });
   await promise;
-  assert.equal(output.textContent, 'Calculating from the canonical session…');
+  assert.equal(output.textContent, '', 'a fenced result writes nothing');
 });

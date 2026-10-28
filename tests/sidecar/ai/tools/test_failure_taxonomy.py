@@ -219,3 +219,16 @@ def test_classify_never_raises_on_junk_input() -> None:
     assert classify("") in EXPECTED_CLASSES
     assert classify(None) in EXPECTED_CLASSES  # type: ignore[arg-type]
     assert classify("   ", error_details={"failure_class": 42}) in EXPECTED_CLASSES  # type: ignore[dict-item]
+
+
+def test_classify_known_transient_code_honours_a_non_retryable_call() -> None:
+    from sidecar.ai.error_codes import CMP_TOOL_IO_FAILED
+
+    # Unknown flag keeps the table's class; a non-retryable call never invites a
+    # same-args retry; a retryable one stays transient.
+    assert classify(CMP_TOOL_IO_FAILED) == "transient"
+    assert classify(CMP_TOOL_IO_FAILED, retryable=False) == "precondition_unmet"
+    assert classify(CMP_TOOL_IO_FAILED, retryable=True) == "transient"
+    # Non-transient classes are unaffected by the flag.
+    assert classify(CMP_MCP_TOOL_NOT_FOUND, retryable=False) == "not_found"
+    assert classify(CMP_MCP_TOOL_NOT_FOUND, retryable=True) == "not_found"

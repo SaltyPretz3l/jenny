@@ -1,5 +1,5 @@
 /* styles/ide-statusbar-quickpick.css — Workspace IDE statusbar quick-pick popover
- * (tab size / EOL), anchored above the clicked statusbar chip. Split out of
+ * (tab size, EOL, language, indentation, encoding), anchored above the clicked statusbar chip. Split out of
  * ide-view.css to respect the file-size cap; loaded via @import in styles.css
  * right after ide-view.css. */
 
@@ -51,4 +51,69 @@
 .ide-chip-option:not(.ide-chip-option--active)::before {
   content: "";
   width: 8px;
+}
+
+/* Row 82: the language / indentation / encoding pickers share this popover. */
+
+.ide-chip-search {
+  display: block;
+  margin-block-end: var(--space-1);
+}
+
+.ide-chip-search .inv-text-field-control {
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-input-background);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-footnote);
+}
+
+.ide-chip-search .inv-text-field-control:focus-visible {
+  border-color: var(--accent);
+  outline: 1px solid var(--accent);
+  outline-offset: 0;
+}
+
+.ide-chip-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 220px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.ide-chip-note {
+  padding: 5px 9px;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  max-width: 280px;
+}
+
+.ide-chip-note--value {
+  color: var(--text-primary);
+  font-size: var(--font-size-footnote);
+  font-weight: 500;
+}
+
+.ide-chip-option-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ide-chip-option-desc {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+/* Zen mode (Ctrl+K Z): the editor stacks alone, without the status bar. */
+#ideShell[data-ide-zen] #ideStatusBar {
+  display: none;
 }

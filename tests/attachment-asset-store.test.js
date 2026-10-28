@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 
+const { fileSymlinkSkip } = require('./helpers/platform-skips');
 const {
   AttachmentAssetStore,
   MAX_AUDIO_SIZE_BYTES,
@@ -266,7 +267,7 @@ test('AttachmentAssetStore resolves only managed asset paths for export', () => 
   assert.equal(store.resolveSafePath(outsidePath), '');
 });
 
-test('AttachmentAssetStore rejects symlinked managed audio paths that resolve outside the root', (t) => {
+test('AttachmentAssetStore rejects symlinked managed audio paths that resolve outside the root', { skip: fileSymlinkSkip() }, () => {
   const rootDir = createTrackedTempDir('jenny-attachment-assets-realpath-');
   const outsideDir = createTrackedTempDir('jenny-attachment-assets-realpath-outside-');
   const store = new AttachmentAssetStore({ rootDir });
@@ -274,12 +275,7 @@ test('AttachmentAssetStore rejects symlinked managed audio paths that resolve ou
   const outsidePath = path.join(outsideDir, 'secret.wav');
   const symlinkPath = path.join(audioDir, 'linked-secret.wav');
   fs.writeFileSync(outsidePath, 'secret', 'utf8');
-  try {
-    fs.symlinkSync(outsidePath, symlinkPath);
-  } catch (error) {
-    t.skip(`symlink creation unavailable: ${error.code || error.message}`);
-    return;
-  }
+  fs.symlinkSync(outsidePath, symlinkPath, 'file');
 
   assert.equal(store.isManagedAssetPath(symlinkPath), true);
   assert.equal(store.resolveManagedAssetRealPath(symlinkPath, { kind: 'audio' }), '');

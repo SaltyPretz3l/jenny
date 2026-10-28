@@ -100,6 +100,17 @@ function parseStatus(stdout) {
   return { branch, detached, unborn, ahead, behind, files, summary };
 }
 
+// Unmerged paths from `git ls-files -u -z` (one record per conflict stage:
+// "<mode> <sha> <stage>\t<path>"), deduplicated.
+function parseUnmergedPaths(stdout) {
+  const paths = new Set();
+  for (const record of String(stdout || '').split('\0')) {
+    const tab = record.indexOf('\t');
+    if (tab > 0) paths.add(record.slice(tab + 1));
+  }
+  return paths;
+}
+
 function parseLog(stdout) {
   const commits = [];
   for (const record of String(stdout || '').split('\0')) {
@@ -228,4 +239,5 @@ module.exports = {
   parseLog,
   parseChangedFilesByCommit,
   parseBlamePorcelain,
+  parseUnmergedPaths,
 };

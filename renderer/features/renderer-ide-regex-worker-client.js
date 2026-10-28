@@ -166,7 +166,10 @@
       });
     }
 
+    // Only a pending request (abort/timeout semantics) costs the worker; an
+    // idle worker is kept so the next search does not respawn it.
     function cancel() {
+      if (!pending) return;
       rejectPending(regexError(jt('ide.regexWorker.cancelled', 'Regex evaluation was cancelled.'), 'REGEX_CANCELLED'), { terminate: true });
     }
 
@@ -180,9 +183,5 @@
     return { evaluate, cancel, dispose };
   }
 
-  return {
-    createRegexWorkerEvaluator,
-    DEFAULT_DEADLINE_MS,
-    MAX_DEADLINE_MS,
-  };
+  return { createRegexWorkerEvaluator };
 });

@@ -343,14 +343,15 @@ test('libraryTagFromPath refuses exactly the ids main anchors to another engine'
   const anchoredSet = /const ID_ANCHORED_ENGINE_TYPES = Object\.freeze\(\s*new Set\(\[([^\]]*)\]\)/.exec(source);
   assert.ok(anchoredSet, 'main still declares ID_ANCHORED_ENGINE_TYPES');
   const anchored = anchoredSet[1].split(',').map((item) => item.trim().replace(/^'|'$/g, '')).filter(Boolean);
-  assert.deepEqual([...anchored].sort(), ['chatgpt', 'codex-cli', 'mock', 'replay']);
+  assert.deepEqual([...anchored].sort(), ['api-provider', 'chatgpt', 'codex-cli', 'mock', 'replay']);
   const body = source.slice(source.indexOf('function inferEngineTypeFromModel'), source.indexOf('const ID_ANCHORED_ENGINE_TYPES'));
   const conditions = {};
   for (const match of body.matchAll(/if \(([^{]+)\) \{\s*return '([a-z_-]+)';/g)) {
     if (anchored.includes(match[2])) (conditions[match[2]] ||= []).push(match[1].trim());
   }
-  // codex-cli's anchor needs a "/", which no library tag has.
+  // The codex-cli and api-provider anchors need a "/", which no library tag has.
   assert.deepEqual(conditions, {
+    'api-provider': ["token.startsWith('api-provider/')"],
     'codex-cli': ["token.startsWith('codex-cli/')"],
     chatgpt: ["token === 'gpt-6-astra' || /^gpt-5([.:-]|$)/.test(token)"],
     mock: ["token.startsWith('mock')"],

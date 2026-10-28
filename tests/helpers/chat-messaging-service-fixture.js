@@ -27,6 +27,7 @@ function createFixture(t, { projects = { project_a: { name: 'Alpha' }, project_b
   const timers = [];
   const faults = new Map(); // session id -> { skip, count }: let `skip` flushes pass, then fail `count`
   const admission = [];
+  const wakes = []; // row 70: every wake turn the messaging service submitted ({request, options})
   const realFlush = store.flushSession.bind(store);
   store.flushSession = (sessionId) => {
     const fault = faults.get(sessionId);
@@ -42,6 +43,14 @@ function createFixture(t, { projects = { project_a: { name: 'Alpha' }, project_b
     sessionStore: store,
     projectService: { get: (id) => projects[id] || null },
     chatWorkspace: { notifyCoordinationChanged: (id) => coordination.push(id) },
+    featureFlags: { session_message_wake: true },
+    sessionRuntime: {
+      hasSessionWork: () => false,
+      submitApplicationTurn: async (request, options) => {
+        wakes.push({ request, options });
+        return { ok: true, acceptance: 'accepted', turn_id: `turn_wake_${wakes.length}`, work_id: `work_wake_${wakes.length}` };
+      },
+    },
   });
   const service = createChatMessagingService({
     backendService: backend,
@@ -72,6 +81,7 @@ function createFixture(t, { projects = { project_a: { name: 'Alpha' }, project_b
     logs,
     timers,
     admission,
+    wakes,
     gesture: () => GESTURES[gesture++],
     advance: (ms) => { clock.ms += ms; },
     failFlush: (sessionId, count = 1, skip = 0) => faults.set(sessionId, { skip, count }),

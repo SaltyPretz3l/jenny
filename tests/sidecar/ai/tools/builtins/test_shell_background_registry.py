@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -26,6 +27,9 @@ def test_harness_background_spawn_environment(monkeypatch, tmp_path, enabled):
         if enabled:
             assert calls[0]["env"]["GIT_EDITOR"] == "false"
             assert calls[0]["env"] == shell._shell_environment()
+        elif os.name == "nt":
+            assert calls[0]["env"]["NoDefaultCurrentDirectoryInExePath"] == "1"
+            assert calls[0]["env"]["GIT_EDITOR"] == "code --wait"
         else:
             assert calls[0]["env"] is None
     finally:
@@ -79,3 +83,24 @@ def test_active_job_ids_filters_by_workspace_store_key(monkeypatch: pytest.Monke
     assert shell_background.active_job_ids(store_key="key-a") == ["aaaaaaaaaaaa"]
     # A job with no recorded owner is never attributed to a workspace.
     assert shell_background.active_job_ids(store_key="key-c") == []
+
+
+def test_background_jobs_leave_one_owned_process_slot_for_foreground_commands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sidecar.ai.error_codes import CMP_TOOL_CAP_EXCEEDED
+    from sidecar.ai.tools.builtins import owned_process
+    from sidecar.ai.tools.contracts import ToolExecutionFailure
+
+    cap = shell_background.MAX_BACKGROUND_JOBS
+    assert cap == max(1, owned_process.DEFAULT_MAX_ACTIVE_PROCESSES - 1)
+    assert cap < owned_process.DEFAULT_MAX_ACTIVE_PROCESSES
+    monkeypatch.setattr(
+        shell_background, "_active_jobs", {f"{index:012x}": object() for index in range(cap)}
+    )
+    monkeypatch.setattr(shell_background, "_background_capacity", shell_background._BackgroundCapacity())
+
+    with pytest.raises(ToolExecutionFailure) as raised:
+        shell_background._reserve_background_slot()
+
+    assert raised.value.code == CMP_TOOL_CAP_EXCEEDED

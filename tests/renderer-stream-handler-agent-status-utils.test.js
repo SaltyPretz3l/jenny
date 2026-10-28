@@ -203,3 +203,39 @@ test('appendAgentStatusStep: a child-terminal row counts as settled for eviction
   assert.ok(list.some((step) => step.key === 'oldest-live'), 'an older running child is still current work');
   assert.ok(!list.some((step) => step.key === 'done-0'));
 });
+
+test('appendAgentStatusStep keeps the last transcript when a newer frame omits it', () => {
+  const first = appendAgentStatusStep([], {
+    childTaskId: 'child-1', source: 'delegate', status: 'running', updatedAt: 1,
+    childActivity: { sequence: 1, steps: [], transcript: [{ kind: 'text', text: 'Note.' }], transcript_version: 1 },
+  });
+  const second = appendAgentStatusStep(first, {
+    childTaskId: 'child-1', source: 'delegate', status: 'running', updatedAt: 2,
+    childActivity: { sequence: 2, steps: [], text: 'more' },
+  });
+  assert.equal(second[0].childActivity.sequence, 2);
+  assert.deepEqual(second[0].childActivity.transcript, [{ kind: 'text', text: 'Note.', truncated: false }]);
+  const third = appendAgentStatusStep(second, {
+    childTaskId: 'child-1', source: 'delegate', status: 'running', updatedAt: 3,
+    childActivity: { sequence: 3, steps: [], transcript: [], transcript_version: 2 },
+  });
+  assert.deepEqual(third[0].childActivity.transcript, [], 'a frame that carries one replaces it');
+});
+
+test('a carried transcript keeps a failed, cut call whole through the monitor model', () => {
+  const model = require('../renderer/chat/renderer-subagent-monitor-model');
+  const first = appendAgentStatusStep([], {
+    childTaskId: 'child-1', source: 'delegate', status: 'running', updatedAt: 1,
+    childActivity: { sequence: 1, steps: [], transcript_version: 1, transcript: [{
+      kind: 'tool', call_id: 'c1', tool: 'read_file', display: 'Read File', status: 'failed',
+      input: '{}', input_truncated: true, output: 'Denied', output_chars: 5000, error_code: 'CMP-TOOL-0001',
+    }] },
+  });
+  const second = appendAgentStatusStep(first, { childTaskId: 'child-1', source: 'delegate', status: 'running', updatedAt: 2, childActivity: { sequence: 2, steps: [] } });
+  const activity = model.normalizeChildActivity(second[0].childActivity);
+  assert.equal(activity, second[0].childActivity, 'the carried copy is not normalized twice');
+  assert.deepEqual(
+    [activity.transcript[0].callId, activity.transcript[0].outputChars, activity.transcript[0].errorCode, activity.transcript[0].inputTruncated],
+    ['c1', 5000, 'CMP-TOOL-0001', true],
+  );
+});

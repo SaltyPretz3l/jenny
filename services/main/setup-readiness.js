@@ -5,7 +5,7 @@ const SETUP_LOCAL_ENGINES = new Set(['ollama', 'vllm', 'openai-compatible']);
 // Mirror of CLOUD_ENGINE_TYPES in services/backend/managed-sidecar-chat-helpers.js.
 // Kept local so this probe stays the zero-dependency leaf described in the
 // header; tests/setup-readiness.test.js asserts the two sets stay in step.
-const SETUP_CLOUD_ENGINES = new Set(['chatgpt', 'codex-cli']);
+const SETUP_CLOUD_ENGINES = new Set(['chatgpt', 'codex-cli', 'api-provider']);
 
 function normalizeEngineToken(value) {
   return String(value || '').trim().toLowerCase().replace(/_/g, '-');

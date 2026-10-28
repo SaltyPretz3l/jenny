@@ -187,6 +187,16 @@ test('a turn cancelled by app shutdown gets its own copy in the cancelled class'
   assert.equal(user.recovery_title, 'Turn cancelled');
 });
 
+test('a New session preparation stopped by its deadline names the cause and points at the card', () => {
+  const metadata = buildAssistantErrorRecoveryMetadata({
+    code: 'CMP-SIDECAR-0002', category: 'cancelled', status: 'cancelled', terminal_subcode: 'handoff_deadline',
+  });
+  assert.equal(metadata.recovery_class, 'cancelled');
+  assert.equal(metadata.recovery_title, 'New chat took too long to prepare');
+  assert.match(metadata.recovery_hint, /New session card/);
+  assert.deepEqual(metadata.recovery_actions, []);
+});
+
 test('the app-shutdown copy also applies when the subcode arrives as an option', () => {
   const metadata = buildAssistantErrorRecoveryMetadata(
     { code: 'CMP-SIDECAR-0002', category: 'cancelled' },
@@ -216,4 +226,16 @@ test('a non-retryable chat refusal names the cause and offers no retry', () => {
   assert.equal(other.recovery_class, 'refused');
   assert.equal(other.recovery_title, 'Jenny could not run this turn');
   assert.equal(classifyAssistantError({ code: 'CMP-CHAT-0001', retryable: true }), 'runtime');
+});
+
+test('a model_busy failure keeps the provider buttons but says the model was switching', () => {
+  const metadata = buildAssistantErrorRecoveryMetadata({
+    code: 'CMP-AI-0002',
+    category: 'model_busy',
+    message: 'Model initialization is already in progress for "qwen3.8-27b-nvfp4"; retry "ornith15:9b-q6-256k" after it completes.',
+    retryable: true,
+  });
+  assert.equal(metadata.recovery_class, 'provider');
+  assert.equal(metadata.next_action, 'retry_turn');
+  assert.equal(metadata.recovery_title, 'Model was still switching');
 });

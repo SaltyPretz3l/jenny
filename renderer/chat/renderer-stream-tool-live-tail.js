@@ -1,10 +1,10 @@
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory();
+    module.exports = factory(require('./renderer-stream-dom-patch-utils'));
     return;
   }
-  root.rendererStreamToolLiveTail = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  root.rendererStreamToolLiveTail = factory(root.rendererStreamDomPatchUtils);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (streamDomPatchUtils) {
   'use strict';
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
@@ -32,12 +32,7 @@
     return String(value == null ? '' : value).trim();
   }
 
-  function escapeSelectorValue(value) {
-    if (typeof CSS !== 'undefined' && CSS && typeof CSS.escape === 'function') {
-      return CSS.escape(String(value || ''));
-    }
-    return String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  }
+  const { escapeSelectorValue } = streamDomPatchUtils;
 
   function readIdentity(source) {
     const payload = source || {};
@@ -64,6 +59,7 @@
     // mounts, or after a render replaced the row, are painted by the reconcile
     // observer.
     const tails = new Map();
+    const stickyByPane = new WeakMap();
     let observer = null;
     let observedTimeline = null;
     let disposed = false;
@@ -106,6 +102,8 @@
       }
       tail = {
         ...identity, key, lines: [], partial: '', droppedUpstream: 0, droppedLocally: 0,
+        // Lines recorded so far, and what the painted text node already holds.
+        totalLines: 0, row: null, painted: null,
       };
       tails.set(key, tail);
       while (tails.size > maxTrackedCalls) {
@@ -114,31 +112,33 @@
       return tail;
     }
 
-    function readRowCallId(node) {
-      return normalizeId(node.getAttribute('data-call-id') || node.getAttribute('data-tool-call-id'));
+    // A settled row is never a target: it owns its Output panel.
+    function isLiveRow(node) {
+      return LIVE_STATUSES.has(normalizeId(node.getAttribute('data-tool-status')).toLowerCase());
     }
 
-    function findLiveRow(callId) {
+    // The tail remembers its row, so a chunk costs no timeline-wide query
+    // until a render replaces (disconnects) or settles that row.
+    function findLiveRow(tail) {
       const chatTimeline = getChatTimeline();
-      if (!chatTimeline || !callId || typeof chatTimeline.querySelectorAll !== 'function') {
+      if (!chatTimeline || !tail.callId || typeof chatTimeline.querySelectorAll !== 'function') {
         return null;
       }
-      const escaped = escapeSelectorValue(callId);
-      let candidates = [];
+      const cached = tail.row;
+      if (cached && cached.isConnected && chatTimeline.contains(cached) && isLiveRow(cached)) return cached;
+      tail.row = null;
+      const escaped = escapeSelectorValue(tail.callId);
+      let candidates;
       try {
-        candidates = Array.from(chatTimeline.querySelectorAll(
+        candidates = chatTimeline.querySelectorAll(
           `.tool-call-block[data-call-id="${escaped}"], .tool-call-row--minimal[data-tool-call-id="${escaped}"]`
-        ));
-      } catch (_error) { /* fall through to the attribute walk */ }
-      if (!candidates.length) {
-        candidates = Array.from(chatTimeline.querySelectorAll(
-          '.tool-call-block[data-call-id], .tool-call-row--minimal[data-tool-call-id]'
-        )).filter((node) => readRowCallId(node) === callId);
-      }
-      // A settled row is never a target: it owns its Output panel.
+        );
+      } catch (_error) { return null; }
       for (let index = candidates.length - 1; index >= 0; index -= 1) {
-        const status = normalizeId(candidates[index].getAttribute('data-tool-status')).toLowerCase();
-        if (LIVE_STATUSES.has(status)) return candidates[index];
+        if (isLiveRow(candidates[index])) {
+          tail.row = candidates[index];
+          return tail.row;
+        }
       }
       return null;
     }
@@ -184,6 +184,11 @@
       const marker = doc.createElement('div');
       marker.className = 'tool-live-output-truncation hidden';
       pane.appendChild(marker);
+      // Sticky tail: follow new output unless the user scrolled up. Tracked
+      // from scroll events so a chunk never reads layout before it writes.
+      pane.addEventListener('scroll', () => {
+        stickyByPane.set(pane, pane.scrollHeight - pane.scrollTop - pane.clientHeight <= STICKY_SCROLL_SLACK_PX);
+      });
       resolvePaneHost(row).appendChild(pane);
       return pane;
     }
@@ -195,6 +200,7 @@
         if (!text) continue;
         const prefix = line && line.stream === 'stderr' ? '! ' : '';
         tail.lines.push(prefix + text);
+        tail.totalLines += 1;
       }
       if (tail.lines.length > maxTailLines) {
         tail.droppedLocally += tail.lines.length - maxTailLines;
@@ -216,9 +222,7 @@
       if (!pane) return false;
       const textNode = pane.querySelector('.tool-live-output-text');
       if (!textNode) return false;
-      const nearBottom = pane.scrollHeight - pane.scrollTop - pane.clientHeight
-        <= STICKY_SCROLL_SLACK_PX;
-      textNode.textContent = tail.lines.join('\n');
+      paintLines(textNode, tail);
 
       const partialNode = pane.querySelector('.tool-live-output-partial');
       if (partialNode) {
@@ -241,19 +245,44 @@
           marker.classList.add('hidden');
         }
       }
-      // Sticky tail: follow new output unless the user scrolled up.
-      if (nearBottom) {
+      if (stickyByPane.get(pane) !== false) {
         pane.scrollTop = pane.scrollHeight;
       }
       return true;
     }
 
-    function reconcile() {
+    // Append only the new lines to the text node this tail painted last; a new
+    // node, or a scrollback trim at the cap, rewrites it whole.
+    function paintLines(textNode, tail) {
+      const painted = tail.painted;
+      const newCount = painted ? tail.totalLines - painted.total : 0;
+      const textChild = textNode.firstChild;
+      if (painted && painted.node === textNode && painted.droppedLocally === tail.droppedLocally
+        && newCount >= 0 && newCount <= tail.lines.length
+        && (textChild ? textChild.nodeType === 3 && !textChild.nextSibling : painted.total === 0)) {
+        if (newCount > 0) {
+          const added = tail.lines.slice(-newCount).join('\n');
+          if (textChild) textChild.appendData(`\n${added}`);
+          else textNode.textContent = added;
+        }
+      } else {
+        textNode.textContent = tail.lines.join('\n');
+      }
+      tail.painted = { node: textNode, total: tail.totalLines, droppedLocally: tail.droppedLocally };
+    }
+
+    // Writes inside a pane (its text, partial and marker) are the tail's own
+    // paint, not a render: they never need a reconcile pass.
+    function isOwnPaneMutation(record) {
+      return Boolean(record.target?.closest?.('[data-tool-live-output]'));
+    }
+
+    function reconcile(records) {
+      if (records && records.length && Array.from(records).every(isOwnPaneMutation)) return;
       for (const tail of [...tails.values()]) {
         if (!isVisible(tail)) continue;
-        const row = findLiveRow(tail.callId);
-        // Painting mutates the timeline and re-enters here: only paint a row
-        // that does not already show this tail's pane.
+        const row = findLiveRow(tail);
+        // Only paint a row that does not already show this tail's pane.
         if (!row || findIntactPane(row, tail)) continue;
         paint(row, tail);
       }
@@ -291,7 +320,7 @@
       const tail = getTail(identity);
       recordChunk(tail, payload);
       ensureObserver();
-      const row = findLiveRow(tail.callId);
+      const row = findLiveRow(tail);
       if (!row || !isVisible(tail)) return false;
       return paint(row, tail);
     }

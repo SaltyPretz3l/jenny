@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import logging
 import os
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -20,12 +20,8 @@ from sidecar.ai.tools.builtins.file_history import (
     materialize_checkpoint_plan,
     plan_checkpoint,
 )
-from sidecar.ai.tools.builtins.file_state import attach_structured_diff_metadata
-from sidecar.ai.tools.contracts import (
-    ToolExecutionFailure,
-    ToolHandlerResult,
-    canonicalize_tool_arguments,
-)
+from sidecar.ai.tools.builtins.file_state import build_rename_diff, is_reserved_internal_path
+from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
 from sidecar.ai.tools.workspace import WorkspaceGuard
 from sidecar.ai.tools.workspace_path_identity import (
     NodeIdentity,
@@ -34,15 +30,11 @@ from sidecar.ai.tools.workspace_path_identity import (
     revalidate_workspace_leaf,
 )
 
-logger = logging.getLogger(__name__)
-
-_JENNY_DIR = ".jenny"
 _MAX_MOVES = 100
-_FILE_TYPE_MASK = 0o170000
-_DIRECTORY_MODE = 0o040000
 
 
-# Keep this constructor local to stay under the import fan-out cap.
+# Keep this constructor local: importing filesystem.failure_result would add a
+# seventh sidecar.ai edge past the import fan-out cap.
 def _failure_result(
     *,
     message: str,
@@ -98,10 +90,8 @@ def move_file_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> T
 
 
 def _normalize_arguments(arguments: dict[str, object]) -> tuple[list[object], bool]:
-    normalized_arguments, _aliases = canonicalize_tool_arguments(
-        tool_name="move_file",
-        arguments=arguments,
-    )
+    # move_file has no argument aliases, so the arguments are used as given.
+    normalized_arguments = arguments
     overwrite = normalized_arguments.get("overwrite", False)
     if not isinstance(overwrite, bool):
         raise ToolExecutionFailure(
@@ -197,6 +187,7 @@ def _validate_batch(
     _add_duplicate_failures(source_keys, "source", failures)
     _add_duplicate_failures(destination_keys, "destination", failures)
     _add_chain_failures(source_keys, destination_keys, failures)
+    _add_nested_source_failures(source_keys, failures)
     return plans, failures
 
 
@@ -312,7 +303,7 @@ def _destination_identity(path: Path) -> NodeIdentity | None:
 
 
 def _identity_is_directory(identity: NodeIdentity) -> bool:
-    return identity.mode & _FILE_TYPE_MASK == _DIRECTORY_MODE
+    return stat.S_ISDIR(identity.mode)
 
 
 def _nearest_existing_parent_device(parent: Path, root: Path) -> int:
@@ -337,8 +328,7 @@ def _nearest_existing_parent_device(parent: Path, root: Path) -> int:
 
 
 def _refuse_jenny_path(relative_path: str, side: str, reasons: list[str]) -> None:
-    normalized = relative_path.casefold()
-    if normalized == _JENNY_DIR or normalized.startswith(f"{_JENNY_DIR}/"):
+    if is_reserved_internal_path(relative_path):
         reasons.append(
             f"{side} is under .jenny; the .jenny directory holds Jenny's "
             "backups and trash"
@@ -393,6 +383,28 @@ def _add_chain_failures(
             )
 
 
+def _add_nested_source_failures(
+    source_keys: list[str | None],
+    failures: list[list[str]],
+) -> None:
+    """Refuse an entry whose source lies inside another entry's source directory.
+
+    Whichever of the two moves ran first would invalidate the other's
+    validated source, so the whole batch fails before anything moves.
+    """
+    for index, key in enumerate(source_keys):
+        if key is None:
+            continue
+        for other_index, other_key in enumerate(source_keys):
+            if other_key is None or other_index == index:
+                continue
+            if key.startswith(other_key.rstrip(os.sep) + os.sep):
+                failures[index].append(
+                    f"source is inside the source directory of entry {other_index + 1}; "
+                    "nested moves are refused"
+                )
+
+
 def _validation_failure_result(
     move_statuses: list[dict[str, object]],
     failures: list[list[str]],
@@ -427,7 +439,6 @@ def _execute_batch(  # noqa: PLR0913 - complete batch execution context.
     overwrite: bool,
 ) -> ToolHandlerResult:
     diffs: list[dict[str, object]] = []
-    warnings: list[object] = []
     journal = workspace.mutation_journal
     recovery = _prepare_move_recovery(
         plans=plans,
@@ -437,7 +448,6 @@ def _execute_batch(  # noqa: PLR0913 - complete batch execution context.
         root=root,
         overwrite=overwrite,
         diffs=diffs,
-        warnings=warnings,
     )
     if isinstance(recovery, ToolHandlerResult):
         return recovery
@@ -448,7 +458,7 @@ def _execute_batch(  # noqa: PLR0913 - complete batch execution context.
         if prepared is not None and journal is not None and index:
             workspace_change_set = journal.begin_sequence(prepared, prepared.sequences[index])
         try:
-            _execute_move(plan, workspace=workspace, root=root, overwrite=overwrite)
+            _execute_move(plan, workspace=workspace, root=root)
         except ToolExecutionFailure as error:
             move_statuses[index]["status"] = "failed"
             if prepared is not None and journal is not None:
@@ -462,7 +472,6 @@ def _execute_batch(  # noqa: PLR0913 - complete batch execution context.
                 error_code=error.code,
                 overwrite=overwrite,
                 diffs=diffs,
-                warnings=warnings,
                 workspace_change_set=workspace_change_set,
             )
 
@@ -479,13 +488,15 @@ def _execute_batch(  # noqa: PLR0913 - complete batch execution context.
                     error_code=CMP_TOOL_IO_FAILED,
                     overwrite=overwrite,
                     diffs=diffs,
-                    warnings=warnings,
                     workspace_change_set=workspace_change_set,
                 )
-        diff, diff_warnings = _build_move_diff(move_statuses[index], index)
-        if diff is not None:
-            diffs.append(diff)
-        warnings.extend(diff_warnings)
+        diffs.append(
+            build_rename_diff(
+                source=str(move_statuses[index]["source"]),
+                destination=str(move_statuses[index]["destination"]),
+                operation_index=index,
+            )
+        )
 
     lines = [f"Moved {len(move_statuses)} workspace entries:"]
     lines.extend(
@@ -499,8 +510,6 @@ def _execute_batch(  # noqa: PLR0913 - complete batch execution context.
         diffs=diffs,
         workspace_change_set=workspace_change_set,
     )
-    if warnings:
-        metadata["warnings"] = warnings
     return ToolHandlerResult(output="\n".join(lines), success=True, metadata=metadata)
 
 
@@ -513,7 +522,6 @@ def _prepare_move_recovery(  # noqa: PLR0913 - complete recovery batch context.
     root: Path,
     overwrite: bool,
     diffs: list[dict[str, object]],
-    warnings: list[object],
 ) -> Any | ToolHandlerResult:
     journal = workspace.mutation_journal
     if journal is None:
@@ -566,7 +574,6 @@ def _prepare_move_recovery(  # noqa: PLR0913 - complete recovery batch context.
                 error_code=error.code,
                 overwrite=overwrite,
                 diffs=diffs,
-                warnings=warnings,
                 workspace_change_set=workspace_change_set,
             )
     apply_backup_retention_best_effort(
@@ -581,15 +588,9 @@ def _execute_move(
     *,
     workspace: WorkspaceGuard,
     root: Path,
-    overwrite: bool,
 ) -> None:
     revalidate_workspace_leaf(plan.source)
-    current_destination_identity = _prepare_destination(
-        plan,
-        workspace=workspace,
-        root=root,
-        overwrite=overwrite,
-    )
+    current_destination_identity = _prepare_destination(plan, workspace=workspace, root=root)
     workspace.ensure_safe_mutation_path(plan.destination)
     if _destination_identity(plan.destination) != current_destination_identity:
         raise ToolExecutionFailure(
@@ -612,7 +613,6 @@ def _prepare_destination(
     *,
     workspace: WorkspaceGuard,
     root: Path,
-    overwrite: bool,
 ) -> NodeIdentity | None:
     workspace.ensure_safe_mutation_path(plan.destination)
     try:
@@ -653,34 +653,6 @@ def _prepare_destination(
     return current_identity
 
 
-def _build_move_diff(
-    status: dict[str, object],
-    operation_index: int,
-) -> tuple[dict[str, object] | None, list[object]]:
-    diff_metadata: dict[str, object] = {}
-    attach_structured_diff_metadata(
-        diff_metadata,
-        path=str(status["destination"]),
-        old_text="",
-        new_text="",
-        status="renamed",
-        logger=logger,
-    )
-    diff = diff_metadata.get("diff")
-    if isinstance(diff, dict):
-        diff.update(
-            {
-                "path": status["destination"],
-                "old_path": status["source"],
-                "operation_index": operation_index,
-            }
-        )
-    warnings = diff_metadata.get("warnings")
-    return diff if isinstance(diff, dict) else None, (
-        warnings if isinstance(warnings, list) else []
-    )
-
-
 def _execution_failure_result(  # noqa: PLR0913 - complete partial-state report.
     move_statuses: list[dict[str, object]],
     *,
@@ -689,7 +661,6 @@ def _execution_failure_result(  # noqa: PLR0913 - complete partial-state report.
     error_code: str,
     overwrite: bool,
     diffs: list[dict[str, object]],
-    warnings: list[object],
     workspace_change_set: dict[str, object] | None = None,
 ) -> ToolHandlerResult:
     lines = [
@@ -710,8 +681,6 @@ def _execution_failure_result(  # noqa: PLR0913 - complete partial-state report.
         diffs=diffs,
         workspace_change_set=workspace_change_set,
     )
-    if warnings:
-        metadata["warnings"] = warnings
     return _failure_result(
         message="\n".join(lines),
         error_code=error_code,

@@ -20,16 +20,18 @@ const {
   normalizeContextBlocksForSend,
 } = require('../services/backend/chat-send-context-blocks');
 
-test('the kind allowlist matches the six assembled overlays', () => {
+test('the kind allowlist matches the seven assembled overlays', () => {
   assert.deepEqual([...CONTEXT_BLOCK_KINDS].sort(), [
     'active_file',
     'codebase',
     'git',
     'linked_session',
     'personality',
+    'profile_overview',
     'workspace_presentation',
   ]);
   assert.equal(MAX_CONTEXT_BLOCKS, CONTEXT_BLOCK_KINDS.length);
+  assert.equal(MAX_CONTEXT_BLOCKS, 7);
 });
 
 test('keeps every allowlisted kind, in order, with content trimmed', () => {
@@ -39,6 +41,7 @@ test('keeps every allowlisted kind, in order, with content trimmed', () => {
     { kind: 'codebase', content: 'grounding' },
     { kind: 'linked_session', content: 'recall' },
     { kind: 'active_file', content: 'open file' },
+    { kind: 'profile_overview', content: '## Profile Overview' },
   ];
   assert.deepEqual(normalizeContextBlocksForSend(blocks), [
     { kind: 'personality', content: 'persona' },
@@ -46,6 +49,7 @@ test('keeps every allowlisted kind, in order, with content trimmed', () => {
     { kind: 'codebase', content: 'grounding' },
     { kind: 'linked_session', content: 'recall' },
     { kind: 'active_file', content: 'open file' },
+    { kind: 'profile_overview', content: '## Profile Overview' },
   ]);
 });
 

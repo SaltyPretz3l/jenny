@@ -57,6 +57,41 @@ test('skills cannot take the memory command names', async () => {
   assert.deepEqual(logs.map((entry) => entry[2].firstId).sort(), ['builtin/forget', 'builtin/memory', 'builtin/remember']);
 });
 
+test('a skill cannot shadow a command the app registered: one collision warning, no duplicate rejections', async () => {
+  // The bundled delegation skill shipped as `command: handoff` next to the built-in
+  // /handoff; the registry rejected it as a duplicate on every refresh (5x per run).
+  const logs = [];
+  const registryLogs = [];
+  const registry = createSlashCommandRegistry({
+    state: { currentSessionId: '' },
+    appendClientLog: (...args) => registryLogs.push(args),
+  });
+  registry.register('/handoff', 'Hand this chat off', () => ({ ok: true }));
+  registry.register('/linked', 'Linked chats', () => ({ ok: true }));
+  const manager = createSkillSlashCommands({
+    registry,
+    getSkillsState: () => snapshot([
+      { id: 'bundled/claude_code_delegation', name: 'Delegation', description: 'Handoff prompt', command: 'handoff', enabled: true },
+      { id: 'bundled/other', name: 'Other', description: 'Linked', command: 'linked', enabled: true },
+      { id: 'bundled/delegate', name: 'Delegate', description: 'Reachable', command: 'delegate', enabled: true },
+    ]),
+    onChanged: () => () => {},
+    log: (...args) => logs.push(args),
+  });
+  await manager.refresh();
+  await manager.refresh();
+
+  assert.deepEqual(registry.listCommands().map((entry) => [entry.name, entry.action]).sort(),
+    [['/delegate', 'attach'], ['/handoff', 'run'], ['/linked', 'run']]);
+  assert.deepEqual(logs.map((entry) => [entry[1], entry[2].firstId, entry[2].secondId]), [
+    ['slash.skill_command_collision', 'builtin/handoff', 'bundled/claude_code_delegation'],
+    ['slash.skill_command_collision', 'builtin/linked', 'bundled/other'],
+    ['slash.skill_command_collision', 'builtin/handoff', 'bundled/claude_code_delegation'],
+    ['slash.skill_command_collision', 'builtin/linked', 'bundled/other'],
+  ]);
+  assert.equal(registryLogs.filter((entry) => entry[1] === 'slash.registration_rejected').length, 0);
+});
+
 test('send slash dispatch attaches, strips the token, carries the full invocation, and clears only on acceptance', async () => {
   const state = { currentSessionId: 's1', ui: {}, composerSessionState: new Map([['s1', { generation: 1 }]]) };
   const chatInput = { value: '/verify check this', focusCalls: 0, focus() { this.focusCalls += 1; } };

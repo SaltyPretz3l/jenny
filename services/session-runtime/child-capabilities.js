@@ -1,12 +1,35 @@
 'use strict';
 
+const { StringDecoder } = require('node:string_decoder');
 const { stableJson, validId } = require('./contracts');
 const { exact, fail } = require('./lineage-contracts');
 const { resolveChildLineage } = require('./runtime-work-authority');
 const { getTrustedExecutionBinding } = require('../backend/session-execution-authority');
 const { RUNTIME_ERROR_CODES, TOOL_ERROR_CODES } = require('../backend/error-codes');
 
+const CHILD_RESULT_MAX_BYTES = 32768;
 const CAPABILITIES = new WeakMap();
+
+// Joins the child's assistant rows for one turn, stopping once the byte budget
+// is spent so a long transcript is never concatenated or encoded in full.
+function boundedChildText(messages, turnId) {
+  const parts = [];
+  let bytes = 0;
+  for (const row of Array.isArray(messages) ? messages : []) {
+    if (row?.turn_id !== turnId || row.role !== 'assistant' || row.tool_call) continue;
+    const piece = `${parts.length ? '\n' : ''}${String(row.content || '')}`;
+    const pieceBytes = Buffer.byteLength(piece);
+    if (bytes + pieceBytes > CHILD_RESULT_MAX_BYTES) {
+      const head = Buffer.from(piece).subarray(0, CHILD_RESULT_MAX_BYTES - bytes);
+      parts.push(new StringDecoder('utf8').write(head));
+      return { result: parts.join(''), truncated: true };
+    }
+    parts.push(piece);
+    bytes += pieceBytes;
+  }
+  return { result: parts.join(''), truncated: false };
+}
+
 function registerRuntimeChildCapability({ binding, gateway, runtime, work, assertCurrent }) {
   if (!gateway.children) return;
   if (!getTrustedExecutionBinding(binding)) fail('runtime_child_binding_required');
@@ -35,13 +58,9 @@ function readChild(entry, args) {
   if (!terminal) return { child_work_id: child.work_id, status: 'pending' };
   const session = runtime.conversationStore.getSession(child.session_id);
   if (session?.session_incarnation !== proof.session_incarnation) fail('runtime_child_session_changed');
-  const text = (session.messages || []).filter(row => row.turn_id === child.turn_id
-    && row.role === 'assistant' && !row.tool_call).map(row => String(row.content || '')).join('\n');
-  const body = Buffer.from(text);
-  const { StringDecoder } = require('node:string_decoder');
-  const result = new StringDecoder('utf8').write(body.subarray(0, 32768));
+  const { result, truncated } = boundedChildText(session.messages, child.turn_id);
   return { child_work_id: child.work_id, session_id: child.session_id, turn_id: child.turn_id,
-    status: child.status, result, truncated: body.length > 32768 };
+    status: child.status, result, truncated };
 }
 async function executeRuntimeChildTool(binding, toolName, args, callId) {
   let entry;
@@ -67,7 +86,7 @@ async function executeRuntimeChildTool(binding, toolName, args, callId) {
     const errorCode = capacity ? RUNTIME_ERROR_CODES.RESOURCE_EXCEEDED
       : invalid ? RUNTIME_ERROR_CODES.INVALID_REQUEST : policy ? TOOL_ERROR_CODES.POLICY_DENIED
       : TOOL_ERROR_CODES.EXECUTION_FAILED;
-    try { entry?.runtime.chatAdapter?.service?._emitServiceLog?.('WARN', 'runtime.child_operation_failed', {
+    try { entry?.runtime.store?.logger?.('WARN', 'runtime.child_operation_failed', {
       work_id: entry.work.work_id, call_id: validId(callId) ? callId : null,
       tool_name: ['session_spawn', 'session_wait', 'session_result'].includes(toolName) ? toolName : null,
       reason: publicReason, errorCode,

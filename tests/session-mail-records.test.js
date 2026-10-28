@@ -4,7 +4,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const R = require('../services/backend/session-mail-records');
-const { countUnreadInbox } = R;
+const { countFailedOutbox, countUnreadInbox } = R;
+const { buildSessionSummary } = require('../services/backend/session-summary-projection');
 const F = require('./helpers/session-mail-fixtures');
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -159,6 +160,25 @@ test('countUnreadInbox is a cheap structural count over raw entries', () => {
   assert.equal(countUnreadInbox(undefined), 0);
   assert.equal(countUnreadInbox({ inbox: 'x' }), 0);
   assert.equal(countUnreadInbox(normalizedMail({ inbox: [F.makeInbox(1), F.makeInbox(2, { read_at: F.iso() }), null, 'x', { read_at: null }] })), 1);
+});
+
+test('failed_delivery_count: only failed outbox records count, and a frozen container reads 0', () => {
+  const failedError = { code: 'CMP-MESSAGE-0009', reason: 'recipient_backpressure', retryable: true };
+  const outbox = [
+    F.makeOutbox(1, { state: 'failed', send_requested_at: F.iso(), last_error: failedError }),
+    F.makeOutbox(2, { state: 'pending', send_requested_at: F.iso() }),
+    F.makeOutbox(3, { state: 'delivered', send_requested_at: F.iso(), delivered_at: F.iso() }),
+    F.makeOutbox(4, { state: 'cancelled' }),
+    F.makeOutbox(5), null, 'x',
+  ];
+  assert.equal(countFailedOutbox(undefined), 0);
+  assert.equal(countFailedOutbox({ outbox: 'x' }), 0);
+  assert.equal(countFailedOutbox(normalizedMail({ outbox })), 1);
+  assert.equal(buildSessionSummary({ session_mail: normalizedMail({ outbox }) }).failed_delivery_count, 1);
+  assert.equal(buildSessionSummary({ session_mail: normalizedMail({ outbox: outbox.slice(1) }) }).failed_delivery_count, 0);
+  assert.equal(buildSessionSummary({}).failed_delivery_count, 0, 'no mail reads 0');
+  const frozen = { ...normalizedMail({ outbox }), schema_version: 2 };
+  assert.equal(buildSessionSummary({ session_mail: frozen }).failed_delivery_count, 0, 'a frozen container reads 0');
 });
 
 test('inbox capacity: 256 records or 2 MiB of body bytes', () => {

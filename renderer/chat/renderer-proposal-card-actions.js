@@ -61,6 +61,11 @@
     if (!store || !cards) return () => {};
     const getBridge = typeof d.getBridge === 'function' ? d.getBridge
       : () => { const shell = d.shell || (globalThis.window && globalThis.window.jennyShell); return (shell && shell.sessionProposals) || null; };
+    // Row 76: the standing launch permission is only ever offered on, and granted from, the primary chat's offer card.
+    const isPrimary = (id) => typeof d.isPrimarySession === 'function' && d.isPrimarySession(id) === true;
+    const launchPermissionEnabled = () => (typeof d.launchPermissionEnabled === 'function' ? d.launchPermissionEnabled() : d.launchPermissionEnabled) !== false;
+    const getPrimaryBridge = typeof d.getPrimaryBridge === 'function' ? d.getPrimaryBridge
+      : () => { const shell = d.shell || (globalThis.window && globalThis.window.jennyShell); return (shell && shell.primaryChat) || null; };
     const announcer = () => d.announcer || (globalThis.window && globalThis.window.rendererLiveAnnouncerInstance) || null;
     const suggestionGroup = d.suggestionGroup || globalThis.rendererProposalSuggestionGroup || require('./renderer-proposal-suggestion-group');
     let disposed = false;
@@ -114,7 +119,8 @@
       const sessionId = card.dataset.proposalSession || '';
       const proposalId = card.dataset.proposalId || '';
       const lookup = store.lookup(sessionId, proposalId);
-      const markup = cards.buildProposalCardMarkup({ sessionId, proposalId, kind: card.dataset.proposalKind, lookup });
+      const markup = cards.buildProposalCardMarkup({ sessionId, proposalId, kind: card.dataset.proposalKind, lookup },
+        { isPrimarySession: d.isPrimarySession, launchPermissionEnabled: launchPermissionEnabled() });
       if (!markup) return;
       const wanted = focusAfterPatch.get(proposalId);
       const template = card.ownerDocument.createElement('template');
@@ -126,6 +132,10 @@
       const details = card.querySelector('.proposal-scope');
       const nextDetails = next.querySelector('.proposal-scope');
       if (details && nextDetails && details.open) nextDetails.open = true;
+      // The "Always allow" tick survives a repaint (busy, notice, options) like the open details do.
+      const always = card.querySelector('[data-proposal-always-allow]');
+      const nextAlways = next.querySelector('[data-proposal-always-allow]');
+      if (always && nextAlways && always.checked) nextAlways.checked = true;
       card.replaceWith(next);
       const optionKey = typeof wanted === 'string' && wanted.startsWith('option:') ? wanted.slice(7) : '';
       const popover = next.querySelector('.proposal-options-popover:not([hidden])');
@@ -207,7 +217,29 @@
       };
       if (isDecision) request.choice = action;
       if (confirmed) request.confirmed_preconditions = confirmed;
-      await submit(card, method, request, { gesture: true });
+      // Read the tick from the live card now: a decided card no longer carries the row.
+      const alwaysBox = (action === 'new_session' || action === 'do_it_here') && isPrimary(sessionId) && launchPermissionEnabled()
+        ? card.querySelector('[data-proposal-always-allow]') : null;
+      const always = Boolean(alwaysBox && alwaysBox.checked === true);
+      const accepted = await submit(card, method, request, { gesture: true });
+      if (always && accepted && !disposed) await grantLaunch(sessionId, proposalId, proposal.options);
+    }
+
+    /** After a successful decision: save the standing permission for the destination project; a refusal is a calm card notice. */
+    async function grantLaunch(sessionId, proposalId, options) {
+      const projectId = options && options.destination_project_id;
+      if (!projectId) return; // the row only renders with a destination project
+      const bridge = getPrimaryBridge();
+      let response = null;
+      if (bridge && typeof bridge.grantLaunch === 'function') {
+        try {
+          response = await bridge.grantLaunch({ schema_version: SCHEMA_VERSION, project_id: projectId });
+        } catch (error) {
+          log('WARN', 'proposal_card.always_allow_failed', { reason: (error && (error.code || error.name)) || 'error' });
+        }
+      }
+      if (disposed || (response && response.ok === true)) return;
+      store.setNotice(sessionId, proposalId, { text: jt('chat.proposal.session.alwaysAllowFailed', 'The permission was not saved.') });
     }
 
     /** One request on one card: busy while in flight, the projection applied, a calm notice on refusal. */
@@ -218,7 +250,7 @@
       const bridge = getBridge();
       if (!bridge || typeof bridge[method] !== 'function') {
         store.setNotice(sessionId, proposalId, { text: errorText('CMP-PROPOSAL-0002', '', kind) });
-        return;
+        return false;
       }
       store.setNotice(sessionId, proposalId, null);
       store.setBusy(sessionId, proposalId, true);
@@ -252,6 +284,7 @@
       const live = [...container.querySelectorAll('[data-proposal-id]')].find((node) => node.dataset.proposalId === proposalId);
       const status = live && live.querySelector('.proposal-status');
       if (status && typeof status.focus === 'function' && card.ownerDocument.activeElement === card.ownerDocument.body) status.focus();
+      return Boolean(ok);
     }
 
     // ---- Options (kind session) -------------------------------------------------------
@@ -351,6 +384,16 @@
       void store.refreshGroup(sessionId, groupId);
     }
 
+    // F3b: a failed child turn retries through the child's own Retry turn (it opens the child first).
+    const retrying = new Set();
+    async function retryChild(trigger) {
+      const childId = trigger.dataset.proposalChildId || '';
+      const messageId = trigger.dataset.proposalMessageId || '';
+      if (!childId || !messageId || retrying.has(childId) || typeof d.retryChildTurn !== 'function') return;
+      retrying.add(childId);
+      try { await d.retryChildTurn(childId, messageId); } catch (_error) { log('WARN', 'proposal_card.retry_child_failed', {}); } finally { retrying.delete(childId); }
+    }
+
     function jump(action, trigger) {
       const scope = container;
       let target;
@@ -387,7 +430,8 @@
       else if (action === 'open-child') {
         const childId = trigger.dataset.proposalChildId || '';
         if (childId && typeof d.openSession === 'function') void d.openSession(childId);
-      } else void perform(card, action);
+      } else if (action === 'retry-child') void retryChild(trigger);
+      else void perform(card, action);
     }
 
     function onChange(event) {

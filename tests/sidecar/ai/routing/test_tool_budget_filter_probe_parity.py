@@ -322,6 +322,38 @@ def test_probe_counts_runtime_overlays_and_context_blocks_before_filtering(
     assert len(context.tool_resolution_context.budget_filtered_names) == 12
 
 
+def test_probe_judges_on_the_count_ladder_and_hands_its_scale_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Under a ladder scale the probe must agree with the preflight, which reuses
+    # the probe's (scale, source) instead of resolving (and counting) again.
+    monkeypatch.setattr(
+        token_budget_module, "_create_best_backend", lambda _config: CharEstimationBackend()
+    )
+    seen: list[dict[str, Any]] = []
+
+    def fake_resolve(**kwargs: Any) -> tuple[float, str]:
+        seen.append(kwargs)
+        return 0.5, "exact"
+
+    monkeypatch.setattr(tool_budget_filter_module, "resolve_token_scale", fake_resolve)
+    context = _filter_input(_FilterKernel())
+    contract = _tool_contract()
+    result = apply_budget_aware_tool_filter(
+        context,
+        tool_contract=contract,
+        tool_payload=list(contract.prompt_schemas),
+        tool_statuses=contract.status_entries,
+    )
+
+    # The estimate path puts this request at "warning" (12 schemas, see above);
+    # at half the count it is "ok" and nothing is filtered.
+    assert len(result.tool_payload) == 24
+    assert result.count_scale == (0.5, "exact")
+    assert len(seen) == 1
+    assert seen[0]["calibration"] is None
+
+
 def test_plan_artifact_schema_uses_the_same_32768_token_budget_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

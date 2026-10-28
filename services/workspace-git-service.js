@@ -18,8 +18,6 @@ const nodePath = require('path');
 const { ToolPathPolicy } = require('./tools/tool-path-policy');
 const { WORKSPACE_GIT_ERROR_CODES, workspaceGitError } = require('./workspace-git-errors');
 const {
-  MAX_COMMIT_MESSAGE_CHARS,
-  MAX_STASH_MESSAGE_CHARS,
   buildPathspecCommand,
   literalPathspec,
   classifyExpectedOutcome,
@@ -57,6 +55,9 @@ const {
   parseChangedFilesByCommit,
   parseBlamePorcelain,
 } = require('./workspace-git-parsers');
+const { buildResolveDeleteCommand } = require('./workspace-git-resolve-delete');
+const { listNonIgnoredFilesRead, checkIgnoredRead, normalizeCheckIgnoredPaths } = require('./workspace-git-ignore-reads');
+const { createWorkspaceGitExtras, classifyHeadPathMiss, trashUntracked } = require('./workspace-git-service-extras');
 
 const MAX_DIFF_CHARS = 200000;
 const MAX_BLAME_LINES = 2000;
@@ -65,7 +66,9 @@ const MAX_LOG_LIMIT = 200;
 
 // The only git verbs a write may invoke. The guard asserts args[0] is in here,
 // so a buildArgs bug can never smuggle an unexpected mutation past _runWrite.
-const WRITE_VERBS = new Set(['add', 'restore', 'commit', 'checkout', 'stash', 'reset', 'update-ref']);
+// Row 82 G1/G2: `branch` (delete `-d` only) and `apply` (`--cached`, one validated
+// single-file patch), both built in workspace-git-service-extras. No network verb.
+const WRITE_VERBS = new Set(['add', 'restore', 'commit', 'checkout', 'stash', 'reset', 'update-ref', 'branch', 'apply']);
 
 function assertWriteVerb(verb) {
   if (!WRITE_VERBS.has(verb)) {
@@ -79,17 +82,6 @@ function buildPathLogHint(relPath) {
     file_name: normalized.split('/').pop() || '',
     path_hash: crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 12),
   };
-}
-
-function classifyHeadPathMiss(result) {
-  const text = String(result?.message || result?.stderr || '');
-  if (/invalid object name ['"]?head|ambiguous argument ['"]?head|unknown revision|bad revision ['"]?head|no such ref:?\s*head|does not have any commits|bad default revision/i.test(text)) {
-    return 'no_head';
-  }
-  if (/path .+ does not exist in ['"]?head|path .+ exists on disk, but not in ['"]?head|no such path .+ in head/i.test(text)) {
-    return 'not_in_head';
-  }
-  return '';
 }
 
 class WorkspaceGitService {
@@ -150,6 +142,9 @@ class WorkspaceGitService {
       resolveInsideRoot: (relPath, root) => this._resolveInsideRoot(relPath, root),
       trashItem: this._trashItemImpl,
     });
+    // Row 82 G1/G2 verbs (commit / stash options, index and commit reads, branch -d,
+    // apply --cached) run through this instance's _withRepo / _runWrite envelopes.
+    this._extras = createWorkspaceGitExtras(this);
   }
 
   _log(level, event, details = {}) {
@@ -334,16 +329,19 @@ class WorkspaceGitService {
     if (command && command.skipExec === true) {
       return command.result;
     }
-    const args = Array.isArray(command) ? command : command?.args;
-    assertWriteVerb(args[0]);
-    const r = await this._exec(root, args, {
-      signal: operation.signal,
-      input: Array.isArray(command) ? null : command?.input,
-    });
-    if (!operation.isCurrent()) return this._unavailable(op, 'root_changed');
-    if (!r.success) {
-      return this._execFailure(op, r);
+    // A batch write (discardFiles) returns { commands: [...], finish }: every command passes
+    // the verb guard before any runs, they run in order inside this one lease, stopping at
+    // the first failure, and `finish` (its non-git side effect) runs only after all succeed.
+    const commands = Array.isArray(command?.commands) ? command.commands : [command];
+    const argvs = commands.map((each) => (Array.isArray(each) ? each : each?.args));
+    for (const args of argvs) assertWriteVerb(args[0]);
+    let r = { stdout: '', stderr: '' };
+    for (const [index, each] of commands.entries()) {
+      r = await this._exec(root, argvs[index], { signal: operation.signal, input: Array.isArray(each) ? null : each?.input });
+      if (!operation.isCurrent()) return this._unavailable(op, 'root_changed');
+      if (!r.success) return this._execFailure(op, r);
     }
+    if (typeof command?.finish === 'function') await command.finish();
     return { ok: true, available: true, isRepo: true, op, root, safePaths, stdout: r.stdout, stderr: r.stderr };
   }
 
@@ -558,23 +556,21 @@ class WorkspaceGitService {
     }, { signal });
   }
 
-  // Non-ignored scan scope for the Workspace File Map scanner: tracked files
-  // plus untracked-but-not-gitignored files, POSIX-relative to the workspace
-  // root (aligns with WorkspaceIdeService.listAllFiles). READ-only — never
-  // routes through _runWrite, never touches WRITE_VERBS.
+  // Non-ignored scan scope for the Workspace File Map scanner (see
+  // workspace-git-ignore-reads). READ-only: never _runWrite / WRITE_VERBS.
   async listNonIgnoredFiles({ signal = null } = {}) {
-    return this._withRepo('listNonIgnoredFiles', async (root, operationSignal) => {
-      const r = await this._exec(
-        root,
-        ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
-        { signal: operationSignal }
-      );
-      if (!r.success) {
-        return this._execFailure('listNonIgnoredFiles', r);
-      }
-      const files = String(r.stdout || '').split('\0').filter(Boolean);
-      return { ok: true, available: true, isRepo: true, op: 'listNonIgnoredFiles', files };
-    }, { signal });
+    return this._withRepo('listNonIgnoredFiles', (root, operationSignal) => listNonIgnoredFilesRead({
+      exec: this._exec, execFailure: (op, result) => this._execFailure(op, result), root, signal: operationSignal,
+    }), { signal });
+  }
+
+  // Row 82 X1: which of these workspace-relative paths are gitignored (invalid
+  // paths dropped silently, capped; see workspace-git-ignore-reads).
+  async checkIgnored({ paths = [], signal = null } = {}) {
+    const { list, truncated } = normalizeCheckIgnoredPaths(normalizePathList(paths), (value) => this._normalizeRelPath(value));
+    return this._withRepo('checkIgnored', (root, operationSignal) => checkIgnoredRead({
+      exec: this._exec, execFailure: (op, result) => this._execFailure(op, result), root, signal: operationSignal, list, truncated,
+    }), { signal });
   }
 
   async getBranches({ signal = null } = {}) {
@@ -686,6 +682,25 @@ class WorkspaceGitService {
     return { ok: true, available: true, isRepo: true, op: 'stage', staged: r.safePaths.length, paths: r.safePaths };
   }
 
+  // Row 75: resolve a conflict by deleting the file (recycle bin, then the
+  // deletion is staged). Unmerged paths only: see workspace-git-resolve-delete.
+  async resolveDelete({ paths = [], signal = null } = {}) {
+    const list = normalizePathList(paths);
+    if (!list.length) {
+      return this._withRepo('resolveDelete', () => ({ ok: true, available: true, isRepo: true, op: 'resolveDelete', paths: [] }), { signal });
+    }
+    const r = await this._runWrite('resolveDelete', {
+      validatePaths: list,
+      buildArgs: ({ root, safePaths, signal: operationSignal }) => buildResolveDeleteCommand({
+        exec: this._exec, execFailure: (op, result) => this._execFailure(op, result), fs: this._fs,
+        trashItemImpl: this._trashItemImpl, root, safePaths, signal: operationSignal,
+      }),
+      signal,
+    });
+    if (!r.ok) return r;
+    return { ok: true, available: true, isRepo: true, op: 'resolveDelete', paths: r.safePaths };
+  }
+
   async unstage({ paths = [], signal = null } = {}) {
     const list = normalizePathList(paths);
     if (!list.length) {
@@ -715,43 +730,8 @@ class WorkspaceGitService {
     return { ok: true, available: true, isRepo: true, op: 'unstage', unstaged: r.safePaths.length, paths: r.safePaths };
   }
 
-  async commit({ message, signal = null } = {}) {
-    const msg = String(message != null ? message : '');
-    const r = await this._runWrite('commit', {
-      validate: () => {
-        if (!msg.trim()) {
-          throw workspaceGitError(
-            WORKSPACE_GIT_ERROR_CODES.COMMIT_MESSAGE_EMPTY,
-            'Commit message cannot be empty.'
-          );
-        }
-        if (msg.length > MAX_COMMIT_MESSAGE_CHARS) {
-          throw workspaceGitError(
-            WORKSPACE_GIT_ERROR_CODES.COMMIT_MESSAGE_EMPTY,
-            `Commit message cannot exceed ${MAX_COMMIT_MESSAGE_CHARS} characters.`
-          );
-        }
-      },
-      buildArgs: () => ['commit', '-m', msg],
-      signal,
-    });
-    if (!r.ok) {
-      if (r.error_code === WORKSPACE_GIT_ERROR_CODES.GIT_COMMAND_FAILED
-        && r.reason === 'nothing_to_commit') {
-        return { ok: true, available: true, isRepo: true, op: 'commit', committed: false, reason: 'nothing_to_commit' };
-      }
-      return r;
-    }
-    const match = /\[[^\]]*\s([0-9a-f]{7,40})\]/.exec(r.stdout || '');
-    return {
-      ok: true,
-      available: true,
-      isRepo: true,
-      op: 'commit',
-      committed: true,
-      shortSha: match ? match[1] : '',
-    };
-  }
+  // Row 82 G1: `amend` / `signoff` options (workspace-git-service-extras).
+  commit(options = {}) { return this._extras.commit(options); }
 
   // UIUX-032: "Discard" promises restoring the last-committed version, but
   // `git restore --worktree` only understands paths git already tracks — on an
@@ -782,70 +762,18 @@ class WorkspaceGitService {
         if (isTracked) {
           return ['restore', '--worktree', '--', literalPathspec(relPath)];
         }
-        const absolute = this._path.resolve(root, relPath);
-        // `ls-files -- <dir>` lists the CHILDREN, never the directory itself,
-        // so a folder whose files are tracked reads as "untracked" here. Unlike
-        // unlink, trashItem happily moves a whole directory - refuse rather
-        // than take tracked files with it. Discard is a single-file verb.
-        let targetStat;
-        try {
-          targetStat = await this._fs.stat(absolute);
-        } catch {
-          targetStat = null;
-        }
-        if (targetStat && targetStat.isDirectory()) {
+        // `ls-files -- <dir>` lists the CHILDREN, never the directory itself, so a
+        // folder whose files are tracked reads as "untracked" here: trashUntracked
+        // refuses a directory (and an unreachable or failing recycle bin).
+        const trashed = await trashUntracked({ fs: this._fs, path: this._path, trashItemImpl: this._trashItemImpl, root, relPath });
+        if (!trashed.ok) {
           return {
             skipExec: true,
             result: {
-              ok: false,
-              available: true,
-              isRepo: true,
-              op: 'discardFile',
-              error_code: WORKSPACE_GIT_ERROR_CODES.GIT_COMMAND_FAILED,
-              reason: 'directory_unsupported',
-              message: 'Discard works on single files. Delete the folder from your file manager instead.',
+              ok: false, available: true, isRepo: true, op: 'discardFile',
+              error_code: WORKSPACE_GIT_ERROR_CODES.GIT_COMMAND_FAILED, reason: trashed.reason, message: trashed.message,
             },
           };
-        }
-        if (!this._trashItemImpl) {
-          return {
-            skipExec: true,
-            result: {
-              ok: false,
-              available: true,
-              isRepo: true,
-              op: 'discardFile',
-              error_code: WORKSPACE_GIT_ERROR_CODES.GIT_COMMAND_FAILED,
-              reason: 'trash_unavailable',
-              message: "Discard is unavailable in this shell mode — the OS recycle bin isn't reachable. Delete the file from your file manager instead.",
-            },
-          };
-        }
-        try {
-          await this._trashItemImpl(absolute);
-        } catch {
-          let fileMissing = false;
-          try {
-            await this._fs.stat(absolute);
-          } catch (statError) {
-            fileMissing = statError?.code === 'ENOENT';
-          }
-          // ENOENT: trashing reached the desired end state despite reporting an
-          // error, so treat it as a clean success rather than a failed discard.
-          if (!fileMissing) {
-            return {
-              skipExec: true,
-              result: {
-                ok: false,
-                available: true,
-                isRepo: true,
-                op: 'discardFile',
-                error_code: WORKSPACE_GIT_ERROR_CODES.GIT_COMMAND_FAILED,
-                reason: 'trash_failed',
-                message: "The file couldn't be moved to the recycle bin. Delete it from your file manager instead.",
-              },
-            };
-          }
         }
         return {
           skipExec: true,
@@ -892,45 +820,8 @@ class WorkspaceGitService {
     };
   }
 
-  async stash({ op = 'push', message = '', signal = null } = {}) {
-    const operation = op === 'pop' ? 'pop' : 'push';
-    const r = await this._runWrite('stash', {
-      buildArgs: () => {
-        if (operation === 'pop') return ['stash', 'pop'];
-        const msg = String(message != null ? message : '').trim();
-        if (msg.length > MAX_STASH_MESSAGE_CHARS) throw workspaceGitError(WORKSPACE_GIT_ERROR_CODES.COMMIT_MESSAGE_EMPTY, `Stash message cannot exceed ${MAX_STASH_MESSAGE_CHARS} characters.`);
-        return msg ? ['stash', 'push', '-m', msg] : ['stash', 'push'];
-      },
-      signal,
-    });
-    if (!r.ok) {
-      if (r.error_code === WORKSPACE_GIT_ERROR_CODES.GIT_COMMAND_FAILED
-        && (r.reason === 'nothing_to_stash' || r.reason === 'nothing_to_pop')) {
-        return {
-          ok: true,
-          available: true,
-          isRepo: true,
-          op: 'stash',
-          operation,
-          stashed: false,
-          reason: r.reason,
-        };
-      }
-      return r;
-    }
-    if (operation === 'push' && /no local changes to save/i.test(`${r.stdout || ''}${r.stderr || ''}`)) {
-      return {
-        ok: true,
-        available: true,
-        isRepo: true,
-        op: 'stash',
-        operation,
-        stashed: false,
-        reason: 'nothing_to_stash',
-      };
-    }
-    return { ok: true, available: true, isRepo: true, op: 'stash', operation, stashed: true };
-  }
+  // push / pop / apply / drop with an optional entry index (workspace-git-service-extras).
+  stash(options = {}) { return this._extras.stash(options); }
 
   async undoLastCommit({ signal = null } = {}) {
     const r = await this._runWrite('undoLastCommit', {
@@ -946,6 +837,18 @@ class WorkspaceGitService {
     }
     return { ok: true, available: true, isRepo: true, op: 'undoLastCommit', undone: true };
   }
+
+  // Row 82 G1/G2 reads and writes (workspace-git-service-extras).
+  getFileAtIndex(options = {}) { return this._extras.getFileAtIndex(options); }
+  getFileAtCommit(options = {}) { return this._extras.getFileAtCommit(options); }
+  getCommitFiles(options = {}) { return this._extras.getCommitFiles(options); }
+  listStashes(options = {}) { return this._extras.listStashes(options); }
+  getLastCommitMessage(options = {}) { return this._extras.getLastCommitMessage(options); }
+  blameFile(options = {}) { return this._extras.blameFile(options); }
+  // Row 82 cleanup G3: Discard All as one write (workspace-git-service-extras).
+  discardFiles(options = {}) { return this._extras.discardFiles(options); }
+  deleteBranch(options = {}) { return this._extras.deleteBranch(options); }
+  applyPatch(options = {}) { return this._extras.applyPatch(options); }
 
   createCheckpoint(options = {}) { return this._checkpoints.createCheckpoint(options); }
 

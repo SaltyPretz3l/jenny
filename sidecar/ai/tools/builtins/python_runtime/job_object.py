@@ -19,7 +19,6 @@ if IS_WINDOWS:
     JOB_OBJECT_LIMIT_JOB_MEMORY = 0x00000200
     JOB_OBJECT_LIMIT_PROCESS_MEMORY = 0x00000100
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
-    RESUME_THREAD_FAILED = 0xFFFFFFFF
     JobObjectExtendedLimitInformation = 9
 
     class IO_COUNTERS(ctypes.Structure):
@@ -66,8 +65,6 @@ if IS_WINDOWS:
     kernel32.SetInformationJobObject.restype = wintypes.BOOL
     kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
     kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
-    kernel32.ResumeThread.argtypes = (wintypes.HANDLE,)
-    kernel32.ResumeThread.restype = wintypes.DWORD
     kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
     kernel32.CloseHandle.restype = wintypes.BOOL
     ntdll.NtResumeProcess.argtypes = (wintypes.HANDLE,)
@@ -131,11 +128,8 @@ class JobObject:
     def resume(self, proc: subprocess.Popen) -> None:
         if not IS_WINDOWS or self._handle is None:
             return
-        thread_handle = getattr(proc, "_thread", None)
-        if thread_handle is not None:
-            if kernel32.ResumeThread(wintypes.HANDLE(int(thread_handle))) == RESUME_THREAD_FAILED:
-                _raise_last_error("Failed to resume Windows Job Object process")
-            return
+        # CPython's Popen closes the primary thread handle right after
+        # CreateProcess, so the suspended process is resumed by its handle.
         process_handle = wintypes.HANDLE(int(proc._handle))  # type: ignore[attr-defined]
         status = int(ntdll.NtResumeProcess(process_handle))
         if status < 0:

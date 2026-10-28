@@ -421,3 +421,74 @@ test('the indentation read and pick act on the focused group editor\'s file, not
   assert.equal(sizes.get(modelA), 3, 'an explicit path wins (session defaults on open)');
   host.dispose();
 });
+
+test('setTabSize keeps the file\'s own spaces/tabs choice instead of forcing spaces', async () => {
+  const { host, fake } = makeHost();
+  await host.openDocument({ path: 'a.js', content: 'one' });
+  const [model] = [...fake.models.values()];
+  const updates = [];
+  const live = { tabSize: 4, insertSpaces: false };
+  model.getOptions = () => ({ ...live });
+  model.updateOptions = (next) => { updates.push(next); Object.assign(live, next); };
+  host.activateDocument('a.js');
+
+  host.setTabSize(8, 'a.js');
+  assert.deepEqual(updates.at(-1), { tabSize: 8, insertSpaces: false }, 'a tab-indented file stays on tabs');
+
+  live.insertSpaces = true;
+  host.setTabSize(2, 'a.js');
+  assert.deepEqual(updates.at(-1), { tabSize: 2, insertSpaces: true });
+
+  host.setIndent('a.js', { insertSpaces: false, tabSize: 4, source: 'file' });
+  host.setTabSize(6, 'a.js');
+  assert.deepEqual(updates.at(-1), { tabSize: 6, insertSpaces: false }, 'an explicit per-tab choice wins');
+  assert.equal(host.getIndentInfo('a.js').tabSize, 6, 'the recorded override follows the new width');
+  host.dispose();
+});
+
+test('the status-bar pass-throughs set language/indent per path and report indent and encoding info', async () => {
+  const { host, fake } = makeHost();
+  await host.openDocument({ path: 'a.js', content: 'one', encoding: 'utf-8-bom' });
+  await host.openDocument({ path: 'b.js', content: 'two' });
+  const models = [...fake.models.values()];
+  const optionState = new Map();
+  models.forEach((model) => {
+    optionState.set(model, { tabSize: 2, insertSpaces: true });
+    model.getOptions = () => optionState.get(model);
+    model.updateOptions = (next) => Object.assign(optionState.get(model), next);
+  });
+  fake.api.editor.setModelLanguage = (model, id) => { model.languageId = id; };
+  models.forEach((model) => { model.getLanguageId = () => model.languageId || 'javascript'; });
+  host.activateDocument('a.js');
+
+  assert.deepEqual(host.getEncodingInfo('a.js'), { encoding: 'utf-8', bom: true });
+  assert.deepEqual(host.getEncodingInfo('b.js'), { encoding: 'utf-8', bom: false });
+
+  assert.equal(host.setLanguage('a.js', 'python'), true);
+  assert.equal(host.getActiveLanguageId(), 'python');
+  assert.equal(models[1].languageId, undefined, 'the other tab is untouched');
+  host.setLanguage('a.js', null);
+  assert.equal(host.getActiveLanguageId(), 'javascript', 'Auto Detect returns to the path language');
+
+  host.setIndent('a.js', { insertSpaces: false, tabSize: 4, source: 'file' });
+  assert.deepEqual(host.getIndentInfo('a.js'), { insertSpaces: false, tabSize: 4, source: 'file' });
+  assert.deepEqual(optionState.get(models[1]), { tabSize: 2, insertSpaces: true });
+  assert.deepEqual(host.getIndentInfo('b.js'), { insertSpaces: true, tabSize: 2, source: 'default' });
+  host.dispose();
+});
+
+test('convertIndentation runs Monaco\'s indentation action on the editor showing the path', async () => {
+  const { host, fake } = makeHost();
+  await host.openDocument({ path: 'a.js', content: 'one' });
+  const [model] = [...fake.models.values()];
+  model.getOptions = () => ({ tabSize: 4, insertSpaces: false });
+  host.activateDocument('a.js');
+  const ran = [];
+  fake.editors[0].getAction = (id) => ({ run: () => { ran.push(id); return Promise.resolve(); } });
+
+  assert.equal(await host.convertIndentation('a.js', 'tabs'), true);
+  assert.equal(await host.convertIndentation('a.js', 'spaces'), true);
+  assert.deepEqual(ran, ['editor.action.indentationToTabs', 'editor.action.indentationToSpaces']);
+  assert.equal(await host.convertIndentation('missing.js', 'tabs'), false, 'no editor shows the path');
+  host.dispose();
+});

@@ -6,6 +6,7 @@ const {
   FRAME_BUDGET_RESERVE_BYTES,
   boundCanonicalSessionMessagesForFrame,
   fitChatSendParamsToFrameBudgetWithOutcome,
+  projectCanonicalSessionMessagesForSend,
 } = require('../services/backend/chat-send-frame-budget');
 const {
   MAX_OUTBOUND_FRAME_BODY_BYTES,
@@ -380,4 +381,22 @@ test('canonical trimming alone is preferred and never escalates when it suffices
   assert.equal(records[0].level, 'WARN');
   assert.ok(out.canonical_session_messages.length > 0);
   assert.deepEqual(out.messages, params.messages, 'provider messages are left alone');
+});
+
+test('a subagent transcript stays out of the send frame; the rest of the report and the stored copy stay whole', () => {
+  const transcript = [{ kind: 'tool', call_id: 'c', tool: 'read_file', status: 'completed', output: 'x'.repeat(2000) }];
+  const metadata = {
+    result_kind: 'subagent_batch_report',
+    subagent_batch_report: { batch_id: 'b', tasks: [{ task_id: 'a', answer: 'A.', transcript, transcript_dropped: 3 }, { task_id: 'b', answer: 'B.' }] },
+    subagent_report: { task_id: 'a', summary: 'S', transcript },
+  };
+  const message = { id: 'm1', role: 'tool', kind: 'tool_result', tool_result: { tool_name: 'delegate', metadata } };
+  const [sent] = projectCanonicalSessionMessagesForSend([message]);
+  const report = sent.tool_result.metadata.subagent_batch_report;
+  assert.deepEqual(report.tasks, [{ task_id: 'a', answer: 'A.' }, { task_id: 'b', answer: 'B.' }]);
+  assert.deepEqual(sent.tool_result.metadata.subagent_report, { task_id: 'a', summary: 'S' });
+  assert.equal(sent.tool_result.metadata.result_kind, 'subagent_batch_report');
+  assert.equal(metadata.subagent_batch_report.tasks[0].transcript, transcript, 'the stored message is not mutated');
+  const plain = { id: 'm2', role: 'tool', kind: 'tool_result', tool_result: { tool_name: 'read_file', metadata: { result_kind: 'read_snapshot' } } };
+  assert.equal(projectCanonicalSessionMessagesForSend([plain])[0].tool_result.metadata, plain.tool_result.metadata, 'other metadata passes by reference');
 });

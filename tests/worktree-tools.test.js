@@ -2,12 +2,8 @@
 
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
-const path = require('node:path');
 
 const { createDefaultRegistry } = require('../services/tools');
-const {
-  executeElectronToolRequest,
-} = require('../services/backend/electron-tool-bridge');
 const { TOOL_ERROR_CODES } = require('../services/backend/error-codes');
 
 function makeContext(overrides = {}) {
@@ -378,10 +374,12 @@ describe('worktree_delete', () => {
       })
     );
 
-    assert.deepEqual(deletedInput, {
+    const { beforeRemove, ...serviceInput } = deletedInput;
+    assert.deepEqual(serviceInput, {
       workspaceRoot: 'C:/dev/jenny',
       worktreeId: 'wt_dirty',
     });
+    assert.equal(typeof beforeRemove, 'function');
     assert.equal(result.isError, true);
     assert.equal(result.metadata.result_kind, 'worktree_delete');
     assert.equal(result.metadata.reason, 'dirty_worktree');
@@ -390,6 +388,103 @@ describe('worktree_delete', () => {
       staged_count: 0,
       untracked_count: 2,
     });
+  });
+
+  test('a dirty refusal of the active worktree never transitions the root', async () => {
+    const registry = createDefaultRegistry({ toolsWorktreeEnabled: true });
+    const tool = registry.getTool('worktree_delete');
+    const coordinator = createRootCoordinator({
+      initialRoot: 'C:/dev/jenny-worktrees/feature-alpha',
+    });
+    const broker = createTransitionBroker(coordinator);
+
+    const result = await tool.execute(
+      { worktree_id: 'wt_selected' },
+      makeContext({
+        workingDirectory: 'C:/dev/jenny-worktrees/feature-alpha',
+        workspaceRootCoordinator: coordinator,
+        workspaceRootTransitionBroker: broker,
+        worktreeService: {
+          async resolveSelectableWorktree() {
+            throw new Error('delete must not pre-resolve the worktree');
+          },
+          // The real service refuses a dirty tree before calling beforeRemove.
+          async deleteWorktree() {
+            return {
+              success: false,
+              result_kind: 'worktree_delete',
+              message: 'Worktree has local changes; refusing to delete.',
+              error_code: TOOL_ERROR_CODES.DISABLED,
+              reason: 'dirty_worktree',
+            };
+          },
+        },
+      })
+    );
+
+    assert.equal(result.isError, true);
+    assert.equal(result.metadata.reason, 'dirty_worktree');
+    assert.equal(result.metadata.active_root_unchanged, true);
+    assert.deepEqual(broker.calls, [], 'a refusal costs no root transitions');
+  });
+
+  test('rejects non-string worktree ids without calling the service', async () => {
+    const registry = createDefaultRegistry({ toolsWorktreeEnabled: true });
+    const coordinator = createRootCoordinator();
+    let called = 0;
+    const context = makeContext({
+      workspaceRootCoordinator: coordinator,
+      workspaceRootTransitionBroker: createTransitionBroker(coordinator),
+      worktreeService: {
+        async deleteWorktree() { called += 1; return { success: true }; },
+        async resolveSelectableWorktree() { called += 1; return { success: true }; },
+        async createWorktree() { called += 1; return { success: true }; },
+      },
+    });
+    for (const [name, input] of [
+      ['worktree_delete', { worktree_id: { id: 'wt' } }],
+      ['worktree_select', { worktree_id: ['wt'] }],
+      ['worktree_delete', { worktreeId: 'wt_camel' }],
+      ['worktree_select', { worktree_id: 'x'.repeat(129) }],
+      ['worktree_create', { name: { toString: () => 'object' } }],
+      ['worktree_create', { name: 'ok', branch: 7 }],
+    ]) {
+      const tool = registry.getTool(name);
+      const result = await tool.execute(input, context);
+      assert.equal(result.isError, true, `${name} ${JSON.stringify(input)}`);
+      assert.equal(result.metadata.reason, 'invalid_arguments');
+      assert.doesNotMatch(tool.summarize(input), /object Object/);
+    }
+    assert.equal(called, 0);
+  });
+
+  test('a blocked root clear vetoes the delete before any mutation', async () => {
+    const registry = createDefaultRegistry({ toolsWorktreeEnabled: true });
+    const tool = registry.getTool('worktree_delete');
+    const coordinator = createRootCoordinator({ initialRoot: 'C:/dev/jenny-worktrees/feature-alpha' });
+    const broker = createTransitionBroker(coordinator, {
+      result: { committed: false, changed: false, code: 'turn_active', blockers: ['stream_1'] },
+    });
+    let gate = null;
+    const result = await tool.execute(
+      { worktree_id: 'wt_selected' },
+      makeContext({
+        workspaceRootCoordinator: coordinator,
+        workspaceRootTransitionBroker: broker,
+        worktreeService: {
+          async deleteWorktree({ beforeRemove }) {
+            gate = await beforeRemove({ worktree_path: 'C:/dev/jenny-worktrees/feature-alpha' });
+            return { success: false, reason: gate.reason, message: gate.message };
+          },
+        },
+      })
+    );
+    assert.equal(gate.proceed, false);
+    assert.equal(result.summary, 'Worktree delete blocked');
+    assert.equal(result.metadata.reason, 'turn_active');
+    assert.deepEqual(result.metadata.blockers, ['stream_1']);
+    assert.equal(result.metadata.active_root_unchanged, true);
+    assert.deepEqual(broker.calls.map((call) => call.mode), ['worktree_delete_clear'], 'no restore after a veto');
   });
 
   test('commits active-root clear before deleting the selected worktree', async () => {
@@ -410,18 +505,18 @@ describe('worktree_delete', () => {
       makeContext({
         workingDirectory: 'C:/dev/jenny-worktrees/feature-alpha',
         worktreeService: {
-          async resolveSelectableWorktree() {
-            return {
-              success: true,
-              worktree_path: 'C:/dev/jenny-worktrees/feature-alpha',
-            };
-          },
           async deleteWorktree(input) {
-            order.push('delete');
-            assert.deepEqual(input, {
+            order.push('checks');
+            const { beforeRemove, ...serviceInput } = input;
+            assert.deepEqual(serviceInput, {
               workspaceRoot: 'C:/dev/jenny-worktrees/feature-alpha',
               worktreeId: 'wt_selected',
             });
+            const gate = await beforeRemove({
+              worktree_path: 'C:/dev/jenny-worktrees/feature-alpha',
+            });
+            assert.deepEqual(gate, { proceed: true });
+            order.push('remove');
             return {
               success: true,
               result_kind: 'worktree_delete',
@@ -444,8 +539,9 @@ describe('worktree_delete', () => {
     assert.equal(result.metadata.result_kind, 'worktree_delete');
     assert.equal(result.metadata.active_root_cleared, true);
     assert.equal(result.metadata.active_root_clear_failed, undefined);
-    assert.deepEqual(order.slice(0, 2), [['commit-root', ''], 'delete']);
-    assert.equal(broker.calls[0].mode, 'worktree_delete_clear');
+    assert.deepEqual(order, ['checks', ['commit-root', ''], 'remove']);
+    assert.deepEqual(broker.calls.map((call) => call.mode), ['worktree_delete_clear'],
+      'no redundant post-delete clear');
   });
 
   test('failed active-root deletion restores through the broker even after caller cancellation', async () => {
@@ -465,13 +561,8 @@ describe('worktree_delete', () => {
         workspaceRootCoordinator: coordinator,
         workspaceRootTransitionBroker: broker,
         worktreeService: {
-          async resolveSelectableWorktree() {
-            return {
-              success: true,
-              worktree_path: 'C:/dev/jenny-worktrees/feature-alpha',
-            };
-          },
-          async deleteWorktree() {
+          async deleteWorktree({ beforeRemove }) {
+            await beforeRemove({ worktree_path: 'C:/dev/jenny-worktrees/feature-alpha' });
             abortController.abort();
             return {
               success: false,
@@ -490,79 +581,5 @@ describe('worktree_delete', () => {
     ]);
     assert.equal(broker.calls[0].signal, abortController.signal);
     assert.equal(broker.calls[1].signal, null, 'integrity rollback is not canceled with the original request');
-  });
-});
-
-describe('Electron worktree tool bridge', () => {
-  test('allows worktree_list through the Electron tool bridge allowlist', async () => {
-    let bridgedCall = null;
-    const result = await executeElectronToolRequest(
-      {
-        configService: {
-          getState() {
-            return { toolsWorkspaceRoot: 'C:/dev/jenny' };
-          },
-        },
-        toolExecutor: {
-          async executePreApproved(call, context) {
-            bridgedCall = { call, context };
-            return {
-              content: '1 worktree found.',
-              isError: false,
-              metadata: { result_kind: 'worktree_list' },
-            };
-          },
-        },
-      },
-      {
-        sessionId: 'session_worktree',
-        streamId: 'stream_worktree',
-        params: {
-          tool_name: 'worktree_list',
-          tool_call_id: 'call_worktree',
-          arguments: {},
-        },
-      }
-    );
-
-    assert.equal(result.success, true);
-    assert.equal(result.metadata.result_kind, 'worktree_list');
-    assert.equal(bridgedCall.call.toolName, 'worktree_list');
-    assert.equal(bridgedCall.context.workingDirectory, path.resolve('C:/dev/jenny'));
-  });
-
-  test('worktree_create remains plan-mode guarded by the executor', async () => {
-    const result = await executeElectronToolRequest(
-      {
-        configService: {
-          getState() {
-            return { toolsWorkspaceRoot: 'C:/dev/jenny' };
-          },
-        },
-        toolExecutor: {
-          async executePreApproved() {
-            return {
-              content: 'Tool "worktree_create" is not available in plan mode.',
-              isError: true,
-              errorCode: TOOL_ERROR_CODES.DISABLED,
-              metadata: {},
-            };
-          },
-        },
-      },
-      {
-        sessionId: 'session_worktree',
-        streamId: 'stream_worktree',
-        planMode: true,
-        params: {
-          tool_name: 'worktree_create',
-          tool_call_id: 'call_worktree_create',
-          arguments: { name: 'Feature Alpha' },
-        },
-      }
-    );
-
-    assert.equal(result.success, false);
-    assert.equal(result.error_code, TOOL_ERROR_CODES.DISABLED);
   });
 });

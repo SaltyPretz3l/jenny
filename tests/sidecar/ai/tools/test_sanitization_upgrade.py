@@ -9,7 +9,6 @@ import pytest
 
 from sidecar.ai.tools.sanitization import (
     _TRUNCATED_SUFFIX,
-    _truncate,
     drop_special_tokens,
     has_control_tokens,
     neutralize_prompt_injection,
@@ -20,6 +19,7 @@ from sidecar.ai.tools.sanitization import (
     strip_invisible_chars,
     strip_special_tokens,
     strip_surrogates,
+    truncate_text,
 )
 
 
@@ -469,12 +469,12 @@ class TestSanitizeToolOutputNoTruncateSplit:
         # and non-truncating max_chars and a tool_name log tag.
         for text in (self._SECRET_IN, self._PLAIN, self._LONG, ""):
             for max_chars in (5, 40, 4000, 100_000):
-                assert sanitize_tool_output(text, max_chars=max_chars) == _truncate(
+                assert sanitize_tool_output(text, max_chars=max_chars) == truncate_text(
                     sanitize_tool_output_no_truncate(text), max_chars
                 )
         assert sanitize_tool_output(
             self._SECRET_IN, max_chars=40, tool_name="run_command"
-        ) == _truncate(
+        ) == truncate_text(
             sanitize_tool_output_no_truncate(self._SECRET_IN, tool_name="run_command"),
             40,
         )

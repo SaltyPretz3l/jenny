@@ -140,6 +140,10 @@ class ChatDecision:
     # The tool-schema reserve inside compact_threshold_tokens; the meter adds
     # it to the message-only estimate so both sides count the same prompt.
     context_tool_overhead_tokens: int | None = None
+    # The last model request's {provider_tokens, estimate_tokens, estimator}
+    # reading (BudgetTracker.calibration_reading); the terminal usage block turns
+    # it into the next turn's ``context_calibration``.
+    context_calibration: dict[str, Any] | None = None
 
 
 class AgentKernel:
@@ -664,6 +668,7 @@ class AgentKernel:
         request_disabled_tools: frozenset[str] = frozenset(),
         policy_decisions_by_call: dict[str, Any] | None = None,
         approval_mode: str = "prompt",
+        execution_context: Any | None = None,
     ) -> ApprovalRequest | None:
         return _te.approval_if_needed(
             self,
@@ -679,6 +684,7 @@ class AgentKernel:
             request_disabled_tools=request_disabled_tools,
             policy_decisions_by_call=policy_decisions_by_call,
             approval_mode=approval_mode,
+            execution_context=execution_context,
         )
 
     def _filter_tool_calls_by_policy(

@@ -2,7 +2,9 @@
  * Workspace IDE search panel. Literal substring search (case-insensitive by
  * default) over a streamed workspace walk. Every cap is applied while work is
  * produced: per-file/aggregate bytes, files, directories, entries, wall time,
- * and results. Symlinks are never followed. */
+ * and results. Symlinks are never followed. Optional whole-word matching and
+ * include/exclude globs (row 82 slice X2) narrow the scan; globs test
+ * root-relative paths and exclude prunes directories as the walk descends. */
 
 const nodeFs = require('node:fs');
 const fsPromises = require('fs/promises');
@@ -14,6 +16,7 @@ const {
 } = require('./workspace-ide-enumerator');
 const { createWalkIgnorePolicy } = require('./workspace-ide-ignore-policy');
 const { sameFileIdentity } = require('./workspace-root-operation');
+const searchFilters = require('../renderer/features/renderer-ide-search-filters');
 
 const SEARCH_DEFAULTS = Object.freeze({
   maxResults: 500,
@@ -178,8 +181,24 @@ function foldLineWithMap(rawLine) {
   return { folded, starts, ends };
 }
 
-function appendMatches({ buffer, relPath, needle, foldedNeedle, caseSensitive, results, matchedFiles, resultCap }) {
-  const lines = buffer.toString('utf8').split('\n');
+// A candidate [start, end) in the RAW line counts as a whole word when neither
+// neighbouring character is a word character (line edges are non-word).
+// A boundary is only required next to a word character of the needle itself, so
+// `foo(` matches `foo(x` (the renderer's wholeWordSource applies the same rule).
+function isWholeWordAt(line, start, end, needle) {
+  const needLeft = searchFilters.WORD_CHAR.test(needle[0] || '');
+  const needRight = searchFilters.WORD_CHAR.test(needle[needle.length - 1] || '');
+  return !(needLeft && start > 0 && searchFilters.WORD_CHAR.test(line[start - 1]))
+    && !(needRight && end < line.length && searchFilters.WORD_CHAR.test(line[end]));
+}
+
+function appendMatches({
+  buffer, relPath, needle, foldedNeedle, caseSensitive, wholeWord = false, results, matchedFiles, resultCap,
+}) {
+  // A leading BOM is not text: editors and replace read BOM-stripped content,
+  // so line-1 columns must not count it.
+  const text = buffer.toString('utf8');
+  const lines = (text.charCodeAt(0) === 0xfeff ? text.slice(1) : text).split('\n');
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     const rawLine = lines[lineIndex].endsWith('\r') ? lines[lineIndex].slice(0, -1) : lines[lineIndex];
     let haystack = caseSensitive ? rawLine : rawLine.toLowerCase();
@@ -201,6 +220,11 @@ function appendMatches({ buffer, relPath, needle, foldedNeedle, caseSensitive, r
       const end = foldMap
         ? foldMap.ends[matchStart + foldedNeedle.length - 1]
         : matchStart + needle.length;
+      if (wholeWord && !isWholeWordAt(rawLine, start, end, needle)) {
+        // Rejected candidate: rescan one code unit later so a later valid hit still lands.
+        matchStart = haystack.indexOf(foldedNeedle, matchStart + 1);
+        continue;
+      }
       matchedFiles.add(relPath);
       results.push({
         path: relPath,
@@ -224,6 +248,9 @@ async function searchWorkspaceFiles({
   root,
   query,
   caseSensitive = false,
+  wholeWord = false,
+  include = [],
+  exclude = [],
   maxResults,
   maxFileBytes = SEARCH_DEFAULTS.maxFileBytes,
   maxTotalBytes = SEARCH_DEFAULTS.maxTotalBytes,
@@ -256,6 +283,18 @@ async function searchWorkspaceFiles({
   const totalByteCap = normalizeByteBudget(maxTotalBytes, SEARCH_DEFAULTS.maxTotalBytes, 256 * 1024 * 1024);
   const foldedNeedle = caseSensitive ? needle : needle.toLowerCase();
   const scopeDir = String(scope || '').replace(/\/+$/, '');
+  const pathFilter = searchFilters.createSearchPathFilter({
+    include: searchFilters.sanitizeGlobList(include),
+    exclude: searchFilters.sanitizeGlobList(exclude),
+  });
+  const skipDirectory = pathFilter.active
+    ? (name, relPath) => activeIgnorePolicy.shouldSkipDirectory(name, relPath)
+      || pathFilter.skipsDirectory(relPath)
+    : activeIgnorePolicy.shouldSkipDirectory;
+  // With a filter, the file budget counts accepted files only (row 82 X1): the walk runs
+  // to its own ceiling and the accepted count stops it at the caller's budget.
+  const fileCap = normalizePositiveInteger(maxFiles, SEARCH_DEFAULTS.maxFiles, 50000);
+  let acceptedFiles = 0;
   const results = [];
   const matchedFiles = new Set();
   let totalBytes = 0;
@@ -280,9 +319,9 @@ async function searchWorkspaceFiles({
     fs,
     initialRelPath: scopeDir,
     resolveDirectory: resolve,
-    shouldSkipDirectory: activeIgnorePolicy.shouldSkipDirectory,
+    shouldSkipDirectory: skipDirectory,
     shouldSkipError: (error) => ['ENOENT', 'EACCES', 'ENOTDIR'].includes(error?.code),
-    maxFiles: normalizePositiveInteger(maxFiles, SEARCH_DEFAULTS.maxFiles, 50000),
+    maxFiles: pathFilter.active ? 50000 : fileCap,
     maxDirectories,
     maxEntries,
     maxDurationMs,
@@ -292,6 +331,16 @@ async function searchWorkspaceFiles({
     onCleanupError: () => onWarning?.('directory_close_failed'),
     onFile: async (relPath) => {
       if (ensureCurrent()) return false;
+      // Globs test the root-relative path (never scope-relative); a filtered file is
+      // neither read nor counted as matched.
+      if (pathFilter.active) {
+        if (!pathFilter.acceptsFile(relPath)) return true;
+        if (acceptedFiles >= fileCap) {
+          consumerLimitReason = 'file_limit';
+          return false;
+        }
+        acceptedFiles += 1;
+      }
       let target;
       try {
         target = await resolveSearchFile(relPath);
@@ -359,6 +408,7 @@ async function searchWorkspaceFiles({
         needle,
         foldedNeedle,
         caseSensitive,
+        wholeWord: wholeWord === true,
         results,
         matchedFiles,
         resultCap,
@@ -375,7 +425,7 @@ async function searchWorkspaceFiles({
     query: needle,
     results,
     fileCount: matchedFiles.size,
-    filesScanned: enumeration.filesScanned,
+    filesScanned: pathFilter.active ? acceptedFiles : enumeration.filesScanned,
     directoriesScanned: enumeration.directoriesScanned,
     entriesScanned: enumeration.entriesScanned,
     bytesScanned: totalBytes,

@@ -679,6 +679,7 @@ def test_reflexive_retry_still_precedes_checkpoint(
         streamed_event_types=set(),
         thinking_budget_checkpoints=0,
         iteration_total=2,
+        outcomes=[],
     )
 
     outcome = _FinalResponseMixin._handle_final_response(

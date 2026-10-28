@@ -24,6 +24,7 @@ from sidecar.protocol import (
     API_VERSION,
     CHAT_SEND_METHOD,
     CONTEXT_PREVIEW_METHOD,
+    HANDOFF_GENERATE_NOTE_METHOD,
     HARDWARE_PROFILE_METHOD,
     HARDWARE_VRAM_USAGE_METHOD,
     INITIALIZE_METHOD,
@@ -580,6 +581,15 @@ def process_message(
             if conversations_outcome is not None:
                 return conversations_outcome
 
+        if method.startswith("speech."):
+            # Local dictation loads on its first request, never at startup
+            # (tests/sidecar/test_sidecar_server_import_cost.py).
+            from sidecar.runtime.request_dispatch_speech import process_speech_method
+
+            speech_outcome = process_speech_method(method, message_id, params, initialized, logger)
+            if speech_outcome is not None:
+                return speech_outcome
+
         mcp_outcome = process_mcp_method(
             method, message_id, params, initialized, brain_container, logger
         )
@@ -637,6 +647,15 @@ def process_message(
             response_reader_factory=response_reader_factory)
         if compact_outcome is not None:
             return compact_outcome
+
+        if method == HANDOFF_GENERATE_NOTE_METHOD:
+            # Lazy: the /handoff note is request-time only (startup import cap).
+            from sidecar.runtime.request_dispatch_handoff import process_handoff_method
+
+            handoff_outcome = process_handoff_method(*inference_args,
+                write_message=write_message, response_reader_factory=response_reader_factory)
+            if handoff_outcome is not None:
+                return handoff_outcome
 
         if method == HARDWARE_PROFILE_METHOD:
             log_event(

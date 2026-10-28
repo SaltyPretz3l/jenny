@@ -138,6 +138,12 @@
   white-space: nowrap;
 }
 
+/* A failed reset is an error, not the amber "Reset all?" prompt; the reason can be long. */
+.settings-reset-confirm-label.settings-reset-error {
+  color: var(--state-danger);
+  white-space: normal;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .settings-status-chip,
   .settings-field-reset {
@@ -175,6 +181,7 @@
    description spans both columns beneath. Geometry is identical with the
    reset hidden, so a field going modified never shifts the row. */
 .settings-field-row-text {
+  min-width: 0;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: baseline;

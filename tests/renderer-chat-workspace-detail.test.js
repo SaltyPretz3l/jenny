@@ -187,3 +187,13 @@ test('configure merges new openers over the old ones', () => {
   assert.deepEqual(seen, ['later']);
   assert.equal(h.calls.changes.length, 0);
 });
+
+test('changes passes a chat findings list on to the working-tree page only when one is given', () => {
+  const h = setup();
+  const opener = h.el('row0');
+  const reviewFindings = { sessionId: 'sess_a', toolCallId: 'c1', focusIndex: 1, findings: [] };
+  assert.equal(h.detail.open({ surface: 'changes', ownerSessionId: 'sess_a', opener, reviewFindings }), true);
+  assert.equal(h.calls.changes[0].reviewFindings, reviewFindings);
+  assert.equal(h.detail.open({ surface: 'changes', ownerSessionId: 'sess_a', opener }), true);
+  assert.equal('reviewFindings' in h.calls.changes[1], false);
+});

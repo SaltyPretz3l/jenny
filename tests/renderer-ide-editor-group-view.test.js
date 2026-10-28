@@ -67,6 +67,9 @@ function makeRig({ dir = '', tabs = ['a.js', 'b.js', 'c.js'], active = 'a.js', m
     onFocus: record('focus'),
     onContextMenu: record('menu'),
     onDropTab: record('drop'),
+    onDoubleClick: record('dblclick'),
+    onSplit: record('split'),
+    onOverflow: record('overflow'),
   });
   document.getElementById('root').appendChild(view.el);
   const strip = view.el.querySelector('.ide-tabstrip');
@@ -432,9 +435,6 @@ test('focus targets the editor when a model is shown and the stage otherwise', (
   rig.view.showPath('a.js');
   rig.view.focus();
   assert.equal(rig.editor.focused, 1);
-  const layouts = rig.editor.layouts;
-  rig.view.layout();
-  assert.equal(rig.editor.layouts, layouts + 1);
 });
 
 test('dispose releases the editor, removes the listeners and the DOM', () => {
@@ -452,4 +452,60 @@ test('dispose releases the editor, removes the listeners and the DOM', () => {
   assert.deepEqual(rig.log.calls, [], 'no listener survives dispose');
   rig.view.dispose();
   assert.equal(rig.log.released.length, 1, 'dispose is idempotent');
+});
+
+test('the group tabbar ends with a labelled editor-actions toolbar filled from the stage switch, Split and More route to the view callbacks', () => {
+  const previous = globalThis.rendererIdeStageSwitch;
+  const asked = [];
+  globalThis.rendererIdeStageSwitch = {
+    editorActionsMarkup: (options) => {
+      asked.push(options);
+      return '<button class="ide-editor-action" data-ide-editor-action="split-right">s</button><button class="ide-editor-action" data-ide-editor-action="more">m</button>';
+    },
+  };
+  try {
+    const rig = makeRig();
+    const bar = rig.view.el.querySelector('.ide-tabbar');
+    const actions = bar.querySelector('.ide-editor-actions');
+    assert.equal(actions.getAttribute('role'), 'toolbar');
+    assert.ok(actions.getAttribute('aria-label'));
+    assert.equal(actions.previousElementSibling, rig.strip, 'the toolbar follows the strip');
+    assert.equal(asked.length, 1);
+    assert.equal(asked[0].surfaces, false, 'groups get Split and More only');
+    assert.equal(typeof asked[0].actionButton, 'function');
+    rig.view.render();
+    assert.equal(asked.length, 1, 'filled once');
+    actions.querySelector('[data-ide-editor-action="split-right"]').click();
+    const more = actions.querySelector('[data-ide-editor-action="more"]');
+    more.click();
+    assert.deepEqual(rig.log.calls.filter((call) => call[0] === 'split' || call[0] === 'overflow').map((call) => call[0]), ['split', 'overflow']);
+    assert.equal(rig.log.calls.find((call) => call[0] === 'overflow')[1], more);
+  } finally {
+    if (previous === undefined) delete globalThis.rendererIdeStageSwitch;
+    else globalThis.rendererIdeStageSwitch = previous;
+  }
+});
+
+test('without the stage switch module the toolbar stays empty and the view still renders', () => {
+  const rig = makeRig();
+  rig.view.render();
+  assert.equal(rig.view.el.querySelector('.ide-editor-actions').children.length, 0);
+  assert.equal(rig.strip.querySelectorAll('.ide-tab').length, 3);
+});
+
+test('double-click reports the tab, the strip drop caret appears and a group tab drag marks the tab', () => {
+  const rig = makeRig();
+  rig.view.render();
+  stubTabRects(rig.strip);
+  rig.strip.querySelector('[data-ide-tab-path="b.js"]').dispatchEvent(new rig.win.MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+  rig.strip.querySelector('[data-ide-tab-close="b.js"]').dispatchEvent(new rig.win.MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+  assert.deepEqual(rig.log.calls, [['dblclick', 'b.js']]);
+  const tab = rig.strip.querySelector('[data-ide-tab="a.js"]');
+  tab.dispatchEvent(dragEvent(rig.win, 'dragstart', { types: [] }));
+  assert.equal(tab.classList.contains('ide-tab--dragging'), true);
+  rig.strip.dispatchEvent(dragEvent(rig.win, 'dragover', { clientX: 150 }));
+  assert.equal(rig.strip.querySelectorAll('.ide-tab-drop-caret').length, 1);
+  rig.strip.dispatchEvent(dragEvent(rig.win, 'dragend'));
+  assert.equal(rig.strip.querySelector('.ide-tab-drop-caret'), null);
+  assert.equal(tab.classList.contains('ide-tab--dragging'), false);
 });

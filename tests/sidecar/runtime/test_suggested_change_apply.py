@@ -32,6 +32,7 @@ from sidecar.protocol import (
 from sidecar.runtime import suggested_change_apply
 from sidecar.runtime.server_auxiliary_workers import AUXILIARY_FAMILY_BY_METHOD
 from sidecar.runtime.workspace_recovery_rpc import process_workspace_recovery_method
+from tests.sidecar._platform_skips import make_dir_link, requires_file_symlinks
 
 LOGGER = logging.getLogger(__name__)
 BOM = b"\xef\xbb\xbf"
@@ -521,22 +522,10 @@ def test_dotdot_and_absolute_escapes_are_refused(env: _Env) -> None:
     ]
 
 
-def _make_dir_link(link: Path, target: Path) -> None:
-    if os.name == "nt":
-        import _winapi
-
-        _winapi.CreateJunction(str(target), str(link))
-        return
-    os.symlink(target, link, target_is_directory=True)
-
-
 def test_junction_or_dir_symlink_pointing_outside_is_refused(env: _Env) -> None:
     secret = env.outside / "secret.txt"
     secret.write_text("secret\n", encoding="utf-8")
-    try:
-        _make_dir_link(env.root / "linked", env.outside)
-    except (OSError, ImportError) as error:
-        pytest.skip(f"directory link could not be created: {error}")
+    make_dir_link(env.root / "linked", env.outside)
 
     result = env.apply(
         [
@@ -553,13 +542,11 @@ def test_junction_or_dir_symlink_pointing_outside_is_refused(env: _Env) -> None:
     ]
 
 
+@requires_file_symlinks()
 def test_file_symlink_pointing_outside_is_refused(env: _Env) -> None:
     secret = env.outside / "secret.txt"
     secret.write_text("secret\n", encoding="utf-8")
-    try:
-        os.symlink(secret, env.root / "link.txt")
-    except OSError as error:
-        pytest.skip(f"file symlinks need a privilege this machine lacks: {error}")
+    os.symlink(secret, env.root / "link.txt")
 
     result = env.apply([_replace("s-1", "link.txt", "secret", "owned", _hash_file(secret))])
 
@@ -571,10 +558,7 @@ def test_link_inside_the_workspace_is_refused(env: _Env) -> None:
     real_dir = env.root / "real"
     real_dir.mkdir()
     (real_dir / "f.txt").write_text("f\n", encoding="utf-8")
-    try:
-        _make_dir_link(env.root / "alias", real_dir)
-    except (OSError, ImportError) as error:
-        pytest.skip(f"directory link could not be created: {error}")
+    make_dir_link(env.root / "alias", real_dir)
 
     result = env.apply(
         [_replace("s-1", "alias/f.txt", "f", "g", _hash_file(real_dir / "f.txt"))]

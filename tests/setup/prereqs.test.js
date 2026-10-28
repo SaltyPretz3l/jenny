@@ -13,6 +13,7 @@ const {
   defaultRun,
   MIN_PYTHON,
 } = require('../../scripts/setup/prereqs');
+const { windowsOnly } = require('../helpers/platform-skips');
 
 // Build a fake `run` from a {("<cmd> <args>"): {status, stdout}} table.
 function fakeRun(table) {
@@ -72,7 +73,7 @@ test('checkNpm probes the npm.cmd shim through a shell on Windows', () => {
   assert.deepEqual(calls, [{ cmd: 'npm.cmd', args: ['--version'], opts: { shell: true } }]);
 });
 
-test('checkNpm finds the real npm through defaultRun on Windows',{ skip: process.platform !== 'win32' }, () => {
+test('checkNpm finds the real npm through defaultRun on Windows', { skip: windowsOnly('real npm.cmd through defaultRun') }, () => {
   const npm = checkNpm(defaultRun, { platform: 'win32' });
   assert.equal(npm.found, true);
   assert.equal(npm.satisfiesMin, true);

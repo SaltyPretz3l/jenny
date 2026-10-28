@@ -68,7 +68,7 @@ def resolve_system_prompt_profile(engine_type: str, requested_profile: str) -> s
     provider route rather than a model-name prefix, so a locally served model
     with a GPT-like name keeps the local companion defaults.
     """
-    if str(engine_type or "").strip().lower() == "chatgpt":
+    if str(engine_type or "").strip().lower() in {"chatgpt", "api-provider"}:
         return SYSTEM_PROMPT_PROFILE_MINIMAL
     normalized = str(requested_profile or "").strip().lower()
     if normalized == SYSTEM_PROMPT_PROFILE_MINIMAL:
@@ -259,6 +259,11 @@ class RuntimeConfig:
     codex_cli_auth_reason: str | None = None
     chatgpt_access_token: str | None = None
     openai_compatible_api_key: str | None = field(default=None, repr=False)
+    # Row 78 API-key provider: the admitted-at-build descriptor, the limits
+    # Electron resolved for the selected model, and the brokered key.
+    api_provider_descriptor: dict[str, Any] | None = None
+    api_provider_model_limits: dict[str, Any] | None = None
+    api_provider_key: str | None = field(default=None, repr=False)
     managed_prefill_progress: bool = False
     # Opt-in llama.cpp ``json_schema`` response_format for a ResponseFormat that
     # carries a schema. Electron sets it only for the managed llama-server; any
@@ -337,6 +342,7 @@ class RuntimeConfig:
     tools_home_enabled: bool = False
     tools_task_board_enabled: bool = False
     tools_project_notes_enabled: bool = False
+    tools_session_directory_enabled: bool = False
     tools_memory_enabled: bool = True
     tools_conversations_enabled: bool = True
     tools_rich_files_enabled: bool = True

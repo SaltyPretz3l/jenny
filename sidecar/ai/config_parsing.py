@@ -27,6 +27,7 @@ from sidecar.ai.engines.chatgpt_model_catalog import (
     normalize_chatgpt_model_catalog as normalize_chatgpt_model_catalog,  # noqa: PLC0414 - re-export
 )
 from sidecar.ai.error_codes import CMP_MCP_CONFIG_INVALID, CMP_MCP_SSE_DISABLED
+from sidecar.ai.execution_policy import BUILTIN_MCP_SERVER_NAME
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.tool_search import DEFAULT_AUTO_TOOL_SEARCH_PERCENTAGE, DeferralMode
 
@@ -109,6 +110,10 @@ _MCP_ENV_RESERVED_KEYS = frozenset({
     "SYSTEMROOT", "COMSPEC", "TEMP", "TMP", "TMPDIR", "APPDATA", "LOCALAPPDATA", "USERPROFILE",
     "HOMEDRIVE", "HOMEPATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL",
     "NODE_OPTIONS", "NODE_PATH", "WINDIR", "AUTHORIZATION",
+    "PROGRAMDATA", "ALLUSERSPROFILE", "SYSTEMDRIVE", "PROGRAMFILES", "PROGRAMW6432",
+    "COMMONPROGRAMFILES", "COMMONPROGRAMW6432", "PUBLIC",
+    "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "PROCESSOR_IDENTIFIER", "PROCESSOR_LEVEL",
+    "PROCESSOR_REVISION", "OS", "COMPUTERNAME", "USERNAME", "USERDOMAIN",
 })
 MAX_GENERATION_PROFILE_MODEL_ID_CHARS = 240
 SESSION_START_DATE_MONTH_SEPARATOR_INDEX = 4
@@ -411,18 +416,19 @@ def _parse_mcp_server_env(value: Any, *, server_name: str) -> tuple[tuple[str, s
             pairs.append((key, item))
         else:
             return tuple(pairs)
-    from sidecar.runtime.diagnostics import log_event
-
-    log_event(
-        logger,
-        logging.WARNING,
-        component="ai.config",
-        event="ai.mcp.config_env_rejected",
-        message=f"mcp server '{server_name}' skipped: env key {key!r} rejected ({reason})",
-        status="rejected",
-        data={"server": server_name, "key": key, "reason": reason},
+    _log_mcp_row_rejected(
+        "ai.mcp.config_env_rejected",
+        f"mcp server '{server_name}' skipped: env key {key!r} rejected ({reason})",
+        {"server": server_name, "key": key, "reason": reason},
     )
     return None
+
+
+def _log_mcp_row_rejected(event: str, message: str, data: dict[str, Any]) -> None:
+    from sidecar.runtime.diagnostics import log_event
+
+    log_event(logger, logging.WARNING, component="ai.config", event=event,
+              message=message, status="rejected", data=data)
 
 
 def _parse_mcp_servers(
@@ -436,6 +442,11 @@ def _parse_mcp_servers(
             continue
         raw_name = _as_non_empty_string(candidate.get("name"))
         name = raw_name or f"mcp_server_{index + 1}"
+        if name == BUILTIN_MCP_SERVER_NAME:
+            # A row may not stand in for (or inherit the policy of) the builtin server.
+            _log_mcp_row_rejected("ai.mcp.config_reserved_name_rejected",
+                                  f"mcp server '{name}' skipped: reserved name", {"server": name})
+            continue
         transport = _normalize_transport(candidate.get("transport"))
         command = _as_non_empty_string(candidate.get("command"))
         args = tuple(

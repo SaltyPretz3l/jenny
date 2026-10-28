@@ -52,6 +52,13 @@ function accepted(choice, actionState, extra = {}) {
   });
 }
 
+function withChild(child) {
+  return accepted('new_session', 'succeeded', {
+    links: { ...LINKS, child_session_id: CHILD, first_turn_turn_id: 't1', first_turn_work_id: 'w1' },
+    child: { model: 'ornith15:9b-q6-256k', run_mode: 'ask', project_label: 'rise-of-nations', resume_count: 0, resume_max: 0, key: JSON.stringify(child), ...child },
+  });
+}
+
 function lookup(proposal, extra = {}) {
   return {
     status: 'ready', proposal, notice: null, busy: false, acks: [], fallback: null, group: null, optionsOpen: false,
@@ -64,6 +71,14 @@ function render(view) {
   const doc = new JSDOM(`<body>${html}</body>`).window.document;
   return { html, doc, card: doc.querySelector('[data-proposal-id]') };
 }
+
+const renderWith = (view, deps) => {
+  const html = cards.buildProposalCardMarkup({ sessionId: SID, proposalId: PID, kind: 'session', lookup: view }, deps);
+  const doc = new JSDOM(`<body>${html}</body>`).window.document;
+  return { html, doc, card: doc.querySelector('[data-proposal-id]') };
+};
+const PRIMARY = { isPrimarySession: (id) => id === SID };
+const always = (doc) => doc.querySelector('.proposal-always');
 
 const byAction = (doc, name) => doc.querySelector(`[data-proposal-action="${name}"]`);
 const statusLine = (doc) => doc.querySelector('.proposal-status');
@@ -182,6 +197,18 @@ const STATES = [
   { name: 'preparing', proposal: accepted('new_session', 'preparing', { actions: { cancel: YES, retry: NO, dismiss: NO } }), word: 'Preparing the new chat…', tone: 'active', running: true, control: 'cancel', controlText: 'Cancel' },
   { name: 'child created', proposal: accepted('new_session', 'child_created', { links: { ...LINKS, child_session_id: CHILD } }), word: 'Starting the new chat…', tone: 'active', running: true, control: 'open-child', controlText: 'Open', noControl: 'cancel' },
   { name: 'started', proposal: accepted('new_session', 'succeeded', { links: { ...LINKS, child_session_id: CHILD, first_turn_turn_id: 't1', first_turn_work_id: 'w1' } }), word: `Started · ${TITLE}`, tone: 'ok', control: 'open-child', controlText: 'Open' },
+  // F3b (2026-10-27): after admission the card follows its child (proposal.child, derived per read).
+  { name: 'child running', proposal: withChild({ phase: 'running', turn_started_at: new Date().toISOString() }), word: 'Running', tone: 'active', running: true, control: 'open-child', controlText: 'Open' },
+  { name: 'child resumed automatically', proposal: withChild({ phase: 'running', resume_count: 2, resume_max: 5 }), word: 'Running', tone: 'active', running: true, detail: 'Resumed automatically after a turn-budget stop (2 of 5)' },
+  { name: 'child waiting for the user', proposal: withChild({ phase: 'waiting' }), word: 'Waiting for you', tone: 'warn', detail: 'The new chat needs your answer.', control: 'open-child', controlText: 'Open' },
+  { name: 'child reported back', proposal: withChild({ phase: 'reported', reply_turn_id: 'wake-1' }), word: 'Reported back', tone: 'ok', control: 'jump-reply', controlText: 'See the reply', also: 'open-child' },
+  { name: 'child stopped at the cap', proposal: withChild({ phase: 'stopped', resume_count: 5, resume_max: 5 }), word: 'Stopped', tone: 'warn', detail: 'Jenny resumed it 5 of 5 times. Reply "resume" in the chat to keep going.' },
+  { name: 'child stopped, no resumes', proposal: withChild({ phase: 'stopped' }), word: 'Turn budget used up', tone: 'warn', detail: 'Reply "resume" in the chat to keep going.' },
+  { name: 'child first turn failed (the incident)', proposal: withChild({ phase: 'failed', error_class: 'model_busy', failed_turn_is_first: true, retry: { message_id: 'a_t1' } }), word: "Couldn't start the new chat", tone: 'error', detail: 'The model was still switching. Nothing ran.', control: 'retry-child', controlText: 'Retry', also: 'open-child' },
+  { name: 'child later turn failed', proposal: withChild({ phase: 'failed', error_class: 'engine' }), word: 'The new chat stopped with an error', tone: 'error', detail: "The model didn't respond.", noControl: 'retry-child' },
+  { name: 'child needs attention', proposal: withChild({ phase: 'attention' }), word: 'Needs attention', tone: 'warn', detail: 'This needs your attention.', control: 'open-child', controlText: 'Open' },
+  { name: 'child archived', proposal: withChild({ phase: 'archived' }), word: 'Archived', tone: 'muted', control: 'open-child', controlText: 'Open' },
+  { name: 'child deleted', proposal: withChild({ phase: 'gone' }), word: 'The new chat was deleted', tone: 'muted', noControl: 'open-child' },
   { name: 'cancelled', proposal: accepted('new_session', 'cancelled'), word: 'Cancelled', tone: 'muted' },
   { name: 'preparation failed (deadline)', proposal: accepted('new_session', 'needs_attention', { actions: { retry: YES, cancel: NO, dismiss: NO }, last_error: { code: 'CMP-PROPOSAL-0010', reason: 'preparation_failed', retryable: true, cause_code: 'deadline' } }), word: "Couldn't prepare the new chat", tone: 'warn', detail: 'Preparing took longer than 60 seconds. You can try again.', control: 'retry', controlText: 'Retry' },
   { name: 'preparation failed (no brief)', proposal: accepted('new_session', 'needs_attention', { actions: { retry: YES, cancel: NO, dismiss: NO }, last_error: { code: 'CMP-PROPOSAL-0010', reason: 'preparation_failed', retryable: true, cause_code: 'no_handoff' } }), word: "Couldn't prepare the new chat", tone: 'warn', detail: "Jenny didn't finish the brief. You can try again." },
@@ -288,7 +315,7 @@ test('deriveSessionStatus is closed: an unknown decision state renders nothing',
   assert.equal(cards.deriveStatus(sessionProposal({ decision_state: 'dismissed' })).word, 'Dismissed');
 });
 
-test('a paired propose_session result renders the session card in the turn row; complete_session_handoff keeps the ordinary tool row', async () => {
+test('a paired propose_session result renders the session card in the turn row; a successful complete_session_handoff draws no row (F3c)', async () => {
   const { createTurnRowRenderUtils } = require('../renderer/chat/renderer-turn-row-render-utils');
   const store = require('../renderer/chat/renderer-proposal-card-store');
   const escapeHtml = (value) => String(value == null ? '' : value).replace(/[&<>"']/gu, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -298,11 +325,11 @@ test('a paired propose_session result renders the session card in the turn row; 
   Object.assign(globalThis, { rendererProposalCardStore: store, rendererProposalCards: cards });
   try {
     const renderer = createTurnRowRenderUtils({ MESSAGE_STATUS: { STREAMING: 'streaming' }, escapeHtml });
-    const pair = (toolName, kind, id) => [
+    const pair = (toolName, kind, id, resultState = 'completed') => [
       { row_id: `${id}-1`, turn_id: 't1', kind: 'tool_call', primary_message_id: `tool_use_${id}`, tool_call_id: id,
         payload: { tool_call_id: id, tool_name: toolName, state: 'completed', input: { title: 'Compare <chips>', initiation: 'offer' } } },
       { row_id: `${id}-2`, turn_id: 't1', kind: 'tool_result', primary_message_id: `tool_result_${id}`, tool_call_id: id,
-        payload: { tool_call_id: id, tool_name: toolName, state: 'completed', metadata: { result_kind: kind, proposal_id: PID } } },
+        payload: { tool_call_id: id, tool_name: toolName, state: resultState, metadata: kind ? { result_kind: kind, proposal_id: PID } : null } },
     ];
     const html = renderer.buildTurnRowListMarkup(pair('propose_session', 'session_proposal', 'c1'), [], { sessionId: 'pane-s' });
     assert.match(html, new RegExp(`data-proposal-id="${PID}"`));
@@ -312,10 +339,71 @@ test('a paired propose_session result renders the session card in the turn row; 
     await new Promise((resolve) => setImmediate(resolve));
     assert.deepEqual(gets, [{ schema_version: 1, session_id: 'pane-s', proposal_id: PID }]);
     const handoff = renderer.buildTurnRowListMarkup(pair('complete_session_handoff', 'session_handoff', 'c2'), [], { sessionId: 'pane-s' });
-    assert.doesNotMatch(handoff, /data-proposal-id/u, 'the handoff tool is an ordinary compact tool row, never a card');
+    assert.doesNotMatch(handoff, /data-proposal-id/u, 'the handoff tool is never a second card');
+    assert.equal((handoff.match(/data-row-id=/gu) || []).length, 0, 'the session card above is its receipt');
+    const running = renderer.buildTurnRowListMarkup(pair('complete_session_handoff', 'session_handoff', 'c3').slice(0, 1), [], { sessionId: 'pane-s' });
+    assert.equal((running.match(/data-row-id=/gu) || []).length, 0, 'not drawn while it runs either');
+    const refused = renderer.buildTurnRowListMarkup(pair('complete_session_handoff', null, 'c4', 'error'), [], { sessionId: 'pane-s' });
+    assert.equal((refused.match(/data-row-id=/gu) || []).length, 1, 'a failed handoff keeps its ordinary row');
+    assert.doesNotMatch(refused, /data-proposal-id/u);
   } finally {
     globalThis.window = savedWindow;
     delete globalThis.rendererProposalCardStore;
     delete globalThis.rendererProposalCards;
   }
+});
+
+// ---- Row 76 (E1): the primary chat's "Always allow" row ----
+
+test('Always allow row: a primary pending offer shows it with the destination label from capabilities', () => {
+  const view = lookup(sessionProposal(), { capabilities: { status: 'ready', value: CAPS } });
+  const { doc } = renderWith(view, PRIMARY);
+  const row = always(doc);
+  assert.ok(row);
+  assert.equal(row.querySelector('.inv-checkbox').textContent.trim(), 'Always allow Jenny to start chats in jenny');
+  const input = row.querySelector('input[type="checkbox"]');
+  assert.equal(input.id, `proposal-always-${PID}`);
+  assert.equal(input.hasAttribute('data-proposal-always-allow'), true);
+  assert.equal(input.checked, false);
+  assert.equal(doc.querySelector('.proposal-actions').nextElementSibling, row, 'the row follows the choices');
+});
+
+test('Always allow row: "this project" when the label is unknown; escaped when it carries markup', () => {
+  const unknown = renderWith(lookup(sessionProposal()), PRIMARY);
+  assert.equal(always(unknown.doc).textContent.trim(), 'Always allow Jenny to start chats in this project');
+  const hostile = { ...CAPS, destinations: [{ project_id: 'proj-a', label: '<b>x</b>', available: true }] };
+  const rendered = renderWith(lookup(sessionProposal(), { capabilities: { status: 'ready', value: hostile } }), PRIMARY);
+  assert.doesNotMatch(rendered.html, /<b>x<\/b>/u);
+  assert.match(always(rendered.doc).textContent, /<b>x<\/b>/u);
+});
+
+test('Always allow row: absent for a non-primary source, a suggestion, the flag off, no destination project, and a decided offer', () => {
+  assert.equal(always(render(lookup(sessionProposal())).doc), null, 'no predicate: never');
+  assert.equal(always(renderWith(lookup(sessionProposal()), { isPrimarySession: () => false }).doc), null);
+  const own = sessionProposal({ display: { title: 'T', description: 'd', initiation: 'own_initiative', authorization_required: false } });
+  assert.equal(always(renderWith(lookup(own), PRIMARY).doc), null);
+  assert.equal(always(renderWith(lookup(sessionProposal()), { ...PRIMARY, launchPermissionEnabled: false }).doc), null);
+  assert.equal(always(renderWith(lookup(sessionProposal({ options: { ...OPTIONS, destination_project_id: null } })), PRIMARY).doc), null);
+  assert.equal(always(renderWith(lookup(accepted('new_session', 'queued')), PRIMARY).doc), null);
+  assert.equal(always(renderWith(lookup(null, { status: 'loading', fallback: { title: 'T', initiation: 'offer' } }), PRIMARY).doc), null);
+});
+
+test('F3b: the receipt shows the facts the child really got, Retry carries the failed reply, and elapsed follows the child turn', () => {
+  const failed = withChild({ phase: 'failed', error_class: 'model_busy', failed_turn_is_first: true, retry: { message_id: 'a_t1' } });
+  failed.actions = { do_it_here: NO, new_session: NO, dismiss: NO, cancel: NO, retry: NO };
+  const { doc } = render(lookup(failed));
+  assert.equal(doc.querySelector('.proposal-session-meta').textContent, 'rise-of-nations · ornith15:9b-q6-256k · Ask');
+  const retry = byAction(doc, 'retry-child');
+  assert.equal(retry.dataset.proposalChildId, CHILD);
+  assert.equal(retry.dataset.proposalMessageId, 'a_t1');
+  const started = new Date(Date.now() - 74000).toISOString();
+  const running = withChild({ phase: 'running', turn_started_at: started });
+  running.actions = failed.actions;
+  assert.equal(render(lookup(running)).doc.querySelector('.proposal-elapsed').dataset.elapsedStartedAt, String(Date.parse(started)));
+  const unknownStart = withChild({ phase: 'running' });
+  unknownStart.actions = failed.actions;
+  assert.equal(render(lookup(unknownStart)).doc.querySelector('.proposal-elapsed'), null, 'no elapsed time from the Accept click');
+  const plain = accepted('new_session', 'succeeded', { links: { ...LINKS, child_session_id: CHILD } });
+  plain.actions = failed.actions;
+  assert.equal(render(lookup(plain)).doc.querySelector('.proposal-session-meta'), null, 'no child view, no facts line');
 });

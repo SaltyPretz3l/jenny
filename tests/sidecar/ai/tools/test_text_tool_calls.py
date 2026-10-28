@@ -12,7 +12,7 @@ from sidecar.ai.tools.text_tool_calls import (
     strip_text_tool_calls,
 )
 
-_KNOWN = ("edit_file", "read_file", "run_command")
+_KNOWN = ("edit_file", "read_file", "run_command", "write_file")
 
 # Trimmed from the persisted HB-031 leak (Qwen3-Coder template, opener included).
 _LEAK = (
@@ -168,3 +168,87 @@ def test_text_without_calls_is_returned_unchanged() -> None:
     text = "  Plain answer.\n\n\n\nWith spacing.  "
 
     assert strip_text_tool_calls(text, _KNOWN) == (text, ())
+
+
+def test_a_value_quoting_the_parameter_tag_round_trips() -> None:
+    body = "use <parameter=x>1</parameter> tags\nmore text"
+    text = (
+        "<tool_call>\n<function=write_file>\n<parameter=path>\nnotes.md\n</parameter>\n"
+        f"<parameter=content>\n{body}\n</parameter>\n</function>\n</tool_call>"
+    )
+
+    (call,) = find_text_tool_calls(text, _KNOWN)
+
+    assert call.complete is True
+    assert call.arguments == {"path": "notes.md", "content": body}
+    assert call.end == len(text)
+
+
+def test_text_after_the_last_parameter_makes_the_call_incomplete() -> None:
+    trailing = "<function=read_file><parameter=path>a.txt</parameter> and then</function>"
+    unclosed = "<function=edit_file><parameter=path>a</parameter><parameter=new_string>b</function>"
+    no_parameters = "<function=read_file>a.txt</function>"
+
+    for text in (trailing, unclosed, no_parameters):
+        (call,) = find_text_tool_calls(text, _KNOWN)
+        assert call.complete is False, text
+    assert find_text_tool_calls(unclosed, _KNOWN)[0].arguments == {"path": "a"}
+
+
+def test_a_value_quoting_a_function_opener_stays_one_complete_call() -> None:
+    text = (
+        "<tool_call><function=write_file><parameter=path>docs.md</parameter>"
+        "<parameter=content>Use <function=read_file> to read.</parameter>"
+        "</function></tool_call>"
+    )
+
+    calls = find_text_tool_calls(text, {"write_file", "read_file"})
+
+    assert len(calls) == 1
+    assert calls[0].name == "write_file"
+    assert calls[0].complete is True
+    assert calls[0].arguments == {"path": "docs.md", "content": "Use <function=read_file> to read."}
+
+
+def test_an_unclosed_call_does_not_absorb_the_next_one() -> None:
+    known = ("a", "b")
+    text = "<function=a><parameter=x>1</parameter>\n<function=b><parameter=y>2</parameter></function>"
+
+    first, second = find_text_tool_calls(text, known)
+
+    assert (first.name, first.arguments, first.complete) == ("a", {"x": "1"}, False)
+    assert (second.name, second.arguments, second.complete) == ("b", {"y": "2"}, True)
+    assert first.end == second.start
+
+
+def test_an_unclosed_call_leaves_the_next_envelope_whole() -> None:
+    text = (
+        "<tool_call><function=read_file><parameter=path>a</parameter>\n"
+        "<tool_call><function=read_file><parameter=path>b</parameter></function></tool_call>"
+    )
+
+    first, second = find_text_tool_calls(text, _KNOWN)
+
+    assert first.complete is False
+    assert text[second.start : second.end].startswith("<tool_call>")
+    assert (second.arguments, second.complete) == ({"path": "b"}, True)
+
+
+def test_json_envelope_reads_string_arguments_and_aliases() -> None:
+    string_args = r'<tool_call>{"name": "read_file", "arguments": "{\"path\": \"a.txt\"}"}</tool_call>'
+    aliased = '<tool_call>{"name": "read_file", "parameters": {"path": "b.txt"}}</tool_call>'
+
+    (first,) = find_text_tool_calls(string_args, _KNOWN)
+    (second,) = find_text_tool_calls(aliased, _KNOWN)
+
+    assert (first.arguments, first.complete) == ({"path": "a.txt"}, True)
+    assert (second.arguments, second.complete) == ({"path": "b.txt"}, True)
+
+
+def test_json_envelope_with_unusable_arguments_is_stripped_but_incomplete() -> None:
+    text = 'Writing.\n<tool_call>{"name": "write_file", "arguments": "path is a.txt"}</tool_call>'
+
+    prose, (call,) = strip_text_tool_calls(text, _KNOWN)
+
+    assert prose == "Writing."
+    assert (call.name, call.arguments, call.complete) == ("write_file", {}, False)

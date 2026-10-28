@@ -29,7 +29,7 @@ test('D15: the view model totals are the filtered project\'s, archived included'
   const all = buildChatsViewModel({ sessions: SESSIONS, scope: 'recent' });
   assert.deepEqual([all.recentTotal, all.archivedTotal, all.scopeTotal], [4, 2, 4]);
   const ascend = buildChatsViewModel({ sessions: SESSIONS, scope: 'recent', projectId: 'project_ascend' });
-  assert.deepEqual([ascend.recentTotal, ascend.archivedTotal, ascend.scopeTotal, ascend.projectTotal], [2, 1, 2, 3]);
+  assert.deepEqual([ascend.recentTotal, ascend.archivedTotal, ascend.scopeTotal, ascend.recentTotal + ascend.archivedTotal], [2, 1, 2, 3]);
   const archivedGeneral = buildChatsViewModel({ sessions: SESSIONS, scope: 'archived', projectId: 'project_general' });
   assert.deepEqual([archivedGeneral.recentTotal, archivedGeneral.archivedTotal, archivedGeneral.scopeTotal], [1, 1, 1]);
 });
@@ -88,6 +88,37 @@ test('the chats count tooltip says how many chats are open as tabs', () => {
     state.workspace.openSessionIds = [];
     controller.renderNow();
     assert.equal(count.getAttribute('title'), '6 chats');
+  } finally {
+    controller.dispose();
+    dom.window.close();
+  }
+});
+
+// Owner polish 2026-10-20: the archived tab drops the dead "0" and reads plain
+// "Archived"; with archived chats it keeps the count.
+test('the Archived tab reads "Archived" at zero and "Archived N" otherwise', () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="chatsProjectRow"></div><div id="chatsScopeSlot"></div><div id="conversationGroups"></div><div id="chatsPanelStatus"></div><span id="conversationCount"></span></body></html>', { pretendToBeVisual: true, url: 'http://localhost/' });
+  const doc = dom.window.document;
+  const state = { ui: {}, sessions: [session('z1', undefined), session('z2', undefined)] };
+  const controller = createChatsPanelController({
+    state,
+    documentRef: doc,
+    windowRef: dom.window,
+    dom: { conversationGroups: doc.getElementById('conversationGroups'), conversationCount: doc.getElementById('conversationCount'), scopeSlot: doc.getElementById('chatsScopeSlot'), projectRow: doc.getElementById('chatsProjectRow'), status: doc.getElementById('chatsPanelStatus') },
+    inventory: { actionButton, segmentedControl },
+    callbacks: {},
+  });
+  try {
+    controller.renderNow();
+    assert.equal(doc.querySelector('#chatsScopeSlot [data-value="archived"]').textContent.trim(), 'Archived');
+
+    state.sessions = [
+      session('z1', undefined),
+      session('z2', undefined, { archived_at: new Date().toISOString() }),
+      session('z3', undefined, { archived_at: new Date().toISOString() }),
+    ];
+    controller.renderNow();
+    assert.equal(doc.querySelector('#chatsScopeSlot [data-value="archived"]').textContent.trim(), 'Archived 2');
   } finally {
     controller.dispose();
     dom.window.close();

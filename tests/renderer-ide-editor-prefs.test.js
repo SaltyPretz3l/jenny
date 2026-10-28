@@ -7,6 +7,23 @@ const { JSDOM } = require('jsdom');
 const editorPrefs = require('../renderer/features/renderer-ide-editor-prefs');
 const { createIdeController } = require('../renderer/features/renderer-ide-controller');
 
+// Row 82: the option block applyEditorPrefs emits for an all-defaults slice (fontFamily is
+// omitted: no resolved mono token under jsdom/no stylesheet, and '' would be a real family).
+const ROW82_DEFAULT_OPTIONS = {
+  cursorStyle: 'line',
+  cursorBlinking: 'smooth',
+  cursorSmoothCaretAnimation: 'on',
+  fontLigatures: true,
+  bracketPairColorization: { enabled: true },
+  guides: { indentation: true, bracketPairs: true },
+  stickyScroll: { enabled: true },
+  folding: true,
+  scrollBeyondLastLine: false,
+  mouseWheelZoom: true,
+  insertSpaces: true,
+  detectIndentation: true,
+};
+
 // ---------------------------------------------------------------------------
 // Part 1 - pure unit tests of the sibling module (no DOM, no Monaco).
 // ---------------------------------------------------------------------------
@@ -27,6 +44,7 @@ test('applyEditorPrefs maps the IDE slice to editor-level options + chip seed de
     lineNumbers: 'off',
     renderWhitespace: 'all',
     rulers: [],
+    ...ROW82_DEFAULT_OPTIONS,
   }]);
   assert.deepEqual(calls.seedDefaults, [{ tabSize: 4, eol: 'crlf' }]);
 });
@@ -43,6 +61,7 @@ test('applyEditorPrefs falls back to safe defaults; unset per-model prefs seed n
     lineNumbers: 'on',
     renderWhitespace: 'selection',
     rulers: [],
+    ...ROW82_DEFAULT_OPTIONS,
   }]);
   // tabSize 0/undefined and eol '' mean "leave following the file".
   assert.deepEqual(calls.seedDefaults, [{ tabSize: null, eol: null }]);
@@ -67,6 +86,71 @@ test('applyEditorPrefs forwards column rulers (a copy) and clears them when empt
   // Disabling rulers (-> []) must emit [] so the guides are cleared, not omitted.
   editorPrefs.applyEditorPrefs({ rulers: [] }, host, { seedDefaults() {} });
   assert.deepEqual(calls.setEditorOptions[1].rulers, []);
+});
+
+test('applyEditorPrefs maps the row 82 prefs onto Monaco options', () => {
+  // renderer-ide-state.js (loaded before this module in the app) owns the font-family sanitizer.
+  globalThis.rendererIdeState = require('../renderer/features/renderer-ide-state');
+  const calls = [];
+  const host = { setEditorOptions: (o) => calls.push(o) };
+  editorPrefs.applyEditorPrefs({
+    fontFamily: 'Fira Code, monospace',
+    cursorStyle: 'block',
+    cursorBlinking: 'solid',
+    cursorSmoothCaretAnimation: false,
+    fontLigatures: false,
+    bracketPairColorization: false,
+    indentGuides: true,
+    stickyScroll: false,
+    folding: false,
+    scrollBeyondLastLine: true,
+    mouseWheelZoom: false,
+    insertSpaces: false,
+    detectIndentation: false,
+  }, host, { seedDefaults() {} });
+  const o = calls[0];
+  assert.equal(o.fontFamily, 'Fira Code, monospace');
+  assert.equal(o.cursorStyle, 'block');
+  assert.equal(o.cursorBlinking, 'solid');
+  assert.equal(o.cursorSmoothCaretAnimation, 'off');
+  assert.equal(o.fontLigatures, false);
+  assert.deepEqual(o.bracketPairColorization, { enabled: false });
+  assert.deepEqual(o.guides, { indentation: true, bracketPairs: false });
+  assert.deepEqual(o.stickyScroll, { enabled: false });
+  assert.equal(o.folding, false);
+  assert.equal(o.scrollBeyondLastLine, true);
+  assert.equal(o.mouseWheelZoom, false);
+  assert.equal(o.insertSpaces, false);
+  assert.equal(o.detectIndentation, false);
+  // Indent guides off also turns the bracket-pair guides off, even with colorization on.
+  editorPrefs.applyEditorPrefs({ indentGuides: false, bracketPairColorization: true }, host, { seedDefaults() {} });
+  assert.deepEqual(calls[1].guides, { indentation: false, bracketPairs: false });
+  // Invalid enum values and hostile fontFamily fall back to the defaults / the token.
+  editorPrefs.applyEditorPrefs({ cursorStyle: 'x', cursorBlinking: 7, fontFamily: 'a;b{}' }, host, { seedDefaults() {} });
+  assert.equal(calls[2].cursorStyle, 'line');
+  assert.equal(calls[2].cursorBlinking, 'smooth');
+  assert.equal('fontFamily' in calls[2], false);
+  delete globalThis.rendererIdeState;
+});
+
+test('applyEditorPrefs omits fontFamily when empty and uses the mono token when no custom family is set', () => {
+  const previous = globalThis.rendererMonacoEditorUtils;
+  globalThis.rendererIdeState = require('../renderer/features/renderer-ide-state');
+  const calls = [];
+  const host = { setEditorOptions: (o) => calls.push(o) };
+  try {
+    globalThis.rendererMonacoEditorUtils = { resolveMonacoFontFamily: () => '' };
+    editorPrefs.applyEditorPrefs({ fontFamily: '' }, host, { seedDefaults() {} });
+    assert.equal('fontFamily' in calls[0], false, 'empty resolved family is omitted (Monaco treats "" as real)');
+    globalThis.rendererMonacoEditorUtils = { resolveMonacoFontFamily: () => '  "JetBrains Mono", monospace ' };
+    editorPrefs.applyEditorPrefs({ fontFamily: '' }, host, { seedDefaults() {} });
+    assert.equal(calls[1].fontFamily, '"JetBrains Mono", monospace');
+    editorPrefs.applyEditorPrefs({ fontFamily: 'Fira Code' }, host, { seedDefaults() {} });
+    assert.equal(calls[2].fontFamily, 'Fira Code', 'a custom family wins over the token');
+  } finally {
+    globalThis.rendererMonacoEditorUtils = previous;
+    delete globalThis.rendererIdeState;
+  }
 });
 
 test('persistChipChange commits valid picks through the acknowledged preference seam', async () => {
@@ -332,6 +416,7 @@ test('activateIde applies persisted editor prefs to the live Monaco editor + mod
       lineNumbers: 'off',
       renderWhitespace: 'all',
       rulers: [],
+      ...ROW82_DEFAULT_OPTIONS,
     });
     // Per-model tabSize reached the model (chip-picker seedDefaults -> setTabSize).
     const tabUpdate = fakeMonaco.__modelUpdateOptionsCalls.find((opts) => opts && opts.tabSize === 4);

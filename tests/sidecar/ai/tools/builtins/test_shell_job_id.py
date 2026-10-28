@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -31,6 +30,7 @@ import pytest
 from sidecar.ai.error_codes import (
     CMP_TOOL_BACKGROUND_NOT_FOUND,
     CMP_TOOL_CAP_EXCEEDED,
+    CMP_TOOL_EXECUTION_FAILED,
     CMP_TOOL_INVALID_PATH,
 )
 from sidecar.ai.tools.builtins import shell_background as shell_background_module
@@ -39,6 +39,7 @@ from sidecar.ai.tools.builtins.shell import check_background_job_tool
 from sidecar.ai.tools.builtins.shell_background import is_valid_job_id, read_background_job
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
+from tests.sidecar._platform_skips import make_dir_link
 
 VALID_ID = "0123456789ab"
 
@@ -71,33 +72,12 @@ def _completed_status(**overrides: object) -> dict[str, object]:
     return status
 
 
-def _can_create_symlink(tmp_path: Path) -> bool:
-    src = tmp_path / "_probe_src"
-    dst = tmp_path / "_probe_dst"
-    src.write_text("x", encoding="utf-8")
-    try:
-        os.symlink(src, dst)
-    except (OSError, NotImplementedError):
-        return False
-    finally:
-        if dst.exists() or dst.is_symlink():
-            try:
-                dst.unlink()
-            except OSError:
-                pass
-        if src.exists():
-            src.unlink()
-    return True
-
-
-def _make_junction(link: Path, target: Path) -> bool:
-    result = subprocess.run(
-        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
-        capture_output=True,
-        check=False,
-        text=True,
-    )
-    return result.returncode == 0
+def _remove_dir_link(path: Path) -> None:
+    """Remove a directory link: unlink a symlink, rmdir a junction."""
+    if path.is_symlink():
+        path.unlink()
+    else:
+        os.rmdir(path)
 
 
 # ── Canonical format validation ────────────────────────────────────────
@@ -139,8 +119,34 @@ def test_check_background_job_valid_id_reads_status(tmp_path: Path) -> None:
     result = check_background_job_tool({"job_id": VALID_ID}, _guard(tmp_path))
     body = json.loads(result.output)
     assert body["state"] == "completed"
-    assert body["schema_version"] == 0
+    # The persistence schema version is not part of the model-facing poll.
+    assert "schema_version" not in body
     assert result.success is True
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        {"state": "failed", "exit_code": 3, "stdout": "", "stderr": "boom"},
+        {"state": "failed", "exit_code": -1, "stdout": "", "stderr": "",
+         "error": "timed out after 5s"},
+        {"state": "running", "pid": 42},
+    ],
+)
+def test_check_background_job_running_or_terminal_read_is_a_successful_poll(
+    tmp_path: Path, status: dict[str, object]
+) -> None:
+    # A job that exited non-zero or timed out is a result the poll read; the
+    # outcome lives in state/exit_code, not in a failed tool call.
+    _write_status(tmp_path, VALID_ID, {"schema_version": 1, "job_id": VALID_ID, **status})
+
+    result = check_background_job_tool({"job_id": VALID_ID}, _guard(tmp_path))
+    body = json.loads(result.output)
+
+    assert result.success is True
+    assert result.error_code is None
+    assert body["state"] == status["state"]
+    assert "schema_version" not in body
 
 
 @pytest.mark.parametrize(
@@ -177,36 +183,7 @@ def test_check_background_job_rejects_hostile_id_does_not_touch_outside_file(
 # ── Symlinked / junctioned job directory ────────────────────────────────
 
 
-def test_check_background_job_rejects_symlinked_job_dir_posix(tmp_path: Path) -> None:
-    if os.name == "nt":
-        pytest.skip("posix symlink path; see junction variant for Windows")
-    if not _can_create_symlink(tmp_path):
-        pytest.skip("symlink creation not permitted in this environment")
-
-    outside = tmp_path.parent / f"{tmp_path.name}_outside"
-    outside.mkdir(exist_ok=True)
-    sentinel = outside / "status.json"
-    sentinel.write_text(json.dumps({"job_id": VALID_ID, "state": "completed"}), encoding="utf-8")
-
-    results_dir = tmp_path / ".jenny" / "tool-results"
-    results_dir.mkdir(parents=True)
-    link = results_dir / VALID_ID
-    os.symlink(outside, link)
-
-    try:
-        with pytest.raises(ToolExecutionFailure) as excinfo:
-            check_background_job_tool({"job_id": VALID_ID}, _guard(tmp_path))
-        assert excinfo.value.code == CMP_TOOL_BACKGROUND_NOT_FOUND
-        assert sentinel.read_text(encoding="utf-8") == json.dumps(
-            {"job_id": VALID_ID, "state": "completed"}
-        )
-    finally:
-        sentinel.unlink()
-        outside.rmdir()
-
-
-@pytest.mark.skipif(os.name != "nt", reason="Windows junctions only")
-def test_check_background_job_rejects_junctioned_job_dir_windows(tmp_path: Path) -> None:
+def test_check_background_job_rejects_linked_job_dir(tmp_path: Path) -> None:
     outside = tmp_path.parent / f"{tmp_path.name}_outside"
     outside.mkdir(exist_ok=True)
     sentinel = outside / "status.json"
@@ -216,10 +193,7 @@ def test_check_background_job_rejects_junctioned_job_dir_windows(tmp_path: Path)
     results_dir.mkdir(parents=True)
     link = results_dir / VALID_ID
 
-    if not _make_junction(link, outside):
-        sentinel.unlink()
-        outside.rmdir()
-        pytest.skip("mklink /J not permitted in this environment")
+    make_dir_link(link, outside)
 
     try:
         with pytest.raises(ToolExecutionFailure) as excinfo:
@@ -232,11 +206,11 @@ def test_check_background_job_rejects_junctioned_job_dir_windows(tmp_path: Path)
         quarantined = [entry for entry in quarantine.iterdir() if VALID_ID in entry.name]
         assert len(quarantined) == 1
     finally:
-        if link.exists():
-            os.rmdir(link)
+        if link.exists() or link.is_symlink():
+            _remove_dir_link(link)
         for entry in (tmp_path / ".jenny" / "quarantine").iterdir():
             if VALID_ID in entry.name:
-                os.rmdir(entry)
+                _remove_dir_link(entry)
         sentinel.unlink()
         outside.rmdir()
 
@@ -253,6 +227,8 @@ def test_check_background_job_oversized_status_file_is_typed_failure(tmp_path: P
 
     result = check_background_job_tool({"job_id": VALID_ID}, _guard(tmp_path))
     assert result.success is False
+    assert result.error_code == CMP_TOOL_EXECUTION_FAILED
+    assert result.metadata["failure_class"] == "unavailable"
     body = json.loads(result.output)
     assert body["state"] != "completed"
     assert "error" in body
@@ -275,6 +251,8 @@ def test_check_background_job_non_dict_or_malformed_json_is_typed_failure_not_cr
 
     result = check_background_job_tool({"job_id": VALID_ID}, _guard(tmp_path))
     assert result.success is False
+    assert result.error_code == CMP_TOOL_EXECUTION_FAILED
+    assert result.metadata["failure_class"] == "unavailable"
     body = json.loads(result.output)
     assert body["job_id"] == VALID_ID
     assert "error" in body

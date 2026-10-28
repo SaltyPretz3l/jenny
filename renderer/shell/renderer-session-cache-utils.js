@@ -6,8 +6,7 @@
   root.rendererSessionCacheUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
 
-  const MAX_CACHED_SESSION_MESSAGE_SETS =
-    Number(globalThis.rendererBootstrapUtils?.MAX_CACHED_SESSION_MESSAGE_SETS) || 6;
+  const MAX_CACHED_SESSION_MESSAGE_SETS = 6;
 
   function createSessionCacheController(deps) {
     const { state } = deps;

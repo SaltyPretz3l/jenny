@@ -166,6 +166,16 @@ test('a send refused while an image render holds the GPU says so and asks for a 
   assert.equal(generic.hint, "The runtime didn't accept the message. Your draft is back in the composer.");
 });
 
+test('a read-only run store names the problem and its one next step', () => {
+  const described = describeRuntimeRefusal({ ok: false, acceptance: 'rejected',
+    error: { code: 'CMP-RUNTIME-0005', reason: 'runtime_store_read_only' } });
+  assert.equal(described.reason, 'runtime_store_read_only');
+  assert.equal(described.title, "Jenny can't queue messages right now");
+  assert.match(described.hint, /Restart Jenny/);
+  assert.equal(described.severity, 'danger');
+  assert.equal(described.action, null);
+});
+
 test('a sandbox transition names the wait and asks for another Send without claiming a queue', () => {
   const described = describeRuntimeRefusal({ ok: false, acceptance: 'rejected',
     error: { code: 'CMP-RUNTIME-0005', reason: 'command_sandbox_transition' } });

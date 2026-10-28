@@ -5,7 +5,7 @@
  * only touches an injected { getItem, setItem } store, so a plain fake storage
  * exercises every branch. Node dragging (and its positions store) is retired
  * by the Living Atlas rework, so this module now persists only
- * { hideTests, layers } — there is no positions API to cover. */
+ * { hideTests, layers, lens } — there is no positions API to cover. */
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -27,7 +27,7 @@ function makePrefs(storage, wsId = 'ws-1') {
   return createMapPrefs({ storage, getWorkspaceId: () => wsId });
 }
 
-const DEFAULTS = { hideTests: false, layers: { activity: true, health: false, deps: true } };
+const DEFAULTS = { hideTests: false, layers: { activity: true, health: false, deps: true }, lens: 'atlas' };
 
 test('restore: absent entry yields the default shape', () => {
   const prefs = makePrefs(fakeStorage());
@@ -45,12 +45,14 @@ test('restore: a well-formed blob overrides every field', () => {
     [PREFS_KEY_PREFIX + 'ws-1']: JSON.stringify({
       hideTests: true,
       layers: { activity: false, health: true, deps: false },
+      lens: 'components',
     }),
   });
   const prefs = makePrefs(storage);
   assert.deepEqual(prefs.restore(), {
     hideTests: true,
     layers: { activity: false, health: true, deps: false },
+    lens: 'components',
   });
 });
 
@@ -62,6 +64,7 @@ test('restore: missing individual fields fall back to their own default, not the
   assert.deepEqual(prefs.restore(), {
     hideTests: true,
     layers: { activity: true, health: true, deps: true },
+    lens: 'atlas',
   });
 });
 
@@ -73,7 +76,7 @@ test('restore: wrong-typed fields are rejected in favor of defaults', () => {
   assert.deepEqual(prefs.restore(), DEFAULTS);
 });
 
-test('restore: a pre-rework blob with stale lens/clusterExpand fields reads cleanly (ignored)', () => {
+test('restore: a pre-rework blob with a retired lens value and clusterExpand reads cleanly', () => {
   const storage = fakeStorage({
     [PREFS_KEY_PREFIX + 'ws-1']: JSON.stringify({
       lens: 'size-cap',
@@ -83,29 +86,29 @@ test('restore: a pre-rework blob with stale lens/clusterExpand fields reads clea
   });
   const prefs = makePrefs(storage);
   const restored = prefs.restore();
-  assert.deepEqual(restored, { hideTests: true, layers: DEFAULTS.layers });
-  assert.equal('lens' in restored, false, 'stale lens field must not surface');
+  assert.deepEqual(restored, { hideTests: true, layers: DEFAULTS.layers, lens: 'atlas' }, 'a retired lens value reads as atlas');
   assert.equal('clusterExpand' in restored, false, 'stale clusterExpand field must not surface');
 });
 
-test('persistPrefs: writes the canonical { hideTests, layers } shape under the per-workspace key', () => {
+test('persistPrefs: writes the canonical { hideTests, layers, lens } shape under the per-workspace key', () => {
   const storage = fakeStorage();
   makePrefs(storage).persistPrefs({ hideTests: true, layers: { activity: false, health: true, deps: false } });
   const raw = storage.getItem(PREFS_KEY_PREFIX + 'ws-1');
-  assert.deepEqual(JSON.parse(raw), { hideTests: true, layers: { activity: false, health: true, deps: false } });
+  assert.deepEqual(JSON.parse(raw), { hideTests: true, layers: { activity: false, health: true, deps: false }, lens: 'atlas' });
 });
 
-test('persistPrefs: never writes back stale lens/clusterExpand fields', () => {
+test('persistPrefs: never writes back clusterExpand or a retired lens value', () => {
   const storage = fakeStorage();
   makePrefs(storage).persistPrefs({ hideTests: false, layers: { activity: true, health: false, deps: true }, lens: 'architecture', clusterExpand: ['x'] });
   const raw = JSON.parse(storage.getItem(PREFS_KEY_PREFIX + 'ws-1'));
-  assert.deepEqual(Object.keys(raw).sort(), ['hideTests', 'layers']);
+  assert.deepEqual(Object.keys(raw).sort(), ['hideTests', 'layers', 'lens']);
+  assert.equal(raw.lens, 'atlas');
 });
 
 test('persistPrefs -> restore round-trip preserves every field', () => {
   const storage = fakeStorage();
   const prefs = makePrefs(storage);
-  const shape = { hideTests: true, layers: { activity: false, health: true, deps: true } };
+  const shape = { hideTests: true, layers: { activity: false, health: true, deps: true }, lens: 'components' };
   prefs.persistPrefs(shape);
   assert.deepEqual(prefs.restore(), shape);
 });

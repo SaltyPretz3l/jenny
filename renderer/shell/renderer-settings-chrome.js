@@ -18,11 +18,10 @@
     const {
       composerModelSelect, composerEffortSelect, chatInput,
       composerAttachMenu, composerAttachShortcut,
-      composerCommandPopover, composerCommandPopoverList, composerTerminalShortcut,
     } = deps.dom;
     const {
       getCurrentRuntimePreferences, getRuntimePreferencesFromSession = null,
-      buildModelOptionMarkup, buildSelectOptionMarkup, listSlashCommands, escapeHtml,
+      buildModelOptionMarkup, buildSelectOptionMarkup,
       getChatZoomOptions = function fallbackGetChatZoomOptions() { return []; },
       normalizeChatZoomPercent = function fallbackNormalizeChatZoomPercent(value) { return Number(value) || 100; },
       resolveComposerModelSelectWidth, updateComposerSafeOffset,
@@ -32,13 +31,8 @@
       dom: {
         composerAttachMenu,
         composerAttachShortcut,
-        composerCommandPopover,
-        composerCommandPopoverList,
-        composerTerminalShortcut,
       },
       callbacks: {
-        listSlashCommands,
-        escapeHtml,
         getChatZoomOptions,
         normalizeChatZoomPercent,
         buildSelectOptionMarkup,
@@ -50,15 +44,16 @@
     }) || {};
     function renderComposerCarriers() {
       const models = Array.isArray(state.modelList?.data) ? state.modelList.data : [];
-      const activeModel = state.status?.model || state.modelList?.active_model || '';
+      const defaultChat = globalThis.rendererComposerModelPickerUtils?.resolveDefaultChatModel?.(state) || {
+        model: String(state.status?.model || state.modelList?.active_model || '').trim(),
+        engineType: String(state.status?.engine || state.status?.engine_type || state.modelList?.engine_type || '').trim().toLowerCase(),
+      };
       const runtimePreferences = getCurrentRuntimePreferences();
       // "Use default" (value '') runs on this model; the effort control reads it
       // from here to offer that model's efforts. Stamped before the rebuild so
       // the rebuild's mutation-driven reconcile sees the current pair.
-      composerModelSelect.dataset.backendModel = String(activeModel || '').trim();
-      composerModelSelect.dataset.backendEngineType = String(
-        state.status?.engine || state.status?.engine_type || state.modelList?.engine_type || ''
-      ).trim().toLowerCase();
+      composerModelSelect.dataset.backendModel = defaultChat.model;
+      composerModelSelect.dataset.backendEngineType = defaultChat.engineType;
       // Split view W2-2a: pane 0's rail carriers carry pane 0's session (one pane: the current preferences).
       const composerPreferences = globalThis.rendererRenderPipelineChromeUtils?.resolvePaneRuntimePreferences?.({ state, sessionId: globalThis.rendererPaneVisibilityUtils?.resolvePaneSessionId?.(state, 0), fromSession: getRuntimePreferencesFromSession, current: () => runtimePreferences }) || runtimePreferences;
       composerModelSelect.innerHTML = buildModelOptionMarkup(models, composerPreferences.preferredModel, {
@@ -121,19 +116,31 @@
       return pageLoad;
     }
 
+    // Tears down the Appearance effect preview (the page renderer's dispose
+    // releases only that), so its rAF never runs behind a closed Settings view.
+    function releasePreview() {
+      pageRenderer?.dispose?.();
+    }
+
     let loadFailed = false;
     let wasOnSettings = false;
     function renderSettings() {
       if (disposed) return;
       // The composer carriers never wait for the page (direct callers on chat rely on this).
       renderComposerCarriers();
+      const onSettings = state.ui.activeView === 'settings';
       if (pageRenderer) {
+        // Off Settings the page waits: entering Settings renders it in full.
+        if (!onSettings) {
+          releasePreview();
+          dirty = true;
+          return;
+        }
         dirty = false;
         pageRenderer.renderSettings();
         return;
       }
       dirty = true;
-      const onSettings = state.ui.activeView === 'settings';
       // A failed load is retried on the next Settings activation, not on every render pass.
       if (onSettings && !wasOnSettings) loadFailed = false;
       wasOnSettings = onSettings;
@@ -155,8 +162,8 @@
     return {
       renderSettings,
       renderComposerCarriers,
+      releasePreview,
       renderComposerPopover: (...args) => overlayRenderer.renderComposerPopover?.(...args),
-      renderCommandPopover: (...args) => overlayRenderer.renderCommandPopover?.(...args),
       syncComposerInputHeight: (...args) => composerMeasure.syncComposerInputHeight?.(...args),
       measureInlineTextWidth: (...args) => composerMeasure.measureInlineTextWidth?.(...args),
       ensureSettingsPage,

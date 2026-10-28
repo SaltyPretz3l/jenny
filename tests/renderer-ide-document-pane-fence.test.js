@@ -3,16 +3,11 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
+const { createDeferred: deferred } = require('./helpers/deferred');
 const { createIdeEditorHost } = require('../renderer/features/renderer-ide-editor-host');
 const { createEditorHostPanes } = require('../renderer/features/renderer-ide-editor-host-panes');
 const { createIdeDocxPane } = require('../renderer/features/renderer-ide-docx-host');
 const { createIdePdfPane } = require('../renderer/features/renderer-ide-pdf-host');
-
-function deferred() {
-  let resolve;
-  const promise = new Promise(done => { resolve = done; });
-  return { promise, resolve };
-}
 
 function harness(t, options = {}) {
   const dom = new JSDOM('<head></head><body><div id="host"></div><textarea id="fallback"></textarea></body>', {

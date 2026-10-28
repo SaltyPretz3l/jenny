@@ -8,7 +8,8 @@ const { getTrustedExecutionBinding } = require('../backend/session-execution-aut
 // Electron-owned tools that touch no host shell pass through the sandbox bridge unchanged.
 // Seam 17 for a new manifest tool: tests/desktop-command-sandbox-approval.test.js pins this set.
 const ALLOWED = new Set(['run_command', 'ask_user', 'exit_plan_mode', 'home', 'task_board', 'project_notes', 'propose_command',
-  'propose_session', 'complete_session_handoff', 'conversations_recent', 'conversation_open', 'conversations_search']);
+  'propose_session', 'complete_session_handoff', 'conversations_recent', 'conversation_open', 'conversations_search',
+  'sessions_list', 'session_status', 'session_transcript', 'session_stop', 'jenny_help']);
 function sandboxEnabled(service) {
   return service?.commandSandbox?.enabled === true
     || service?.configService?.getState?.()?.commandSandbox?.enabled === true;

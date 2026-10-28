@@ -28,10 +28,19 @@ class GitOperation:
 
 # ── Regex patterns for output parsing ─────────────────────────────────
 
-# git commit: [main abc1234] commit message
+# git commit: [main abc1234] msg, [main (root-commit) abc1234] msg,
+# [detached HEAD abc1234] msg
 _RE_COMMIT = re.compile(
-    r"\[(?P<branch>[^\]\s]+)\s+(?P<sha>[0-9a-f]{7,40})\]",
+    # Git separates the parts with single spaces; literal spaces and a bounded
+    # branch keep a long bracketed line from backtracking quadratically.
+    r"\[(?P<branch>[^\]\r\n]{1,256}?)(?: \(root-commit\))? (?P<sha>[0-9a-f]{7,40})\]",
 )
+_DETACHED_HEAD = "detached HEAD"
+
+
+def _commit_branch(match: re.Match[str]) -> str | None:
+    branch = match.group("branch")
+    return None if branch == _DETACHED_HEAD else branch
 
 # git push: abc1234..def5678  main -> main  OR  * [new branch] main -> main
 _RE_PUSH_RANGE = re.compile(
@@ -124,12 +133,13 @@ def _extract_cli_subcommand(argv: list[str]) -> tuple[str | None, str | None]:
 def _detect_commit(stdout: str, stderr: str) -> list[GitOperation]:
     ops: list[GitOperation] = []
     for m in _RE_COMMIT.finditer(stdout):
+        branch = _commit_branch(m)
         ops.append(
             GitOperation(
                 kind="commit",
-                branch=m.group("branch"),
+                branch=branch,
                 sha=m.group("sha"),
-                summary=f"committed {m.group('sha')} on {m.group('branch')}",
+                summary=f"committed {m.group('sha')} on {branch or _DETACHED_HEAD}",
             )
         )
     return ops
@@ -189,7 +199,7 @@ def _detect_cherry_pick(stdout: str, stderr: str) -> list[GitOperation]:
         ops.append(
             GitOperation(
                 kind="cherry_pick",
-                branch=m.group("branch"),
+                branch=_commit_branch(m),
                 sha=m.group("sha"),
                 summary=f"cherry-picked {m.group('sha')}",
             )

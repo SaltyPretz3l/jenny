@@ -84,11 +84,7 @@
       if (preferred) {
         return preferred;
       }
-      return String(
-        state?.models?.status?.currentModel
-          || state?.modelList?.active_model
-          || ''
-      ).trim();
+      return String(state?.modelList?.active_model || '').trim();
     }
 
     function maybeShowPlanModeModelHint(planModeNext, sessionId) {
@@ -153,7 +149,7 @@
         // change event that this binding drops while the control is
         // aria-disabled mid-save — the gap that let a qwen3.8 graded level
         // ride into ornith15 requests (CMP-AI-0005).
-        const profiles = reasoningEffortProfiles || globalThis.reasoningEffortProfiles;
+        const profiles = reasoningEffortProfiles;
         if (typeof profiles?.normalizeManagedReasoningEffortForModel === 'function') {
           const currentEffort = profiles.normalizeReasoningEffort(
             preferencesFor(sessionId)?.reasoningEffort
@@ -217,14 +213,49 @@
           const sessionId = sessionOf();
           const slotChip = runModeSlot.querySelector(sessionId ? '[data-inv-chip="composer-run-mode"]' : '#composerRunModeChip');
           if (slotChip && slotChip.disabled) return;
-          setRunMode(option.getAttribute('data-run-mode-option'), { source: 'click', ...(sessionId ? { sessionId, chip: slotChip } : {}) });
+          setRunMode(option.getAttribute('data-run-mode-option'), { source: 'click', ...targetOf(sessionId, slotChip) });
           return;
         }
         const chip = event.target.closest(sessionOf() ? '[data-inv-chip="composer-run-mode"]' : '#composerRunModeChip');
         if (!chip || chip.disabled) return;
-        const sessionId = sessionOf();
-        cycleRunMode(sessionId ? { source: 'click', sessionId, chip } : { source: 'click' });
+        openRunModeMenu(chip, sessionOf());
       }, listenerOptions);
+    }
+
+    /* Row 63: the chip opens the four modes, each with what it does; Shift+Tab
+       still cycles from the message box. Without the menu primitive it cycles. */
+    function openRunModeMenu(chip, sessionId) {
+      const menu = globalThis.inventoryContextMenu;
+      const copy = globalThis.rendererComposerV2Render?.RUN_MODE_COPY;
+      const target = targetOf(sessionId, chip);
+      if (typeof menu?.show !== 'function' || !copy) {
+        cycleRunMode({ source: 'click', ...target });
+        return;
+      }
+      if (chip.getAttribute('aria-expanded') === 'true') {
+        menu.hide();
+        return;
+      }
+      const current = currentRunMode(sessionId);
+      chip.setAttribute('aria-expanded', 'true');
+      menu.show({
+        anchorEl: chip,
+        placement: 'above',
+        className: 'composer-run-mode-menu',
+        heading: jt('composer.runMode.menuHeading', 'Run mode'),
+        footer: jt('composer.runMode.menuFooter', 'Shift+Tab switches modes from the message box.'),
+        restoreFocusTo: chip,
+        focusChecked: true,
+        onHide: () => chip.setAttribute('aria-expanded', 'false'),
+        items: composerState.RUN_MODE_ORDER.map((mode) => ({
+          label: copy[mode].label,
+          description: copy[mode].hint,
+          iconHtml: copy[mode].icon,
+          checked: mode === current,
+          value: mode,
+          action: () => (mode === current ? false : setRunMode(mode, { source: 'click', ...target })),
+        })),
+      });
     }
 
     function bindSettingsEvents(registerListener, listenerOptions) {
@@ -336,8 +367,7 @@
           hostId: 'composerAutoRunConfirmOverlay',
         });
       }
-      let pending;
-      pending = Promise.resolve(autoRunConfirmDialog.confirm({
+      const pending = Promise.resolve(autoRunConfirmDialog.confirm({
         title: jt('runMode.autoConfirm.title', 'Turn on Auto run?'),
         message: jt('runMode.autoConfirm.bodyWithIdle', 'In Auto, tools run without asking — including commands that change files. Python and explicit denies still ask; blocked commands are refused.') + ' ' + (Number(state.unattendedGuardMinutes) > 0
           ? jt('runMode.autoConfirm.idleOn', 'Inactivity pause is enabled after {minutes} minutes without keyboard or mouse input.', { minutes: state.unattendedGuardMinutes })
@@ -459,12 +489,16 @@
       return 'discard';
     }
 
+    // A second pane's run-mode write names its session and chip; pane 0's names neither.
+    function targetOf(sessionId, chip) {
+      return sessionId ? { sessionId, chip: chip || null } : {};
+    }
+
     function cycleRunMode(options = {}) {
       if (!isRunModeAvailable(options.chip)) return false;
-      const target = options.sessionId ? { sessionId: options.sessionId, chip: options.chip || null } : {};
       return setRunMode(composerState.nextRunMode(currentRunMode(options.sessionId)), {
         source: options.source || 'shortcut',
-        ...target,
+        ...targetOf(options.sessionId, options.chip),
       });
     }
 
@@ -474,8 +508,7 @@
       const prefs = preferencesFor(options.sessionId) || {};
       const stored = prefs.prePlanRunMode === 'auto' || prefs.prePlanRunMode === 'ask' ? prefs.prePlanRunMode : '';
       const restore = stored || 'ask';
-      const target = options.sessionId ? { sessionId: options.sessionId, chip: options.chip || null } : {};
-      return setRunMode(current === 'plan' ? restore : 'plan', { source: 'shortcut-plan', ...target });
+      return setRunMode(current === 'plan' ? restore : 'plan', { source: 'shortcut-plan', ...targetOf(options.sessionId, options.chip) });
     }
 
     const runModeControl = {

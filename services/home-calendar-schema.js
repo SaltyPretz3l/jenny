@@ -94,6 +94,18 @@ function addLocalDays(date, days) {
   );
 }
 
+// Calendar range bounds arrive as local date-times, bare dates or timestamps
+// with a zone suffix; all are read as local wall-clock values like the stored
+// events. A bare-date END bound covers that whole day (the next local midnight).
+function parseRangeBound(value, isEnd = false) {
+  const text = String(value || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    const day = parseLocalDateTime(`${text}T00:00`);
+    return day && isEnd ? addLocalDays(day, 1) : day;
+  }
+  return parseLocalDateTime(text.replace(/(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$/i, ''));
+}
+
 // Wall-clock duration helpers. A recurrence occurrence must keep its local
 // start AND end across a DST boundary; deriving the end from a fixed
 // millisecond delta drifts the wall-clock end by an hour on the 23h/25h
@@ -415,6 +427,7 @@ module.exports = {
   normalizeCalendarSourceKind,
   buildLocalInstance,
   parseLocalDateTime,
+  parseRangeBound,
   startOfLocalDay,
   wallClockDurationMinutes,
 };

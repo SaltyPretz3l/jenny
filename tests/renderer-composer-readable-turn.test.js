@@ -37,6 +37,7 @@ function createHarness(t, {
   composerPopoverOpen = false,
   busyActivityScopes = [],
   draftText = 'Follow up',
+  currentSessionId = 'session-1',
 } = {}) {
   const dom = new JSDOM(`<!doctype html><body>
     <div id="composerWrap"></div>
@@ -81,7 +82,7 @@ function createHarness(t, {
   const busyScopes = new Set(busyActivityScopes.map((scope) => (SESSION_KEYED_SCOPES.has(scope) ? `${scope}:session-1` : scope)));
   const calls = { popoverClosed: 0, snapshotScopes: [] };
   const state = {
-    currentSessionId: 'session-1',
+    currentSessionId,
     sessions: [{
       id: 'session-1',
       ...(pluginSessionReadOnly ? { session_type: 'plugin' } : {}),
@@ -90,7 +91,7 @@ function createHarness(t, {
     auth: { authenticated },
     attachments: { queued: [] },
     queuedSendBySession: new Map(),
-    ui: { activeView: 'chat', composerPopoverOpen, commandPopoverOpen: false, followLatest: true },
+    ui: { activeView: 'chat', composerPopoverOpen, followLatest: true },
     status: {},
     modelList: {},
   };
@@ -173,11 +174,18 @@ for (const phase of ['sidecar_spawned', 'model_acquiring', 'model_loading', 'sta
   });
 }
 
-test('drafting stays available while the model prepares; Send stays gated', (t) => {
+test('while the model prepares, drafting stays available and Send queues into the open chat (row 62)', (t) => {
   const { document, pipeline } = createHarness(t, { backendPhase: 'model_loading' });
   pipeline.renderComposerState();
   assert.equal(document.getElementById('chatInput').disabled, false, 'typing a draft is harmless');
-  assert.equal(document.getElementById('sendButton').disabled, true, 'sending still needs a usable backend');
+  assert.equal(document.getElementById('sendButton').disabled, false, 'Send queues until the engine is ready');
+});
+
+test('while the model prepares with no open chat, Send stays gated', (t) => {
+  const { document, pipeline } = createHarness(t, { backendPhase: 'model_loading', currentSessionId: '' });
+  pipeline.renderComposerState();
+  assert.equal(document.getElementById('chatInput').disabled, false, 'typing a draft is harmless');
+  assert.equal(document.getElementById('sendButton').disabled, true, 'a queued send needs a chat to land in');
 });
 
 for (const phase of ['stopped', 'stopping', 'error', 'no_such_phase']) {

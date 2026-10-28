@@ -242,3 +242,75 @@ test('settled advisory child duration freezes while another child continues', ()
   assert.equal(later.children[0].elapsedMs, 1_000);
   assert.equal(later.children[1].elapsedMs, 8_000);
 });
+
+const modelUtils = model;
+
+test('groupSteps merges consecutive ok calls of one tool on one target; failures and running calls stand alone', () => {
+  const ok = (target, range) => ({ tool: 'read_file', display: 'Read File', ok: true, target, range });
+  const groups = modelUtils.groupSteps([
+    ok('a.pdf', 'p1'), ok('a.pdf', 'p2'), ok('a.pdf', 'p1'),
+    { tool: 'read_file', display: 'Read File', ok: false, target: 'a.pdf' },
+    ok('a.pdf', 'p3'),
+    { tool: 'read_file', display: 'Read File', ok: true, target: 'a.pdf', status: 'running' },
+    ok('b.pdf'),
+  ]);
+  assert.deepEqual(groups.map((group) => group.calls.length), [3, 1, 1, 1, 1]);
+  assert.deepEqual(groups[0].ranges, ['p1', 'p2']);
+  assert.deepEqual(modelUtils.groupSteps(undefined), []);
+});
+
+test('report children carry the prompt, the cut flag and a step limit; step range and path survive, path only on ok', () => {
+  const model = modelUtils.buildMonitorViewModel({ terminal: { kind: 'batch', report: { status: 'completed', tasks: [{
+    task_id: 'a', status: 'completed', summary: 'S', prompt: '  Do the thing.  ', answer_truncated: true,
+    budget: { max_steps: 4, iterations_used: 4 },
+    steps: [
+      { tool: 'read_file', display: 'Read File', ok: true, target: 'x.md', range: 'lines 1–20', path: 'x.md' },
+      { tool: 'read_file', display: 'Read File', ok: false, path: 'y.md', detail: 'nope' },
+    ],
+  }] } } });
+  const child = model.children[0];
+  assert.equal(child.prompt, 'Do the thing.');
+  assert.equal(child.answerTruncated, true);
+  assert.deepEqual(child.stepLimit, { used: 4, max: 4 });
+  assert.equal(child.steps[0].range, 'lines 1–20');
+  assert.equal(child.steps[0].path, 'x.md');
+  assert.equal(child.steps[1].path, undefined);
+  const old = modelUtils.buildMonitorViewModel({ terminal: { kind: 'single', report: { task_id: 'b', status: 'completed', summary: 'S' } } }).children[0];
+  assert.equal(old.prompt, '');
+  assert.equal(old.answerTruncated, false);
+  assert.equal(old.stepLimit, null);
+});
+
+test('a failed child shows no step-limit note; a group lists ranges only when every call has one, and keeps its start index', () => {
+  const report = (status) => modelUtils.buildMonitorViewModel({ terminal: { kind: 'single', report: {
+    task_id: 'a', status, summary: 'S', budget: { max_steps: 4, iterations_used: 4 },
+  } } }).children[0];
+  assert.equal(report('failed').stepLimit, null);
+  assert.equal(report('cancelled').stepLimit, null);
+  assert.deepEqual(report('partial').stepLimit, { used: 4, max: 4 });
+  const read = (range) => ({ tool: 'read_file', display: 'Read File', ok: true, target: 'a.pdf', ...(range ? { range } : {}) });
+  const groups = modelUtils.groupSteps([{ tool: 'glob', display: 'Glob', ok: true }, read(), read('p2'), read('p3')]);
+  assert.deepEqual(groups.map((group) => group.start), [0, 1]);
+  assert.deepEqual(groups[1].ranges, [], 'a whole-file read beside p2 lists no ranges');
+});
+
+test('report and live children carry a normalized transcript; unknown kinds and fields drop', () => {
+  const report = modelUtils.buildMonitorViewModel({ terminal: { kind: 'single', report: { task_id: 'a', status: 'completed', summary: 'S',
+    transcript_dropped: 2,
+    transcript: [
+      { kind: 'tool', call_id: 'c', tool: 'read_file', display: 'Read File', status: 'weird', input: 'x'.repeat(1_500), output: 'o', output_chars: 9_000, extra: 1 },
+      { kind: 'text', text: '   ' },
+      { kind: 'nope', text: 'dropped' },
+      { kind: 'thought', text: 'Why.', ms: 12, live: 'yes' },
+    ] } } }).children[0];
+  assert.equal(report.transcript.length, 2);
+  assert.equal(report.transcript[0].status, 'completed');
+  assert.equal(report.transcript[0].input.length, 1_000);
+  assert.equal(report.transcript[0].outputChars, 9_000);
+  assert.equal(Object.hasOwn(report.transcript[0], 'extra'), false);
+  assert.deepEqual(report.transcript[1], { kind: 'thought', text: 'Why.', live: false, truncated: false, ms: 12 });
+  assert.equal(report.transcriptDropped, 2);
+  const activity = modelUtils.normalizeChildActivity({ sequence: 1, transcript: [{ kind: 'text', text: 'Note.' }], transcript_version: 3 });
+  assert.equal(activity.transcript_version, 3);
+  assert.equal(Object.hasOwn(modelUtils.normalizeChildActivity({ sequence: 2 }), 'transcript'), false, 'a frame without one leaves the key out');
+});

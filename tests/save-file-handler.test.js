@@ -12,6 +12,7 @@ const {
   SUPPORTED_FORMATS,
   FORMAT_FILTER_MAP,
 } = require('../services/save-file-handler');
+const { linkDirectory, posixOnly, windowsOnly } = require('./helpers/platform-skips');
 
 function makeLog() {
   const entries = [];
@@ -144,22 +145,14 @@ test('save-file handler rejects writes inside protected roots', async () => {
 });
 
 test('save-file handler rejects a portable symlink escape into a protected root', {
-  skip: process.platform === 'win32' ? 'portable directory symlink coverage runs on non-Windows' : false,
+  skip: posixOnly('portable directory symlink coverage'),
 }, async (t) => {
   const basePath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-save-symlink-'));
   t.after(() => fs.rmSync(basePath, { recursive: true, force: true }));
   const protectedRoot = path.join(basePath, 'protected');
   const aliasPath = path.join(basePath, 'outside-alias');
   fs.mkdirSync(protectedRoot);
-  try {
-    fs.symlinkSync(protectedRoot, aliasPath, 'dir');
-  } catch (error) {
-    if (error?.code === 'EPERM' || error?.code === 'EACCES') {
-      t.skip(`directory symlinks are unavailable: ${error.code}`);
-      return;
-    }
-    throw error;
-  }
+  linkDirectory(protectedRoot, aliasPath);
   const targetPath = path.join(aliasPath, 'should-not-write.md');
   const { dialog } = makeDialogStub({ filePath: targetPath });
   const handler = buildSaveFileHandler({
@@ -177,22 +170,14 @@ test('save-file handler rejects a portable symlink escape into a protected root'
 });
 
 test('save-file handler rejects a Windows junction escape into a protected root', {
-  skip: process.platform !== 'win32' ? 'Windows junctions are only available on Windows' : false,
+  skip: windowsOnly('junctions'),
 }, async (t) => {
   const basePath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-save-junction-'));
   t.after(() => fs.rmSync(basePath, { recursive: true, force: true }));
   const protectedRoot = path.join(basePath, 'protected');
   const aliasPath = path.join(basePath, 'outside-alias');
   fs.mkdirSync(protectedRoot);
-  try {
-    fs.symlinkSync(protectedRoot, aliasPath, 'junction');
-  } catch (error) {
-    if (error?.code === 'EPERM' || error?.code === 'EACCES') {
-      t.skip(`directory junctions are unavailable: ${error.code}`);
-      return;
-    }
-    throw error;
-  }
+  linkDirectory(protectedRoot, aliasPath);
   const targetPath = path.join(aliasPath, 'should-not-write.md');
   const { dialog } = makeDialogStub({ filePath: targetPath });
   const handler = buildSaveFileHandler({

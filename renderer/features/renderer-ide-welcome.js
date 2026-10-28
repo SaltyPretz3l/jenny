@@ -65,7 +65,6 @@
 
     const recent = [];
     let bound = false;
-    let clickHandler = null;
 
     function noteOpened(path) {
       const normalized = String(path || '');
@@ -90,6 +89,11 @@
       for (let i = paths.length - 1; i >= 0; i -= 1) {
         noteOpened(paths[i]);
       }
+    }
+
+    // A workspace root change: the old root's paths mean nothing in the new one.
+    function clearRecent() {
+      recent.length = 0;
     }
 
     function drop(path) {
@@ -121,6 +125,14 @@
       container.classList.toggle('hidden', !markup);
     }
 
+    // One titled list section (recent files, your projects).
+    function section(heading, rows) {
+      return '<section class="ide-welcome-section">'
+        + '<h3 class="ide-welcome-heading">' + escapeHtml(heading) + '</h3>'
+        + '<div class="ide-welcome-recent-list">' + rows + '</div>'
+        + '</section>';
+    }
+
     function buildRecentHtml() {
       if (!recent.length || !actionButton) {
         return '';
@@ -139,10 +151,7 @@
           });
         })
         .join('');
-      return '<section class="ide-welcome-section">'
-        + '<h3 class="ide-welcome-heading">' + escapeHtml(jt('ide.welcome.recentFiles', 'Recent files')) + '</h3>'
-        + '<div class="ide-welcome-recent-list">' + rows + '</div>'
-        + '</section>';
+      return section(jt('ide.welcome.recentFiles', 'Recent files'), rows);
     }
 
     // Progressive disclosure (GUI finding 2026-07-20): the full four-section
@@ -210,10 +219,7 @@
             ? '<span class="ide-welcome-recent-dir project-menu-detail--danger">' + escapeHtml(jt('projects.menu.locate', 'Locate…')) + '</span>'
             : '<span class="ide-welcome-recent-dir">' + escapeHtml(project.rootPath) + '</span>'),
       })).join('');
-      return '<section class="ide-welcome-section">'
-        + '<h3 class="ide-welcome-heading">' + escapeHtml(jt('ide.welcome.yourProjects', 'Your projects')) + '</h3>'
-        + '<div class="ide-welcome-recent-list">' + rows + '</div>'
-        + '</section>';
+      return section(jt('ide.welcome.yourProjects', 'Your projects'), rows);
     }
 
     function kickSwitcherLoad() {
@@ -337,8 +343,7 @@
         return;
       }
       bound = true;
-      clickHandler = handleClick;
-      host.addEventListener('click', clickHandler);
+      host.addEventListener('click', handleClick);
       const view = host.ownerDocument?.defaultView || null;
       if (getProjectSwitcher && view && typeof view.addEventListener === 'function') {
         projectsChangedView = view;
@@ -355,16 +360,12 @@
       renderGate.bump();
       disposalFence.dispose();
       if (bound) {
-        const host = getDom().ideEmptyState || null;
-        if (host && clickHandler) {
-          host.removeEventListener('click', clickHandler);
-        }
+        getDom().ideEmptyState?.removeEventListener('click', handleClick);
       }
       projectsChangedView?.removeEventListener?.('jenny:projects-changed', handleProjectsChanged);
       projectsChangedView = null;
       bound = false;
-      clickHandler = null;
-      recent.length = 0;
+      clearRecent();
     }
 
     return {
@@ -373,6 +374,7 @@
       dispose,
       noteOpened,
       seedRecent,
+      clearRecent,
       drop,
     };
   }

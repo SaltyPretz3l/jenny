@@ -25,12 +25,7 @@ const { pathToFileURL } = require('node:url');
 const { chromium } = require('playwright-core');
 
 const ROOT = path.resolve(__dirname, '..');
-const browserPath = [
-  process.env.JENNY_TEST_CHROMIUM,
-  process.platform === 'win32' && 'C:/Program Files/Google/Chrome/Application/chrome.exe',
-  chromium.executablePath(),
-].find((candidate) => candidate && fs.existsSync(candidate));
-const SKIP = !browserPath && 'No local Chromium available; set JENNY_TEST_CHROMIUM';
+const { SKIP, browserPath } = require('./helpers/composer-layout-harness');
 
 const MODULES = [
   'renderer/shared/string-utils.js',

@@ -1,8 +1,11 @@
 /* renderer/chat/renderer-chat-path-open.js
  * Preventing the cancelable `ide:open-file-at-line` event claims navigation.
- * Claimed opens try the preview panel, then the IDE, then the OS default app;
- * `preferIde` skips the panel. Path chips suppress propagation so opening a
- * path does not toggle its row. Context menus exclude editable fields, text
+ * Claimed opens try the preview panel, then the IDE; an IDE decline (binary,
+ * oversize: the IDE toasts) ends there and a failure toasts. Clicks never fall
+ * back to the OS default app (it would run a model-named `tool.exe`); only the
+ * explicit "Open in Default App" menu item reaches it, through the main-process
+ * external-open allowlist. `preferIde` skips the panel. Path chips suppress
+ * propagation so opening a path does not toggle its row. Context menus exclude editable fields, text
  * selections, and non-path targets. Main-process workspace containment stays
  * authoritative.
  */
@@ -127,7 +130,7 @@
     // Sync eligibility for the IDE half: root state is hydrated at boot
     // (renderer-shell-state-runtime-utils applyWorkspaceRootStatePayload).
     // While it has not landed yet we stay optimistic — the main process is
-    // the authority and the failure path falls back + toasts.
+    // the authority and the failure path toasts.
     function hasWorkspaceRoot() {
       var rootState = state && state.workspaceRoot;
       if (!rootState || typeof rootState !== 'object') {
@@ -151,30 +154,12 @@
       });
     }
 
-    function openInDefaultAppFallback(relPath) {
-      var fsApi = getWorkspaceFs();
-      if (!fsApi || typeof fsApi.openInDefaultApp !== 'function') {
-        toastOpenFailure(relPath, null);
-        return Promise.resolve(false);
-      }
-      return Promise.resolve(fsApi.openInDefaultApp({ path: relPath }))
-        .then(function handled() { return true; })
-        .catch(function reportFallbackFailure(error) {
-          appendClientLog('WARN', 'chat.path_open_fallback_failed', {
-            path: relPath,
-            message: String((error && error.message) || error || ''),
-          });
-          toastOpenFailure(relPath, error);
-          return false;
-        });
-    }
-
     // The DIRECT IDE route: Workspace view first (the surface rule
     // handleOpenChangeDiff pins), then the IDE's open-then-revealPosition
-    // seam. Failure degrades to the OS default app, then a toast. This is
-    // exactly the pre-panel openClaimedPath body — the context menu's
-    // "Open in IDE" item and the panel's own escape hatch both target it, so
-    // its behavior must stay byte-identical.
+    // seam. A decline is final (the IDE already toasted: binary, too large,
+    // superseded); a failure toasts. Never the OS default app (F2). The
+    // context menu's "Open in IDE" item and the panel's own escape hatch both
+    // target it.
     function openInIdePath(relPath, line, column, pane) {
       setActiveView('ide');
       return Promise.resolve(openIdeFileAtLine(relPath, line, column, pane === undefined ? undefined : { pane: pane }))
@@ -183,14 +168,15 @@
             return true;
           }
           appendClientLog('WARN', 'chat.path_open_ide_declined', { path: relPath });
-          return openInDefaultAppFallback(relPath);
+          return false;
         })
         .catch(function reportIdeFailure(error) {
           appendClientLog('WARN', 'chat.path_open_ide_failed', {
             path: relPath,
             message: String((error && error.message) || error || ''),
           });
-          return openInDefaultAppFallback(relPath);
+          toastOpenFailure(relPath, error);
+          return false;
         });
     }
 
@@ -206,9 +192,9 @@
     }
 
     // The claimed navigation. Panel first (the user stays in chat), then the
-    // direct IDE route, then the OS default app, then a toast. A panel that
-    // declines (root vanished mid-open, no preview owner) or rejects is not a
-    // failure — it just hands the target back to the IDE ladder.
+    // direct IDE route. A panel that declines (root vanished mid-open, no
+    // preview owner) or rejects is not a failure — it just hands the target
+    // back to the IDE ladder.
     function openClaimedPath(relPath, line, column, options) {
       var pane = options ? options.pane : undefined;
       if (options && options.preferIde === true) {
@@ -246,8 +232,8 @@
         : {};
       var relPath = normalizeRelPath(detail.path);
       if (!isOpenableRelPath(relPath) || !hasWorkspaceRoot()) {
-        // Unclaimed on purpose: the dispatcher's default-app fallback is the
-        // right degradation for absolute/escaping paths and rootless shells.
+        // Unclaimed on purpose: absolute/escaping paths and rootless shells
+        // are not ours; the dispatcher shows its own can't-open cue.
         return;
       }
       if (typeof event.preventDefault === 'function') {
@@ -261,7 +247,7 @@
 
     // Chips re-enter through the shared event so cite links and chips stay on
     // one navigation flow; when nothing claims it (IDE wiring absent) the chip
-    // mirrors the cite-utils default-app fallback rather than dying silently.
+    // toasts rather than dying silently, never handing the path to the OS.
     function dispatchOpenForChip(relPath, line, column, pane) {
       var claimed = false;
       try {
@@ -278,7 +264,7 @@
       }
       appendClientLog('INFO', 'chat.tool_path_chip_open', { path: relPath, handled: claimed });
       if (!claimed) {
-        openInDefaultAppFallback(relPath);
+        toastOpenFailure(relPath, null);
       }
     }
 

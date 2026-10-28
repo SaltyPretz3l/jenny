@@ -23,9 +23,10 @@ from typing import Any
 
 from sidecar.ai.routing.tool_loop_calls import _ToolCallPhasesMixin
 from sidecar.ai.routing.tool_loop_finalize import _FinalResponseMixin
+from sidecar.runtime.turn_state import current_pending_mail
 
 logger = logging.getLogger("sidecar.ai.routing.tool_loop")
-_CLOUD_PROVIDER_ENGINE_TYPES = frozenset({"chatgpt", "codex-cli"})
+_CLOUD_PROVIDER_ENGINE_TYPES = frozenset({"chatgpt", "codex-cli", "api-provider"})
 
 
 def _engine_stall_message(
@@ -117,7 +118,9 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
     ) -> None:
         import sidecar.ai.routing.tool_loop as _tl_hub
         from sidecar.ai.routing.iteration_limits import (
+            LoopCapScaler,
             effective_max_tools_per_turn,
+            has_wind_down_system_message,
             is_sub_agent_request_context,
         )
 
@@ -137,7 +140,8 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
         self.working_messages = working_messages
         self.working_messages[:] = _tl_hub.normalize_history_for_loop(self.working_messages)
         # Mid-turn compaction may summarise the trailing turn-context row away.
-        self.turn_context_row = _tl_hub.turn_context.take_turn_context_row(working_messages)[1]
+        self.turn_context_row: dict[str, Any] | None = None
+        self._hold_turn_context_row()
         self.tool_contract = tool_contract
         self.tool_payload = tool_payload
         self.tool_resolution_context = tool_resolution_context
@@ -197,6 +201,7 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
         self.outcome_index = len(self.outcomes)
         self.completed_generations = 0
         self.tool_nudge_attempted = False
+        self.empty_sanitized_generations = 0
         self.checkpoint_created = False
         self.thinking_budget_checkpoints = 0
         self.reflexive_retries_used: dict[str, int] = {}
@@ -215,6 +220,13 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
         self.compaction_last_ditch_used = False
         self.current_info_context_injected = False
         self.failure_context_outcome_count = 0
+        self.failure_context_nudged = False
+        self.last_checkpoint_carry: str | None = None
+        self.current_tool_signatures: tuple[str, ...] | None = None
+        # The plain message estimate the composer meter shows (tool_loop_compaction).
+        self.meter_estimate_tokens = 0
+        self.micro_first_passes = 0
+        self.missing_status_counter = _tl_hub.tool_loop_cycle_recovery.MissingStatusCounter()
 
         self.max_iterations = runtime.max_iterations
         # Approval-resume continuity: iterations are numbered absolutely as
@@ -222,8 +234,6 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
         # reuses a pre-approval iteration number within the same turn.
         self.iteration_base = max(int(getattr(runtime, "iteration_base", 0) or 0), 0)
         self.iteration_total = self.iteration_base + self.max_iterations
-        from sidecar.ai.routing.iteration_limits import LoopCapScaler
-
         # A slow local model at the default task cap earns more steps when it
         # reaches the cap (see iteration_limits.LoopCapScaler); None of the gates below change.
         self.loop_cap = LoopCapScaler.for_run(
@@ -238,7 +248,10 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
         # cannot reach this capacity on its own -- only a gate failure grants it.
         self.gate_iterations_granted = 0
         self.gate_attempts = 0
-        self.wind_down_injected = False
+        # A resumed leg replays this turn's history, which may already carry the row.
+        self.wind_down_injected = self.iteration_base > 0 and has_wind_down_system_message(
+            self.working_messages
+        )
         self.feature_flags = kernel._config.feature_flags or {}
 
         from sidecar.ai.routing.quota_runtime import initialize_runtime_quota
@@ -248,13 +261,9 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
             request_context=request_context)
 
         # Publish attribution only after construction can no longer fail.
-        mutation_lifecycle = __import__(
-            "sidecar.ai.routing.mutation_change_set_lifecycle",
-            fromlist=["bind_run_context"],
-        )
-        mutation_lifecycle.bind_run_context(self)
+        _tl_hub.mutation_change_set_lifecycle.bind_run_context(self)
 
-    # -- Bound helpers (were closures 863-908) ----------------------------
+    # -- Bound helpers -----------------------------------------------------
 
     def _interrupted_tool_outcome(self, record: dict[str, Any], output: str) -> Any:
         # Delegates to the shared builder so the approval-resume dispatch path
@@ -283,6 +292,8 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
             self.working_messages, getattr(self, "turn_context_row", None)
         )
         _tl_hub.write_progress.repin_after_compaction(self)
+        # The rebuilt window dropped the nudge row; the next failure re-pins it.
+        self.failure_context_nudged = False
 
     def _settle_unfinished_tool_results(self, reason: str) -> int:
         import sidecar.ai.routing.tool_loop as _tl_hub
@@ -312,19 +323,58 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
         return settled
 
     def _finish(self, loop_result: Any, *, reason: str) -> Any:
+        import sidecar.ai.routing.tool_loop as _tl_hub
+
         self.runtime.completion_reason = str(reason or "").strip() or None
         if loop_result.approval_request is None:
             self._settle_unfinished_tool_results(reason)
-        mutation_lifecycle = __import__(
-            "sidecar.ai.routing.mutation_change_set_lifecycle",
-            fromlist=["finish_run_change_set"],
-        )
-        mutation_lifecycle.finish_run_change_set(
+        _tl_hub.mutation_change_set_lifecycle.finish_run_change_set(
             self,
             approval_paused=loop_result.approval_request is not None,
             reason=reason,
         )
         return loop_result
+
+    def _finish_text(
+        self,
+        response_text: str,
+        *,
+        reason: str,
+        status: str | None = None,
+        reasoning: object = None,
+        completion_source: str = "model",
+        **terminal: Any,
+    ) -> Any:
+        """Finish the turn with a text reply and no approval.
+
+        Non-blank ``reasoning`` is persisted as the reasoning block; otherwise
+        the thinking row is the ``status`` line, or the run's own thinking text
+        when no status is given. ``terminal`` carries the terminal_* fields.
+        """
+        import sidecar.ai.routing.tool_loop as _tl_hub
+
+        reasoning_text = str(reasoning or "").strip()
+        return self._finish(
+            _tl_hub.ToolLoopResult(
+                thinking_text=reasoning_text
+                or (self.thinking_text if status is None else status),
+                thinking_kind=(
+                    _tl_hub.CHAT_THINKING_KIND_REASONING
+                    if reasoning_text
+                    else _tl_hub.CHAT_THINKING_KIND_STATUS
+                ),
+                persist_thinking=bool(reasoning_text),
+                response_text=response_text,
+                approval_request=None,
+                approval_plan=None,
+                outcomes=self.outcomes,
+                usage_totals=self.usage_totals,
+                streamed_event_types=self.streamed_event_types,
+                completion_source=completion_source,
+                **terminal,
+            ),
+            reason=reason,
+        )
 
     def _finish_empty_generation(self, result: Any) -> Any | None:
         import sidecar.ai.routing.tool_loop as _tl_hub
@@ -343,19 +393,9 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
                 return _tl_hub.thinking_checkpoint.reasoning_only_stop_wind_down(
                     self, result
                 )
-            return self._finish(
-                _tl_hub.ToolLoopResult(
-                    thinking_text=self.thinking_text,
-                    thinking_kind=_tl_hub.CHAT_THINKING_KIND_STATUS,
-                    persist_thinking=False,
-                    response_text="I could not produce a valid response for that request.",
-                    approval_request=None,
-                    approval_plan=None,
-                    outcomes=self.outcomes,
-                    usage_totals=self.usage_totals,
-                    streamed_event_types=self.streamed_event_types,
-                    completion_source="deterministic_tool_fallback",
-                ),
+            return self._finish_text(
+                "I could not produce a valid response for that request.",
+                completion_source="deterministic_tool_fallback",
                 reason="empty_generation",
             )
         return None
@@ -385,7 +425,7 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
             completed_generations=self.completed_generations,
             phase=phase,
             tool_call_history=self.tool_call_history,
-            current_tool_signatures=getattr(self, "current_tool_signatures", None),
+            current_tool_signatures=self.current_tool_signatures,
             error_output_history=self.error_output_history,
             cycle_hint_attempted=self.cycle_hint_attempted,
         )
@@ -407,6 +447,12 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
         self.max_iterations += 1
         self.iteration_total += 1
         return True
+
+    def release_gate_iteration(self) -> None:
+        """Hand back an unused ``grant_gate_iteration`` claim."""
+        self.gate_iterations_granted -= 1
+        self.max_iterations -= 1
+        self.iteration_total -= 1
 
     def _extend_loop_cap(self) -> bool:
         """At the step cap, grant a slow local model its speed-scaled extension.
@@ -442,15 +488,48 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
         )
         return True
 
+    def _drain_pending_mail(self, iteration: int) -> None:
+        """Append mid-turn mail (row 70 W2a) before the next generation.
+
+        ``session.mail_arrived`` rows were validated by the multiplexer. They join
+        the working messages exactly as next-turn mail does, as canonical
+        ``role:"context"`` rows the provider seam renders into the user-role data
+        entry (``engine_messages``), so compaction exclusion, history hashing and
+        the vision anchor keep their context-row rules. A sub-agent never drains
+        its parent's mail. Logs carry ids and counts, never a body.
+        """
+        import sidecar.ai.routing.tool_loop as _tl_hub
+
+        if self.is_sub_agent_request:
+            return
+        pending = current_pending_mail()
+        if pending is None:
+            return
+        rows = pending.drain()
+        if not rows:
+            return
+        self.working_messages.extend(rows)
+        message_ids = [str(row["session_message"]["message_id"]) for row in rows]
+        self.runtime.emit(_tl_hub.MailConsumedEvent(message_ids=message_ids, iteration=iteration))
+        _tl_hub.log_event(
+            logger,
+            logging.INFO,
+            component="ai.router",
+            event="ai.router.mail_consumed",
+            message="Mid-turn mail joined the working messages.",
+            status="active",
+            data={"count": len(message_ids), "iteration": iteration},
+            request_id=self.request_id,
+            session_id=self.session_id,
+        )
+
     # -- Main loop --------------------------------------------------------
 
     def execute(self) -> Any:  # noqa: C901, PLR0911, PLR0912, PLR0915
-        mutation_lifecycle = __import__(
-            "sidecar.ai.routing.mutation_change_set_lifecycle",
-            fromlist=["finish_run_change_set", "release_run_context"],
-        )
+        import sidecar.ai.routing.tool_loop as _tl_hub
+
+        _mcl = _tl_hub.mutation_change_set_lifecycle
         try:
-            import sidecar.ai.routing.tool_loop as _tl_hub
             from sidecar.ai.routing.iteration_limits import (
                 append_sub_agent_finalization_message,
                 append_wind_down_system_message,
@@ -509,6 +588,7 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
                 plan_deadline_row = _tl_hub.plan_presentation.deadline_nudge_row(self, _iteration)
                 if plan_deadline_row is not None:
                     self.working_messages.append(plan_deadline_row)
+                self._drain_pending_mail(_iteration)
                 # -- Emit iteration-start *before* model call -----------------
                 runtime.emit(
                     _tl_hub.IterationStartEvent(
@@ -664,7 +744,9 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
                 self.pending_retry_response_format = None
                 self.streamed_event_types.update(streamed_generation_types)
                 self.usage_totals = _tl_hub._merge_generation_usage(self.usage_totals, result.usage)
-                _tl_hub.tool_loop_compaction.note_request_measurement(self, result.usage)
+                _tl_hub.tool_loop_compaction.note_request_measurement(
+                    self, result.usage, tool_payload=generation_tool_payload
+                )
                 runtime.report_generation_usage(self.usage_totals, result.usage)
                 try:
                     runtime.raise_if_cancelled()
@@ -822,8 +904,10 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
         except Exception as error:
             from sidecar.ai.routing.tool_resource_deferral import ToolLoopSuspended
 
+            # Cancellation and provider failures escape without _finish; settle
+            # the journal here so the change set is never stranded in_progress.
             try:
-                mutation_lifecycle.finish_run_change_set(
+                _mcl.finish_run_change_set(
                     self,
                     approval_paused=isinstance(error, ToolLoopSuspended),
                     reason=f"exception:{type(error).__name__}",
@@ -835,4 +919,4 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
                 )
             raise
         finally:
-            mutation_lifecycle.release_run_context(self)
+            _mcl.release_run_context(self)

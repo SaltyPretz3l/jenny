@@ -7,39 +7,21 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
-  const _sendFlowHelpers = typeof globalThis !== 'undefined' && globalThis.rendererSendFlowHelpers
-    ? globalThis.rendererSendFlowHelpers
-    : typeof require === 'function'
-      ? require('./renderer-send-flow-helpers')
-      : null;
-  if (!_sendFlowHelpers
-    || typeof _sendFlowHelpers.adoptPersistedUserMessageId !== 'function'
-    || typeof _sendFlowHelpers.clipSessionTitle !== 'function'
-    || typeof _sendFlowHelpers.createOptimisticSessionId !== 'function'
-    || typeof _sendFlowHelpers.createSendQueueGuards !== 'function'
-    || typeof _sendFlowHelpers.createTraceToken !== 'function'
-    || typeof _sendFlowHelpers.cloneJsonLike !== 'function'
-    || typeof _sendFlowHelpers.cloneQueuedAttachments !== 'function'
-    || typeof _sendFlowHelpers.buildOptimisticAttachmentMetadata !== 'function'
-    || typeof _sendFlowHelpers.buildDurableFailureMessage !== 'function'
-    || typeof _sendFlowHelpers.buildSendFailureMetadata !== 'function'
-    || typeof _sendFlowHelpers.summarizeDurableFailurePreview !== 'function'
-    || typeof _sendFlowHelpers.getQueuedSendFromState !== 'function'
-    || typeof _sendFlowHelpers.getOrCreateSendOutbox !== 'function'
-    || typeof _sendFlowHelpers.clearQueuedSendInState !== 'function'
-    || typeof _sendFlowHelpers.stashQueuedSendInState !== 'function'
-    || typeof _sendFlowHelpers.annotateUserSendFailureInStore !== 'function'
-    || typeof _sendFlowHelpers.reconcileAcceptedRegenerate !== 'function'
-    || typeof _sendFlowHelpers.resolveMessageCopyText !== 'function') {
-    throw new Error('renderer-send-flow-helpers must load before renderer/chat/renderer-send-utils.js');
+  // Load-order guard: each sibling module (browser global, else require) must
+  // already be loaded and expose every function this file takes from it.
+  function need(mod, keys, name) {
+    if (!mod || keys.some((key) => typeof mod[key] !== 'function')) {
+      throw new Error(`${name} must load before renderer/chat/renderer-send-utils.js`);
+    }
+    return mod;
   }
+  const canRequire = typeof require === 'function';
   const {
     adoptPersistedUserMessageId,
     annotateUserSendFailureInStore,
     buildDurableFailureMessage,
     buildOptimisticAttachmentMetadata,
     buildSendFailureMetadata,
-    clearQueuedSendInState,
     cloneJsonLike,
     cloneQueuedAttachments,
     clipSessionTitle,
@@ -52,63 +34,38 @@
     resolveMessageCopyText,
     stashQueuedSendInState,
     summarizeDurableFailurePreview,
-  } = _sendFlowHelpers;
-  const _sendMessageActions = typeof globalThis !== 'undefined' && globalThis.rendererSendMessageActions
-    ? globalThis.rendererSendMessageActions
-    : typeof require === 'function'
-      ? require('./renderer-send-message-actions')
-      : null;
-  if (!_sendMessageActions || typeof _sendMessageActions.createSendMessageActions !== 'function') {
-    throw new Error('renderer-send-message-actions must load before renderer/chat/renderer-send-utils.js');
-  }
-  const { createSendMessageActions } = _sendMessageActions;
-  const _navigationIntentUtils = (typeof globalThis !== 'undefined' && globalThis.rendererNavigationIntent)
-    || (typeof require === 'function' ? require('./renderer-navigation-intent') : null);
-  if (!_navigationIntentUtils || typeof _navigationIntentUtils.getOrCreateNavigationIntentOwner !== 'function') {
-    throw new Error('renderer-navigation-intent must load before renderer/chat/renderer-send-utils.js');
-  }
-  const _sendOutboxDispatch = (typeof globalThis !== 'undefined' && globalThis.rendererSendOutboxDispatch)
-    || (typeof require === 'function' ? require('./renderer-send-outbox-dispatch') : null);
-  if (!_sendOutboxDispatch || typeof _sendOutboxDispatch.createQueuedSendDispatcher !== 'function') {
-    throw new Error('renderer-send-outbox-dispatch must load before renderer/chat/renderer-send-utils.js');
-  }
-  const _sendPreflightUtils = typeof globalThis !== 'undefined' && globalThis.rendererSendPreflightUtils
-    ? globalThis.rendererSendPreflightUtils
-    : typeof require === 'function'
-      ? require('./renderer-send-preflight-utils')
-      : null;
-  if (!_sendPreflightUtils || typeof _sendPreflightUtils.createSendPreflightUtils !== 'function') {
-    throw new Error('renderer-send-preflight-utils must load before renderer/chat/renderer-send-utils.js');
-  }
-  const { createSendPreflightUtils } = _sendPreflightUtils;
-  const _sendCompletionUtils = typeof globalThis !== 'undefined' && globalThis.rendererSendCompletion
-    ? globalThis.rendererSendCompletion
-    : typeof require === 'function'
-      ? require('./renderer-send-completion')
-      : null;
-  if (!_sendCompletionUtils || typeof _sendCompletionUtils.createSendCompletion !== 'function') {
-    throw new Error('renderer-send-completion must load before renderer/chat/renderer-send-utils.js');
-  }
-  const { createSendCompletion } = _sendCompletionUtils;
-  const _sendReceiptUtils = typeof globalThis !== 'undefined' && globalThis.rendererSendReceipts
-    ? globalThis.rendererSendReceipts
-    : typeof require === 'function'
-      ? require('./renderer-send-receipts')
-      : null;
-  if (!_sendReceiptUtils || typeof _sendReceiptUtils.createSendReceiptStore !== 'function') {
-    throw new Error('renderer-send-receipts must load before renderer/chat/renderer-send-utils.js');
-  }
-  const { createSendReceiptStore } = _sendReceiptUtils;
-  const _skillSlashCommands = (typeof globalThis !== 'undefined' && globalThis.rendererSkillSlashCommands)
-    || (typeof require === 'function' ? require('./renderer-skill-slash-commands') : null);
-  const _promptSlashCommands = globalThis.rendererMcpPromptSlashCommands || (typeof require === 'function' ? require('./renderer-mcp-prompt-slash-commands') : null);
-  if (!_skillSlashCommands || typeof _skillSlashCommands.createSendSlashDispatch !== 'function') {
-    throw new Error('renderer-skill-slash-commands must load before renderer/chat/renderer-send-utils.js');
-  }
-  const _asyncFenceUtils = (typeof globalThis !== 'undefined' && globalThis.rendererAsyncFence) ||
-    (typeof require === 'function' ? require('../shared/async-fence') : null);
-  if (!_asyncFenceUtils || typeof _asyncFenceUtils.createDisposalFence !== 'function') {
-    throw new Error('rendererAsyncFence must load before renderer/chat/renderer-send-utils.js');
+  } = need(globalThis.rendererSendFlowHelpers || (canRequire ? require('./renderer-send-flow-helpers') : null), [
+    'adoptPersistedUserMessageId', 'annotateUserSendFailureInStore', 'buildDurableFailureMessage',
+    'buildOptimisticAttachmentMetadata', 'buildSendFailureMetadata', 'cloneJsonLike', 'cloneQueuedAttachments',
+    'clipSessionTitle', 'createOptimisticSessionId', 'createSendQueueGuards', 'createTraceToken',
+    'getQueuedSendFromState', 'getOrCreateSendOutbox', 'reconcileAcceptedRegenerate', 'resolveMessageCopyText',
+    'stashQueuedSendInState', 'summarizeDurableFailurePreview',
+  ], 'renderer-send-flow-helpers');
+  const { createSendMessageActions } = need(globalThis.rendererSendMessageActions
+    || (canRequire ? require('./renderer-send-message-actions') : null), ['createSendMessageActions'], 'renderer-send-message-actions');
+  const _navigationIntentUtils = need(globalThis.rendererNavigationIntent
+    || (canRequire ? require('./renderer-navigation-intent') : null), ['getOrCreateNavigationIntentOwner'], 'renderer-navigation-intent');
+  const _sendOutboxDispatch = need(globalThis.rendererSendOutboxDispatch
+    || (canRequire ? require('./renderer-send-outbox-dispatch') : null), ['createQueuedSendDispatcher'], 'renderer-send-outbox-dispatch');
+  const { createSendPreflightUtils } = need(globalThis.rendererSendPreflightUtils
+    || (canRequire ? require('./renderer-send-preflight-utils') : null), ['createSendPreflightUtils'], 'renderer-send-preflight-utils');
+  const { createSendCompletion } = need(globalThis.rendererSendCompletion
+    || (canRequire ? require('./renderer-send-completion') : null), ['createSendCompletion'], 'renderer-send-completion');
+  const { createSendReceiptStore } = need(globalThis.rendererSendReceipts
+    || (canRequire ? require('./renderer-send-receipts') : null), ['createSendReceiptStore'], 'renderer-send-receipts');
+  const _skillSlashCommands = need(globalThis.rendererSkillSlashCommands
+    || (canRequire ? require('./renderer-skill-slash-commands') : null), ['createSendSlashDispatch'], 'renderer-skill-slash-commands');
+  const _promptSlashCommands = globalThis.rendererMcpPromptSlashCommands || (canRequire ? require('./renderer-mcp-prompt-slash-commands') : null);
+  const _asyncFenceUtils = need(globalThis.rendererAsyncFence
+    || (canRequire ? require('../shared/async-fence') : null), ['createDisposalFence'], 'rendererAsyncFence');
+
+  // Paths and display names of accepted attachments (active-file dedupe input).
+  function attachmentRefs(list) {
+    const entries = Array.isArray(list) ? list : [];
+    return {
+      paths: entries.map((e) => String(e?.path || e?.assetPath || e?.absolute_path || e?.absolutePath || '').trim()).filter(Boolean),
+      names: entries.map((e) => String(e?.displayName || e?.promptName || '').trim()).filter(Boolean),
+    };
   }
 
   const FOLLOW_UP_ACTION_BUSY_REASON = jt('shell.fallback.waitForCurrentResponse', 'Wait for the current response to finish before trying that.');
@@ -122,9 +79,8 @@
   function createSendController(deps) {
     const { state } = deps;
     const sessionContext = deps.sessionContext || (globalThis.rendererPaneSessionContext || require('./renderer-pane-session-context')).createPaneSessionContext({ state, paneId: deps.paneId });
-    const sendOutbox = getOrCreateSendOutbox(state, {
-      releaseAssets: (assetPaths) => window.jennyShell?.attachments?.releaseAssets?.(assetPaths),
-    });
+    const releaseAssets = (assetPaths) => window.jennyShell?.attachments?.releaseAssets?.(assetPaths);
+    const sendOutbox = getOrCreateSendOutbox(state, { releaseAssets });
     const navigationIntent = _navigationIntentUtils.getOrCreateNavigationIntentOwner(state);
     const multiStreamController = deps.multiStreamController || globalThis.rendererMultiStreamController || null;
     const thinkingIndicator = deps.thinkingIndicator || null;
@@ -152,7 +108,6 @@
       getCurrentRuntimePreferences, getRuntimePreferencesFromSession,
       getCurrentVisibleMessages,
       getCurrentSessionMessages,
-      getSessionTurnEventState = function noopGetSessionTurnEventState() { return { turnEvents: [] }; },
       getSessionMessages,
       setSessionMessages,
       createNormalizedMessage,
@@ -179,7 +134,6 @@
       optimisticAppend,
       flushBufferedStreamEvents,
       dropBufferedStreamEvents,
-      isSendBusy,
       isSessionStreaming,
       hasPendingToolApprovalForSession,
       getCurrentMessageById,
@@ -188,7 +142,6 @@
       resolveRegenerateRequest,
       showCopyFeedback,
       upsertSessionSummary,
-      removeSessionState,
       rekeySessionState,
       attachPendingOriginToSession = () => '',
       rekeySessionOrigin = () => '',
@@ -215,21 +168,18 @@
     function getCurrentSessionId() { return sessionContext.getSessionId(); }
 
     function startOptimisticSendIndicator() {
-      if (thinkingIndicator && typeof thinkingIndicator.startIndicator === 'function') {
-        const displayState = typeof thinkingIndicator.getDisplayState === 'function'
-          ? thinkingIndicator.getDisplayState()
-          : null;
-        if (!displayState || displayState.mode === 'idle') {
-          thinkingIndicator.startIndicator('thinking');
-        }
-      }
+      if (typeof thinkingIndicator?.startIndicator !== 'function') return;
+      const displayState = thinkingIndicator.getDisplayState?.() || null;
+      if (!displayState || displayState.mode === 'idle') thinkingIndicator.startIndicator('thinking');
     }
 
     function clearOptimisticSendIndicator({ resetThinking = false } = {}) {
-      if (resetThinking && thinkingIndicator && typeof thinkingIndicator.resetIndicator === 'function') {
-        thinkingIndicator.resetIndicator();
-      }
+      if (resetThinking) thinkingIndicator?.resetIndicator?.();
     }
+
+    // A split pane (paneId > 0) shares the outbox and failed-send payloads with
+    // pane 0 through `state`; only pane 0's controller may tear those down.
+    const ownsSharedSendState = !(Number(sessionContext.paneId) > 0);
 
     // Preflight-state lifecycle lives in a sibling module (size cap); wired
     // with this closure's controller/state/log so behavior is unchanged.
@@ -242,33 +192,15 @@
 
     function resolveFollowUpActionBlock() {
       const currentSessionId = getCurrentSessionId();
-      if (isSessionBusy(currentSessionId) || hasPendingToolApprovalForSession(currentSessionId)) {
-        return {
-          blocked: true,
-          reason: FOLLOW_UP_ACTION_BUSY_REASON,
-        };
-      }
-      if (!state.auth?.authenticated) {
-        return {
-          blocked: true,
-          reason: FOLLOW_UP_AUTH_BLOCKED_REASON,
-        };
-      }
-      if (!['ready', 'model_unavailable'].includes(String(state.backend?.phase || '').trim())) {
-        return {
-          blocked: true,
-          reason: FOLLOW_UP_BACKEND_NOT_READY_REASON,
-        };
-      }
-      return {
-        blocked: false,
-        reason: '',
-      };
+      const reason = isSessionBusy(currentSessionId) || hasPendingToolApprovalForSession(currentSessionId)
+        ? FOLLOW_UP_ACTION_BUSY_REASON
+        : !state.auth?.authenticated ? FOLLOW_UP_AUTH_BLOCKED_REASON
+          : !backendStartQueue.isBackendUsable() ? FOLLOW_UP_BACKEND_NOT_READY_REASON : '';
+      return { blocked: Boolean(reason), reason };
     }
 
     // Queued-send state helpers (sibling lift-out); bind to this closure's state.
     const getQueuedSend = (sessionId) => getQueuedSendFromState(state, sessionId);
-    const clearQueuedSendForSession = (sessionId) => clearQueuedSendInState(state, sessionId);
     const stashQueuedSendForSession = (sessionId, payload) => stashQueuedSendInState(state, sessionId, payload);
 
     // Dock-scoped approval-steer (ide_chat_dock, plan §17 decision 7): a
@@ -313,7 +245,7 @@
       chatInput,
       getInputSessionId: Number(sessionContext.paneId) > 0 ? () => sessionContext.getSessionId() : undefined,
       getComposerController: () => globalThis.rendererComposerSessionStateController || null,
-      releaseAssets: (assetPaths) => window.jennyShell?.attachments?.releaseAssets?.(assetPaths),
+      releaseAssets,
       log: appendClientLog,
     });
     const sendCompletion = createSendCompletion({
@@ -374,7 +306,7 @@
     const durableSend = durableModule.createController({ state, sessionContext,
       shell: { ...window.jennyShell, activeFileContext: window.rendererIdeActiveFileContext }, receipts: sendReceipts,
       callbacks: { ...deps.callbacks, renderMessages, renderSessions, renderHeader, renderComposerState,
-        attachPendingOriginToSession, rekeySessionOrigin, activateWorkspaceSession },
+        attachPendingOriginToSession, rekeySessionOrigin, activateWorkspaceSession, stopSessionStream: id => handleStopActiveStream(id) },
       helpers: { clipSessionTitle, buildOptimisticAttachmentMetadata, adoptPersistedUserMessageIdInStore },
       multiStreamController, isDisposed: () => disposalFence.isDisposed() });
     const skillsBridge = window.jennyShell?.skills || null;
@@ -388,6 +320,7 @@
       onSkillsChanged: skillsBridge?.onChanged ? (listener) => skillsBridge.onChanged(listener) : null,
       log: appendClientLog,
     });
+    const backendStartQueue = _sendOutboxDispatch.createBackendStartQueue({ state, shell: window.jennyShell, isDisposed: () => disposalFence.isDisposed(), getDispatch: () => dispatchQueuedSendForSession }); // row 62: Send while the engine starts
     function startPromptSend(prompt, options = {}) {
       const imageDrafts = window.rendererImageEditDraft || (typeof require === 'function' ? require('../features/renderer-image-edit-draft') : null);
       return imageDrafts.sendWithDraft(startPromptSendCore, prompt, options, window.rendererImageEditDraftController,
@@ -396,18 +329,23 @@
     async function startPromptSendCore(prompt, options) {
       let settings = options || {};
       const composerTargetSessionId = String(settings.sessionIdOverride || getCurrentSessionId() || '').trim(); // before any await
+      // The outbox dispatcher counts any truthy result as sent and deletes the
+      // entry, so a drained send reports "not now" as null and stays queued.
+      const isOutboxDispatch = settings.outboxDispatch === true;
+      const reject = (reason, sessionId) => (isOutboxDispatch ? null : { rejected: true, reason, sessionId });
       if (!settings.editedMessageId && String(prompt || '').trim().startsWith('/')) await deps.promptCommands?.ensureScope({ maxAgeMs: 1000 });
       let slashDispatch = sendSlashDispatch.dispatch(prompt, settings);
       if (slashDispatch && typeof slashDispatch.then === 'function') slashDispatch = await slashDispatch;
       if (slashDispatch.handled) return null;
       prompt = slashDispatch.prompt;
       settings = slashDispatch.settings;
+      const normalizedPrompt = String(prompt || '').trim();
       // A pending MCP prompt block rides typed sends only (the composer and slash submits mark themselves) or a drained outbox entry's own copy.
-      const promptBlock = settings.outboxDispatch ? settings.promptBlock || null : settings.attachImageEditDraft === true && String(prompt || '').trim() ? _promptSlashCommands?.getPendingPromptBlock(state, sessionContext) || null : null;
+      const promptBlock = settings.outboxDispatch ? settings.promptBlock || null : settings.attachImageEditDraft === true && normalizedPrompt ? _promptSlashCommands?.getPendingPromptBlock(state, sessionContext) || null : null;
       const pendingBatch = getPendingQuestionBatch();
       const usesReplayImageAttachments = Array.isArray(settings.replayImageAttachments);
       const requestedSessionId = String(settings.sessionIdOverride || getCurrentSessionId() || '').trim(); // W2-2b: its queue is sent
-      if (requestedSessionId !== composerTargetSessionId) return { rejected: true, reason: 'session_changed', sessionId: composerTargetSessionId };
+      if (requestedSessionId !== composerTargetSessionId) return reject('session_changed', composerTargetSessionId);
       const imageEditDraft = settings.imageEditSnapshot;
       const sessionQueue = globalThis.rendererComposerSessionState || require('./renderer-composer-session-state');
       const queuedForSend = sessionQueue.getQueuedAttachments(state, requestedSessionId); // pane 0's live array or a pane's record
@@ -421,24 +359,23 @@
       const preserveCurrentSessionOnDispatch = settings.preserveCurrentSessionOnDispatch === true;
       // commitEdit keeps its own editor draft alive until this atomic command
       // succeeds, so the ordinary composer draft remains untouched on failure.
-      const isEditRegenerate = Boolean(String(settings.editedMessageId || '').trim());
-      const normalizedInteractiveResponse = normalizePendingQuestionBatch(settings.interactiveResponse?.batch_snapshot)
-        ? {
-            ...settings.interactiveResponse,
-            batch_snapshot: normalizePendingQuestionBatch(settings.interactiveResponse.batch_snapshot),
-          }
+      const editedMessageId = String(settings.editedMessageId || '').trim();
+      const isEditRegenerate = Boolean(editedMessageId);
+      const batchSnapshot = normalizePendingQuestionBatch(settings.interactiveResponse?.batch_snapshot);
+      const normalizedInteractiveResponse = batchSnapshot
+        ? { ...settings.interactiveResponse, batch_snapshot: batchSnapshot }
         : null;
       const interactiveGuardrailFallback =
         Boolean(settings.interactiveGuardrailFallback) ||
         shouldForceInteractiveGuardrail(normalizedInteractiveResponse?.batch_snapshot);
       const audioOnlyDraftBlocked =
-        !String(prompt || '').trim()
+        !normalizedPrompt
         && !normalizedInteractiveResponse
         && !promptBearingAttachments.length
         && attachmentBudget.accepted.some(
           (entry) => String(entry?.kind || '').trim() === 'audio'
         );
-      if (audioOnlyDraftBlocked && ['ready', 'model_unavailable'].includes(state.backend.phase) && state.auth.authenticated) {
+      if (audioOnlyDraftBlocked && backendStartQueue.isBackendUsable() && state.auth.authenticated) {
         // Audio clips carry no prompt content (voice transcription was
         // removed), so a clip-only draft has nothing to send. Say so
         // instead of silently ignoring the click/Enter.
@@ -452,18 +389,17 @@
         });
         return null;
       }
+      const queueUntilBackendReady = backendStartQueue.claim(requestedSessionId, Boolean(isEditRegenerate || normalizedInteractiveResponse || settings.outboxDispatch || pendingBatch));
       if (
-        (!String(prompt || '').trim() && !normalizedInteractiveResponse && !promptBearingAttachments.length)
-        || !['ready', 'model_unavailable'].includes(state.backend.phase)
+        (!normalizedPrompt && !normalizedInteractiveResponse && !promptBearingAttachments.length)
+        || (!backendStartQueue.isBackendUsable() && !queueUntilBackendReady)
         || !state.auth.authenticated
       ) {
         return null;
       }
-      if (compactionCoordinator?.isPending?.(requestedSessionId)) {
-      setComposerStatusNotice(jt('settings.compaction.compacting', 'Compacting context…'), { owner: `compaction:${requestedSessionId}`, tone: 'pending', spinner: true, sessionId: requestedSessionId });
-        renderComposerState();
+      if (compactionCoordinator?.isPending?.(requestedSessionId)) { // the inline compaction row already tells it
         appendClientLog('INFO', 'chat.send_blocked', { sessionId: requestedSessionId, reason: 'session_compacting' });
-        return { rejected: true, reason: 'session_compacting', sessionId: requestedSessionId };
+        return reject('session_compacting', requestedSessionId);
       }
       const autoGate = settings.startupAudit || (globalThis.rendererRunModeControl?.confirmAutoSend?.(requestedSessionId) ?? true); if (autoGate !== true && await autoGate !== true) return null; // FG-003 Auto warning
       compactionCoordinator?.clearSettled?.(requestedSessionId);
@@ -476,6 +412,7 @@
         snapshot: settings.runtimePreferencesSnapshot, session: requestedSession, current: getCurrentRuntimePreferences, clone: cloneJsonLike, fromSession: getRuntimePreferencesFromSession,
       });
       if (['ask', 'auto'].includes(settings.runModeOverride)) Object.assign(runtimePreferences, { runMode: settings.runModeOverride, planMode: false });
+      const providerNotice = globalThis.rendererApiProviderNotice?.confirmFirstSend?.(runtimePreferences.preferredModel || state.status?.model) ?? true; if (providerNotice !== true && await providerNotice !== true) return null; // row 78 first-use notice
       const visionGate = globalThis.rendererComposerVisionGate?.evaluateComposerVisionGate?.({ state, runtimePreferences, queued: queuedForSend });
       if (visionGate?.blocked && !usesReplayImageAttachments && !isEditRegenerate && !normalizedInteractiveResponse) {
         setComposerStatusNotice(visionGate.notice, { owner: 'attachments.vision', tone: visionGate.tone, at: 0 }); renderComposerState(); return null;
@@ -491,28 +428,35 @@
       // Ungating this let a stale flag strand the queued-send drain (below)
       // exactly like it must not strand a fresh dock send.
       const durableEligible = !isEditRegenerate && durableModule.eligible(state, window.jennyShell, settings, prompt, normalizedInteractiveResponse);
-      if (durableEligible && !durableSend.hasCapacity()) return null;
-      if (!durableEligible && (requestedSessionBusy || (hasPendingToolApprovalForSession(requestedSessionId) && !isDockApprovalSteerActive()))) {
+      if (durableEligible && !queueUntilBackendReady && !durableSend.hasCapacity()) return null;
+      if (queueUntilBackendReady || (!durableEligible && (requestedSessionBusy || (hasPendingToolApprovalForSession(requestedSessionId) && !isDockApprovalSteerActive())))) {
+        // An edit replaces a message in place and a drained outbox entry is
+        // already queued: neither may become a new queued message.
+        if (isEditRegenerate) {
+          appendClientLog('INFO', 'chat.send_blocked', { sessionId: requestedSessionId, reason: 'session_busy_edit' });
+          return { rejected: true, reason: 'session_busy', sessionId: requestedSessionId };
+        }
+        if (isOutboxDispatch) return null;
         if (
-          canQueueForSession(requestedSessionId)
-          && (String(prompt || '').trim() || attachmentBudget.accepted.length)
+          (queueUntilBackendReady || canQueueForSession(requestedSessionId))
+          && (normalizedPrompt || attachmentBudget.accepted.length)
         ) {
           // Legacy outbox capture and draft consumption must precede any await:
           // terminal dispatch may run while mention contents are still resolving.
           // Backfill only the same queued entry, deduping against resolved mentions.
-          const queuedAccepted = Array.isArray(attachmentBudget.accepted) ? attachmentBudget.accepted : [];
-          const queuedAttachedPaths = queuedAccepted.map((e) => String(e?.path || e?.assetPath || e?.absolute_path || e?.absolutePath || '').trim()).filter(Boolean);
-          const queuedAttachedNames = queuedAccepted.map((e) => String(e?.displayName || e?.promptName || '').trim()).filter(Boolean);
-          const queuedMentionPaths = window.rendererIdeMentionAutocomplete?.collectMentionPaths?.(chatInput) || [];
+          // A prompt that did not come from the composer (preserveComposerDraft)
+          // takes none of its @-mentions and leaves its draft alone.
+          const queuedRefs = attachmentRefs(attachmentBudget.accepted);
+          const queuedMentionPaths = preserveComposerDraft ? [] : window.rendererIdeMentionAutocomplete?.collectMentionPaths?.(chatInput) || [];
           const queuedMentionContentsPromise = Promise.resolve(
-            window.rendererIdeMentionAutocomplete?.collectMentionContents?.({ input: chatInput }) || []
+            preserveComposerDraft ? [] : window.rendererIdeMentionAutocomplete?.collectMentionContents?.({ input: chatInput }) || []
           );
           // Initially dedupe only attachments; failed mention reads must not
           // discard the active-file snapshot from both context sources.
           const queuedActiveFileContext = window.rendererIdeActiveFileContext?.readActiveFileContextForTurn?.({
             mentionedPaths: [],
-            attachedPaths: queuedAttachedPaths,
-            attachedNames: queuedAttachedNames,
+            attachedPaths: queuedRefs.paths,
+            attachedNames: queuedRefs.names,
           }) || null;
           const queuedEntry = stashQueuedSendForSession(requestedSessionId, {
             prompt: String(prompt || ''),
@@ -543,13 +487,16 @@
           // target it by object IDENTITY — robust against a dispatch, clear, or a
           // newer queued send (which all replace/remove the Map entry), where a
           // createdAt timestamp could collide at ms resolution.
-          chatInput.value = ''; deps.promptCommands?.consume(promptBlock); // the queued entry carries it now
-          sessionQueue.clearQueuedAttachments(state, requestedSessionId);
-          syncComposerInputHeight();
-          syncComposerVisualState();
+          deps.promptCommands?.consume(promptBlock); // the queued entry carries it now
+          if (!preserveComposerDraft) {
+            chatInput.value = '';
+            sessionQueue.clearQueuedAttachments(state, requestedSessionId);
+            syncComposerInputHeight();
+            syncComposerVisualState();
+          }
           renderComposerState();
           appendClientLog('INFO', 'chat.queue_created', {
-            sessionId: requestedSessionId,
+            sessionId: requestedSessionId, ...(queueUntilBackendReady ? { reason: 'backend_starting' } : {}),
             attachmentCount: attachmentBudget.accepted.length,
             mentionCount: queuedMentionPaths.length,
           });
@@ -557,15 +504,11 @@
           // settle, and apply the resolved-mention dedupe to the active-file slice.
           sendOutbox.settleContextCapture(queuedEntry, queuedMentionContentsPromise.then((contents) => {
             const capturedContents = Array.isArray(contents) ? contents : [];
-            let activeFileContextSnapshot = queuedActiveFileContext;
-            const activeSnapshot = activeFileContextSnapshot;
-            if (activeSnapshot && activeSnapshot.path) {
-              const normalizedActive = String(activeSnapshot.path).trim().replace(/\\/g, '/');
-              const resolvedPaths = capturedContents.map((entry) => String((entry && entry.path) || '').trim().replace(/\\/g, '/'));
-              if (resolvedPaths.indexOf(normalizedActive) !== -1) {
-                activeFileContextSnapshot = null;
-              }
-            }
+            const norm = (path) => String(path || '').trim().replace(/\\/g, '/');
+            const activePath = queuedActiveFileContext?.path ? norm(queuedActiveFileContext.path) : '';
+            const activeFileContextSnapshot = activePath && capturedContents.some((entry) => norm(entry?.path) === activePath)
+              ? null
+              : queuedActiveFileContext;
             return { mentionContentsSnapshot: capturedContents, activeFileContextSnapshot };
           }));
           return {
@@ -589,7 +532,6 @@
       }
       const currentMessages = getCurrentVisibleMessages();
       const shouldAnimateActivation = currentMessages.length === 0;
-      const normalizedPrompt = String(prompt || '').trim();
       let effectivePrompt = interactiveGuardrailFallback
         ? [
             normalizedPrompt,
@@ -603,8 +545,7 @@
       const optimisticTitleSource = visiblePrompt || (hasExplicitVisiblePrompt ? '' : normalizedPrompt);
       const pendingBatchSnapshot = pendingBatch && normalizedInteractiveResponse ? pendingBatch : null;
       const acceptedAttachments = cloneQueuedAttachments(attachmentBudget.accepted);
-      const attachedPaths = acceptedAttachments.map((e) => String(e?.path || e?.assetPath || e?.absolute_path || e?.absolutePath || '').trim()).filter(Boolean);
-      const attachedNames = acceptedAttachments.map((e) => String(e?.displayName || e?.promptName || '').trim()).filter(Boolean);
+      const { paths: attachedPaths, names: attachedNames } = attachmentRefs(acceptedAttachments);
       const previousSessionId = getCurrentSessionId();
       const optimisticSessionId = requestedSessionId || createOptimisticSessionId();
       const createdOptimisticSession = !requestedSessionId || requestedSession?.local_draft === true;
@@ -617,9 +558,12 @@
       const { approvalMode } = runModeProjection;
       // Capture approved paths synchronously from THIS textarea before the receipt
       // consumes its text. Reads may settle later; queued sends already own a snapshot.
+      // A prompt that is not the composer's (edit, regenerate, retry, handoff)
+      // must not carry the files @-mentioned in the user's unsent draft.
       const mentionContentsPromise = Object.prototype.hasOwnProperty.call(settings, 'mentionContentsSnapshot')
         ? Promise.resolve(Array.isArray(settings.mentionContentsSnapshot) ? settings.mentionContentsSnapshot : [])
-        : Promise.resolve(window.rendererIdeMentionAutocomplete?.collectMentionContents?.({ input: chatInput }) || []).catch(() => []);
+        : preserveComposerDraft ? Promise.resolve([])
+          : Promise.resolve(window.rendererIdeMentionAutocomplete?.collectMentionContents?.({ input: chatInput }) || []).catch(() => []);
       let sendReceipt = sendReceipts.begin({
         sessionId: optimisticSessionId,
         prompt: effectivePrompt,
@@ -631,11 +575,13 @@
         approvalMode,
         interactiveResponse: normalizedInteractiveResponse,
         skillInvocation,
-        editedMessageId: String(settings.editedMessageId || '').trim(),
+        editedMessageId,
       }, {
         consumeDraft: !preserveComposerDraft,
         restoreOnFailure: settings.restoreDraftOnStartStreamReject !== false,
-        recordFailedPayload: settings.recordFailedPayload !== false,
+        // A failed edit keeps its editor open and gets no Retry marker, so a
+        // failed payload for it could never be replayed.
+        recordFailedPayload: settings.recordFailedPayload !== false && !isEditRegenerate,
         failedPayloadId: retryPayloadId,
       });
       if (!sendReceipt) return null; deps.promptCommands?.consume(promptBlock); // the receipt's Retry payload carries it; a restored draft does not
@@ -647,107 +593,106 @@
         sendSlashDispatch.clearAccepted(result, skillInvocation, settings);
         return result;
       }
-      if (!preserveComposerDraft) syncComposerInputHeight();
-      thinkingController.resumeAutoScroll();
-      setFollowLatest(true);
-      // Send-stay-in-dock (ide_chat_dock): only force the view back to Chat when
-      // NO live chat surface is showing — a send typed into the open Workspace
-      // dock must not yank the user out of the IDE (falls back flag-off).
-      const chatSurfaceLiveForSend = (globalThis.rendererChatSurfaceLiveUtils || {}).isChatSurfaceLive?.(state)
-        ?? (state.ui.activeView === 'chat');
-      if (!chatSurfaceLiveForSend) {
-        appendClientLog('INFO', 'chat.send_view_corrected', {
-          previousView: state.ui.activeView,
-        });
-        state.ui.activeView = 'chat';
-      }
-      const preflightState = beginSessionPreflight({
-        sessionId: optimisticSessionId,
-        optimisticSessionId,
-        previousSessionId,
-        optimisticCreated: createdOptimisticSession,
-      });
-      setChatSendLifecycle(optimisticSessionId, 'preflight');
-      if (pendingBatchSnapshot) {
-        patchSessionSummary(createdOptimisticSession ? optimisticSessionId : getCurrentSessionId(), {
-          pending_question_batch: null,
-          interactive_sequence_state: interactiveGuardrailFallback
-            ? INTERACTIVE_SEQUENCE_FALLBACK_REQUESTED
-            : INTERACTIVE_SEQUENCE_IDLE,
-          interactive_round_count: pendingBatchSnapshot.round_index,
-        });
-      }
-      if (createdOptimisticSession) {
-        const timestamp = new Date().toISOString();
-        upsertSessionSummary({
-          id: optimisticSessionId,
-          title: clipSessionTitle(optimisticTitleSource),
-          session_type: 'chat',
-          created_at: timestamp,
-          updated_at: timestamp,
-          message_count: visiblePrompt || acceptedAttachments.length ? 1 : 0,
-          last_message_preview: String(visiblePrompt || '').slice(0, 160),
-          last_model_used: '',
-          preferred_model: runtimePreferences.preferredModel,
-          reasoning_effort: runtimePreferences.reasoningEffort,
-          conversation_mode: 'chat',
-          pending_question_batch: null,
-          interactive_sequence_state: interactiveGuardrailFallback
-            ? INTERACTIVE_SEQUENCE_FALLBACK_REQUESTED
-            : INTERACTIVE_SEQUENCE_IDLE,
-          interactive_round_count: pendingBatchSnapshot?.round_index || 0,
-          run_mode: runModeProjection.runMode,
-          plan_mode: runModeProjection.planMode,
-          context_preferences: {
-            history_scope: runtimePreferences.contextPreferences.historyScope,
-            include_personality: runtimePreferences.contextPreferences.includePersonality !== false,
-            include_memory: runtimePreferences.contextPreferences.includeMemory !== false, memory_opt_out: runtimePreferences.contextPreferences.memoryOptOut === true,
-          },
-          optimistic_local: true,
-          local_draft: false,
-        }, { prepend: true });
-        sessionContext.setSessionId(optimisticSessionId);
-        attachPendingOriginToSession(optimisticSessionId);
-        setSessionMessages(optimisticSessionId, getSessionMessages(optimisticSessionId), `session_${optimisticSessionId}`);
-        state.ui.animateNextChatActivation = shouldAnimateActivation;
-      } else {
-        state.ui.animateNextChatActivation = shouldAnimateActivation;
-      }
+      // The draft is consumed from here on: any throw must settle the receipt
+      // (restoring the draft) and clear preflight, so the try starts now.
       const operationState = { optimisticUserMessageId: '' };
-      if (visiblePrompt || acceptedAttachments.length) {
-        operationState.optimisticUserMessageId = isEditRegenerate
-          ? String(settings.editedMessageId || '').trim()
-          : `user_local_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
-        if (!isEditRegenerate) {
-          optimisticAppend(optimisticSessionId, 'user', visiblePrompt, {
-            id: operationState.optimisticUserMessageId,
-            attachments: buildOptimisticAttachmentMetadata(acceptedAttachments),
-            ...(skillInvocation ? { skill_invocation: skillInvocation } : {}),
+      let preflightState = null;
+      let sendNavigationToken = null;
+      try {
+        if (!preserveComposerDraft) syncComposerInputHeight();
+        thinkingController.resumeAutoScroll();
+        setFollowLatest(true);
+        // Send-stay-in-dock (ide_chat_dock): only force the view back to Chat when
+        // NO live chat surface is showing — a send typed into the open Workspace
+        // dock must not yank the user out of the IDE (falls back flag-off).
+        const chatSurfaceLiveForSend = (globalThis.rendererChatSurfaceLiveUtils || {}).isChatSurfaceLive?.(state)
+          ?? (state.ui.activeView === 'chat');
+        if (!chatSurfaceLiveForSend) {
+          appendClientLog('INFO', 'chat.send_view_corrected', {
+            previousView: state.ui.activeView,
+          });
+          state.ui.activeView = 'chat';
+        }
+        preflightState = beginSessionPreflight({
+          sessionId: optimisticSessionId,
+          optimisticSessionId,
+          previousSessionId,
+          optimisticCreated: createdOptimisticSession,
+        });
+        setChatSendLifecycle(optimisticSessionId, 'preflight');
+        const sequenceState = interactiveGuardrailFallback ? INTERACTIVE_SEQUENCE_FALLBACK_REQUESTED : INTERACTIVE_SEQUENCE_IDLE;
+        if (pendingBatchSnapshot) {
+          patchSessionSummary(createdOptimisticSession ? optimisticSessionId : getCurrentSessionId(), {
+            pending_question_batch: null,
+            interactive_sequence_state: sequenceState,
+            interactive_round_count: pendingBatchSnapshot.round_index,
           });
         }
-        onUserSendStarted({
+        if (createdOptimisticSession) {
+          const timestamp = new Date().toISOString();
+          upsertSessionSummary({
+            id: optimisticSessionId,
+            title: clipSessionTitle(optimisticTitleSource),
+            session_type: 'chat',
+            created_at: timestamp,
+            updated_at: timestamp,
+            message_count: visiblePrompt || acceptedAttachments.length ? 1 : 0,
+            last_message_preview: String(visiblePrompt || '').slice(0, 160),
+            last_model_used: '',
+            preferred_model: runtimePreferences.preferredModel,
+            reasoning_effort: runtimePreferences.reasoningEffort,
+            conversation_mode: 'chat',
+            pending_question_batch: null,
+            interactive_sequence_state: sequenceState,
+            interactive_round_count: pendingBatchSnapshot?.round_index || 0,
+            run_mode: runModeProjection.runMode,
+            plan_mode: runModeProjection.planMode,
+            context_preferences: {
+              history_scope: runtimePreferences.contextPreferences.historyScope,
+              include_personality: runtimePreferences.contextPreferences.includePersonality !== false,
+              include_memory: runtimePreferences.contextPreferences.includeMemory !== false, memory_opt_out: runtimePreferences.contextPreferences.memoryOptOut === true,
+            },
+            optimistic_local: true,
+            local_draft: false,
+          }, { prepend: true });
+          sessionContext.setSessionId(optimisticSessionId);
+          attachPendingOriginToSession(optimisticSessionId);
+          setSessionMessages(optimisticSessionId, getSessionMessages(optimisticSessionId), `session_${optimisticSessionId}`);
+        }
+        state.ui.animateNextChatActivation = shouldAnimateActivation;
+        if (visiblePrompt || acceptedAttachments.length) {
+          operationState.optimisticUserMessageId = isEditRegenerate
+            ? editedMessageId
+            : `user_local_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
+          if (!isEditRegenerate) {
+            optimisticAppend(optimisticSessionId, 'user', visiblePrompt, {
+              id: operationState.optimisticUserMessageId,
+              attachments: buildOptimisticAttachmentMetadata(acceptedAttachments),
+              ...(skillInvocation ? { skill_invocation: skillInvocation } : {}),
+            });
+          }
+          onUserSendStarted({
+            sessionId: optimisticSessionId,
+            prompt: visiblePrompt,
+            attachmentCount: acceptedAttachments.length,
+          });
+        }
+        renderMessages();
+        renderSessions();
+        renderHeader();
+        renderComposerState();
+        const optimisticRenderedAtMs = Date.now();
+        const localRenderLatencyMs = Math.max(
+          optimisticRenderedAtMs - Number(preflightState?.startedAt || optimisticRenderedAtMs),
+          0
+        );
+        appendClientLog('INFO', 'chat.send_optimistic_rendered', {
           sessionId: optimisticSessionId,
-          prompt: visiblePrompt,
-          attachmentCount: acceptedAttachments.length,
+          localRenderLatencyMs,
         });
-      }
-      renderMessages();
-      renderSessions();
-      renderHeader();
-      renderComposerState();
-      const optimisticRenderedAtMs = Date.now();
-      const localRenderLatencyMs = Math.max(
-        optimisticRenderedAtMs - Number(preflightState?.startedAt || optimisticRenderedAtMs),
-        0
-      );
-      appendClientLog('INFO', 'chat.send_optimistic_rendered', {
-        sessionId: optimisticSessionId,
-        localRenderLatencyMs,
-      });
-      startOptimisticSendIndicator();
-      const sendNavigationToken = navigationIntent.beginOperation('chat.send');
+        startOptimisticSendIndicator();
+        sendNavigationToken = navigationIntent.beginOperation('chat.send');
 
-      try {
         const targetSessionId = createdOptimisticSession ? '' : optimisticSessionId;
         const traceId = createTraceToken();
         markStartupAudit('first-chat-send', {
@@ -780,8 +725,8 @@
           visiblePrompt,
           // CTL-001 anchor reuse: an edit-resend re-anchors the edited durable
           // user message instead of persisting a second copy of the prompt.
-          ...(String(settings.editedMessageId || '').trim()
-            ? { editedMessageId: String(settings.editedMessageId).trim(), ...(settings.failureRetry === true ? { failureRetry: true } : {}) }
+          ...(editedMessageId
+            ? { editedMessageId, ...(settings.failureRetry === true ? { failureRetry: true } : {}) }
             : {}),
           traceId,
           preferredModel: runtimePreferences.preferredModel,
@@ -886,7 +831,7 @@
       if (!availability.available) return null;
       const payload = sendReceipts.getFailedPayload(payloadId);
       if (isSessionBusy(payload.sessionId)) {
-      showComposerActionError(new Error('Wait for the current response to finish before retrying.'), jt('chat.send.retryUnavailableTitle', 'Retry Unavailable'));
+        showComposerActionError(new Error(FOLLOW_UP_ACTION_BUSY_REASON), jt('chat.send.retryUnavailableTitle', 'Retry Unavailable'));
         return null;
       }
       const result = await startPromptSend(payload.prompt, {
@@ -918,11 +863,13 @@
 
     function dispose() {
       if (!disposalFence.dispose()) return;
-      sendSlashDispatch.dispose();
-      dispatchQueuedSendForSession?.dispose?.();
+      sendSlashDispatch.dispose(); backendStartQueue.dispose();
+      dispatchQueuedSendForSession.dispose?.();
       durableSend.dispose();
-      sendReceipts.dispose();
-      sendOutbox.dispose?.();
+      // Closing a split pane must not empty pane 0's outbox (a disposed outbox
+      // refuses every later enqueue) or drop its failed-send Retry payloads.
+      sendReceipts.dispose({ retainFailedPayloads: !ownsSharedSendState });
+      if (ownsSharedSendState) sendOutbox.dispose?.();
     }
 
     async function handleStopActiveStream(sessionIdInput) { // session-scoped callers (lockdown) share the Stop hold protocol
@@ -938,7 +885,15 @@
       // first must restore the queued entry to the composer, not send it.
       const queuedAtStop = getQueuedSend(activeSessionId) || null;
       if (queuedAtStop) dispatchQueuedSendForSession.holdNextDispatch(activeSessionId, activeStreamId);
-      const cancelResult = await window.jennyShell.chat.cancelStream(activeStreamId);
+      let cancelResult;
+      try {
+        cancelResult = await window.jennyShell.chat.cancelStream(activeStreamId);
+      } catch (error) {
+        // A failed cancel leaves the stream running: its terminal must drain
+        // the queued entry normally, not restore it as if Stop had worked.
+        dispatchQueuedSendForSession.releaseHold(activeSessionId, activeStreamId);
+        throw error;
+      }
       // CTL-009: a refused cancel (stream already finished/unknown by the time
       // this round-trip landed) is a no-op — don't report the success shape
       // that drives UI state for a cancellation that never happened. The
@@ -966,7 +921,7 @@
     const dispatchQueuedSendForSession = _sendOutboxDispatch.createQueuedSendDispatcher({
       sendOutbox, getQueuedSend, isSessionBusy, hasPendingToolApprovalForSession,
       isDockApprovalSteerActive, startPromptSend, renderComposerState, renderSessions,
-      appendClientLog,
+      appendClientLog, isBackendStarting: backendStartQueue.isBackendStarting,
     });
 
     const messageActions = createSendMessageActions({
@@ -987,17 +942,12 @@
       }),
       startPromptSend,
     });
-    const {
-      handleElaborateMessage,
-      handleRegenerateMessage,
-      handleCopyMessage,
-    } = messageActions;
+    const { handleElaborateMessage, handleRegenerateMessage, handleCopyMessage } = messageActions;
 
     return {
       startPromptSend,
       handleStopActiveStream,
       getQueuedSend,
-      clearQueuedSendForSession,
       stashQueuedSendForSession,
       restoreQueuedSendDraft,
       dispatchQueuedSendForSession,

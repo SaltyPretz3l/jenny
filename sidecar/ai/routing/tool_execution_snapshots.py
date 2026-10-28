@@ -362,6 +362,7 @@ def freeze_effective_execution_inputs(  # noqa: PLR0913
             "todo_write",
             "todo_read",
             "mermaid_generate",
+            "operation_status",
         }
         and normalized_session_id
     ):

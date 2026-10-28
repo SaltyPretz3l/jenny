@@ -43,6 +43,8 @@ CASES = {
                  _line('backend.managed_sidecar_initialized', 'new-run')], 0, 'run_id=new-run boot_ms=731'),
     'combined_source': ([_line('window.ready', 'new-run', 'did-finish-load+renderer-ready', 640),
                          _line('backend.managed_sidecar_initialized', 'new-run')], 0, 'run_id=new-run boot_ms=640'),
+    'first_paint_source': ([_line('window.ready', 'new-run', 'ready-to-show', 410),
+                            _line('backend.managed_sidecar_initialized', 'new-run')], 0, 'run_id=new-run boot_ms=410'),
     'did_fail_load': ([_line('window.ready', 'new-run', 'did-fail-load', 900),
                        _line('backend.managed_sidecar_initialized', 'new-run')], 2, 'FAIL source=did-fail-load'),
     'startup_timeout': ([_line('window.ready', 'new-run', 'startup-timeout', 15000),

@@ -125,14 +125,15 @@
 
   // The receipt names what was decided: the command's first line when there
   // is one, else the tool.
-  function renderResolvedReceipt(source, displayToolName, escapeHtml) {
+  // `subjectText` (a stop's "Stop <title>") replaces the command line as plain text.
+  function renderResolvedReceipt(source, displayToolName, escapeHtml, subjectText = '') {
     const decision = receiptDecision(source.decision);
     const mark = decision === 'allowed' ? '\u2713' : (decision === 'denied' ? '\u2715' : '');
     const firstLine = String(source.commandText == null ? '' : source.commandText).trim().split('\n')[0];
-    const command = boundedText(firstLine, RECEIPT_SUBJECT_MAX_CHARS);
+    const command = subjectText ? '' : boundedText(firstLine, RECEIPT_SUBJECT_MAX_CHARS);
     const subject = command
       ? `<code class="tool-approval-receipt-subject">${escapeHtml(command)}</code>`
-      : `<span class="tool-approval-receipt-subject">${escapeHtml(displayToolName)}</span>`;
+      : `<span class="tool-approval-receipt-subject">${escapeHtml(boundedText(subjectText, RECEIPT_SUBJECT_MAX_CHARS) || displayToolName)}</span>`;
     return `<p class="tool-approval-receipt tool-approval-receipt--resolved">`
       + (mark ? `<span class="tool-approval-receipt-mark" aria-hidden="true">${mark}</span>` : '')
       + `<span class="tool-approval-receipt-label">${escapeHtml(receiptLabel(decision, source.approvalScope))}</span>`
@@ -147,14 +148,17 @@
   // being discarded or a card whose answer was refused, it folds to a
   // receipt, as does a row the sealed fold marked interrupted (the turn is
   // over). Anything else keeps today's buttons: before the live approvals and
-  // paused work load, a card must not claim it is dead.
+  // paused work load, a card must not claim it is dead. A live approval also
+  // hands over its exact presentation, which only the live request carries.
   function resolveApprovalCardState(state, ref) {
     const callId = normalizeText(ref && ref.callId);
     if (!state || !callId) return { state: 'live' };
     const approvals = state.pendingToolApprovals && typeof state.pendingToolApprovals.values === 'function'
       ? [...state.pendingToolApprovals.values()] : [];
-    if (approvals.some((approval) => normalizeText(approval && approval.callId) === callId)) {
-      return { state: 'live' };
+    const live = approvals.find((approval) => normalizeText(approval && approval.callId) === callId);
+    if (live) {
+      return live.exactApproval && typeof live.exactApproval === 'object'
+        ? { state: 'live', exactApproval: live.exactApproval } : { state: 'live' };
     }
     const sessionId = normalizeText(ref.sessionId);
     const turnId = normalizeText(ref.turnId);
@@ -221,6 +225,58 @@
     return characters.length > maxChars
       ? characters.slice(0, maxChars - 1).join('') + '\u2026'
       : characters.join('');
+  }
+
+  // Quoted arguments keep every character, but an invisible control shows as a visible marker
+  // (⟨U+202E⟩) instead of being honored: a bidi override would reorder the command the reader
+  // approves, a zero-width space would hide a split. Tabs, newlines and CRLF stay as they are.
+  const INVISIBLE_CHARACTER_RE = /(?![\t\n]|\r\n)[\p{Cc}\p{Cf}]/gu;
+
+  function quotedArgumentMarkup(text, escapeHtml) {
+    let markup = '';
+    let last = 0;
+    for (const match of text.matchAll(INVISIBLE_CHARACTER_RE)) {
+      const code = match[0].codePointAt(0).toString(16).toUpperCase().padStart(4, '0');
+      markup += escapeHtml(text.slice(last, match.index))
+        + `<span class="tool-approval-invisible">\u27E8U+${code}\u27E9</span>`;
+      last = match.index + match[0].length;
+    }
+    return markup + escapeHtml(text.slice(last));
+  }
+
+  // Commands and writes are approved against the exact arguments that decide what runs
+  // (`exact_approval`, built by services/backend/chat-stream-tool-approval.js, whose
+  // EXACT_APPROVAL_FIELDS keys this set mirrors), never the redacted, clipped input snapshot.
+  const EXACT_APPROVAL_TOOLS = new Set(['run_command', 'run_temp_script', 'python_execute', 'monitor', 'write_file', 'edit_file']);
+  const EXACT_APPROVAL_MAX_CHARS = 32 * 1024;
+
+  function normalizeExactApproval(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || value.schema_version !== 1) return null;
+    if (value.too_large === true) return { tooLarge: true, fields: [] };
+    if (!Array.isArray(value.fields) || !SHA256_HEX.test(String(value.sha256 || ''))) return null;
+    const fields = value.fields
+      .filter((field) => field && typeof field.name === 'string' && field.name && typeof field.text === 'string')
+      .map((field) => ({ name: field.name, text: field.text }));
+    if (fields.length !== value.fields.length) return null;
+    const chars = fields.reduce((total, field) => total + field.name.length + field.text.length, 0);
+    return { tooLarge: chars > EXACT_APPROVAL_MAX_CHARS, fields };
+  }
+
+  // Each decisive argument whole, in its own scrollable block; a lone field needs no label.
+  function renderExactApproval(exact, escapeHtml) {
+    const labelled = exact.fields.length > 1;
+    return `<div class="tool-approval-exact" data-approval-exact-input>`
+      + exact.fields.map((field) => (labelled ? `<div class="tool-approval-exact-name">${escapeHtml(field.name)}</div>` : '')
+        + `<pre class="tool-approval-command" data-approval-exact-field="${escapeHtml(field.name)}">`
+        + `<code>${quotedArgumentMarkup(field.text, escapeHtml)}</code></pre>`).join('')
+      + `</div>`;
+  }
+
+  function renderExactUnavailable(reason, escapeHtml) {
+    const note = reason === 'too_large'
+      ? jt('approval.block.exactTooLarge', "This request is too large to review here, so it can't be approved. Deny it.")
+      : jt('approval.block.exactUnavailable', "The exact request can't be shown, so it can't be approved. Deny it.");
+    return `<p class="tool-approval-message-note" data-approval-exact-unavailable="${reason}">${escapeHtml(note)}</p>`;
   }
 
   // What the folded preview counts, in the tool's own terms.
@@ -292,6 +348,50 @@
       + `</div>`;
   }
 
+  // Stopping another chat (row 69 Q11, owner 2026-10-20). The model names the chat only by id; the
+  // card names it from the app's own directory (title, project, live state) and says what the stop
+  // does in that state. The raw id never shows; a target that did not arrive reads as unnamed.
+  const SESSION_STOP_TOOL = 'session_stop';
+  const SESSION_STOP_STATES = new Set(['running', 'waiting_approval', 'queued', 'idle', 'not_found']);
+
+  function normalizeSessionStopApproval(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || value.schema_version !== 1) return null;
+    if (!SESSION_STOP_STATES.has(value.state)) return null;
+    if (value.state === 'not_found') return { state: 'not_found', title: '', project: '' };
+    const target = value.target;
+    if (!target || typeof target !== 'object' || typeof target.session_id !== 'string' || !target.session_id) return null;
+    const title = boundedText(target.title, SESSION_MESSAGE_TITLE_MAX_CHARS);
+    return {
+      state: value.state,
+      title: title && title !== 'New Chat' ? title : jt('chat.messages.untitledChat', 'Untitled chat'),
+      project: boundedText(target.project_label, SESSION_MESSAGE_PROJECT_MAX_CHARS),
+    };
+  }
+
+  function sessionStopEffect(state) {
+    switch (state) {
+      case 'running': return jt('approval.block.sessionStopRunning', 'Running now: its reply in progress is cancelled, and its waiting sends are cleared.');
+      case 'waiting_approval': return jt('approval.block.sessionStopApproval', 'Paused on your approval: that request is cancelled, and its waiting sends are cleared.');
+      case 'queued': return jt('approval.block.sessionStopQueued', 'Waiting to start: its waiting sends are cleared.');
+      case 'idle': return jt('approval.block.sessionStopIdle', 'Nothing is running there right now, so nothing is stopped.');
+      case 'not_found': return jt('approval.block.sessionStopNotFound', 'This chat can’t reach that one, so nothing is stopped.');
+      default: return '';
+    }
+  }
+
+  function renderSessionStopApproval(stop, escapeHtml) {
+    const title = stop ? (stop.title || jt('approval.block.sessionStopOtherChat', 'Another chat'))
+      : jt('approval.block.sessionStopUnnamed', 'A chat Jenny could not name');
+    const effect = stop ? sessionStopEffect(stop.state) : '';
+    return `<div class="tool-approval-message" data-approval-session-stop="${escapeHtml(stop ? stop.state : 'unknown')}">`
+      + `<div class="tool-approval-message-recipient"><span class="tool-approval-message-label">${escapeHtml(jt('approval.block.sessionStopLabel', 'Stop'))}</span>`
+      + `<span class="tool-approval-message-title">${escapeHtml(title)}</span>`
+      + (stop && stop.project ? `<span class="tool-approval-message-project">${escapeHtml(stop.project)}</span>` : '')
+      + `</div>`
+      + (effect ? `<p class="tool-approval-message-note">${escapeHtml(effect)}</p>` : '')
+      + `</div>`;
+  }
+
   function renderApprovalBlock(options, deps) {
     const source = options || {};
     const dependencies = deps || {};
@@ -306,6 +406,14 @@
     // body did not arrive intact has no Allow button, so the stock clipped preview never stands in.
     const sendsMessage = toolName === SESSION_MESSAGE_TOOL;
     const sessionMessage = sendsMessage ? normalizeSessionMessageApproval(source.sessionMessageApproval) : null;
+    // A caller that carries exact presentations passes the key even when the value is absent (a
+    // rehydrated row): a command or write without one then has no Allow, like a message without its
+    // body. A caller that never carries them (the legacy card) keeps the ordinary preview.
+    const needsExact = EXACT_APPROVAL_TOOLS.has(toolName);
+    const exactApproval = needsExact ? normalizeExactApproval(source.exactApproval) : null;
+    const exactUnavailable = exactApproval && exactApproval.tooLarge ? 'too_large'
+      : (needsExact && !exactApproval && Object.prototype.hasOwnProperty.call(source, 'exactApproval') ? 'missing' : '');
+    const withholdsAllow = (sendsMessage && !sessionMessage) || Boolean(exactUnavailable);
     const displayToolName = normalizeText(source.displayToolName) || toolName || jt('approval.block.thisTool', 'this tool');
     const mode = source.mode === 'card' ? 'card' : 'inline';
     const prompt = normalizeText(source.prompt)
@@ -331,7 +439,9 @@
       ? source.cardState : 'live';
     const rowIdentity = ` data-tool-call-id="${callIdAttr}" data-call-id="${callIdAttr}"${approvalAttrMarkup}`;
     if (source.cardState === 'resolved') {
-      const receipt = renderResolvedReceipt(source, displayToolName, escapeHtml);
+      const stopTarget = toolName === SESSION_STOP_TOOL ? normalizeSessionStopApproval(source.sessionStopApproval) : null;
+      const receipt = renderResolvedReceipt(source, displayToolName, escapeHtml, stopTarget && stopTarget.title
+        ? jt('approval.block.sessionStopSubject', 'Stop {title}', { title: stopTarget.title }) : '');
       const decisionAttr = ` data-approval-status="resolved" data-approval-decision="${receiptDecision(source.decision)}"`;
       return mode === 'inline'
         ? `<div class="approval-gap-row" role="status" aria-live="polite"${rowIdentity}${decisionAttr}>${receipt}</div>`
@@ -363,7 +473,10 @@
     const promptMarkup = `<${promptTag} class="tool-approval-prompt"`
       + ` data-approval-intent="${purpose ? 'stated' : 'derived'}">`
       + `${attributionMarkup}${escapeHtml(headline)}</${promptTag}>`;
-    const policyScope = normalizePolicyText(source.policyScope, POLICY_SCOPES);
+    // "Another chat" is the backend's scope for session_stop (shown via approval.scope.anotherChat).
+    const requestedScope = normalizeText(source.policyScope);
+    const policyScope = requestedScope === 'Another chat' ? requestedScope
+      : normalizePolicyText(source.policyScope, POLICY_SCOPES);
     const policyConsequence = normalizePolicyText(source.policyConsequence, POLICY_CONSEQUENCES);
     const localizedPolicyScope = translatePolicyText('approvalScope', policyScope);
     const localizedPolicyConsequence = translatePolicyText('approvalConsequence', policyConsequence);
@@ -397,16 +510,22 @@
     // meaningful to show or the preview would only repeat the headline.
     const commandText = String(source.commandText == null ? '' : source.commandText).trim();
     let commandMarkup = '';
-    if (sessionMessage) {
+    if (toolName === SESSION_STOP_TOOL) {
+      commandMarkup = renderSessionStopApproval(normalizeSessionStopApproval(source.sessionStopApproval), escapeHtml);
+    } else if (sessionMessage) {
       commandMarkup = renderSessionMessageApproval(sessionMessage, escapeHtml);
     } else if (sendsMessage) {
       commandMarkup = `<p class="tool-approval-message-note" data-approval-session-message-unavailable>`
         + `${escapeHtml(jt('approval.block.sessionMessageUnavailable', "The full message can't be shown, so it can't be approved. Deny it."))}</p>`;
+    } else if (exactUnavailable) {
+      commandMarkup = renderExactUnavailable(exactUnavailable, escapeHtml);
+    } else if (exactApproval) {
+      commandMarkup = renderExactApproval(exactApproval, escapeHtml);
     } else if (commandText && commandText !== headline) {
       const clipped = commandText.length > COMMAND_PREVIEW_MAX_CHARS
         ? jt('approval.block.clippedCommand', '{command}… (+{count} more chars)', { command: commandText.slice(0, COMMAND_PREVIEW_MAX_CHARS), count: commandText.length - COMMAND_PREVIEW_MAX_CHARS })
         : commandText;
-      const quoted = `<pre class="tool-approval-command"><code>${escapeHtml(clipped)}</code></pre>`;
+      const quoted = `<pre class="tool-approval-command"><code>${quotedArgumentMarkup(clipped, escapeHtml)}</code></pre>`;
       // A one-liner is shorter than the sentence describing it, so hiding it
       // behind a click costs more than it saves. Only a block gets folded.
       // Counted on the full text: the summary promises what the payload is,
@@ -423,7 +542,7 @@
     // travels on the button that was pressed.
     const buttonIdentity = ` data-tool-call-id="${callIdAttr}" data-call-id="${callIdAttr}"`
       + `${approvalAttrMarkup}`;
-    const alwaysAllowMarkup = sendsMessage || source.oneOffOnly === true || source.one_off_only === true ? ''
+    const alwaysAllowMarkup = sendsMessage || withholdsAllow || source.oneOffOnly === true || source.one_off_only === true ? ''
       : `<button class="tool-approve-btn tool-approve-always-btn" type="button" data-action="approve"`
         + ` data-approval-scope="always"${buttonIdentity}`
         + ` title="${escapeHtml(jt('approval.block.alwaysAllowTitle', 'Allow this tool call and stop asking for {tool}', { tool: displayToolName }))}"`
@@ -444,7 +563,7 @@
       + `<span class="tool-approval-paused-note">${escapeHtml(jt('approval.block.pausedNote', 'Resume to answer.'))}</span>`
       + `</div>`;
     const actionsMarkup = cardState === 'paused' ? pausedActionsMarkup : `<div class="tool-approval-actions">`
-      + (sendsMessage && !sessionMessage ? '' : `<button class="tool-approve-btn" type="button" data-action="approve"`
+      + (withholdsAllow ? '' : `<button class="tool-approve-btn" type="button" data-action="approve"`
       + ` data-approval-scope="once"${buttonIdentity}`
       + ` title="${escapeHtml(jt('approval.block.allowTitle', 'Allow this tool call'))}" aria-label="${escapeHtml(jt('approval.block.allowOnceAriaLabel', 'Allow {tool} once', { tool: displayToolName }))}">${escapeHtml(jt('approval.block.allowOnce', 'Allow once'))}</button>`)
       + alwaysAllowMarkup
@@ -460,10 +579,11 @@
       + `</div>`;
 
     if (mode === 'inline') {
-      // An exact-content message approval is decided only on its own card, never by a batch.
+      // An exact-content message approval, or a request with no Allow, is decided only on its own
+      // card, never by a batch.
       return `<div class="approval-gap-row" role="status" aria-live="polite"`
         + `${rowIdentity}`
-        + `${sendsMessage ? ' data-approval-exact="true"' : ''}`
+        + `${sendsMessage || withholdsAllow ? ' data-approval-exact="true"' : ''}`
         + ` data-approval-status="${approvalStatus}">`
         + `${block}`
         + `</div>`;
@@ -472,11 +592,13 @@
   }
 
   return {
+    EXACT_APPROVAL_TOOLS,
     applyApprovalReceipt,
     approvalCardStateKey,
     approvalKeepsReceipt,
     deriveApprovalReceipt,
     normalizeSessionMessageApproval,
+    normalizeSessionStopApproval,
     renderApprovalBlock,
     resolveApprovalCardState,
   };

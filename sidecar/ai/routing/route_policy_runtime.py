@@ -101,7 +101,8 @@ def build_approval_request(  # noqa: PLR0913 - router-owned value factory seam
     return approval_request_type(
         tool_name=descriptor.name,
         reason=reason,
-        tool_input={str(key): value for key, value in call.arguments.items()},
+        # Signed on approval; must equal what admission later checks (CMP-TOOL-0039).
+        tool_input=_tools_contracts.strip_private_arguments(call.arguments),
         mode=mode,
         tool_call_id=call_id,
         policy_decision_id=(

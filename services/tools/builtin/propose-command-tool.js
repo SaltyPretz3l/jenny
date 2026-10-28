@@ -3,6 +3,7 @@
 const {
   checkLiveCall, proposalFailure, publishProposal, resolveProposalDeps,
 } = require('./propose-tool-support');
+const { manifestSchema } = require('./tool-result');
 
 const NAME = 'propose_command';
 const RESULT = Object.freeze({
@@ -16,12 +17,11 @@ const RESULT = Object.freeze({
 // Records a command for the user to Copy or Run; it never executes anything.
 module.exports = {
   name: NAME,
-  description: 'Offer the user a concrete shell command they can Copy or Run from a card.',
+  ...manifestSchema(NAME),
   category: 'builtin',
   readOnly: true,
   sideEffecting: false,
   workspaceRequired: true,
-  parameters: {},
 
   // The command text is deliberately not echoed into the tool row.
   summarize() {

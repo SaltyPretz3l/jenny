@@ -20,6 +20,8 @@
 // strings (app.get('/api/users'), "GET /api/users"). Host filesystem roots
 // are the privacy payload; route-shaped slash strings are content.
 
+const { redactExactSecrets } = require('./exact-secret-redaction');
+
 const REDACTED_PATH_TOKEN = '[redacted:path]';
 const REDACTED_SECRET_TOKEN = '[redacted:secret]';
 const SECRET_VALUE_RE = /\bbearer\s+[A-Za-z0-9._~+/=-]{12,}|\bbasic\s+[A-Za-z0-9+/=]{8,}|\bsk-(?:proj-)?[A-Za-z0-9_-]{8,}|\bgh[pousr]_[A-Za-z0-9_-]{20,}|\b(?:sk|pk|tok|ghp|gho)_[A-Za-z0-9_-]{8,}/gi;
@@ -34,7 +36,7 @@ const UNIX_PATH_AFTER_DELIMITER_RE = /(["':=,])\/(?:Users|home|var|tmp|etc|opt|s
 const JSON_EXPORT_FORMATS = new Set(['json', 'session-json']);
 
 function redactExportSecrets(text) {
-  return String(text ?? '')
+  return redactExactSecrets(String(text ?? ''))
     .replace(SECRET_VALUE_RE, REDACTED_SECRET_TOKEN)
     .replace(SECRET_ASSIGNMENT_RE, (_match, prefix) => `${prefix}${REDACTED_SECRET_TOKEN}`);
 }

@@ -1348,6 +1348,20 @@ def test_vllm_error_object_frame_is_classified_as_failed() -> None:
     assert normalizer.terminal_finish_reason == FINISH_REASON_PROVIDER_ERROR
 
 
+def test_bare_error_frame_without_choices_is_classified_as_failed() -> None:
+    # OpenRouter-style mid-stream failure (the api-provider engine streams through
+    # the vllm path): no ``object`` marker, no choices.
+    normalizer = ProviderStreamNormalizer(provider="vllm")
+    events = _drain_chunk(normalizer, {"error": {"message": "upstream failed", "code": 502}})
+
+    assert [event.kind for event in events] == [NORMALIZED_KIND_FAILED]
+    assert normalizer.terminal_finish_reason == FINISH_REASON_PROVIDER_ERROR
+    # A chunk that still carries choices is content, not a bare error frame.
+    other = ProviderStreamNormalizer(provider="vllm")
+    _drain_chunk(other, {"error": {"message": "x"}, "choices": [{"delta": {"content": "a"}}]})
+    assert other.terminal_finish_reason != FINISH_REASON_PROVIDER_ERROR
+
+
 def test_duplicate_terminal_chunks_keep_the_latest_provider_verdict() -> None:
     # A provider that repeats its terminal frame must not flip the stream back
     # to "no evidence"; the last verdict stands and the stream stays terminal.

@@ -93,22 +93,28 @@ test('a stalled chatgpt token refresh settles at the inactivity deadline and rel
   );
 });
 
-test('a stalled auth phase rejects dedupe joiners together while a conflicting model stays busy', async () => {
-  const service = createService(async () => chatgptPayload());
+function stalledAuth(service) {
   service.chatgptAuthService = {
     getAccessToken: () => new Promise(() => {}),
     getCachedAccessToken: () => '',
     getAccountId: () => '',
     getCredentialEpoch: () => 1,
   };
+}
+
+test('a stalled auth phase rejects dedupe joiners together while a conflicting explicit model stays busy', async () => {
+  const service = createService(async () => chatgptPayload());
+  stalledAuth(service);
 
   const first = initializeManagedSidecarWithTimeout(service, {
     requestedEngineType: 'chatgpt',
+    requestedModel: 'gpt-5.5',
     inactivityTimeoutMs: 30,
     absoluteTimeoutMs: 400,
   });
   const joined = initializeManagedSidecarWithTimeout(service, {
     requestedEngineType: 'chatgpt',
+    requestedModel: 'gpt-5.5',
     inactivityTimeoutMs: 30,
     absoluteTimeoutMs: 400,
   });
@@ -126,6 +132,26 @@ test('a stalled auth phase rejects dedupe joiners together while a conflicting m
   assert.deepEqual(settled.map((entry) => entry.status), ['rejected', 'rejected']);
   assert.equal(settled[0].reason.error_code, 'CMP-SIDECAR-0001');
   assert.equal(settled[1].reason, settled[0].reason, 'the joiner shares the flight failure');
+  assert.equal(service._managedInitializeFlight, null);
+});
+
+// F2 (2026-10-27): a config refresh (no explicit model) yields to an explicit load instead of
+// failing it as busy: the explicit request waits for the refresh to settle, then runs its own flight.
+test('an explicit model waits out a stalled config refresh and then runs its own flight', async () => {
+  const service = createService(async () => chatgptPayload());
+  stalledAuth(service);
+  const refresh = initializeManagedSidecarWithTimeout(service, {
+    requestedEngineType: 'chatgpt', inactivityTimeoutMs: 30, absoluteTimeoutMs: 400,
+  });
+  const explicit = initializeManagedSidecarWithTimeout(service, {
+    requestedEngineType: 'chatgpt', requestedModel: 'different:1b', inactivityTimeoutMs: 30, absoluteTimeoutMs: 400,
+  });
+  const [refreshed, loaded] = await Promise.allSettled([refresh, explicit]);
+  assert.equal(refreshed.status, 'rejected');
+  assert.equal(refreshed.reason.error_code, 'CMP-SIDECAR-0001');
+  assert.equal(loaded.status, 'rejected');
+  assert.notEqual(loaded.reason.category, 'model_busy', 'never refused as busy behind a refresh');
+  assert.notEqual(loaded.reason, refreshed.reason, 'its own flight, not the refresh failure');
   assert.equal(service._managedInitializeFlight, null);
 });
 

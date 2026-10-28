@@ -40,19 +40,22 @@ function instancesOverlap(earlier, later) {
     && later.start < earlier.end;
 }
 
+// Sweep line over start-sorted instances: only still-open earlier instances
+// (end after this start) are compared, so a long listing is not O(n^2). The
+// open list stays in start order, matching the earlier index-order output.
 function computeOverlaps(instances) {
   const candidates = (Array.isArray(instances) ? instances : [])
     .filter(isTimedAndParseable)
     .sort(compareInstances);
   const overlaps = new Map();
-  for (let laterIndex = 1; laterIndex < candidates.length; laterIndex += 1) {
-    const later = candidates[laterIndex];
-    for (let earlierIndex = 0; earlierIndex < laterIndex; earlierIndex += 1) {
-      const earlier = candidates[earlierIndex];
+  let open = [];
+  for (const later of candidates) {
+    open = open.filter((earlier) => earlier.end > later.start);
+    const laterId = normalizeString(later.instanceId);
+    for (const earlier of open) {
       if (!instancesOverlap(earlier, later)) continue;
-      const laterId = normalizeString(later.instanceId);
       const current = overlaps.get(laterId) || [];
-      if (current.length >= MAX_OVERLAPS_PER_INSTANCE) continue;
+      if (current.length >= MAX_OVERLAPS_PER_INSTANCE) break;
       current.push({
         instance_id: normalizeString(earlier.instanceId),
         title: text(earlier.title),
@@ -60,6 +63,7 @@ function computeOverlaps(instances) {
       });
       overlaps.set(laterId, current);
     }
+    open.push(later);
   }
   return overlaps;
 }
@@ -188,6 +192,8 @@ function shapeReceipt({
 
 module.exports = {
   MAX_METADATA_INSTANCES,
+  MAX_METADATA_TITLE_CHARS,
+  MAX_OVERLAPS_PER_INSTANCE,
   computeOverlaps,
   indexRecentJournal,
   shapeCalendarMetadata,

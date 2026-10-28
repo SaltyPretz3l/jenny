@@ -21,7 +21,11 @@ from sidecar.ai.config import read_environment_value
 from sidecar.ai.engines.base import EMPTY_ASSISTANT_CONTENT_PLACEHOLDER, EngineMessage
 from sidecar.ai.tools.inband_parser import _gen_inband_call_id
 from sidecar.ai.tools.models import GenerationResult, ToolCallRequest
-from sidecar.ai.tools.tool_call_healing import is_healing_enabled, repair_json_payload
+from sidecar.ai.tools.tool_call_healing import (
+    CHARACTER_LEVEL_ARGUMENT_REPAIRS,
+    is_healing_enabled,
+    repair_json_payload,
+)
 
 if TYPE_CHECKING:
     from sidecar.ai.engines.codex_cli import CodexCliProcessResult
@@ -95,11 +99,6 @@ _MAX_EVENT_KINDS = 24
 _MAX_DIAGNOSTIC_ENTRIES = 8
 # A reply carrying either schema key is an envelope attempt, never legacy text.
 _ENVELOPE_KEY_RE = re.compile(r'"(?:message|tool_calls)"\s*:')
-# Character-level fixes only: a repair that strips or closes structure can
-# keep the first of several objects or a cut-off body, which is not the call.
-_SAFE_ARGUMENT_REPAIRS = frozenset(
-    {"ascii_quotes", "python_literals", "single_quotes", "trailing_comma"}
-)
 
 
 def _structured_tools_enabled() -> bool:
@@ -307,7 +306,8 @@ def _decode_arguments_object(text: str) -> dict[str, Any] | None:
     if not is_healing_enabled():
         return None
     healed = repair_json_payload(text)
-    if not _SAFE_ARGUMENT_REPAIRS.issuperset(healed.repairs):
+    # The repair policy's shared set: nothing that strips or closes structure.
+    if not CHARACTER_LEVEL_ARGUMENT_REPAIRS.issuperset(healed.repairs):
         return None
     return healed.value or None
 

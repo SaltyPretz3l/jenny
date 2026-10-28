@@ -8,6 +8,7 @@ const path = require('node:path');
 
 const { executeElectronToolRequest } = require('../services/backend/electron-tool-bridge');
 const { SessionExecutionAuthority } = require('../services/backend/session-execution-authority');
+const { posixOnly } = require('./helpers/platform-skips');
 
 const UUID = /^[a-f0-9-]{36}$/u;
 
@@ -219,7 +220,7 @@ test('an aborted job stops waiting for the staging lock', async () => {
   } finally { fx.cleanup(); }
 });
 
-test('hosted staging keeps POSIX-legal names that desktop rejects', { skip: process.platform === 'win32' }, async () => {
+test('hosted staging keeps POSIX-legal names that desktop rejects', { skip: posixOnly('colon and backslash filenames cannot be created on Windows') }, async () => {
   const fx = fixture();
   try {
     fs.writeFileSync(path.join(fx.project, 'log:2026.txt'), 'x');

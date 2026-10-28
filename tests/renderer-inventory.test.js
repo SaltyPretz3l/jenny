@@ -815,3 +815,13 @@ test('icon-mode copy keeps the SVG glyphs intact and announces via aria-label', 
   // Success is announced on the accessible name since there is no visible text.
   assert.equal(button.getAttribute('aria-label'), 'Copied', 'aria-label mirrors copy success');
 });
+
+test('collapsible document handlers ignore a synthetic event without an Element target', () => {
+  const listeners = {};
+  const rootEl = { addEventListener(type, handler) { listeners[type] = handler; } };
+  Collapsible.initCollapsibleHandlers(rootEl);
+  assert.ok(listeners.click && listeners.keydown, 'both handlers installed');
+  // A keydown dispatched on `document` itself (agent driver, gate run 2026-10-20) has no `closest`.
+  assert.doesNotThrow(() => listeners.keydown({ target: {}, key: 'Escape', preventDefault() {} }));
+  assert.doesNotThrow(() => listeners.click({ target: null, preventDefault() {} }));
+});

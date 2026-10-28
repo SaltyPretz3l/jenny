@@ -9,7 +9,7 @@ const {
   createIdeExplorerWiring,
 } = require('../renderer/features/renderer-ide-explorer-wiring');
 
-function createHarness({ terminalAvailable = true, rootContext } = {}) {
+function createHarness({ terminalAvailable = true, rootContext, canAdd } = {}) {
   const dom = new JSDOM('<div id="host"></div>');
   const host = dom.window.document.getElementById('host');
   const calls = [];
@@ -20,6 +20,11 @@ function createHarness({ terminalAvailable = true, rootContext } = {}) {
       calls.push(`send:${builder('bash', '/stale-session')}`);
       return Promise.resolve(true);
     },
+    // Row 82 T2: a terminal set with room starts a new terminal in the folder.
+    ...(canAdd === undefined ? {} : {
+      canAdd: () => canAdd,
+      newTerminal(opts) { calls.push(`new:${JSON.stringify(opts)}`); return 'terminal-2'; },
+    }),
   } : null;
   const context = rootContext === undefined
     ? { rootPath: '/workspace', rootId: 'root-a', generation: 1, phase: 'ready' }
@@ -132,4 +137,16 @@ test('terminal cd command quotes powershell, cmd, and POSIX paths safely', () =>
   assert.equal(buildTerminalCdCommand('powershell', 'C:/Work', 'src[1]'),
     "Set-Location -LiteralPath 'C:/Work/src[1]'");
   assert.equal(buildTerminalCdCommand('zsh', '/work', '$(evil)/`tick`'), "cd '/work/$(evil)/`tick`'");
+});
+
+test('Open in Terminal starts a new terminal in the folder when one can be added (row 82 T2)', async (t) => {
+  const roomy = createHarness({ canAdd: true });
+  const full = createHarness({ canAdd: false });
+  t.after(() => { roomy.dispose(); full.dispose(); });
+  await clickMenuItem(roomy.menu('directory'), 'Open in Terminal');
+  assert.deepEqual(roomy.calls, ['open:terminal', 'new:{"start":true,"cwd":"src"}']);
+  await clickMenuItem(roomy.menu('root'), 'Open in Terminal');
+  assert.equal(roomy.calls.at(-1), "send:cd '/workspace'", 'the root itself cds the main terminal');
+  await clickMenuItem(full.menu('directory'), 'Open in Terminal');
+  assert.deepEqual(full.calls, ['open:terminal', "send:cd '/workspace/src'"], 'at the four-terminal cap the main terminal cds');
 });

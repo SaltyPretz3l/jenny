@@ -153,13 +153,18 @@ def no_process(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(shell, "start_background_job", unexpected_launch)
 
 
-@pytest.mark.parametrize("tool_name", ["run_command", "run_temp_script"])
-@pytest.mark.parametrize("background", [False, True])
+@pytest.mark.parametrize(
+    ("tool_name", "background"),
+    [
+        pytest.param("run_command", False, id="run_command-foreground"),
+        pytest.param("run_command", True, id="run_command-background"),
+        # run_temp_script has no background mode, so it has no background pair.
+        pytest.param("run_temp_script", False, id="run_temp_script-foreground"),
+    ],
+)
 def test_failed_validation_releases_the_lease_and_the_next_tool_is_admitted(
     tmp_path: Path, no_process: None, tool_name: str, background: bool,
 ) -> None:
-    if tool_name == "run_temp_script" and background:
-        pytest.skip("run_temp_script has no background mode")
     (tmp_path / "marker.txt").write_text("still-readable", encoding="utf-8")
     server, gateway = _Server(tmp_path), _Gateway()
     arguments: dict[str, Any] = (

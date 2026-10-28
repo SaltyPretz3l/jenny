@@ -22,6 +22,36 @@
   var STARTUP_LINE_REFRESH_MS = 250;
   var DEFAULT_STARFIELD_MIN_HOLD_MS = 900;
   var DEFAULT_STARFIELD_COLLAPSE_MS = 750;
+  var DEFAULT_STARFIELD_QUICK_COLLAPSE_MS = 250;
+  // The full sky (hold plus the long collapse) is the first impression: a
+  // profile sees it once, then later launches skip the hold, collapse fast and
+  // let input through during the collapse (owner, 2026-10-19).
+  var STARTUP_FULL_SKY_SEEN_KEY = 'jenny.startup.fullSkySeen';
+
+  function startupStorage(doc) {
+    try {
+      var win = doc && doc.defaultView;
+      return win && win.localStorage ? win.localStorage : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function readFullSkySeen(doc) {
+    try {
+      var storage = startupStorage(doc);
+      return Boolean(storage && storage.getItem(STARTUP_FULL_SKY_SEEN_KEY) === '1');
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function markFullSkySeen(doc) {
+    try {
+      var storage = startupStorage(doc);
+      if (storage) { storage.setItem(STARTUP_FULL_SKY_SEEN_KEY, '1'); }
+    } catch (_error) { /* storage unavailable: the next launch shows the full sky again */ }
+  }
   var ERROR_CODE_PATTERN = /CMP-[A-Z]+-\d{4}/;
 
   var STARTUP_OVERLAY_CONTINUE_ACTION = 'startup-continue';
@@ -322,8 +352,10 @@
     var starfieldModule = typeof globalThis !== 'undefined' ? globalThis.rendererStartupStarfield : null;
     var starfieldMinHoldMs = (starfieldModule && Number(starfieldModule.MIN_HOLD_MS)) || DEFAULT_STARFIELD_MIN_HOLD_MS;
     var starfieldCollapseMs = (starfieldModule && Number(starfieldModule.COLLAPSE_MS)) || DEFAULT_STARFIELD_COLLAPSE_MS;
+    var starfieldQuickCollapseMs = (starfieldModule && Number(starfieldModule.QUICK_COLLAPSE_MS)) || DEFAULT_STARFIELD_QUICK_COLLAPSE_MS;
 
     var overlayDocument = startupOverlay && (startupOverlay.ownerDocument || (typeof document !== 'undefined' ? document : null));
+    var returningLaunch = readFullSkySeen(overlayDocument);
     var startupSky = null;
     var startupSkyMountedAt = 0;
 
@@ -490,6 +522,7 @@
       }
       setStartupOverlayBackgroundInert(startupOverlay, false);
       try { globalThis.__jennyStartupAudit?.mark?.('shell-interactive'); } catch (error) { logIgnoredError('startup_audit_mark', error); }
+      try { globalThis.__jennyStartupAudit?.markComposerInteractive?.(overlayDocument, 'curtain-removed'); } catch (error) { logIgnoredError('startup_audit_mark', error); }
       if (!lifecycleControllerDisposed) {
         if (onStartupRemoved) { try { onStartupRemoved(); } catch (error) { logIgnoredError('startup_removed', error); } }
       }
@@ -509,7 +542,7 @@
       retireSkyWhenSwitchedOff();
       var animating = isSkyAnimating();
       // A warm start still gets a short sky: never collapse before the hold.
-      var holdLeft = animating && !(options && options.skipHold)
+      var holdLeft = animating && !returningLaunch && !(options && options.skipHold)
         ? Math.ceil(starfieldMinHoldMs - (now() - startupSkyMountedAt))
         : 0;
       if (holdLeft > 0) {
@@ -523,6 +556,7 @@
       }
       startupOverlayDismissed = true;
       clearStartupOverlayTimers();
+      if (!returningLaunch) { markFullSkySeen(overlayDocument); }
       if (onStartupReady) { try { onStartupReady(); } catch (error) { logIgnoredError('startup_ready', error); } }
       if (animating && startupOverlay.style) {
         // The stars drive the fade; the class marks dismissal while the
@@ -533,9 +567,16 @@
       }
       startupOverlay.classList.add('hidden');
       if (animating) {
-        startupSky.collapse({ onDone: removeStartupOverlayNode });
+        var collapseMs = returningLaunch ? starfieldQuickCollapseMs : starfieldCollapseMs;
+        if (returningLaunch) {
+          // A returning launch hands input to the shell as the collapse starts.
+          setStartupOverlayBackgroundInert(startupOverlay, false);
+          if (startupOverlay.style) { startupOverlay.style.pointerEvents = 'none'; }
+          try { globalThis.__jennyStartupAudit?.markComposerInteractive?.(overlayDocument, 'input-released'); } catch (error) { logIgnoredError('startup_audit_mark', error); }
+        }
+        startupSky.collapse({ onDone: removeStartupOverlayNode, durationMs: collapseMs });
         if (startupOverlayDismissed && !startupOverlayRemoved && !startupOverlayRemovalTimer) {
-          startupOverlayRemovalTimer = setTimeout(removeStartupOverlayNode, starfieldCollapseMs + STARTUP_OVERLAY_COLLAPSE_FALLBACK_SLACK_MS);
+          startupOverlayRemovalTimer = setTimeout(removeStartupOverlayNode, collapseMs + STARTUP_OVERLAY_COLLAPSE_FALLBACK_SLACK_MS);
         }
         return;
       }
@@ -577,6 +618,7 @@
     function notifyShellHydrated() {
       if (lifecycleControllerDisposed || startupShellHydrated) { return; }
       startupShellHydrated = true;
+      try { globalThis.__jennyStartupAudit?.markOnce?.('shell-hydrated'); } catch (error) { logIgnoredError('startup_audit_mark', error); }
       maybeDismissStartupOverlay();
     }
 

@@ -168,9 +168,12 @@
       return { now: Math.round(now), min: min, max: Math.min(o.model.SIZE_MAX, Math.round(max)) };
     }
 
+    // A resolved target carries its range (read once per drag/key press), so a
+    // pointermove never re-reads the font scale (getComputedStyle).
     function clamp(node, dir, px, target) {
       const max = target && Number.isFinite(target.maxPx) ? target.maxPx : o.model.SIZE_MAX;
-      return Math.min(max, Math.max(o.model.minExtent(node, dir, o.getFontScale()), Math.round(px)));
+      const min = target && Number.isFinite(target.minPx) ? target.minPx : o.model.minExtent(node, dir, o.getFontScale());
+      return Math.min(max, Math.max(min, Math.round(px)));
     }
 
     function resolve(sashEl) {
@@ -185,6 +188,7 @@
       const child = split.children[at];
       if (child.size === null) return null;
       const sizes = rendered.solved ? rendered.solved.sizes : {};
+      const bounds = range(split, at, rendered.solved);
       return {
         splitId: splitId,
         childId: child.node.id,
@@ -193,7 +197,8 @@
         cell: rendered.refs.splits.get(splitId).cells[at],
         node: child.node,
         storedPx: Number.isFinite(sizes[child.node.id]) ? sizes[child.node.id] : child.size,
-        maxPx: range(split, at, rendered.solved).max,
+        minPx: bounds.min,
+        maxPx: bounds.max,
       };
     }
 
@@ -208,9 +213,7 @@
   }
 
   return {
-    KEY_STEP: KEY_STEP,
     createSashTargets: createSashTargets,
-    END_GROW: END_GROW,
     isRtl: isRtl,
     buildSash: buildSash,
     createSash: createSash,

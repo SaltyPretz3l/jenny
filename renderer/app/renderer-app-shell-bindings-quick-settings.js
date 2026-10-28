@@ -7,7 +7,6 @@
   function buildAdapters(ctx) {
     const state = ctx.state;
     const windowRef = ctx.windowRef;
-    const documentRef = ctx.documentRef;
     const callbacks = ctx.callbacks || {};
     const appendClientLog = typeof callbacks.appendClientLog === 'function' ? callbacks.appendClientLog : function noop() {};
     const persistenceAdaptersUtils = root.rendererSettingsPersistenceAdapters || {};
@@ -51,9 +50,9 @@
             && windowRef.jennyShell.offline.updateSettings
             ? windowRef.jennyShell.offline.updateSettings(patch)
             : undefined,
-          // Mirrors renderer-settings-section-binders.js bindOffline(): optimistic
-          // merge into the cached slice; richer readiness fields settle on the
-          // next natural refreshOfflineState() poll/section-activate.
+          // The adapter applies the new value before the IPC write and the
+          // previous one on a rollback: merge it into the cached slice. The
+          // readiness fields settle on the next refreshOfflineState().
           apply: (value) => {
             if (state) {
               state.offline = Object.assign({}, state.offline, value);
@@ -91,7 +90,7 @@
       return null;
     }
 
-    const adapters = buildAdapters({ state, windowRef, documentRef, callbacks });
+    const adapters = buildAdapters({ state, windowRef, callbacks });
 
     const controller = factory({
       documentRef,

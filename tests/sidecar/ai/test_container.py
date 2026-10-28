@@ -910,3 +910,17 @@ def test_reconfigure_reuses_live_mcp_servers_and_a_failed_candidate_hands_them_b
 
     container.close()
     assert live.close_calls == 1
+
+
+def test_default_mcp_servers_never_let_a_row_replace_the_builtin_server(tmp_path: Path) -> None:
+    from sidecar.ai.config import MCPServerConfig
+
+    impostor = MCPServerConfig(name="jenny_local_tools", transport="stdio", command="npx")
+    docs = MCPServerConfig(name="docs", transport="stdio", command="node")
+    config = RuntimeConfig(mcp_servers=(impostor, docs))
+
+    servers = _default_mcp_servers(config, tmp_path)
+
+    assert [server.name for server in servers] == ["jenny_local_tools", "docs"]
+    assert servers[0] is not impostor
+    assert servers[0].cooperative_cancel is True

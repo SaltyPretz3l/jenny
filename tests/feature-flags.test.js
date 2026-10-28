@@ -20,6 +20,15 @@ test('session runtime defaults on and environment OFF cannot be overridden by st
   assert.deepEqual(normalizeFeatureOverrides({ session_runtime: true }), {});
 });
 
+test('dictation (row 84) defaults on, follows the Settings switch, and the env OFF beats a stored ON', () => {
+  assert.equal(buildFeatureFlags({}).dictation, true);
+  assert.ok(FEATURE_OVERRIDE_KEYS.includes('dictation'));
+  assert.equal(buildFeatureFlags({}, { dictation: false }).dictation, false);
+  assert.equal(buildFeatureFlags({ JENNY_ENABLE_DICTATION: '0' }).dictation, false);
+  assert.equal(buildFeatureFlags({ JENNY_ENABLE_DICTATION: '0' }, { dictation: true }).dictation, false);
+  assert.equal(FORCE_DENY_ENV_KEYS.dictation, 'JENNY_ENABLE_DICTATION');
+});
+
 test('isFeatureEnabledByDefault falls back to the provided default for empty values', () => {
   assert.equal(isFeatureEnabledByDefault('', true), true);
   assert.equal(isFeatureEnabledByDefault('', false), false);
@@ -505,6 +514,13 @@ test('failure_retry_reasoning_carry is retired with the failed-attempt reasoning
 
 test('desktop_notifications is a default-on internal kill switch, not a user override', () => {
   assert.equal(buildFeatureFlagDefaults({}).desktop_notifications, true);
+  // Quiet agent launches default it off; JENNY_AGENT_QUIET=0 or the explicit switch restores it.
+  assert.equal(buildFeatureFlagDefaults({ JENNY_AGENT_DEV: '1' }).desktop_notifications, false);
+  assert.equal(buildFeatureFlagDefaults({ JENNY_AGENT_DEV: '1', JENNY_AGENT_QUIET: '0' }).desktop_notifications, true);
+  assert.equal(
+    buildFeatureFlagDefaults({ JENNY_AGENT_DEV: '1', JENNY_ENABLE_DESKTOP_NOTIFICATIONS: '1' }).desktop_notifications,
+    true
+  );
   assert.equal(
     buildFeatureFlagDefaults({ JENNY_ENABLE_DESKTOP_NOTIFICATIONS: '0' }).desktop_notifications,
     false

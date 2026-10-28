@@ -26,10 +26,13 @@ from sidecar.ai.routing import loop_event_emit, route_policy_runtime
 from sidecar.ai.routing import router as _router
 from sidecar.ai.routing import tool_resource_deferral as _tool_resource_deferral
 from sidecar.ai.routing import tool_restored_inputs as _tool_restored_inputs
+from sidecar.ai.routing.tool_resolution import contract_entry_for_call
 from sidecar.ai.tools import assembly as _tool_assembly
 from sidecar.ai.tools import contracts as _tool_contracts
 from sidecar.ai.tools import sanitization as _sanitization
 from sidecar.ai.tools import schema_examples as _tools_schema_examples
+from sidecar.ai.tools.failure_taxonomy import classify as _classify_failure
+from sidecar.ai.tools.failure_taxonomy import failure_log_level
 from sidecar.ai.tools.plan_artifact_policy import is_plan_artifact_write_eligible
 from sidecar.ai.tools.policy import tool_policy_call_key
 from sidecar.ai.tools.tool_actions import effective_side_effecting
@@ -102,6 +105,7 @@ def should_pause_for_live_prompt(
     *,
     approvals_pre_granted: bool,
     scan_approval_mode: str | None,
+    tool_contract: Any | None = None,
 ) -> bool:
     live_run_mode = current_live_run_mode_state()
     if live_run_mode is None or live_run_mode.snapshot()[0] != "prompt":
@@ -113,7 +117,10 @@ def should_pause_for_live_prompt(
         return False
     if call.tool_id == TOOL_SEARCH_TOOL_NAME:
         return False
-    descriptor = kernel._mcp_client.tool_descriptor(call.tool_id)
+    # The contract entry first: Electron-owned tools (worktree_*, session_message,
+    # home, task_board, propose_*) have no client descriptor, so the unattended
+    # pause never fired for them (tool review C2 #2).
+    _entry, descriptor = contract_entry_for_call(kernel, tool_contract, call.tool_id)
     return descriptor is not None and effective_side_effecting(descriptor, call.arguments) is True
 
 
@@ -293,8 +300,11 @@ def pre_filter_tool_calls(  # noqa: PLR0913
     for call in tool_calls:
         kernel._assert_valid_tool_call(call)
         outcome_index += 1
-        entry = tool_contract.entry(call.tool_id) if tool_contract is not None else None
-        descriptor = entry.descriptor if entry is not None else None
+        entry, descriptor = (
+            contract_entry_for_call(kernel, tool_contract, call.tool_id)
+            if tool_contract is not None
+            else (None, None)
+        )
 
         tool_result = _preparation_blocked(call, getattr(runtime, "request_context", None))
         if (
@@ -540,6 +550,7 @@ def execute_tool_calls_sequentially(  # noqa: C901, PLR0912, PLR0913, PLR0915
                 call,
                 approvals_pre_granted=approvals_pre_granted,
                 scan_approval_mode=scan_approval_mode,
+                tool_contract=tool_contract,
             ):
                 message = (
                     f"Tool '{call.tool_id}' was not executed: auto run was paused because "
@@ -648,11 +659,14 @@ def execute_tool_calls_sequentially(  # noqa: C901, PLR0912, PLR0913, PLR0915
                 key: value for key, value in exc.to_error_data().items()
             }
             failure_metadata.update(_failure_review_metadata(exc))
+            # The outcome carries no retryable flag: settle the class while the failure does.
+            failure_metadata.setdefault("failure_class", _classify_failure(
+                exc.code, retryable=exc.retryable, error_details=failure_metadata))
             # HB-017: the failure text keeps real paths for the model; the log does not.
             log_message = _sanitization.redact_error_paths(exc.message)
             log_event(
                 logger,
-                logging.WARNING,
+                failure_log_level(exc.code, error_details=failure_metadata),
                 component="ai.router",
                 event="ai.router.tool_execution_recovered",
                 message=log_message,
@@ -671,14 +685,8 @@ def execute_tool_calls_sequentially(  # noqa: C901, PLR0912, PLR0913, PLR0915
                 f"Tool '{call.tool_id}' failed: {_sentence(exc.message)}"
                 f"{_plan_mode_outside_root_hint(exc.code, request_context)}"
             )
-            if (
-                getattr(
-                    getattr(kernel, "_config", None),
-                    "tool_result_envelope_enabled",
-                    False,
-                )
-                is not True
-            ):
+            config = getattr(kernel, "_config", None)
+            if getattr(config, "tool_result_envelope_enabled", False) is not True:
                 failure_output += (
                     " Review the error and retry with corrected arguments if applicable."
                 )
@@ -721,13 +729,6 @@ def execute_tool_calls_sequentially(  # noqa: C901, PLR0912, PLR0913, PLR0915
             )
             return boundary
     return None
-
-
-__all__ = [
-    "execute_tool_calls_sequentially",
-    "pre_filter_tool_calls",
-    "settle_after_turn_boundary",
-]
 
 
 APPROVAL_WINDOW_DROPPED_OUTPUT_TEMPLATE = (
@@ -918,14 +919,9 @@ def prevalidate_call_arguments(
     """
     if call.tool_id == "delegate":
         return None
-    entry = tool_contract.entry(call.tool_id) if tool_contract is not None else None
+    entry, descriptor = contract_entry_for_call(kernel, tool_contract, call.tool_id)
     if entry is not None and not entry.available:
         return None
-    descriptor = (
-        entry.descriptor
-        if entry is not None
-        else kernel._mcp_client.tool_descriptor(call.tool_id)
-    )
     if descriptor is None or (
         call.coerced and not effective_side_effecting(descriptor, call.arguments)
     ):
@@ -988,3 +984,10 @@ def _launcher_refusal(descriptor: Any, arguments: Any) -> dict[str, Any] | None:
         },
         "error_code": _tool_support.CMP_TOOL_COMMAND_BLOCKED,
     }
+
+
+__all__ = [
+    "execute_tool_calls_sequentially", "pre_filter_tool_calls", "preparation_refusal",
+    "prevalidate_call_arguments", "settle_after_turn_boundary", "settle_dropped_tool_calls",
+    "should_pause_for_live_prompt",
+]

@@ -78,6 +78,7 @@ const PROTOCOL_ERROR_CODES = Object.freeze({
 // that discriminates WHICH failure a cloud provider_code stands for.
 const PROVIDER_CLASSIFICATIONS = Object.freeze({
   INVALID_API_KEY: 'invalid_api_key',
+  REDIRECT_REFUSED: 'redirect_refused',
 });
 
 const LOOP_PROTOCOL_ERROR_CODES = Object.freeze({
@@ -95,6 +96,15 @@ const LOOP_PROTOCOL_ERROR_CODES = Object.freeze({
 
 const HARNESS_ERROR_CODES = Object.freeze({
   TURN_NOT_FOUND: 'CMP-HARN-0001',
+});
+
+// Local push-to-talk dictation: the sidecar speech.prepare / speech.transcribe
+// requests carry these on error.rpc.data.error_code.
+const SPEECH_ERROR_CODES = Object.freeze({
+  MODEL_INVALID: 'CMP-SPEECH-0001',
+  INVALID_AUDIO: 'CMP-SPEECH-0002',
+  ENGINE_FAILED: 'CMP-SPEECH-0003',
+  PACKAGE_UNAVAILABLE: 'CMP-SPEECH-0004',
 });
 
 // Composer spellcheck context menu (services/main/spellcheck-menu-bridge.js).
@@ -199,6 +209,19 @@ const WORKSPACE_FS_ERROR_CODES = Object.freeze({
   OPEN_FAILED: 'CMP-WORKSPACEFS-0062',
 });
 
+// Row 82 E3 hot exit backups (main-owned store under userData, root-scoped by the
+// root context, never by the renderer). Root-not-ready and flag-off are result
+// codes on the IPC handlers (root_transitioning, DISABLED), not raised.
+const WORKSPACE_BACKUP_ERROR_CODES = Object.freeze({
+  DISABLED: 'CMP-WSBACKUP-0001',
+  INVALID_ROOT: 'CMP-WSBACKUP-0002',
+  INVALID_PATH: 'CMP-WSBACKUP-0003',
+  INVALID_PAYLOAD: 'CMP-WSBACKUP-0004',
+  TOO_LARGE: 'CMP-WSBACKUP-0005',
+  QUOTA_EXCEEDED: 'CMP-WSBACKUP-0006',
+  IO_FAILED: 'CMP-WSBACKUP-0007',
+});
+
 // Workspace IDE integrated terminal (renderer-initiated, root-scoped cwd).
 const TERMINAL_ERROR_CODES = Object.freeze({
   SPAWN_FAILED: 'CMP-TERMINAL-0001',
@@ -207,6 +230,9 @@ const TERMINAL_ERROR_CODES = Object.freeze({
   // 0004: the @lydell/node-pty native module failed to load (missing prebuild
   // / electron ABI mismatch). Emitted by the WorkspacePtyService fail-soft path.
   MODULE_LOAD_FAILED: 'CMP-TERMINAL-0004',
+  // 0005: a requested start folder is not an existing directory inside the
+  // workspace root once links are resolved (row 82 T2, "Open in Terminal").
+  CWD_OUTSIDE_ROOT: 'CMP-TERMINAL-0005',
 });
 
 // Workspace IDE SCM foundation (renderer-initiated, root-scoped, default-off).
@@ -226,6 +252,8 @@ const WORKSPACE_GIT_ERROR_CODES = Object.freeze({
   LINE_RANGE_INVALID: 'CMP-GIT-0011',
   COMMIT_MESSAGE_EMPTY: 'CMP-GIT-0020',
   GIT_COMMAND_FAILED: 'CMP-GIT-0040',
+  // Row 82 G2: applyPatch refused a patch that is not one in-root single-file text diff.
+  PATCH_INVALID: 'CMP-GIT-0410',
 });
 
 // Workspace IDE Test Runner (renderer-initiated, root-scoped, default-off).
@@ -354,6 +382,34 @@ const HOST_ERROR_CODES = Object.freeze({
   LIMIT: 'CMP-HOST-0007',
 });
 
+// Jenny CLI host (services/cli-host/): the in-process local-only composition,
+// its profile lock and its run-scoped permission ceiling. Every CLI failure
+// reaches the agent as a cli.v1 `error` or `result` frame carrying one of these.
+const CLI_ERROR_CODES = Object.freeze({
+  NO_SECURE_STORAGE: 'CMP-CLI-0001',
+  ENGINE_NOT_LOCAL: 'CMP-CLI-0002',
+  TOOL_REGISTRY_DRIFT: 'CMP-CLI-0003',
+  INVALID_OPTION: 'CMP-CLI-0004',
+  PROFILE_BUSY: 'CMP-CLI-0005',
+  PROFILE_LOCK_LOST: 'CMP-CLI-0006',
+  PROFILE_LOCK_UNAVAILABLE: 'CMP-CLI-0007',
+  INVALID_POLICY: 'CMP-CLI-0008',
+  HOST_STATE: 'CMP-CLI-0009',
+  WORK_WAIT: 'CMP-CLI-0010',
+});
+
+// The desktop app's opt-in "Install command-line tool" action
+// (services/cli-path-service.js): the user PATH entry for the packaged
+// resources/bin shim. Its own 01xx range so the CLI host keeps 0001-0099.
+const CLI_PATH_ERROR_CODES = Object.freeze({
+  UNSUPPORTED: 'CMP-CLI-0101',
+  SHIM_MISSING: 'CMP-CLI-0102',
+  PATH_INVALID: 'CMP-CLI-0103',
+  REGISTRY_FAILED: 'CMP-CLI-0104',
+  PATH_CHANGED: 'CMP-CLI-0105',
+  BUSY: 'CMP-CLI-0106',
+});
+
 const PROJECT_ERROR_CODES = Object.freeze({
   INVALID: 'CMP-PROJECT-0001',
   NOT_FOUND: 'CMP-PROJECT-0002',
@@ -425,6 +481,19 @@ const MESSAGE_ERROR_CODES = Object.freeze({
   STALE_OPERATION: 'CMP-MESSAGE-0012',
 });
 
+// Primary Jenny chat controls bridge (row 76): permissions, activity, pause, reset. Wire-stable;
+// the response `reason` stays the stable enum.
+const PRIMARY_ERROR_CODES = Object.freeze({
+  INVALID_REQUEST: 'CMP-PRIMARY-0001',
+  UNAVAILABLE: 'CMP-PRIMARY-0002',
+  DISABLED: 'CMP-PRIMARY-0003',
+  NOT_FOUND: 'CMP-PRIMARY-0004',
+  BUSY: 'CMP-PRIMARY-0005',
+  CAPACITY: 'CMP-PRIMARY-0006',
+  UNKNOWN_PROJECT: 'CMP-PRIMARY-0007',
+  COPY_FAILED: 'CMP-PRIMARY-0008',
+});
+
 // Live inference metrics and GPU-pressure bridge (row 59 checkpoint 6). Wire-stable;
 // the response `reason` stays the stable enum, the code is the class frozen in the plan.
 const PERFORMANCE_ERROR_CODES = Object.freeze({
@@ -440,10 +509,13 @@ module.exports = {
   PERFORMANCE_ERROR_CODES,
   PROPOSAL_ERROR_CODES,
   MESSAGE_ERROR_CODES,
+  PRIMARY_ERROR_CODES,
   CONFIG_ERROR_CODES,
   RUNTIME_ERROR_CODES,
   UPDATER_ERROR_CODES,
   HOST_ERROR_CODES,
+  CLI_ERROR_CODES,
+  CLI_PATH_ERROR_CODES,
   PROJECT_ERROR_CODES,
   AI_ERROR_CODES,
   SIDECAR_ERROR_CODES,
@@ -460,6 +532,7 @@ module.exports = {
   SETUP_ERROR_CODES,
   SPELLCHECK_ERROR_CODES,
   HARNESS_ERROR_CODES,
+  SPEECH_ERROR_CODES,
   ARTIFACT_ERROR_CODES,
   PERSIST_ERROR_CODES,
   PERSONALITY_ERROR_CODES,
@@ -470,6 +543,7 @@ module.exports = {
   RUN_TASK_ERROR_CODES,
   TERMINAL_ERROR_CODES,
   TOOL_ERROR_CODES,
+  WORKSPACE_BACKUP_ERROR_CODES,
   WORKSPACE_FS_ERROR_CODES,
   WORKSPACE_GIT_ERROR_CODES,
   WORKSPACE_TEST_RUNNER_ERROR_CODES,

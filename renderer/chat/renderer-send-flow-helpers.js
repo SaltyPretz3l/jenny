@@ -409,9 +409,16 @@
       return false;
     }
 
-    const nextMessages = payload.failureRetry === true
-      ? currentMessages
-      : currentMessages.slice(0, sourceIndex + 1);
+    // Mirrors the store's re-anchor (session-turn-events.js resolveReanchoredHistory): a row that
+    // belongs to no turn moves above the reused prompt instead of landing inside the new turn.
+    const isOffTurn = (message) => String(message?.kind || '') === 'memory_note';
+    const tail = currentMessages.slice(sourceIndex + 1);
+    const nextMessages = [
+      ...currentMessages.slice(0, sourceIndex),
+      ...tail.filter(isOffTurn),
+      currentMessages[sourceIndex],
+      ...(payload.failureRetry === true ? tail.filter((message) => !isOffTurn(message)) : []),
+    ];
     callbacks.clearProjectionContextCacheForSession?.(sessionId);
     callbacks.setSessionMessages?.(sessionId, nextMessages, `session_${sessionId}`);
     callbacks.patchSessionSummary?.(sessionId, {

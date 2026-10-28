@@ -14,11 +14,12 @@ _ENGINE_ORDER = (
     "openai-compatible",
     "codex-cli",
     "chatgpt",
+    "api-provider",
     "replay",
     "mock",
 )
 _REASONING_EFFORT_SUPPORTED_ENGINES = frozenset(
-    {"ollama", "vllm", "openai-compatible", "codex-cli", "chatgpt"}
+    {"ollama", "vllm", "openai-compatible", "codex-cli", "chatgpt", "api-provider"}
 )
 
 
@@ -86,6 +87,7 @@ def build_provider_capabilities(config: RuntimeConfig) -> dict[str, ProviderCapa
         reason=(None if chatgpt_access_token else "chatgpt engine unavailable: not signed in"),
         reasoning_effort_support=_reasoning_effort_support("chatgpt"),
     )
+    capabilities["api-provider"] = _api_provider_capability(config)
     capabilities["replay"] = ProviderCapability(
         engine="replay",
         available=True,
@@ -104,6 +106,59 @@ def build_provider_capabilities(config: RuntimeConfig) -> dict[str, ProviderCapa
     )
 
     return capabilities
+
+
+def _api_provider_capability(config: RuntimeConfig) -> ProviderCapability:
+    """Availability of the user's API-key provider (row 78).
+
+    Deep descriptor validation happens when the engine is built; this only
+    reports whether the pieces Electron must send are present.
+    """
+    descriptor = getattr(config, "api_provider_descriptor", None)
+    limits = getattr(config, "api_provider_model_limits", None)
+    has_key = bool(str(getattr(config, "api_provider_key", "") or "").strip())
+    requires_secret = (
+        isinstance(descriptor, dict) and descriptor.get("auth_profile", "") != "none"
+    )
+    configured = isinstance(descriptor, dict) and bool(descriptor) and bool(limits)
+    reason: str | None = None
+    if not configured:
+        reason = "api provider not configured"
+    elif requires_secret and not has_key:
+        reason = "api provider key missing"
+    return ProviderCapability(
+        engine="api-provider",
+        available=reason is None,
+        requires_secret=requires_secret,
+        secret_configured=has_key,
+        reason=reason,
+        reasoning_effort_support=_reasoning_effort_support("api-provider"),
+    )
+
+
+def api_provider_models(runtime_config: Any) -> dict[str, Any]:
+    """The one model the user configured for their API provider, or none."""
+    capability = (
+        _api_provider_capability(runtime_config) if runtime_config is not None else None
+    )
+    model_id = str(getattr(runtime_config, "model", "") or "").strip()
+    limits = getattr(runtime_config, "api_provider_model_limits", None)
+    entry: dict[str, Any] = {"id": model_id}
+    context_length = limits.get("context_length") if isinstance(limits, dict) else None
+    if isinstance(context_length, int) and not isinstance(context_length, bool):
+        entry["context_length"] = context_length
+    available = bool(capability.available) if capability is not None else False
+    return {
+        "engine_type": "api-provider",
+        "models": [entry] if available and model_id else [],
+        "stale": False,
+        "available": available,
+        "reason": (
+            str(capability.reason or "")
+            if capability is not None
+            else "provider 'api-provider' is unavailable"
+        ),
+    }
 
 
 def available_engine_types(capabilities: dict[str, ProviderCapability]) -> list[str]:

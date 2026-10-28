@@ -227,6 +227,171 @@
     list.appendChild(node);
   }
 
+  /* Owner option C (2026-10-20, Claude Code parity): a queued send is shown
+   * where it was typed, as its own user bubble greyed out until it starts, with
+   * one quiet line under it: what it is waiting as, and its actions. Withdraw
+   * puts the text back in the composer as a draft; Up in an empty composer
+   * takes every queued message back at once. The strip above keeps only what
+   * has no bubble here (a paused reply the composer never queued, or a bubble
+   * the timeline has not drawn). */
+  const QUEUED_ATTR = 'data-queued-send';
+  const META_ATTR = 'data-queued-send-meta';
+
+  function bubbleRow(row) {
+    return Boolean(row) && row.queued !== false && row.detached !== true && row.status !== 'running' && Boolean(row.userId);
+  }
+
+  function canWithdraw(row) {
+    return Boolean(row.workId) && !WITHDRAW_LOCKED.includes(row.status);
+  }
+
+  function cssId(value) {
+    const escape = globalThis.CSS?.escape;
+    return typeof escape === 'function' ? escape(String(value)) : String(value).replace(/["\\]/g, '\\$&');
+  }
+
+  function bubbleState(row) {
+    if (row.wait?.reason === 'cleanup_unconfirmed') return 'stuck';
+    return ['withdrawing', 'unconfirmed', 'paused'].includes(row.status) ? row.status : 'queued';
+  }
+
+  function bubbleLabel(row) {
+    if (row.wait?.reason === 'cleanup_unconfirmed') return waitStatus(null, row);
+    return statusLabel(row) || jt('chat.runtimeQueue.queued', 'Queued');
+  }
+
+  /* The composer gets the texts back ahead of anything already typed, one per
+   * line, through the same input event typing raises (height, state, draft). */
+  function putBackInComposer(input, texts) {
+    const lines = (Array.isArray(texts) ? texts : []).map((text) => String(text || '').trim()).filter(Boolean);
+    if (!input || !lines.length) return false;
+    const typed = String(input.value || '');
+    input.value = lines.join('\n') + (typed.trim() ? `\n${typed}` : '');
+    const EventCtor = input.ownerDocument?.defaultView?.Event || globalThis.Event;
+    if (typeof EventCtor === 'function') input.dispatchEvent(new EventCtor('input', { bubbles: true }));
+    input.focus?.({ preventScroll: true });
+    const end = input.value.length;
+    input.setSelectionRange?.(end, end);
+    return true;
+  }
+
+  async function withdrawToComposer(row, actions) {
+    if (!canWithdraw(row) || typeof actions?.withdraw !== 'function') return false;
+    const withdrawn = await actions.withdraw(row);
+    if (withdrawn !== true) return false;
+    actions.putDraft?.([row.prompt]);
+    return true;
+  }
+
+  /* Up in an empty composer: every withdrawable queued send, in order. A send
+   * the runtime refuses to withdraw stays queued and stays out of the draft. */
+  async function takeBackQueued(rows, actions) {
+    const taken = [];
+    for (const row of (Array.isArray(rows) ? rows : []).filter((entry) => bubbleRow(entry) && canWithdraw(entry))) {
+      if (typeof actions?.withdraw === 'function' && await actions.withdraw(row) === true) taken.push(row.prompt);
+    }
+    if (taken.length) actions.putDraft?.(taken);
+    return taken.length;
+  }
+
+  function wantsTakeBack(event, input) {
+    return Boolean(event) && event.key === 'ArrowUp' && !event.defaultPrevented && !event.isComposing
+      && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey
+      && Boolean(input) && String(input.value || '') === '';
+  }
+
+  /* Returns true when it took the key (something was queued to take back). */
+  function handleTakeBackKeydown(event, { input, rows, actions } = {}) {
+    if (!wantsTakeBack(event, input)) return false;
+    const candidates = (Array.isArray(rows) ? rows : []).filter((row) => bubbleRow(row) && canWithdraw(row));
+    if (!candidates.length) return false;
+    event.preventDefault();
+    takeBackQueued(candidates, actions).catch(() => {});
+    return true;
+  }
+
+  function metaButton(doc, parent, id, label, className, handler) {
+    const wrapper = doc.createElement('span');
+    wrapper.innerHTML = actionButton({ id, domId: id, label, className: `queued-send-meta__action ${className}`, plain: true });
+    const node = wrapper.firstElementChild;
+    node.addEventListener('click', (event) => {
+      event.preventDefault();
+      if (node.disabled) return;
+      handler(node);
+    });
+    parent.appendChild(node);
+    return node;
+  }
+
+  function buildMeta(doc, row, key, actions, closing) {
+    const meta = element(doc, 'div', 'queued-send-meta');
+    meta.setAttribute(META_ATTR, 'true');
+    const label = element(doc, 'span', 'queued-send-meta__label', bubbleLabel(row));
+    label.setAttribute('role', 'status');
+    meta.appendChild(label);
+    if (row.wait?.reason === 'cleanup_unconfirmed' && actions.restartEngine) {
+      metaButton(doc, meta, `queued-send-restart-${key}`, jt('chat.stuckSend.restartEngine', 'Restart engine'),
+        'queued-send-meta__action--restart', () => actions.restartEngine(row));
+    }
+    if (row.status === 'paused' && row.resumable !== false) {
+      const resume = metaButton(doc, meta, `queued-send-resume-${key}`, jt('chat.runtimeQueue.resume', 'Resume'),
+        'queued-send-meta__action--resume', () => actions.resume?.(row));
+      resume.disabled = !actions.resume || closing === true;
+      resume.title = closing === true ? jt('chat.runtimeQueue.resumeClosing', 'Jenny is shutting down')
+        : jt('chat.runtimeQueue.resumeTitle', 'Resume this queued message');
+    }
+    const withdraw = metaButton(doc, meta, `queued-send-withdraw-${key}`, jt('chat.runtimeQueue.withdraw', 'Withdraw'),
+      'queued-send-meta__action--withdraw', (node) => {
+        node.disabled = true;
+        withdrawToComposer(row, actions).then((done) => { if (!done) node.disabled = !canWithdraw(row); }, () => { node.disabled = false; });
+      });
+    withdraw.disabled = !canWithdraw(row) || !actions.withdraw;
+    withdraw.title = jt('chat.runtimeQueue.withdrawToDraftTitle', 'Withdraw it and put it back in the composer to edit (Up in an empty composer takes them all back)');
+    return meta;
+  }
+
+  /**
+   * Grey the user bubble of each queued send in `timeline` and give it its
+   * line; clear bubbles whose send has started or gone. Rebuilt only when the
+   * line's content changes, so a render never replaces a button under focus.
+   * @returns {Set<string>} keys of the rows now shown as bubbles
+   */
+  function syncQueuedBubbles({ timeline, rows, actions = {}, closing = false } = {}) {
+    const shown = new Set();
+    if (!timeline || typeof timeline.querySelectorAll !== 'function') return shown;
+    const wanted = new Map();
+    for (const row of (Array.isArray(rows) ? rows : []).filter(bubbleRow)) {
+      const article = timeline.querySelector(`.chat-entry[data-message-id="${cssId(row.userId)}"]`);
+      if (article && !wanted.has(article)) wanted.set(article, row);
+    }
+    for (const node of timeline.querySelectorAll(`[${QUEUED_ATTR}]`)) {
+      if (wanted.has(node)) continue;
+      node.removeAttribute(QUEUED_ATTR);
+      node.querySelector(`[${META_ATTR}]`)?.remove();
+    }
+    const taken = new Set();
+    for (const [article, row] of wanted) {
+      const key = rowDomKey(row.key, taken);
+      const signature = JSON.stringify([key, bubbleState(row), bubbleLabel(row), row.resumable, canWithdraw(row), closing,
+        Boolean(actions.withdraw), Boolean(actions.resume), Boolean(actions.restartEngine)]);
+      article.setAttribute(QUEUED_ATTR, bubbleState(row));
+      const existing = article.querySelector(`[${META_ATTR}]`);
+      if (existing?.getAttribute('data-queued-signature') === signature && existing.parentNode === article) {
+        shown.add(row.key);
+        continue;
+      }
+      const doc = article.ownerDocument;
+      const focused = existing?.contains(doc.activeElement) ? doc.activeElement.id : '';
+      existing?.remove();
+      const meta = buildMeta(doc, row, key, actions, closing);
+      meta.setAttribute('data-queued-signature', signature);
+      article.appendChild(meta);
+      if (focused) focusControl(meta, focused);
+      shown.add(row.key);
+    }
+    return shown;
+  }
+
   function disposeRuntimeQueueRender(host) {
     const view = host?.[VIEW];
     if (!view) return;
@@ -237,5 +402,6 @@
     host.hidden = true;
   }
 
-  return { disposeRuntimeQueueRender, renderRuntimeQueue };
+  return { disposeRuntimeQueueRender, handleTakeBackKeydown, putBackInComposer, renderRuntimeQueue, syncQueuedBubbles,
+    takeBackQueued, withdrawToComposer };
 });

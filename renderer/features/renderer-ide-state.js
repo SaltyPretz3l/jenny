@@ -38,9 +38,6 @@
   const CHAT_DOCK_WIDTH_MAX = 2400;
   const CHAT_DOCK_WIDTH_DEFAULT = 380;
   const CHAT_DOCK_SIDES = ['left', 'right'];
-  // Per-panel side location (CONFIG_VERSION 28, the "Move View" model): each rail
-  // panel lives on exactly one side. Mirrors the service whitelist.
-  const PANEL_LOCATIONS = ['primary', 'secondary'];
   // The fresh-profile home side for each panel; MUST match the service's
   // DEFAULT_WORKSPACE_IDE.panelLocations (Explorer + Search primary, Source Control
   // secondary). The per-id fallback for an ABSENT key in coercePanelLocations.
@@ -72,6 +69,75 @@
   const EXPLORER_SORT_MODES = ['name', 'type', 'modified'];
   const REPLACE_JOURNAL_MAX_APPLIED = 200;
   const REPLACE_JOURNAL_QUERY_MAX = 500;
+  // Row 82 editor/terminal/auto-save prefs: additive persisted keys, table-driven and
+  // mirrored by services/workspace-ide-config-schema.js (same specs, same results; the
+  // parity test pins it). 'bool' defaults true -> false only on literal false; default
+  // false -> true only on literal true. `legacy(src)` is the fallback for an invalid enum.
+  const CURSOR_STYLES = ['line', 'block', 'underline'];
+  const CURSOR_BLINKING = ['smooth', 'blink', 'phase', 'expand', 'solid'];
+  const AUTO_SAVE_MODES = ['off', 'afterDelay', 'onFocusChange', 'onWindowChange'];
+  const AUTO_SAVE_DELAY_MIN = 100;
+  const AUTO_SAVE_DELAY_MAX = 60000;
+  const FONT_FAMILY_MAX_CHARS = 200;
+  // Shell profile id ('' = platform default): the ids workspace-pty-profiles.js emits
+  // (pwsh, git-bash, ...); main checks it against the detected shells.
+  const TERMINAL_PROFILE_ID_RE = /^[a-z0-9-]{1,32}$/;
+  // D1: 25,000 lines (about 1.5 MB per 1,000 lines per terminal); a larger stored value clamps on load.
+  const TERMINAL_SCROLLBACK_MIN = 500;
+  const TERMINAL_SCROLLBACK_DEFAULT = 1000;
+  const TERMINAL_SCROLLBACK_MAX = 25000;
+  // '' = use the app mono token. Only plain family-list characters survive; anything else
+  // (or an over-long value) collapses to '' rather than reaching Monaco's CSS.
+  function normalizeFontFamily(value) {
+    const text = typeof value === 'string' ? value.trim() : '';
+    return text.length > 0 && text.length <= FONT_FAMILY_MAX_CHARS && /^[A-Za-z0-9 _\-.,'"]+$/.test(text) ? text : '';
+  }
+  function clampPrefInt(value, min, max, fallback) {
+    const numeric = typeof value === 'number' || (typeof value === 'string' && value.trim() !== '')
+      ? Math.trunc(Number(value))
+      : NaN;
+    return Number.isFinite(numeric) ? Math.min(max, Math.max(min, numeric)) : fallback;
+  }
+  const EDITOR_PREF_SPECS = [
+    { key: 'fontFamily', kind: 'text', def: '', clean: normalizeFontFamily },
+    { key: 'cursorStyle', kind: 'enum', def: 'line', values: CURSOR_STYLES },
+    { key: 'cursorBlinking', kind: 'enum', def: 'smooth', values: CURSOR_BLINKING },
+    { key: 'cursorSmoothCaretAnimation', kind: 'bool', def: true },
+    { key: 'fontLigatures', kind: 'bool', def: true },
+    { key: 'bracketPairColorization', kind: 'bool', def: true },
+    { key: 'indentGuides', kind: 'bool', def: true },
+    { key: 'stickyScroll', kind: 'bool', def: true },
+    { key: 'folding', kind: 'bool', def: true },
+    { key: 'insertSpaces', kind: 'bool', def: true },
+    { key: 'detectIndentation', kind: 'bool', def: true },
+    // A valid autoSaveMode wins; else the pre-row-82 boolean migrates (true -> afterDelay).
+    {
+      key: 'autoSaveMode', kind: 'enum', def: 'off', values: AUTO_SAVE_MODES,
+      legacy: (src) => (src.autoSaveEnabled === true ? 'afterDelay' : 'off'),
+    },
+    { key: 'autoSaveDelayMs', kind: 'int', def: 1000, min: AUTO_SAVE_DELAY_MIN, max: AUTO_SAVE_DELAY_MAX },
+    { key: 'scrollBeyondLastLine', kind: 'bool', def: false },
+    { key: 'mouseWheelZoom', kind: 'bool', def: true },
+    { key: 'inlineBlame', kind: 'bool', def: true },
+    { key: 'terminalScrollback', kind: 'int', def: TERMINAL_SCROLLBACK_DEFAULT, min: TERMINAL_SCROLLBACK_MIN, max: TERMINAL_SCROLLBACK_MAX },
+    {
+      key: 'terminalDefaultProfile', kind: 'text', def: '',
+      clean: (value) => (typeof value === 'string' && TERMINAL_PROFILE_ID_RE.test(value) ? value : ''),
+    },
+  ];
+  function normalizeEditorPrefSpec(spec, src) {
+    const raw = src[spec.key];
+    if (spec.kind === 'bool') {
+      return spec.def === true ? raw !== false : raw === true;
+    }
+    if (spec.kind === 'enum') {
+      return spec.values.includes(raw) ? raw : (spec.legacy ? spec.legacy(src) : spec.def);
+    }
+    if (spec.kind === 'int') {
+      return clampPrefInt(raw, spec.min, spec.max, spec.def);
+    }
+    return spec.clean(raw);
+  }
   // Editor column rulers (CONFIG_VERSION 34); mirrors the service bounds. [] = off.
   const RULERS_MAX_COUNT = 8;
   const RULERS_MAX_COLUMN = 500;
@@ -166,6 +232,18 @@
       applied: validPaths.slice(0, REPLACE_JOURNAL_MAX_APPLIED),
       truncated: value.truncated === true || validPaths.length > REPLACE_JOURNAL_MAX_APPLIED,
     };
+  }
+
+  // Search history (root-bound, mirrors the service normalizer): trimmed non-empty
+  // strings <= 256 chars, de-duplicated keeping the newest, newest last, max 20.
+  function normalizeSearchHistory(value) {
+    if (!Array.isArray(value)) return [];
+    const newestFirst = [];
+    for (let index = value.length - 1; index >= 0 && newestFirst.length < 20; index -= 1) {
+      const entry = typeof value[index] === 'string' ? value[index].trim() : '';
+      if (entry && entry.length <= 256 && !newestFirst.includes(entry)) newestFirst.push(entry);
+    }
+    return newestFirst.reverse();
   }
 
   // Bottom-panel height clamp (shared by create/persist/apply; the panel module mirrors it).
@@ -324,137 +402,8 @@
     return ide.panelLocations && ide.panelLocations[id] === 'secondary' ? 'secondary' : 'primary';
   }
 
-  function primaryPanels(ide) {
-    return RAIL_PANELS.filter((id) => getPanelLocation(ide, id) !== 'secondary');
-  }
-
   function secondaryPanels(ide) {
     return RAIL_PANELS.filter((id) => getPanelLocation(ide, id) === 'secondary');
-  }
-
-  // Which single panel is the active, visible one for its side - the gate each
-  // panel module's isActivePanel() resolves to.
-  function isPanelActive(ide, id) {
-    const mods = layoutModules();
-    if (mods) {
-      const found = mods.model.findView(getWorkbenchLayout(ide), id);
-      return found !== null && found.active === true && found.collapsed !== true;
-    }
-    if (getPanelLocation(ide, id) === 'secondary') {
-      return ide.secondaryPanelOpen === true && ide.secondaryPanel === id;
-    }
-    return ide.railPanel === id;
-  }
-
-  // "Show panel X". Tree: reveal the view in its stack (active, un-collapsed);
-  // hooks.openSecondary is ignored. Legacy: a secondary-located panel opens the
-  // secondary sidebar via hooks.openSecondary, a primary one becomes the active rail
-  // panel. Returns the resolved location so callers can find the panel's host.
-  function showPanel(ide, id, hooks) {
-    const { openSecondary, schedulePersist, requestRender } = hooks || {};
-    const mods = layoutModules();
-    if (mods) {
-      if (commitWorkbenchLayout(ide, mods.model.revealView(getWorkbenchLayout(ide), id))) {
-        schedulePersist?.();
-      }
-      requestRender?.();
-      return getPanelLocation(ide, id);
-    }
-    if (getPanelLocation(ide, id) === 'secondary') {
-      openSecondary?.(id);
-      return 'secondary';
-    }
-    if (ide.railPanel !== id) {
-      ide.railPanel = id;
-      schedulePersist?.();
-    }
-    requestRender?.();
-    return 'primary';
-  }
-
-  // A fresh single-view stack at a row edge. ops.moveView's {edge} would join the
-  // outermost stack, which is usually the chat dock, so the new stack is built here.
-  function moveToNewEdgeStack(mods, layout, viewId, side) {
-    const copy = mods.model.cloneLayout(layout);
-    const source = mods.model.findStack(copy, mods.model.findView(copy, viewId).stackId);
-    const at = source.views.indexOf(viewId);
-    source.views.splice(at, 1);
-    if (source.active === viewId) {
-      source.active = source.views[Math.min(at, source.views.length - 1)];
-    }
-    const row = copy.root.t === 'split' && copy.root.dir === 'row'
-      ? copy.root
-      : { t: 'split', id: null, dir: 'row', children: [{ node: copy.root, size: null }] };
-    const fresh = { t: 'stack', id: null, kind: 'views', views: [viewId], active: viewId, collapsed: false };
-    row.children[side === 'left' ? 'unshift' : 'push']({ node: fresh, size: SECONDARY_WIDTH_DEFAULT });
-    return mods.model.normalizeLayout({ v: 1, root: row }) || layout;
-  }
-
-  // Tree form of movePanelLocation: 'primary' joins the Explorer stack; 'secondary'
-  // joins the existing secondary stack (the first other stack holding a rail panel),
-  // else opens a fresh stack at the edge opposite the Explorer stack ('right' when
-  // undeterminable). The last view of the Explorer stack cannot leave it.
-  function moveOnTree(mods, ide, id, target) {
-    const layout = getWorkbenchLayout(ide);
-    const rail = mods.model.findView(layout, 'explorer');
-    const here = mods.model.findView(layout, id);
-    if (!here || getPanelLocation(ide, id) === target) {
-      return;
-    }
-    if (target === 'primary') {
-      if (rail) {
-        commitWorkbenchLayout(ide, mods.ops.moveView(layout, id, { stackId: rail.stackId }));
-      }
-      return;
-    }
-    if (rail && here.stackId === rail.stackId && mods.model.findStack(layout, rail.stackId).views.length <= 1) {
-      return;
-    }
-    const other = mods.model.listViews(layout).filter((view) => RAIL_PANELS.includes(view))
-      .map((view) => mods.model.findView(layout, view)).find((found) => !rail || found.stackId !== rail.stackId);
-    const side = rail && mods.legacy.toLegacy(layout).railSide === 'right' ? 'left' : 'right';
-    commitWorkbenchLayout(ide, other
-      ? mods.ops.moveView(layout, id, { stackId: other.stackId })
-      : moveToNewEdgeStack(mods, layout, id, side));
-  }
-
-  // Re-home a panel to the other side, fixing the active-panel invariants. Keeps
-  // >=1 panel in the primary rail (the last primary panel can't be moved out).
-  function movePanelLocation(ide, id, target) {
-    if (!RAIL_PANELS.includes(id) || !PANEL_LOCATIONS.includes(target)) {
-      return ide;
-    }
-    const mods = layoutModules();
-    if (mods) {
-      moveOnTree(mods, ide, id, target);
-      return ide;
-    }
-    // Self-heal a missing/partial map to a full one before mutating.
-    ide.panelLocations = coercePanelLocations(ide.panelLocations);
-    if (getPanelLocation(ide, id) === target) {
-      return ide;
-    }
-    if (target === 'secondary' && primaryPanels(ide).length <= 1) {
-      return ide;
-    }
-    ide.panelLocations[id] = target;
-    if (target === 'secondary') {
-      ide.secondaryPanel = id;
-      ide.secondaryPanelOpen = true;
-      if (ide.railPanel === id) {
-        ide.railPanel = primaryPanels(ide)[0];
-      }
-    } else {
-      ide.railPanel = id;
-      if (ide.secondaryPanel === id) {
-        const rest = secondaryPanels(ide);
-        ide.secondaryPanel = rest[0] || '';
-        if (!rest.length) {
-          ide.secondaryPanelOpen = false;
-        }
-      }
-    }
-    return ide;
   }
 
   // Self-heal the LEGACY fields: full map, >=1 primary, railPanel primary-located,
@@ -475,17 +424,6 @@
     return ide;
   }
 
-  // Self-heal locations + active-panel fields after hydrate (or any external
-  // mutation); with the tree present, then build/heal it and re-derive the mirror.
-  function normalizePanelLocations(ide) {
-    normalizeLegacyPanelFields(ide);
-    if (layoutModules()) {
-      getWorkbenchLayout(ide);
-      syncLegacyFromLayout(ide);
-    }
-    return ide;
-  }
-
   function createIdeUiState() {
     return {
       openTabs: [],
@@ -502,6 +440,7 @@
       activeStageSurface: 'editor',
       previewPath: '',
       replaceJournal: null,
+      searchHistory: [],
       // Primary rail defaults left (the service schema); pre-hydrate fallback.
       railSide: 'left',
       railWidth: 300,
@@ -533,9 +472,10 @@
       lineNumbers: 'on',
       renderWhitespace: 'selection',
       eol: '',
-      // Debounced auto-save (the in-feature toggle). DEFAULT-OFF: this writes the
-      // user's files, so only a literal true enables it. This is the sole gate.
+      // Auto-save (DEFAULT-OFF: it writes the user's files). autoSaveMode is the gate;
+      // autoSaveEnabled is only its derived mirror (kept one release for rollback safety).
       autoSaveEnabled: false,
+      ...Object.fromEntries(EDITOR_PREF_SPECS.map((spec) => [spec.key, spec.def])),
       // Save-time hygiene (CONFIG_VERSION 34): all DEFAULT-OFF.
       formatOnSave: false,
       trimTrailingWhitespace: false,
@@ -559,6 +499,7 @@
     ide.activeStageSurface = 'editor';
     ide.previewPath = '';
     ide.replaceJournal = null;
+    ide.searchHistory = [];
     ide.search = { query: '', results: [], busy: false };
     return ide;
   }
@@ -716,6 +657,17 @@
     return true;
   }
 
+  // Keep Open: a transient preview tab becomes a regular tab (the double-click and
+  // menu gesture). Returns true only when the tab was a preview and now is not.
+  function keepTabOpen(ide, path) {
+    const tab = getTab(ide, path);
+    if (!tab || tab.kind !== 'file' || tab.transientPreview !== true) {
+      return false;
+    }
+    delete tab.transientPreview;
+    return true;
+  }
+
   // "Exploded View" per-file-tab view mode ('code'|'exploded'), FILE tabs
   // only - mirrors toggleTabPinned's kind:'file' gate exactly. The TS/JS
   // language gate for when exploded view is offered lives in the controller,
@@ -804,6 +756,7 @@
       activeStageSurface: coerceStageSurface(ide.activeStageSurface),
       previewPath: normalizePreviewSourcePath(ide.previewPath),
       replaceJournal: normalizeReplaceJournal(ide.replaceJournal),
+      searchHistory: normalizeSearchHistory(ide.searchHistory),
       railPanel: view.railPanel,
       railSide: view.railSide,
       railWidth: view.railWidth,
@@ -821,25 +774,36 @@
       panelLocations: coercePanelLocations(view.panelLocations),
       showGenerated: ide.showGenerated === true,
       explorerSortMode: EXPLORER_SORT_MODES.includes(ide.explorerSortMode) ? ide.explorerSortMode : 'name',
-      wordWrap: ide.wordWrap === 'on' ? 'on' : 'off',
-      // Editor prefs (validated here too so a corrupt in-memory value never persists).
-      fontSize: normalizeEditorFontSize(ide.fontSize),
-      tabSize: TAB_SIZES.includes(Number(ide.tabSize)) ? Number(ide.tabSize) : TAB_SIZE_DEFAULT,
-      minimap: ide.minimap === false ? false : true,
-      lineNumbers: LINE_NUMBERS.includes(ide.lineNumbers) ? ide.lineNumbers : 'on',
-      renderWhitespace: RENDER_WHITESPACE.includes(ide.renderWhitespace) ? ide.renderWhitespace : 'selection',
-      eol: EOL_VALUES.includes(ide.eol) ? ide.eol : '',
-      // Auto-save is DEFAULT-OFF, so only a literal true persists as enabled.
-      autoSaveEnabled: ide.autoSaveEnabled === true,
-      formatOnSave: ide.formatOnSave === true,
-      trimTrailingWhitespace: ide.trimTrailingWhitespace === true,
-      insertFinalNewline: ide.insertFinalNewline === true,
-      rulers: normalizeRulers(ide.rulers),
+      ...normalizeEditorPrefs(ide),
     };
     if (layout) {
       persisted.workbenchLayout = mods.model.cloneLayout(layout);
     }
     return persisted;
+  }
+
+  // Editor prefs, validated on write and on restore so a corrupt value never lands.
+  function normalizeEditorPrefs(src) {
+    const prefs = {
+      wordWrap: src.wordWrap === 'on' ? 'on' : 'off',
+      fontSize: normalizeEditorFontSize(src.fontSize),
+      tabSize: TAB_SIZES.includes(Number(src.tabSize)) ? Number(src.tabSize) : TAB_SIZE_DEFAULT,
+      minimap: src.minimap === false ? false : true,
+      lineNumbers: LINE_NUMBERS.includes(src.lineNumbers) ? src.lineNumbers : 'on',
+      renderWhitespace: RENDER_WHITESPACE.includes(src.renderWhitespace) ? src.renderWhitespace : 'selection',
+      eol: EOL_VALUES.includes(src.eol) ? src.eol : '',
+      formatOnSave: src.formatOnSave === true,
+      trimTrailingWhitespace: src.trimTrailingWhitespace === true,
+      insertFinalNewline: src.insertFinalNewline === true,
+      rulers: normalizeRulers(src.rulers),
+    };
+    for (const spec of EDITOR_PREF_SPECS) {
+      prefs[spec.key] = normalizeEditorPrefSpec(spec, src);
+    }
+    // Derived mirror of the resolved mode (rollback safety for one release); never trusted
+    // independently, so a stale autoSaveEnabled can't override an explicit 'off'.
+    prefs.autoSaveEnabled = prefs.autoSaveMode !== 'off';
+    return prefs;
   }
 
   function applyPersistedState(ide, persisted) {
@@ -861,7 +825,7 @@
         pinned: entry?.pinned === true,
         viewMode: entry?.viewMode === 'exploded' ? 'exploded' : 'code',
         ...(entry?.preview === true ? { transientPreview: true } : {}),
-        ...(Number.isInteger(entry?.line) || Number.isInteger(entry?.top) ? { restore: { line: entry.line, top: entry.top } } : {}),
+        ...(Number.isInteger(entry?.line) || Number.isInteger(entry?.top) || entry?.page || entry?.zoom ? { restore: { line: entry.line, top: entry.top, ...(entry.page && { page: entry.page }), ...(entry.zoom && { zoom: entry.zoom }) } } : {}),
         ...(GROUP_ID_RE.test(entry?.group) ? { group: entry.group } : {}),
       });
     }
@@ -884,6 +848,7 @@
     ide.activeStageSurface = coerceStageSurface(source.activeStageSurface);
     ide.previewPath = normalizePreviewSourcePath(source.previewPath);
     ide.replaceJournal = normalizeReplaceJournal(source.replaceJournal);
+    ide.searchHistory = normalizeSearchHistory(source.searchHistory);
     ide.railSide = source.railSide === 'right' ? 'right' : 'left';
     const railWidth = Number(source.railWidth);
     if (Number.isFinite(railWidth) && railWidth > 0) {
@@ -908,18 +873,7 @@
     // Cross-validate the active railPanel/secondaryPanel against the locations
     // (and force the secondary closed when it ends up empty).
     normalizeLegacyPanelFields(ide);
-    ide.wordWrap = source.wordWrap === 'on' ? 'on' : 'off';
-    ide.fontSize = normalizeEditorFontSize(source.fontSize);
-    ide.tabSize = TAB_SIZES.includes(Number(source.tabSize)) ? Number(source.tabSize) : TAB_SIZE_DEFAULT;
-    ide.minimap = source.minimap === false ? false : true;
-    ide.lineNumbers = LINE_NUMBERS.includes(source.lineNumbers) ? source.lineNumbers : 'on';
-    ide.renderWhitespace = RENDER_WHITESPACE.includes(source.renderWhitespace) ? source.renderWhitespace : 'selection';
-    ide.eol = EOL_VALUES.includes(source.eol) ? source.eol : '';
-    ide.autoSaveEnabled = source.autoSaveEnabled === true;
-    ide.formatOnSave = source.formatOnSave === true;
-    ide.trimTrailingWhitespace = source.trimTrailingWhitespace === true;
-    ide.insertFinalNewline = source.insertFinalNewline === true;
-    ide.rulers = normalizeRulers(source.rulers);
+    Object.assign(ide, normalizeEditorPrefs(source));
     // A saved tree wins over the legacy keys just applied; with none (or a corrupt
     // one) the legacy keys migrate. The mirror is then re-derived.
     const mods = layoutModules();
@@ -942,29 +896,28 @@
   }
 
   return {
-    BOTTOM_HEIGHT_DEFAULT,
-    BOTTOM_HEIGHT_MAX,
-    BOTTOM_HEIGHT_MIN,
     BOTTOM_VIEWS,
+    TERMINAL_SCROLLBACK_MIN,
+    TERMINAL_SCROLLBACK_DEFAULT,
+    TERMINAL_SCROLLBACK_MAX,
     DIFF_TAB_PREFIX,
     MAP_TAB_ID,
-    MAP_TAB_PREFIX,
     FONT_SIZE_MAX,
     FONT_SIZE_MIN,
     normalizeEditorFontSize,
+    CURSOR_STYLES,
+    CURSOR_BLINKING,
+    AUTO_SAVE_MODES,
+    AUTO_SAVE_DELAY_MIN,
+    AUTO_SAVE_DELAY_MAX,
+    normalizeFontFamily,
+    normalizeEditorPrefs,
     MAX_OPEN_TABS,
-    PANEL_LOCATIONS,
-    PREVIEW_TAB_PREFIX,
     RAIL_PANELS,
     RENDER_WHITESPACE,
     REPLACE_JOURNAL_MAX_APPLIED,
     REPLACE_JOURNAL_QUERY_MAX,
-    RULERS_MAX_COLUMN,
     STAGE_SURFACES,
-    RULERS_MAX_COUNT,
-    SECONDARY_WIDTH_DEFAULT,
-    SECONDARY_WIDTH_MAX,
-    SECONDARY_WIDTH_MIN,
     CHAT_DOCK_WIDTH_DEFAULT,
     CHAT_DOCK_WIDTH_MAX,
     CHAT_DOCK_WIDTH_MIN,
@@ -987,16 +940,13 @@
     getTabViewMode,
     isDiffTabId,
     isMapTabId,
-    isPanelActive,
     isPreviewTabId,
-    movePanelLocation,
+    keepTabOpen,
     normalizeIdeRelativePath,
-    normalizePanelLocations,
     normalizePreviewSourcePath,
     normalizeRulers,
     openDiffTab,
     openTab,
-    primaryPanels,
     resetIdeRootState,
     secondaryPanels,
     setActiveTab,
@@ -1005,7 +955,6 @@
     setTabDirty,
     setTabStale,
     setTabViewMode,
-    showPanel,
     sortTabsPinnedFirst,
     syncLegacyFromLayout,
     toPersistedState,

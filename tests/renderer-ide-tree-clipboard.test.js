@@ -174,8 +174,7 @@ test('an unrendered focused path pastes into its parent instead of the workspace
     getFocusedPath: () => 'collapsed/hidden.txt',
     getRootEpoch: () => 1,
     getRenderedRows: () => [],
-    getApi: () => ({ copyEntry: async (payload) => { copies.push(payload); } }),
-    getMutationContext: async () => ({ generation: 4 }),
+    copyEntry: async (from, to) => { copies.push({ from, to }); },
     refreshDirectory: async (path) => { refreshes.push(path); },
     parentDirOf: treeMarkup.parentDirOf,
     nameOf: treeMarkup.nameOf,
@@ -184,10 +183,7 @@ test('an unrendered focused path pastes into its parent instead of the workspace
 
   await clipboard.paste();
 
-  assert.deepEqual(copies, [{
-    from: 'source.txt', to: 'collapsed/source.txt',
-    onCollision: 'auto-rename', expectedGeneration: 4,
-  }]);
+  assert.deepEqual(copies, [{ from: 'source.txt', to: 'collapsed/source.txt' }]);
   assert.deepEqual(refreshes, ['collapsed']);
 });
 
@@ -293,7 +289,7 @@ function createUndoHarness({ withStat = true } = {}) {
     getRootEpoch: () => 1,
     getRenderedRows: () => [{ path: 'dst', kind: 'directory' }, { path: 'a.js', kind: 'file' }],
     getApi: () => api,
-    getMutationContext: async () => ({ generation: 1 }),
+    copyEntry: (from, to) => api.copyEntry({ from, to }),
     moveEntry: async (from, to) => {
       log.moves.push([from, to]);
       items.set(to, items.get(from));
@@ -395,4 +391,73 @@ test('an api without stat still undoes copy and move as before', async () => {
   await moved.clipboard.paste('dst');
   await moved.log.undo();
   assert.deepEqual(moved.log.moves.at(-1), ['dst/a.js', 'a.js']);
+});
+
+test('a cut directory whose row is collapsed away still moves as a directory', async (t) => {
+  const preflights = [];
+  const harness = await createHarness({
+    files: { 'src/sub/x.js': 'x' },
+    dirs: ['src', 'src/sub', 'dst'],
+    expanded: ['src', 'src/sub'],
+    preflightMutation: async (path, kind) => { preflights.push([path, kind]); return { ready: true, paths: [] }; },
+  });
+  t.after(() => harness.dispose());
+  await settle(40);
+  harness.tree.selection.replace(['src/sub'], 'src/sub');
+  harness.tree.syncSelection();
+  pressShortcut(harness, row(harness, 'src/sub'), 'x');
+  harness.ide.expandedDirs.delete('src');
+  harness.tree.syncSelection();
+  assert.equal(harness.panel.querySelector('[data-ide-tree-path="src/sub"]'), null, 'the cut row is no longer rendered');
+
+  await harness.tree.clipboard.paste('dst');
+  await settle(40);
+
+  assert.deepEqual(preflights, [['src/sub', 'directory']]);
+  assert.deepEqual(harness.bridge.calls.rename, [{ from: 'src/sub', to: 'dst/sub', expectedGeneration: 1 }]);
+  assert.equal(harness.ide.expandedDirs.has('src/sub'), false, 'the moved directory expansion is pruned');
+});
+
+test('a cut path that was never rendered resolves its kind instead of assuming a file', async () => {
+  const moves = [];
+  const errors = [];
+  const make = (api) => createIdeTreeClipboard({
+    selection: { resolveTargets: () => ['hidden/dir'] },
+    getFocusedPath: () => '',
+    getRootEpoch: () => 1,
+    getRenderedRows: () => [],
+    getApi: () => api,
+    moveEntry: async (from, to, kind) => { moves.push([from, to, kind]); return true; },
+    showError: (message) => errors.push(message),
+    parentDirOf: treeMarkup.parentDirOf,
+    nameOf: treeMarkup.nameOf,
+  });
+  const statted = make({ stat: async ({ path }) => ({ path, exists: true, kind: 'directory' }) });
+  statted.cut();
+  await statted.paste('dst');
+  assert.deepEqual(moves, [['hidden/dir', 'dst/dir', 'directory']]);
+
+  const blind = make({});
+  blind.cut();
+  await blind.paste('dst');
+  assert.equal(moves.length, 1, 'an unknown kind is never moved as a file');
+  assert.equal(errors.length, 1);
+});
+
+test('isCut covers stored paths and their descendants only', () => {
+  const clipboard = createIdeTreeClipboard({
+    selection: { resolveTargets: () => ['a', 'b/c.js'] },
+    getRootEpoch: () => 1,
+    getRenderedRows: () => [{ path: 'a', kind: 'directory' }, { path: 'b/c.js', kind: 'file' }],
+    parentDirOf: treeMarkup.parentDirOf,
+    nameOf: treeMarkup.nameOf,
+  });
+  clipboard.cut();
+  assert.equal(clipboard.isCut('a'), true);
+  assert.equal(clipboard.isCut('a/deep/x.js'), true);
+  assert.equal(clipboard.isCut('ab'), false);
+  assert.equal(clipboard.isCut('b/c.js'), true);
+  assert.equal(clipboard.isCut('b'), false);
+  clipboard.copy();
+  assert.equal(clipboard.isCut('a'), false);
 });

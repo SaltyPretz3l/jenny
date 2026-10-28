@@ -54,6 +54,146 @@
 .ide-prb [data-diag-severity="info"] { color: var(--state-info); }
 .ide-prb [data-diag-severity="hint"] { color: var(--text-muted); }
 
+/* ── Toolbar (row 82 X3): filter field, severity chips, Active file only,
+ * Collapse All. Field look mirrors the Search panel's query field. ── */
+.ide-prb-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ide-prb-filter {
+  display: block;
+}
+
+.ide-prb-filter .inv-text-field-control {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  line-height: 1.4;
+}
+
+.ide-prb-filter .inv-text-field-control:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.ide-prb-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* Toggle chips share the Search panel's toggle look (.ide-search-toggle). */
+.ide-prb-filter-chip,
+.ide-prb-collapse-all {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.ide-prb-filter-chip:hover,
+.ide-prb-collapse-all:hover:not(:disabled) {
+  background: var(--bg-surface-2);
+  color: var(--text-primary);
+}
+
+.ide-prb-filter-chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* An unpressed severity chip reads as "hidden": its glyph loses the tint. */
+.ide-prb-filter-chip[data-ide-prb-severity][aria-pressed="false"] .ide-prb-chip-icon {
+  color: var(--text-muted);
+}
+
+.ide-prb-filter-chip:focus-visible,
+.ide-prb-collapse-all:focus-visible,
+.ide-prb-clear-filters:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.ide-prb-collapse-all {
+  margin-inline-start: auto;
+}
+
+.ide-prb-collapse-all:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ide-prb-chip-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.ide-prb-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ide-prb-filter-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.ide-prb-clear-filters {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-link);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+
+.ide-prb-clear-filters:hover {
+  text-decoration: underline;
+}
+
+.ide-prb-file-chevron {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--text-muted);
+  transition: transform var(--transition-fast);
+}
+
+.ide-prb-file[aria-expanded="false"] .ide-prb-file-chevron {
+  transform: rotate(-90deg);
+}
+
+:dir(rtl) .ide-prb-file[aria-expanded="false"] .ide-prb-file-chevron {
+  transform: rotate(90deg);
+}
+
 /* Per-file group. */
 .ide-prb-group {
   display: flex;
@@ -191,4 +331,34 @@
   flex-shrink: 0;
   width: 12px;
   height: 12px;
+}
+
+/* == file:line links in run and test output (the problems they point at) == */
+
+/* An inline button that reads as part of the monospace output: same font, no box, a link
+ * underline. Its text is exactly the link text, so selecting and copying output is unchanged. */
+.ide-output-link {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-link);
+  font: inherit;
+  text-align: start;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--text-link) 45%, transparent);
+  text-underline-offset: 2px;
+  white-space: inherit;
+  cursor: pointer;
+}
+
+.ide-output-link:hover {
+  text-decoration-color: currentColor;
+}
+
+.ide-output-link:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 2px;
 }

@@ -40,9 +40,11 @@ class ToolCallRequest:
     # turn-fatal error) so the tool loop can reject exactly THAT call and let
     # the model retry, matching what the streaming path already does.
     malformed_arguments: bool = False
-    # Healing-net tags applied to reach ``arguments`` (``closed_string``,
-    # ``stripped_fence``, ...); empty when the payload parsed cleanly. Consumed
-    # by the tool loop's structural-repair policy in ``tool_loop_recovery.py``.
+    # Healing-net tags applied to reach ``arguments`` (``single_quotes``,
+    # ``closed_string``, ...) plus provenance tags such as
+    # ``parsed_string_arguments``; empty when the payload parsed cleanly. The
+    # allowlist in ``routing/tool_call_repair_policy.py`` decides which tags
+    # leave a side-effecting call dispatchable.
     argument_repairs: tuple[str, ...] = ()
 
 

@@ -9,6 +9,7 @@ touching the link target.
 from __future__ import annotations
 
 import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -17,21 +18,15 @@ from sidecar.ai.mcp import builtin_server
 from sidecar.ai.tools.builtins import file_history, filesystem
 from sidecar.ai.tools.builtins.shell_background import read_background_job
 from sidecar.ai.tools.workspace import WorkspaceGuard
+from tests.sidecar._platform_skips import make_dir_link, requires_file_symlinks
 
 
-def _can_create_symlink(tmp_path: Path) -> bool:
-    target = tmp_path / "symlink-probe-target"
-    target.mkdir()
-    link = tmp_path / "symlink-probe-link"
-    try:
-        os.symlink(target, link, target_is_directory=True)
-    except (NotImplementedError, OSError):
-        return False
-    finally:
-        if link.is_symlink():
-            link.unlink()
-        target.rmdir()
-    return True
+def _is_link_object(path: Path) -> bool:
+    """Symlink, or a Windows junction (a reparse point that ``is_symlink`` does not report)."""
+    if path.is_symlink():
+        return True
+    attributes = getattr(os.lstat(path), "st_file_attributes", 0)
+    return bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
 
 
 def _assert_quarantined_link(root: Path, *, original_name: str) -> None:
@@ -40,7 +35,7 @@ def _assert_quarantined_link(root: Path, *, original_name: str) -> None:
     entries = list(quarantine.iterdir())
     assert entries
     assert any(original_name in entry.name for entry in entries)
-    assert any(entry.is_symlink() for entry in entries)
+    assert any(_is_link_object(entry) for entry in entries)
 
 
 def test_filesystem_artifact_identity_covers_absolute_and_normalized_aliases(
@@ -67,15 +62,13 @@ def test_filesystem_artifact_identity_covers_absolute_and_normalized_aliases(
 
 
 def test_artifact_writer_quarantines_linked_artifacts_root(tmp_path: Path) -> None:
-    if not _can_create_symlink(tmp_path):
-        pytest.skip("symlink creation not permitted in this environment")
     root = tmp_path / "workspace"
     outside = tmp_path / "outside-artifacts"
     (root / ".jenny").mkdir(parents=True)
     outside.mkdir()
     sentinel = outside / "keep.txt"
     sentinel.write_text("outside", encoding="utf-8")
-    os.symlink(outside, root / ".jenny" / "artifacts", target_is_directory=True)
+    make_dir_link(root / ".jenny" / "artifacts", outside)
 
     tool = builtin_server._default_tools()["create_artifact"]
     result = tool.handler(
@@ -102,15 +95,13 @@ def test_filesystem_artifact_write_quarantines_linked_root(
     tmp_path: Path,
     path_shape: str,
 ) -> None:
-    if not _can_create_symlink(tmp_path):
-        pytest.skip("symlink creation not permitted in this environment")
     root = tmp_path / "workspace"
     outside = tmp_path / "outside-filesystem-artifacts"
     (root / ".jenny").mkdir(parents=True)
     outside.mkdir()
     sentinel = outside / "keep.txt"
     sentinel.write_text("outside", encoding="utf-8")
-    os.symlink(outside, root / ".jenny" / "artifacts", target_is_directory=True)
+    make_dir_link(root / ".jenny" / "artifacts", outside)
 
     artifact_path = root / ".jenny" / "artifacts" / "session-123" / "result.md"
     requested_path = {
@@ -136,15 +127,13 @@ def test_filesystem_artifact_write_quarantines_linked_root(
 
 
 def test_checkpoint_writer_quarantines_linked_backups_root(tmp_path: Path) -> None:
-    if not _can_create_symlink(tmp_path):
-        pytest.skip("symlink creation not permitted in this environment")
     root = tmp_path / "workspace"
     outside = tmp_path / "outside-backups"
     (root / ".jenny").mkdir(parents=True)
     outside.mkdir()
     sentinel = outside / "keep.txt"
     sentinel.write_text("outside", encoding="utf-8")
-    os.symlink(outside, root / ".jenny" / "backups", target_is_directory=True)
+    make_dir_link(root / ".jenny" / "backups", outside)
     target = root / "notes.txt"
     target.write_text("hello\n", encoding="utf-8")
 
@@ -158,9 +147,8 @@ def test_checkpoint_writer_quarantines_linked_backups_root(tmp_path: Path) -> No
     _assert_quarantined_link(root, original_name="backups")
 
 
+@requires_file_symlinks()
 def test_background_status_leaf_link_is_quarantined_not_followed(tmp_path: Path) -> None:
-    if not _can_create_symlink(tmp_path):
-        pytest.skip("symlink creation not permitted in this environment")
     root = tmp_path / "workspace"
     outside = tmp_path / "outside-status"
     job_id = "0123456789ab"

@@ -6,17 +6,17 @@
 
 /* == Editor chrome (W4): breadcrumbs strip + bottom status bar == */
 
+/* Muted path text on the editor surface: no band, no border (tab-row overhaul). */
 .ide-breadcrumbs {
   display: flex;
   align-items: center;
   flex-shrink: 0;
   gap: 2px;
   min-height: 24px;
-  padding: 0 12px;
+  padding-block: 4px 0;
+  padding-inline: 14px;
   overflow-x: auto;
   scrollbar-width: none;
-  background: var(--bg-surface-2);
-  border-bottom: 1px solid var(--line);
   font-size: var(--font-size-footnote);
   white-space: nowrap;
 }
@@ -130,99 +130,6 @@
   color: var(--accent);
 }
 
-/* == Tab drag-reorder states (W5) == */
-
-.ide-tab--dragging {
-  opacity: 0.5;
-}
-
-.ide-tab--drop-before {
-  box-shadow: inset 2px 0 0 var(--accent);
-}
-
-.ide-tab--drop-after {
-  box-shadow: inset -2px 0 0 var(--accent);
-}
-
-/* == Pinned tabs (compact) ==
- * A pinned tab clamps to the left of the strip (the pinned-first ordering
- * invariant lives in renderer-ide-tabs-controller / -state) and renders
- * compact: a small pin glyph precedes the name, the tab is a touch narrower,
- * and the close control stays hidden until hover (the base rule reveals × for
- * the active tab; a pinned tab opts back out so it reads tight and resists an
- * accidental close). The dirty dot still shows via the shared rules. */
-.ide-tab-pin {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-  color: var(--text-muted);
-}
-
-.ide-tab--pinned {
-  max-width: 168px;
-}
-
-.ide-tab--pinned .ide-tab-label {
-  padding-inline-start: 8px;
-}
-
-.ide-tab--pinned.ide-tab--active .ide-tab-pin {
-  color: var(--accent);
-}
-
-/* Stay compact while active: the × only appears on hover (the base rule reveals
- * it for the active tab; the :not(:hover) guard lets hover win again). */
-.ide-tab--pinned.ide-tab--active:not(:hover) .ide-tab-close {
-  opacity: 0;
-}
-
-/* == Tab-strip overflow affordance ==
- * The strip itself scrolls (overflow-x:auto, no wrap; see .ide-tabstrip in
- * ide-view.css). The "show all tabs" control is sticky-pinned to the right
- * edge so it stays reachable while the tabs scroll under it. It is rendered
- * only when tabs exist and revealed only once the strip overflows
- * (.ide-tabstrip--overflowing, toggled in renderer-ide-tabs.js) - so the
- * empty / fits-without-scrolling cases stay pixel-identical to before (no
- * affordance, no layout shift). */
-.ide-tabstrip-overflow {
-  display: none;
-  position: sticky;
-  inset-inline-end: 0;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  align-self: stretch;
-  width: 28px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-inline-start: 1px solid var(--line);
-  background: var(--bg-surface-2);
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.ide-tabstrip--overflowing {
-  /* Keep the active tab clear of the sticky overflow control when it is
-   * scrolled into view - scrollIntoView honours scroll-padding, so reserving
-   * the control's width stops the active tab tucking under it. */
-  scroll-padding-inline-end: 28px;
-}
-
-.ide-tabstrip--overflowing .ide-tabstrip-overflow {
-  display: inline-flex;
-}
-
-.ide-tabstrip-overflow:hover {
-  background: var(--bg-panel);
-  color: var(--text-primary);
-}
-
-.ide-tabstrip-overflow:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
 /* == Quick-pick overlays — shared `.ide-picker-*` chrome ==
  * The Ctrl+P file picker, the Ctrl+T symbol picker, the branch switcher, and
  * the run-script picker all render through the renderer-ide-picker-overlay
@@ -325,15 +232,10 @@
   max-height: min(420px, 70%);
 }
 
-.ide-quick-open-path mark {
-  background: transparent;
-  color: var(--accent);
-  font-weight: 500;
-}
-
 /* "@" symbol mode rows (Ctrl+P): the leading kind chip reuses the Go-to-Symbol
  * (Ctrl+T) `.ide-symbol-open-kind` style; only the accent name highlight is
  * quick-open-specific (the name lives in a `.ide-quick-open-name` span). */
+.ide-quick-open-path mark,
 .ide-quick-open-symbol-row .ide-quick-open-name mark {
   background: transparent;
   color: var(--accent);
@@ -556,31 +458,4 @@
 .ide-terminal-scrollback:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
-}
-
-.ide-terminal-input {
-  flex-shrink: 0;
-  padding: 6px 8px;
-  border-top: 1px solid var(--line);
-}
-
-.ide-terminal-field {
-  display: block;
-}
-
-.ide-terminal-field .inv-text-field-control {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 5px 8px;
-  border: 1px solid var(--line-strong);
-  border-radius: 4px;
-  background: var(--bg-base);
-  color: var(--text-primary);
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-code);
-}
-
-.ide-terminal-field .inv-text-field-control:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -1px;
 }

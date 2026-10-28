@@ -1,7 +1,7 @@
 """Background job management for the shell tool.
 
-Handles fire-and-forget execution via ``subprocess.Popen`` + daemon
-threads, with status and output persisted to
+Handles fire-and-forget execution through the owned-process service plus a
+daemon waiter thread, with status and output persisted to
 ``<workspace>/.jenny/tool-results/<job_id>/``.
 """
 
@@ -10,14 +10,13 @@ from __future__ import annotations
 import atexit
 import logging
 import os
-import signal
 import subprocess
 import threading
 import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import NamedTuple, Protocol
+from typing import NamedTuple
 
 from sidecar.ai.error_codes import (
     CMP_TOOL_BACKGROUND_NOT_FOUND,
@@ -52,37 +51,29 @@ from sidecar.ai.tools.workspace_store import (
 from sidecar.runtime.diagnostics import log_event
 
 TOOL_RESULTS_DIR = ".jenny/tool-results"
+# Defense in depth for output.txt: the owned-process capture is already
+# bounded far below this, so only a raised capture cap could reach it.
 MAX_BACKGROUND_OUTPUT_BYTES = 50 * 1024 * 1024
-MAX_BACKGROUND_JOBS = _owned_process.DEFAULT_MAX_ACTIVE_PROCESSES
+# Background jobs share the owned-process capacity with foreground commands;
+# leave one slot so a full set of background jobs cannot starve run_command.
+MAX_BACKGROUND_JOBS = max(1, _owned_process.DEFAULT_MAX_ACTIVE_PROCESSES - 1)
 MAX_TERMINAL_STATUS_FALLBACKS = 64
 RUNNING_RECONCILIATION_GRACE_SECONDS = 5.0
 RUNNING_PID_REUSE_MAX_SECONDS = 15 * 60.0
 BACKGROUND_STOP_WAIT_SECONDS = 3.0
 JOB_RETENTION_SECONDS = 7 * 24 * 60 * 60
 FULL_OUTPUT_FILE = "output.txt"
-
-# Canonical job-ID format: 12 lowercase hex chars, matching the IDs minted by
-# start_background_job() (uuid.uuid4().hex[:12]). Any job_id supplied by the
-# model that doesn't match this is refused before it ever reaches a path
-# join — this is what closes traversal (`..`), absolute drive/UNC paths, and
-# separator-bearing IDs (WIDE-011).
-
-# status.json read cap (WIDE-011): bounds the read before json.loads() runs,
-# so a hostile/oversized status file can't be used to force an unbounded
-# in-memory parse.
+# Job-ID validation and the status.json read cap (WIDE-011) live in
+# shell_background_status.py.
 _OUTPUT_SIZE_MARKER = "\n...[truncated due to background output size cap]"
 logger = logging.getLogger(__name__)
-
-
-class _Closable(Protocol):
-    def close(self) -> None: ...
 
 
 @dataclass
 class _ManagedBackgroundProcess:
     process: subprocess.Popen[str]
-    job_object: _Closable | None = None
-    process_group_id: int | None = None
+    # Every production job is spawned through the owned-process service; a
+    # bare ``process`` (no owner) exists only for injected test fakes.
     owned_process: _owned_process.OwnedProcess | None = None
     owned_result: _owned_process.OwnedProcessResult | None = None
     cleanup_verdict: _owned_process_settlement.OwnedProcessCleanupVerdict | None = None
@@ -516,30 +507,6 @@ def _wait_for_background_exit(
         return process.communicate()
 
 
-def _terminate_posix_process_group(job: _ManagedBackgroundProcess, timeout_seconds: float) -> None:
-    process = job.process
-    process_group_id = job.process_group_id
-    if process_group_id is None or not hasattr(os, "killpg"):
-        return
-    try:
-        os.killpg(process_group_id, signal.SIGTERM)
-        process.wait(timeout=max(0.1, timeout_seconds))
-        return
-    except ProcessLookupError:
-        return
-    except subprocess.TimeoutExpired:
-        sigkill = getattr(signal, "SIGKILL", None)
-        if sigkill is None:
-            process.kill()
-            process.wait(timeout=max(0.1, timeout_seconds))
-            return
-        try:
-            os.killpg(process_group_id, sigkill)
-        except ProcessLookupError:
-            return
-        process.wait(timeout=max(0.1, timeout_seconds))
-
-
 def _terminate_background_process(
     job: _ManagedBackgroundProcess,
     *,
@@ -551,23 +518,11 @@ def _terminate_background_process(
             timeout_seconds=timeout_seconds,
         )
         return
+    # Unowned fake (tests only): stop its own handle, never by name.
     process = job.process
     try:
         if process.poll() is not None:
             return
-        if os.name == "nt" and job.job_object is not None:
-            job.job_object.close()
-            job.job_object = None
-            try:
-                process.wait(timeout=max(0.1, timeout_seconds))
-                return
-            except subprocess.TimeoutExpired:
-                pass
-        elif os.name != "nt" and job.process_group_id is not None:
-            _terminate_posix_process_group(job, timeout_seconds)
-            if process.poll() is not None:
-                return
-
         process.terminate()
         try:
             process.wait(timeout=max(0.1, timeout_seconds))
@@ -576,10 +531,6 @@ def _terminate_background_process(
             process.wait(timeout=max(0.1, timeout_seconds))
     except Exception:  # noqa: BLE001
         logger.debug("failed to terminate background shell job", exc_info=True)
-    finally:
-        if job.job_object is not None:
-            job.job_object.close()
-            job.job_object = None
 
 
 ManagedBackgroundProcess = _ManagedBackgroundProcess
@@ -609,10 +560,6 @@ def release_managed_background_process(job: ManagedBackgroundProcess) -> None:
     """
     if job.owned_process is not None:
         _owned_process.get_owned_process_service().release(job.owned_process)
-        return
-    if job.job_object is not None:
-        job.job_object.close()
-        job.job_object = None
 
 
 @dataclass(frozen=True)
@@ -803,9 +750,6 @@ def _settle_background_job(
         _publish_terminal_status(store, job_ref, status)
     finally:
         _remove_active_job(job_id)
-        if job.job_object is not None:
-            job.job_object.close()
-            job.job_object = None
         job.terminalized.set()
         if job.cleanup_verdict is not None and job.cleanup_verdict.cleanup == "confirmed":
             job.settled.set()

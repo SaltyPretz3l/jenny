@@ -16,6 +16,7 @@ const {
   SCRYPT_PARAMS,
 } = require('../../server/auth-store');
 const { createRequestSecurity } = require('../../server/request-security');
+const { posixOnly } = require('../helpers/platform-skips');
 
 function tempFile() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-hosted-auth-'));
@@ -272,7 +273,7 @@ test('CSRF-authorized mutations refresh the throttled session idle window', asyn
 });
 
 test('unsafe auth symlinks and permissions fail closed without changing the target', {
-  skip: process.platform === 'win32' ? 'POSIX security qualification gate' : false,
+  skip: posixOnly('file modes 0644/0600 and symlink fail-closed'),
 }, (t) => {
   const fixture = tempFile();
   t.after(() => fs.rmSync(fixture.dir, { recursive: true, force: true }));

@@ -1,12 +1,14 @@
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('../shared/async-fence'));
+    module.exports = factory(require('../shared/async-fence'), require('./renderer-stream-dom-patch-utils'));
     return;
   }
-  root.rendererRenderPipelineSurfaceStateUtils = factory(root.rendererAsyncFence);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (asyncFence) {
+  root.rendererRenderPipelineSurfaceStateUtils = factory(root.rendererAsyncFence, root.rendererStreamDomPatchUtils);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (asyncFence, streamDomPatchUtils) {
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const windowRef = globalRef.window || globalRef;
+  // The one attribute-selector escaper (index.html loads the dom-patch utils first).
+  const { escapeSelectorValue } = streamDomPatchUtils;
 
   function createSurfaceStatePipeline(deps) {
     const { state = {}, dom = {}, runtime = {}, callbacks = {} } = deps || {};
@@ -260,13 +262,6 @@
       chatView.classList.add('thread-transition-ready');
       mirrorChatStateClassesToDock();
       refreshChatViewportAfterStateChange();
-    }
-
-    function escapeSelectorValue(value) {
-      if (windowRef.CSS && typeof windowRef.CSS.escape === 'function') {
-        return windowRef.CSS.escape(value);
-      }
-      return String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     }
 
     function dispose() {

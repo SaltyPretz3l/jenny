@@ -41,52 +41,12 @@
   margin-top: var(--space-6);
 }
 
-/* ── T2 — merged subsection treatment (Skills, Tips, nested MCP) ───────── */
-/* These classes already exist in index.html with zero CSS; this gives them a
-   real separator + heading. The header is a row (h4 + .settings-badge), with
-   the description as a sibling <p class="settings-copy">. */
+/* ── T2 — subsection treatment (Skills) ────────────────────────────────── */
+/* A separator rule above a subsection; its heading is a .settings-group-heading. */
 .settings-subsection {
   margin-top: var(--space-9);
   padding-top: var(--space-8);
   border-top: 1px solid color-mix(in srgb, var(--settings-shell-muted-border) 70%, transparent);
-}
-
-/* Neutralise the card-corner trick the base .settings-card-header applies
-   (negative margin / padding / rounded top / accent bottom border) — a
-   subsection header is an inline label row, not the card masthead. */
-.settings-card-header--subsection {
-  margin: 0;
-  padding: 0;
-  border-radius: 0;
-  border-bottom: 0;
-  background: none;
-  gap: var(--space-5);
-}
-
-.settings-card-header--subsection h4 {
-  margin: 0;
-  color: var(--text-primary);
-  font-family: var(--font-family-display, inherit);
-  font-size: var(--font-size-heading);
-  font-weight: 500;
-  line-height: 1.2;
-  letter-spacing: 0;
-}
-
-/* The subsection description tucks under its header without the full card-copy
-   top margin (the header row already provides separation). */
-.settings-card-header--subsection + .settings-copy {
-  margin-top: var(--space-4);
-}
-
-/* Depth cue for a nested subsection (Skills -> MCP Servers): swap the full
-   top rule for a left accent rail + indent so nesting reads at a glance. */
-.settings-subsection .settings-subsection {
-  margin-top: var(--space-8);
-  padding-top: var(--space-6);
-  padding-inline-start: var(--space-7);
-  border-top: 0;
-  border-inline-start: 2px solid color-mix(in srgb, var(--settings-shell-muted-border) 60%, transparent);
 }
 
 /* ── T5 — badge tone + loading->live convention ───────────────────────── */
@@ -128,43 +88,8 @@
 .settings-badge[data-badge-state="loading"],
 [data-badge-state="loading"] .inv-badge { visibility: hidden; }
 /* ── T4 — settings toggle list (injected inventory switches) ───────────── */
-/* A vertical column of injected inventory switches.
-   .inv-toggle carries no self-margin, so the grid supplies the inter-row gap;
-   each switch fills its row with the control trailing the label. The row
-   surface and label typography mirror .tools-config-field-row (settings-
-   controls.css) so every switch in the Session group — Context, Tools — reads
-   as one control family rather than two slightly different cards. */
+/* A vertical column of injected inventory switches. The row idiom (label
+   leading, switch trailing, hairlines between) lives in settings-grid.css. */
 .settings-toggle-list {
   display: grid;
-  gap: var(--space-4);
-  margin-top: var(--space-6);
-}
-.settings-toggle-list .inv-toggle {
-  display: flex;
-  justify-content: space-between;
-  width: 100%;
-  gap: var(--space-6);
-  padding: var(--space-5) var(--space-6);
-  border: 1px solid var(--settings-shell-muted-border);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--settings-shell-muted-bg) 64%, transparent);
-  box-shadow:
-    var(--shadow-sm),
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
-}
-/* The base .inv-toggle-label is xs / --text-secondary (sized for the composer
-   chrome). Promote it to a primary control label here, matching the Tools
-   capability rows so labels share one voice across the group. */
-.settings-toggle-list .inv-toggle-label {
-  color: var(--text-primary);
-  font-size: var(--font-size-body);
-  line-height: 1.5;
-}
-
-/* ── T10 — cascade "requires X" cue ───────────────────────────────────── */
-.settings-requires-note {
-  margin-top: var(--space-3);
-  color: var(--text-muted);
-  font-size: var(--font-size-footnote);
-  line-height: 1.5;
 }

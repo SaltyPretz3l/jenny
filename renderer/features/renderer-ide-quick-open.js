@@ -117,12 +117,19 @@
       };
     }
 
+    function refreshIfOpen() { if (picker?.isOpen()) picker.refresh(); }
+
     function resetWorkspaceView() {
       workspaceEpoch += 1;
       workspaceResult = null;
       activeSymbols = null;
       symbolsForPath = '';
       symbolsFetching = false;
+      // An open picker would otherwise sit on "Indexing…" until reopened.
+      if (picker?.isOpen()) {
+        picker.refresh();
+        ensureFiles().then(refreshIfOpen, refreshIfOpen);
+      }
     }
 
     function invalidate() {
@@ -148,9 +155,7 @@
 
     // True for a bare ":42" / ":42:5" query (a line jump with no path typed):
     // the target is the open file, not a file in the list.
-    function isBareLineQuery() {
-      return lastParsed.line != null && !lastParsed.pathPart;
-    }
+    function isBareLineQuery() { return lastParsed.line != null && !lastParsed.pathPart; }
 
     // --- @-mode: active-file symbol list ---
     // Everything here is reached through window globals so the module stays
@@ -163,9 +168,7 @@
       return typeof query === 'string' && query.startsWith('@');
     }
 
-    function activeEditorReader() {
-      return globalRef.rendererIdeActiveEditorReader || null;
-    }
+    function activeEditorReader() { return globalRef.rendererIdeActiveEditorReader || null; }
 
     function activeEditorPath() {
       const reader = activeEditorReader();
@@ -289,10 +292,8 @@
         return;
       }
       // Only re-render if the overlay is still open when the fetch resolves
-      // (it may have closed mid-flight); refresh on a hidden overlay is a no-op
-      // but the guard keeps intent explicit.
-      const reRender = () => { if (picker?.isOpen()) { picker.refresh(); } };
-      fetchActiveSymbols().then(reRender, reRender);
+      // (it may have closed mid-flight).
+      fetchActiveSymbols().then(refreshIfOpen, refreshIfOpen);
     }
 
     function computeMatches(query) {
@@ -327,16 +328,27 @@
           .slice(0, MAX_RESULTS)
           .map((path) => ({ path, ranges: [] }));
       }
-      const scored = [];
+      // Bounded top-N insertion: score desc, ties in plain code-unit path order
+      // (no full sort or localeCompare over every match per keystroke).
+      const top = [];
       for (const path of files) {
         const match = scorer(path, pathQuery);
-        if (match) {
-          scored.push({ path, score: match.score, ranges: match.ranges });
+        if (!match) continue;
+        const entry = { path, score: match.score, ranges: match.ranges };
+        if (top.length === MAX_RESULTS && !ranksBefore(entry, top[MAX_RESULTS - 1])) continue;
+        let low = 0, high = top.length;
+        while (low < high) {
+          const mid = (low + high) >> 1;
+          if (ranksBefore(top[mid], entry)) low = mid + 1;
+          else high = mid;
         }
+        top.splice(low, 0, entry);
+        if (top.length > MAX_RESULTS) top.pop();
       }
-      scored.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
-      return scored.slice(0, MAX_RESULTS);
+      return top;
     }
+
+    function ranksBefore(a, b) { return a.score > b.score || (a.score === b.score && a.path < b.path); }
 
     // The Ctrl+E recently-edited list: filter the runtime MRU by the query while
     // PRESERVING activation order (no score re-sort), so the most-recent file
@@ -364,9 +376,7 @@
       return out;
     }
 
-    function status(text) {
-      return `<div class="ide-picker-status ide-quick-open-status">${text}</div>`;
-    }
+    function status(text) { return `<div class="ide-picker-status ide-quick-open-status">${text}</div>`; }
 
     function buildResultRowMarkup(match, index, selected) {
       const highlight = typeof paletteUtils.highlightRanges === 'function'
@@ -562,13 +572,8 @@
       },
     }) || null;
 
-    function toggle() {
-      picker?.toggle();
-    }
-
-    function toggleRecent() {
-      recentPicker?.toggle();
-    }
+    function toggle() { picker?.toggle(); }
+    function toggleRecent() { recentPicker?.toggle(); }
 
     function dispose() {
       picker?.dispose();

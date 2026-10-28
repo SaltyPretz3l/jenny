@@ -180,5 +180,5 @@ test('cancelled bridge result persists before terminal settlement and releases t
 });
 
 test('the sandbox bridge passes every Electron-owned shell-free tool through (seam 17 of a new manifest tool)', () => {
-  assert.deepEqual([...SANDBOX_BRIDGE_TOOLS].sort(), ['ask_user', 'complete_session_handoff', 'conversation_open', 'conversations_recent', 'conversations_search', 'exit_plan_mode', 'home', 'project_notes', 'propose_command', 'propose_session', 'run_command', 'task_board']);
+  assert.deepEqual([...SANDBOX_BRIDGE_TOOLS].sort(), ['ask_user', 'complete_session_handoff', 'conversation_open', 'conversations_recent', 'conversations_search', 'exit_plan_mode', 'home', 'jenny_help', 'project_notes', 'propose_command', 'propose_session', 'run_command', 'session_status', 'session_stop', 'session_transcript', 'sessions_list', 'task_board']);
 });

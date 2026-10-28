@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from sidecar.ai.error_codes import (
+    CMP_TOOL_CAP_EXCEEDED,
     CMP_TOOL_EXECUTION_FAILED,
     CMP_TOOL_INVALID_PATH,
 )
@@ -22,6 +23,9 @@ from sidecar.ai.tools.workspace_store import (
 )
 
 MAX_EDITABLE_BYTES = 512 * 1024
+# Text artifacts one session may hold; a runaway loop otherwise fills the
+# workspace's artifact directory without bound.
+MAX_ARTIFACTS_PER_SESSION = 500
 EXTENSION_PATTERN = re.compile(r"\.[a-z0-9]+(?:[._-][a-z0-9]+)*$")
 
 
@@ -256,6 +260,27 @@ def create_binary_artifact(
     )
 
 
+def _ensure_session_artifact_capacity(store: GuardedWorkspaceStore, parent: StoreRef) -> None:
+    """Refuse a new text artifact once the session directory is at its cap."""
+    try:
+        existing: int | None = len(
+            store.list_entries(parent, max_entries=MAX_ARTIFACTS_PER_SESSION)
+        )
+    except ToolExecutionFailure as error:
+        if error.code != CMP_TOOL_CAP_EXCEEDED:
+            raise
+        existing = None
+    if existing is None or existing >= MAX_ARTIFACTS_PER_SESSION:
+        raise ToolExecutionFailure(
+            code=CMP_TOOL_CAP_EXCEEDED,
+            message=(
+                f"session already holds the maximum of {MAX_ARTIFACTS_PER_SESSION} "
+                "artifact files"
+            ),
+            retryable=False,
+        )
+
+
 def _write_unique_artifact_bytes(
     store: GuardedWorkspaceStore,
     parent: StoreRef,
@@ -283,6 +308,7 @@ def _persist_text_artifact(  # noqa: PLR0913 - normalized text artifact inputs.
     artifact_kind: str,
 ) -> dict[str, object]:
     store, artifact_parent = _artifact_parent(workspace, session_id)
+    _ensure_session_artifact_capacity(store, artifact_parent)
     target = _write_unique_artifact_bytes(
         store,
         artifact_parent,

@@ -268,3 +268,86 @@ test('the run indicator is one control that opens the Run view and offers no sec
     globalThis.window = prevWindow;
   }
 });
+
+// ── Row 82 slice S: language / indentation / encoding chips ─────────────────
+
+function mountStatusBar(callbacks, ide = { activeTabPath: 'a.js', wordWrap: 'off' }) {
+  const dom = new JSDOM('<!doctype html><body><div id="sb"></div></body>');
+  const doc = dom.window.document;
+  const statusBar = createIdeStatusBar({
+    getDom: () => ({ ideStatusBar: doc.getElementById('sb'), ideBreadcrumbs: null }),
+    getIde: () => ide,
+    callbacks: {
+      getCursorInfo: () => ({ lineNumber: 1, column: 1, selectedChars: 0 }),
+      getActiveLanguageId: () => 'javascript',
+      getDocumentKind: () => 'file',
+      isDiffTab: () => false,
+      ...callbacks,
+    },
+  });
+  statusBar.bindEvents();
+  statusBar.render();
+  return { doc, bar: doc.getElementById('sb'), statusBar };
+}
+
+test('the language chip is a button that opens the language picker anchored on itself', () => {
+  const picked = [];
+  const { bar } = mountStatusBar({ onPickLanguage: (chip) => picked.push(chip) });
+  const chip = bar.querySelector('[data-ide-status-action="language"]');
+  assert.ok(chip, 'the language chip carries data-ide-status-action="language"');
+  assert.equal(chip.tagName, 'BUTTON', 'keyboard reachable like the EOL chip');
+  assert.equal(chip.textContent, 'javascript');
+  assert.equal(chip.getAttribute('title'), 'Select Language Mode');
+  chip.click();
+  assert.deepEqual(picked, [chip], 'the click hands the chip over as the picker anchor');
+});
+
+test('the indentation chip reads Spaces: N or Tab Size: N and opens the indentation picker', () => {
+  const opened = [];
+  let info = { insertSpaces: true, tabSize: 2, source: 'default' };
+  const { bar, statusBar } = mountStatusBar({
+    getIndentInfo: () => info,
+    onPickIndentation: (chip) => opened.push(chip),
+  });
+  const chip = () => bar.querySelector('[data-ide-status-action="indentation"]');
+  assert.equal(chip().textContent, 'Spaces: 2');
+  assert.equal(bar.querySelector('[data-ide-status-action="tab-size"]'), null, 'the old tab-size action is gone');
+  info = { insertSpaces: false, tabSize: 4, source: 'file' };
+  statusBar.render();
+  assert.equal(chip().textContent, 'Tab Size: 4');
+  assert.equal(chip().tagName, 'BUTTON');
+  chip().click();
+  assert.deepEqual(opened, [chip()]);
+});
+
+test('the indentation chip falls back to the tab-size opener and getTabSize on an older wiring', () => {
+  const opened = [];
+  const { bar } = mountStatusBar({ getTabSize: () => 8, onPickTabSize: (chip) => opened.push(chip) });
+  const chip = bar.querySelector('[data-ide-status-action="indentation"]');
+  assert.equal(chip.textContent, 'Spaces: 8');
+  chip.click();
+  assert.deepEqual(opened, [chip]);
+});
+
+test('the encoding chip reads UTF-8 or UTF-8 with BOM and opens the read-only info', () => {
+  const opened = [];
+  let encoding = { encoding: 'utf-8', bom: false };
+  const { bar, statusBar } = mountStatusBar({
+    getEncodingInfo: () => encoding,
+    onPickEncoding: (chip) => opened.push(chip),
+  });
+  const chip = () => bar.querySelector('[data-ide-status-action="encoding"]');
+  assert.equal(chip().textContent, 'UTF-8');
+  encoding = { encoding: 'utf-8', bom: true };
+  statusBar.render();
+  assert.equal(chip().textContent, 'UTF-8 with BOM');
+  assert.equal(chip().tagName, 'BUTTON');
+  chip().click();
+  assert.deepEqual(opened, [chip()]);
+});
+
+test('the right-hand chips keep the VS Code order: indentation, encoding, EOL, language', () => {
+  const { bar } = mountStatusBar({});
+  const order = [...bar.querySelectorAll('[data-ide-status-action]')].map((el) => el.dataset.ideStatusAction);
+  assert.deepEqual(order.filter((a) => ['indentation', 'encoding', 'eol', 'language'].includes(a)), ['indentation', 'encoding', 'eol', 'language']);
+});

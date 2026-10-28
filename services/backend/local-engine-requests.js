@@ -21,6 +21,8 @@ const {
 const { INTERACTIVE_ERROR_CODES } = require('./error-codes');
 const { resolveSkillsAuthority } = require('../skills-project-scope');
 const { normalizeHandoffPreparation, normalizeSessionHandoff } = require('./session-handoff-context');
+const { normalizeRequestApplicationTurn } = require('./application-turns');
+const { resolveDefaultChatModel } = require('./backend-chat-model-resolution');
 const LOCAL_INFERENCE_ENGINE_TYPES = new Set(['ollama', 'vllm']);
 const SKILL_INVOCATION_ID_PATTERN = /^(bundled|user|project)\/[A-Za-z0-9_][A-Za-z0-9._-]*(\/[A-Za-z0-9_][A-Za-z0-9._-]*){0,7}$/;
 
@@ -165,6 +167,7 @@ async function prepareLocalEngineChatRequest(service, {
   proposalDecision,
   sessionHandoffPreparation,
   sessionHandoff,
+  applicationTurn,
 }, options = {}) {
   const cancellation = options?.cancellation;
   const throwIfStartCancelled = () => {
@@ -189,6 +192,7 @@ async function prepareLocalEngineChatRequest(service, {
   const sessionKey = String(sessionId || '').trim();
   const normalizedProposalDecision = normalizeProposalDecision(proposalDecision);
   const handoffFields = normalizeInternalHandoffFields({ sessionHandoffPreparation, sessionHandoff });
+  const normalizedApplicationTurn = normalizeRequestApplicationTurn(applicationTurn);
   const normalizedSkillInvocation = resolveSkillInvocation(service, skillInvocation, sessionKey);
   const normalizedContextPreferences = normalizeContextPreferences(
     typeof contextPreferences !== 'undefined'
@@ -219,6 +223,9 @@ async function prepareLocalEngineChatRequest(service, {
   if (forcedLocal) {
     runtimePreferredModel = forcedLocal.model;
     runtimePreferredEngineType = forcedLocal.engineType;
+  } else if (!runtimePreferredModel) {
+    // The persisted pick stays '' (Default); only this turn's route is pinned.
+    runtimePreferredModel = resolveDefaultChatModel(service);
   }
 
   throwIfStartCancelled();
@@ -243,6 +250,7 @@ async function prepareLocalEngineChatRequest(service, {
     failureRetry,
     ...(normalizedProposalDecision ? { proposalDecision: normalizedProposalDecision } : {}),
     ...handoffFields,
+    ...(normalizedApplicationTurn ? { applicationTurn: normalizedApplicationTurn } : {}),
   };
 }
 

@@ -61,7 +61,7 @@
       message: item.message,
       tone: item.tone || 'warning',
       sectionId: item.sectionId || 'models',
-      actionLabel: item.actionLabel || 'Open',
+      actionLabel: item.actionLabel || jt('common.open', 'Open'),
       action: item.action || '',
       priority: Number.isFinite(Number(item.priority)) ? Number(item.priority) : 100,
     });
@@ -197,7 +197,7 @@
         message: jt('settings.controlTower.chooseModel', 'Choose or load a model before starting local-first work.'),
         tone: 'warning',
         sectionId: 'models',
-        actionLabel: 'Choose a model',
+        actionLabel: jt('settings.controlTower.chooseModelAction', 'Choose a model'),
         priority: 20,
       });
     }
@@ -380,7 +380,7 @@
     }
     return {
       tone: attentionCount > 0 ? 'attention' : 'ready',
-      summaryLabel: attentionCount > 0 ? jt('settings.controlTower.reviewCount', '{count} to review', { count: attentionCount }) : 'Ready',
+      summaryLabel: attentionCount > 0 ? jt('settings.controlTower.reviewCount', '{count} to review', { count: attentionCount }) : jt('healthPill.ready', 'Ready'),
       summaryMessage: attentionCount > 0
         ? ''
         : jt('settings.controlTower.readySummary', 'Settings are ready for the current local-first workflow.'),
@@ -417,7 +417,7 @@
     const items = Array.isArray(safeModel.items) ? safeModel.items : [];
     const rows = items.map((item) => {
       const sectionId = String(item.sectionId || 'models').trim() || 'models';
-      const actionLabel = String(item.actionLabel || 'Open');
+      const actionLabel = String(item.actionLabel || jt('common.open', 'Open'));
       const tone = String(item.tone || 'warning');
       const dataset = { 'settings-control-section': sectionId };
       if (item.action) dataset['settings-control-action'] = item.action;
@@ -459,7 +459,7 @@
     if (!documentRef || typeof documentRef.getElementById !== 'function') return;
     const headerBadge = documentRef.getElementById('readinessBadge');
     if (headerBadge) {
-      const label = String(safeModel.summaryLabel || 'Ready');
+      const label = String(safeModel.summaryLabel || jt('healthPill.ready', 'Ready'));
       if (headerBadge.textContent !== label) headerBadge.textContent = label;
       const tone = safeModel.attentionCount > 0 ? (safeModel.badgeTone === 'pending' ? 'pending' : 'warning') : 'success';
       if (headerBadge.getAttribute('data-state') !== tone) headerBadge.setAttribute('data-state', tone);

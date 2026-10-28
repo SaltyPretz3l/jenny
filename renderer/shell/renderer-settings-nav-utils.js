@@ -38,7 +38,7 @@
       ? searchUtils.createSettingsSearchController({
         settingsNav: settingsNav,
         navigateToSection: function (sectionId) {
-          setActiveSection(sectionId);
+          return setActiveSection(sectionId);
         },
         getNavItems: function () { return getAllNavItems(); },
         getSectionRefreshPromise: typeof deps.getSectionRefreshPromise === 'function' ? deps.getSectionRefreshPromise : null,
@@ -50,6 +50,12 @@
         && !node.hidden
         && !node.classList.contains('hidden')
         && !node.closest('[hidden]');
+    }
+
+    // The search box filters the rail with this class (display:none); a filtered
+    // item is out of keyboard reach and out of the picker too.
+    function isSearchHidden(item) {
+      return item.classList.contains('settings-nav-item-search-hidden');
     }
 
     function getSectionNavItem(sectionId) {
@@ -82,7 +88,7 @@
       if (!sectionPicker) return;
       [].forEach.call(sectionPicker.options, function (option) {
         var item = getSectionNavItem(option.value);
-        option.hidden = !isVisibleNode(item);
+        option.hidden = !isVisibleNode(item) || isSearchHidden(item);
         option.disabled = option.hidden;
       });
       sectionPicker.value = resolveSectionId(state.ui.activeSettingsSection);
@@ -214,80 +220,13 @@
       });
     }
 
-    /*
-     * Section-level UI feedback. Pairs with [data-surface-state] tokens in
-     * styles/settings-sections.css. Distinct from data-activity-state, which
-     * the runtime activity system stamps on individual controls — this helper
-     * is for section-card glow that the activity system doesn't reach.
-     */
-    var settleTimers = Object.create(null);
-    function findSectionCard(sectionId) {
-      var id = String(sectionId || '').trim();
-      if (!id) {
-        return null;
-      }
-      if (cardCache) {
-        for (var i = 0; i < cardCache.length; i++) {
-          if (cardCache[i].getAttribute('data-settings-section') === id) {
-            return cardCache[i];
-          }
-        }
-      }
-      if (!settingsContentScroll) {
-        return null;
-      }
-      return settingsContentScroll.querySelector('.settings-card[data-settings-section="' + id + '"]');
-    }
-    function markSectionState(sectionId, nextState, options) {
-      var card = findSectionCard(sectionId);
-      if (!card) {
-        return;
-      }
-      var pendingTimer = settleTimers[sectionId];
-      if (pendingTimer) {
-        window.clearTimeout(pendingTimer);
-        delete settleTimers[sectionId];
-      }
-      if (!nextState) {
-        if (card.dataset.surfaceState !== undefined) {
-          delete card.dataset.surfaceState;
-        }
-        return;
-      }
-      var nextValue = String(nextState);
-      if (card.dataset.surfaceState !== nextValue) {
-        card.dataset.surfaceState = nextValue;
-      }
-      var settleAfter = options && Number(options.settleAfter);
-      if (settleAfter > 0) {
-        settleTimers[sectionId] = window.setTimeout(function () {
-          if (card.dataset.surfaceState === nextValue) {
-            delete card.dataset.surfaceState;
-          }
-          delete settleTimers[sectionId];
-        }, settleAfter);
-      }
-    }
-    function setNavItemDirty(sectionId, dirty) {
-      var item = getSectionNavItem(sectionId);
-      if (!item) {
-        return;
-      }
-      var isDirty = item.getAttribute('data-dirty') === 'true';
-      if (dirty && !isDirty) {
-        item.setAttribute('data-dirty', 'true');
-      } else if (!dirty && isDirty) {
-        item.removeAttribute('data-dirty');
-      }
-    }
-
     function handleSettingsNavKeydown(event) {
       if (event.target === sectionPicker) return;
       var currentItem = event.target.closest('[data-settings-section]');
       if (!currentItem || !settingsNav) {
         return;
       }
-      var items = getAllNavItems();
+      var items = getAllNavItems().filter(function (item) { return !isSearchHidden(item); });
       if (!items.length) {
         return;
       }
@@ -385,10 +324,6 @@
     return {
       setActiveSection: setActiveSection,
       restoreActiveSection: restoreActiveSection,
-      focusNavItem: focusNavItem,
-      markSectionState: markSectionState,
-      setNavItemDirty: setNavItemDirty,
-      setNavItemBadge: function (sectionId, text, tone) { return setNavItemBadge(settingsNav, sectionId, text, tone); },
       bind: bind,
       dispose: dispose,
     };

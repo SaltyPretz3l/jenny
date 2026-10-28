@@ -59,7 +59,8 @@ class InferenceOperations {
     let lease;
     try {
       this.assertCurrent();
-      const admission = this.lanes.tryAcquireInference({ ownerId: this.requestId, route: this.route });
+      const admission = this.lanes.tryAcquireInference({ ownerId: this.requestId, route: this.route,
+        sessionId: this.sessionId });
       if (admission.status !== 'granted') return admission;
       lease = admission.lease;
       this.assertCurrent();
@@ -114,10 +115,16 @@ class InferenceOperations {
         this.initialLease = null;
       }
       const admission = this.initialLease ? { status: 'granted', lease: this.initialLease }
-        : this.lanes.tryAcquireInference({ ownerId: this.requestId, route });
+        : this.lanes.tryAcquireInference({ ownerId: this.requestId, route, sessionId: this.sessionId, queue: true });
       if (admission.status !== 'granted') {
         this.operations.delete(id);
-        return response(id, admission.status === 'waiting' ? 'waiting' : 'rejected', admission.reason);
+        if (admission.status !== 'waiting') return reject(admission.reason);
+        // Only quarantined leases (cleanup unconfirmed) hold the lane: nothing frees it on its
+        // own, so the sidecar must not keep polling for it.
+        const blockers = admission.blockers || [];
+        const quarantined = !admission.queued && blockers.length > 0
+          && blockers.every(blocker => blocker.quarantined_at !== null);
+        return response(id, 'waiting', quarantined ? 'lane_quarantined' : admission.reason);
       }
       record.lease = admission.lease;
       this.initialLease = null;
@@ -175,6 +182,7 @@ class InferenceOperations {
 
   close({ producerSettled = false } = {}) {
     this.closed = true;
+    this.lanes.forgetInferenceWaiter?.(this.requestId);
     const initialLease = this.initialLease;
     this.initialLease = null;
     if (initialLease) this.lanes.release(initialLease, { producerSettled: true });

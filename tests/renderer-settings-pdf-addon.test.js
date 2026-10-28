@@ -148,6 +148,24 @@ test('downloading shows bytes, a progress bar and Cancel; a pushed state replace
   h.close();
 });
 
+test('a pushed state that changes nothing on screen keeps the rendered nodes and focus', async () => {
+  const h = harness(state({ state: 'downloading', downloadedBytes: 11_400_000, totalBytes: 19_238_032, cancellable: true }));
+  h.controller.bind();
+  await settle();
+  const cancel = h.host.querySelector('[data-action="pdfAddonCancel"]');
+  cancel.focus();
+  // The same progress again (a repeated event): no rewrite.
+  h.emit(state({ state: 'downloading', downloadedBytes: 11_400_000, totalBytes: 19_238_032, cancellable: true }));
+  assert.equal(h.host.querySelector('[data-action="pdfAddonCancel"]'), cancel, 'the same node');
+  assert.equal(h.doc.activeElement, cancel);
+  // New progress does repaint, and focus follows the action.
+  h.emit(state({ state: 'downloading', downloadedBytes: 15_000_000, totalBytes: 19_238_032, cancellable: true }));
+  assert.notEqual(h.host.querySelector('[data-action="pdfAddonCancel"]'), cancel);
+  assert.equal(h.host.querySelector('[data-progress]').dataset.progress, '15000000/19238032');
+  assert.equal(h.doc.activeElement, h.host.querySelector('[data-action="pdfAddonCancel"]'));
+  h.close();
+});
+
 test('ready: Remove asks once inline before removing', async () => {
   const h = harness(state({ state: 'ready', installedVersion: '1.27.2.2' }));
   h.controller.bind();

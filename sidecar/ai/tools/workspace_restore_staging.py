@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
 
 from sidecar.ai.tools.workspace_mutation_journal_contract import EMPTY_SHA256, PathSignature
+from sidecar.ai.tools.workspace_restore_io import link as guarded_link
+from sidecar.ai.tools.workspace_restore_io import make_parents
 
 
 def _validate_resume_state(  # noqa: C901, PLR0912 - ordered recovery-state validation.
@@ -234,14 +236,14 @@ def _stage_move_sources(
             _remove_exact(source)
             continue
         _assert_signature(source, entry["expected_signature"], "restore_state_ambiguous")
-        stage.parent.mkdir(parents=True, exist_ok=True)
+        make_parents(stage)
         if _signature(stage).kind != "missing":
             raise WorkspaceRestoreError(
                 "restore_stage_collision", "Restore staging path is occupied."
             )
         if source.is_file() and not source.is_symlink():
             try:
-                os.link(source, stage)
+                guarded_link(source, stage)
             except FileExistsError as error:
                 raise WorkspaceRestoreError(
                     "restore_stage_collision", "Restore staging path is occupied."

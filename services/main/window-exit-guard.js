@@ -122,16 +122,24 @@ function createWindowExitGuard({
       failOpenClose(win, 'no_webcontents');
       return;
     }
+    sendPreflightRequest(win, webContents, (reason) => failOpenClose(win, reason));
+  }
+
+  // The one request machinery shared by a close and a quit preflight: arm the
+  // fail-open timer, record `pending`, push the request. They differ only in
+  // `failOpen(reason)`, which runs after `pending` is cleared on a timeout or
+  // a failed push. `resolveQuit` is set for a quit preflight only.
+  function sendPreflightRequest(win, webContents, failOpen, resolveQuit) {
     requestSeq += 1;
     const requestId = `win-exit-${requestSeq}`;
     const timer = setTimeoutFn(() => {
       if (pending && pending.requestId === requestId) {
         pending = null;
         logEvent('WARN', 'window.exit_preflight_timeout', { requestId, timeoutMs });
-        failOpenClose(win, 'timeout');
+        failOpen('timeout');
       }
     }, timeoutMs);
-    pending = { requestId, win, timer };
+    pending = { requestId, win, timer, resolveQuit };
     try {
       webContents.send(requestChannel, { requestId });
     } catch (error) {
@@ -140,7 +148,7 @@ function createWindowExitGuard({
         requestId,
         message: String((error && error.message) || error || ''),
       });
-      failOpenClose(win, 'send_failed');
+      failOpen('send_failed');
     }
   }
 
@@ -168,28 +176,11 @@ function createWindowExitGuard({
       return Promise.resolve(true);
     }
     return new Promise((resolveQuit) => {
-      requestSeq += 1;
-      const requestId = `win-exit-${requestSeq}`;
-      const timer = setTimeoutFn(() => {
-        if (pending && pending.requestId === requestId) {
-          pending = null;
-          logEvent('WARN', 'window.exit_preflight_timeout', { requestId, timeoutMs });
-          logEvent('WARN', 'window.exit_preflight_fail_open', { reason: 'timeout' });
-          resolveQuit(true);
-        }
-      }, timeoutMs);
-      pending = { requestId, win, timer, resolveQuit };
-      try {
-        webContents.send(requestChannel, { requestId });
-      } catch (error) {
-        clearPending();
-        logEvent('WARN', 'window.exit_preflight_send_failed', {
-          requestId,
-          message: String((error && error.message) || error || ''),
-        });
-        logEvent('WARN', 'window.exit_preflight_fail_open', { reason: 'send_failed' });
+      const failOpenQuit = (reason) => {
+        logEvent('WARN', 'window.exit_preflight_fail_open', { reason });
         resolveQuit(true);
-      }
+      };
+      sendPreflightRequest(win, webContents, failOpenQuit, resolveQuit);
     });
   }
 
@@ -214,6 +205,26 @@ function createWindowExitGuard({
         }
       }
     });
+    // A reload or navigation while the prompt is up (after its ack cancelled the
+    // timer) destroys the renderer that owed the answer; a pending entry left
+    // behind would refuse every later close and quit. Drop it and keep the app
+    // open: the next close or quit asks the new page again.
+    const webContents = mainWindow.webContents;
+    if (webContents && typeof webContents.on === 'function') {
+      webContents.on('did-start-navigation', (details, _url, isInPlace, isMainFrame) => {
+        const mainFrame = details && typeof details.isMainFrame === 'boolean' ? details.isMainFrame : isMainFrame;
+        const sameDocument = details && typeof details.isSameDocument === 'boolean' ? details.isSameDocument : isInPlace;
+        if (!mainFrame || sameDocument || !pending || pending.win !== mainWindow) {
+          return;
+        }
+        const { requestId, resolveQuit } = pending;
+        clearPending();
+        logEvent('WARN', 'window.exit_preflight_dropped', { requestId, reason: 'navigation' });
+        if (resolveQuit) {
+          resolveQuit(false);
+        }
+      });
+    }
     return true;
   }
 

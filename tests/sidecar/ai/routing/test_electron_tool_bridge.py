@@ -988,3 +988,34 @@ def test_question_pause_closes_answer_reader_and_never_becomes_a_result(mode):
     else:
         assert sent[0]["params"]["runtime_decision"] == decision
     assert "runtime_decision" not in sent[0]["params"]["arguments"]
+
+
+def _resolve_with(tool_name: str, result: dict[str, object]) -> list[tuple[int, str]]:
+    logged: list[tuple[int, str]] = []
+
+    class _Logger:
+        def log(self, level: int, _message: str, *args: object, **kwargs: object) -> None:
+            extra = kwargs.get("extra") or {}
+            logged.append((level, str(extra.get("event", ""))))
+
+    def response_reader_factory(expected_id: int, **_kwargs: object):
+        return lambda _timeout: {"jsonrpc": "2.0", "id": expected_id, "result": result}
+
+    execute_electron_tool(ElectronToolBridgeRequest(
+        tool_name=tool_name, arguments={}, request_id="req", trace_id="trace",
+        session_id="session", tool_call_id="call", write_message=lambda _message: None,
+        read_message=None, response_reader_factory=response_reader_factory,
+        timeout_seconds=1.0, logger=_Logger(),
+    ))
+    return [level for level, event in logged if event == "sidecar.runtime.electron_tool.resolved"]
+
+
+def test_auto_checkpoint_outside_a_git_repo_resolves_at_info() -> None:
+    """Owner log 2026-10-20: every turn in a plain folder logged a WARN here."""
+    not_git = {"tool_name": "__jenny_git_checkpoint", "output": "no checkpoint (skipped)",
+               "success": False, "metadata": {"result_kind": "auto_checkpoint", "reason": ""}}
+    git_failed = {**not_git, "metadata": {"result_kind": "auto_checkpoint", "reason": "git_failed"}}
+    model_tool = {"tool_name": "worktree_list", "output": "boom", "success": False}
+    assert _resolve_with("__jenny_git_checkpoint", not_git) == [20]
+    assert _resolve_with("__jenny_git_checkpoint", git_failed) == [30]
+    assert _resolve_with("worktree_list", model_tool) == [30]

@@ -16,6 +16,7 @@ from sidecar.ai.tools.builtins.python_runtime import bundled_runtime, interprete
 from sidecar.ai.tools.builtins.python_runtime.errors import PythonRuntimeError
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
+from tests.sidecar._platform_skips import posix_only
 
 
 def _write_python(path: Path, *, executable: bool = True) -> Path:
@@ -142,7 +143,7 @@ def test_copy_bundled_runtime_requires_copied_executable(tmp_path: Path) -> None
         bundled_runtime.copy_bundled_runtime(python, root, tmp_path / "runtime.build")
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX executable-bit contract")
+@posix_only("executable-bit contract")
 def test_copy_bundled_runtime_requires_executable_bit(tmp_path: Path) -> None:
     root, python = _pbs_tree(tmp_path)
     python.chmod(0o644)

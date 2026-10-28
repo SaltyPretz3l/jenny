@@ -66,9 +66,12 @@
       return result !== false && typeof deps.openArtifact === 'function';
     }
 
-    function openChanges(ownerSessionId, opener) {
+    function openChanges(ownerSessionId, opener, reviewFindings) {
       // The rail claims the owner itself (it must claim before it renders); this one is for fakes.
-      return call('openChanges', { ownerSessionId, opener }) === true;
+      // A chat findings list's Show in diff (row 64) hands its findings to the Working tree page.
+      const context = { ownerSessionId, opener };
+      if (reviewFindings && typeof reviewFindings === 'object') context.reviewFindings = reviewFindings;
+      return call('openChanges', context) === true;
     }
 
     function openBackgroundTasks(ownerSessionId, opener) {
@@ -100,7 +103,7 @@
       let opened;
       try {
         if (surface === 'outputs') opened = openOutputs(ownerSessionId, opener, options.resourceRef);
-        else if (surface === 'changes') opened = openChanges(ownerSessionId, opener);
+        else if (surface === 'changes') opened = openChanges(ownerSessionId, opener, options.reviewFindings);
         else if (surface === 'background_tasks') opened = openBackgroundTasks(ownerSessionId, opener);
         else if (surface === 'context') opened = openComposerPopover(opener, CONTEXT_RING_SELECTOR);
         else opened = openComposerPopover(opener, PROJECT_PILL_SELECTOR);

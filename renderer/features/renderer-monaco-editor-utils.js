@@ -231,6 +231,8 @@
       // for the single typography MutationObserver that drives them.
       fontConsumers: null,
       typographyObserverInstalled: false,
+      // The IDE's custom font family ({ resolve, apply }), re-applied after a typography pass.
+      ideFontFamilyResolver: null,
       // Explicit editor font size in px; 0 = follow Text size.
       codeFontPx: 0,
     };
@@ -639,6 +641,7 @@
       if (fontFamily && consumers?.size) {
         consumers.forEach((editor) => applyMonacoFontFamily(editor, fontFamily));
       }
+      if (fontFamily) reapplyIdeFontFamily(sharedState, fontFamily);
       try {
         view.monaco?.editor?.remeasureFonts?.();
       } catch (_error) {
@@ -647,6 +650,25 @@
     });
     observer.observe(root, { attributes: true, attributeFilter: ['data-typography', 'data-font-scale'] });
     sharedState.typographyObserverInstalled = true;
+  }
+
+  // A custom IDE font family outranks the token the pass above just applied (row 82 E1).
+  function reapplyIdeFontFamily(sharedState, tokenFamily) {
+    const binding = sharedState.ideFontFamilyResolver;
+    if (!binding) return;
+    try {
+      const custom = String(binding.resolve() || '').trim();
+      if (custom && custom !== tokenFamily) binding.apply(custom);
+    } catch (_error) {
+      // A torn-down IDE host; its next applyEditorPrefs registers again.
+    }
+  }
+
+  // The IDE editor prefs register how to resolve and apply the IDE font family so a
+  // typography change never replaces a custom family with the token; null clears it.
+  function setIdeFontFamilyResolver(binding) {
+    const valid = binding && typeof binding.resolve === 'function' && typeof binding.apply === 'function';
+    getSharedMonacoState().ideFontFamilyResolver = valid ? binding : null;
   }
 
   // Registers a live editor so the typography observer can retune it. ALWAYS
@@ -915,6 +937,7 @@
     CODE_FONT_SIZE_EVENT,
     withMonacoFontFamily,
     registerMonacoFontConsumer,
+    setIdeFontFamilyResolver,
     createIdeFontBinding,
     IDE_DIFF_EDITOR_OPTIONS,
     normalizeEditorLanguage,

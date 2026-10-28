@@ -6,6 +6,9 @@ const { sessionAllowsChatSend } = require('./session-type');
 const { AI_ERROR_CODES } = require('./error-codes');
 const { isRuntimeRoute } = require('../session-runtime/lanes');
 const { chatgptModelsEnabled } = require('./chatgpt-models-enabled');
+const { assertApiProviderAdmissible } = require('./api-provider-runtime');
+const { APPLICATION_TURN_HANDOFF_PREPARATION } = require('./session-handoff-context');
+const { normalizeRequestApplicationTurn } = require('./application-turns');
 
 // H2a admission: refuse a ChatGPT turn once the credential is revoked, or once
 // the running sidecar is holding a stale credential generation (sign-out landed
@@ -96,6 +99,7 @@ function assertChatTurnAdmissible(service, sessionId, route = null) {
     throw error;
   }
   assertChatgptCredentialAdmissible(service, route);
+  assertApiProviderAdmissible(service, route);
   if (route) assertCodexCliCredentialAdmissible(service, route);
 }
 
@@ -106,6 +110,23 @@ function assertLinkedFirstTurnAdmissible(service, sessionId, idempotencyKey = nu
   if (!reason) return;
   throw Object.assign(new Error('This chat is waiting for its first turn to start.'), {
     code: reason, retryable: false, submissionOutcome: 'rejected',
+  });
+}
+
+// A Retry or Edit reuses its anchor user message as an ordinary prompt. An app-started turn's anchor
+// is only an app label: only the proposal card can run a New session preparation turn again, and a
+// wake or auto-resume turn continues with the person's next message.
+function assertRegenerateAnchorAdmissible(service, sessionId, editedMessageId) {
+  const messages = service.sessionStore?.getSession?.(String(sessionId || '').trim())?.messages;
+  const anchor = Array.isArray(messages) ? messages.find((message) => message?.id === editedMessageId) : null;
+  if (anchor?.application_turn === APPLICATION_TURN_HANDOFF_PREPARATION) {
+    throw Object.assign(new Error('Retry this from the New session card.'), {
+      code: 'handoff_preparation_retry_refused', retryable: false, submissionOutcome: 'rejected',
+    });
+  }
+  if (!normalizeRequestApplicationTurn(anchor?.application_turn)) return;
+  throw Object.assign(new Error('Send a message to continue.'), {
+    code: 'application_turn_retry_refused', retryable: false, submissionOutcome: 'rejected',
   });
 }
 
@@ -126,4 +147,5 @@ module.exports = {
   assertChatTurnAdmissible,
   assertLinkedFirstTurnAdmissible,
   assertChatgptCredentialAdmissible,
+  assertRegenerateAnchorAdmissible,
 };

@@ -9,6 +9,11 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
+from sidecar.ai.context.context_count import (
+    ScaledTokenizerBackend,
+    normalize_context_calibration,
+    resolve_token_scale,
+)
 from sidecar.ai.context.history_reframe import reframe_tool_history_messages
 from sidecar.ai.context.messages import (
     build_context_block_system_messages,
@@ -22,13 +27,16 @@ from sidecar.ai.context.runtime_overlays import (
 )
 from sidecar.ai.context.token_budget import (
     CharEstimationBackend,
+    apply_budget_check,
     estimate_messages_tokens,
     estimate_tool_schema_tokens,
-    resolve_auto_compact_ratio,
+    resolve_context_window_hint,
 )
 from sidecar.ai.context.turn_context import split_context_blocks
 from sidecar.ai.feature_flags import (
+    FEATURE_CONTEXT_COMPACTION,
     FEATURE_PROMPT_CACHE,
+    FEATURE_TOKEN_BUDGET,
     FEATURE_TOOL_SEARCH,
     is_feature_flag_enabled,
 )
@@ -38,6 +46,7 @@ from sidecar.ai.routing.tool_budget_filter import (
     apply_budget_aware_tool_filter,
     build_system_prompt_for_statuses,
     build_turn_context_row_for_statuses,
+    count_full_tool_schemas,
 )
 from sidecar.runtime.chat_decision_support import (
     ToolResolutionContext,
@@ -49,15 +58,63 @@ from sidecar.runtime.chat_decision_support import (
 from sidecar.runtime.chat_models import ChatRequestContext
 
 
+def _compact_at_tokens(  # noqa: PLR0913 - keyword-only scale inputs.
+    kernel: Any,
+    request: ChatRequestContext,
+    tool_payload: list[Any],
+    tool_tokens: int,
+    capacity: int | None,
+    *,
+    token_scale: float | None = None,
+    scale_source: str = "estimate",
+) -> int | None:
+    """Turn-boundary auto-compact point in whole-prompt units, or ``None``.
+
+    The send compacts when system rows plus history reach the threshold of the
+    budget built below, the same way ``chat_decision`` builds it; that threshold
+    already sets the tool schemas aside, so adding them back puts it in the same
+    units as ``used_tokens``. ``token_scale`` carries the same count source the
+    send resolves, so the point is in the units of ``used_tokens``.
+    """
+    config = kernel._config
+    flags = config.feature_flags or {}
+    if not capacity or not (
+        is_feature_flag_enabled(flags, FEATURE_TOKEN_BUDGET)
+        and is_feature_flag_enabled(flags, FEATURE_CONTEXT_COMPACTION)
+    ):
+        return None
+    num_tools = count_full_tool_schemas(tool_payload) if config.tools_enabled else 0
+    try:
+        _messages, budget, _tracker = apply_budget_check(
+            [],
+            config,
+            kernel._engine,
+            num_tools=num_tools,
+            reasoning_effort=request.reasoning_effort,
+            tool_schema_tokens=estimate_tool_schema_tokens(tool_payload) if num_tools else None,
+            token_scale=token_scale,
+            scale_source=scale_source,
+        )
+    # Engine metadata reads feed the budget; the estimate degrades, never fails.
+    except (ArithmeticError, OSError, TypeError, ValueError):
+        return None
+    threshold = budget.auto_compact_threshold(num_tools) if budget is not None else 0
+    return min(threshold + tool_tokens, capacity) if threshold > 0 else None
+
+
 def preview_context(
-    kernel: Any, request: ChatRequestContext, history: list[dict[str, Any]]
+    kernel: Any,
+    request: ChatRequestContext,
+    history: list[dict[str, Any]],
+    *,
+    context_calibration: Any = None,
 ) -> dict[str, Any]:
     config = kernel._config
     canonical_history = history
     history = compact_semantic_messages_with_report(
         reframe_tool_history_messages(history, config=config)
     ).messages
-    backend = kernel._tokenizer_backend() or CharEstimationBackend()
+    inner_backend = kernel._tokenizer_backend() or CharEstimationBackend()
     flags = config.feature_flags or {}
     search = bool(
         config.tools_enabled
@@ -66,7 +123,27 @@ def preview_context(
             kernel._engine_supports_tool_calling() or kernel._engine_supports_inband_tool_calling()
         )
     )
-    capacity = config.context_length or kernel._engine.get_model_context_length() or None
+    # The window the request budget is built from (the configured num_ctx clamp,
+    # not the native window); tool deferral keeps the send's own window read.
+    capacity = resolve_context_window_hint(kernel._engine, config)
+    # The same count source the send resolves, so the composer's next-send figure
+    # and its compaction point share units. No exact round trip on a preview.
+    token_scale, scale_source = resolve_token_scale(
+        engine=kernel._engine,
+        config=config,
+        messages=[],
+        tool_payload=(),
+        inner_backend=inner_backend,
+        calibration=normalize_context_calibration(context_calibration),
+        raw_window=capacity or 0,
+        allow_exact=False,
+    )
+    backend = (
+        ScaledTokenizerBackend(inner_backend, token_scale)
+        if token_scale is not None
+        else inner_backend
+    )
+    deferral_window = config.context_length or kernel._engine.get_model_context_length() or 0
     resolution = None
     if search:
         base = kernel._assemble_tool_contract(request_context=request, include_deferred_tools=False)
@@ -75,7 +152,7 @@ def preview_context(
             normalize_deferral_mode(config.tool_search_mode),
             descriptors,
             frozenset(d.name for d in descriptors if d.availability.defer_eligible is not True),
-            context_window=capacity or 0,
+            context_window=deferral_window,
             tool_token_threshold_pct=config.tool_search_auto_threshold_pct,
         )
         resolution = ToolResolutionContext(
@@ -190,6 +267,15 @@ def preview_context(
     total = estimate_messages_tokens(messages, backend) + counts["messages"] + counts["tools"]
     # Framing, cache boundaries and inter-section separators belong to the prompt.
     counts["system_prompt"] += total - sum(counts.values())
+    compact_at = _compact_at_tokens(
+        kernel,
+        request,
+        filtered.tool_payload,
+        counts["tools"],
+        capacity,
+        token_scale=token_scale,
+        scale_source=scale_source,
+    )
     return {
         "status": "estimated",
         "measurement": "estimated",
@@ -197,11 +283,9 @@ def preview_context(
         "used_tokens": total,
         "capacity_tokens": capacity,
         "available_tokens": max(0, capacity - total) if capacity else None,
-        "reserve_tokens": round(
-            capacity * (1 - resolve_auto_compact_ratio(config, model_id=config.model))
-        )
-        if capacity
-        else None,
+        "compact_at_tokens": compact_at,
+        # Window space held back above the compaction point.
+        "reserve_tokens": capacity - compact_at if capacity and compact_at is not None else None,
         "breakdown": counts,
         "provenance": "canonical_prompt_estimate",
         "retrieval_pending": True,

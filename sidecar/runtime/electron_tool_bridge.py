@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import json
 import logging
 import math
 import re
@@ -15,6 +16,7 @@ from sidecar.ai.error_codes import CMP_TOOL_EXECUTION_FAILED
 from sidecar.ai.mcp.exceptions import MCPError
 from sidecar.ai.mcp.models import MCPToolResult
 from sidecar.protocol import API_VERSION, JSONRPC_VERSION, TOOL_EXECUTE_ELECTRON_METHOD
+from sidecar.runtime.approval import close_response_reader
 from sidecar.runtime.diagnostics import log_event
 from sidecar.runtime.multiplexer import (
     ApprovalResponseCancelledError,
@@ -26,21 +28,18 @@ _LOGGER = logging.getLogger(__name__)
 _MAX_METADATA_DEPTH = 6
 _MAX_METADATA_ITEMS = 100
 _MAX_METADATA_STRING_CHARS = 20_000
+# Electron results are untrusted input: bound what one result may carry into the
+# loop. Generated artifacts reuse the metadata item cap.
+_MAX_BRIDGE_OUTPUT_CHARS = 512 * 1024
+_MAX_BRIDGE_UI_PAYLOAD_BYTES = 256 * 1024
+_MAX_BRIDGE_ERROR_MESSAGE_CHARS = 2_000
+_ERROR_CODE_RE = re.compile(r"CMP-[A-Z]+-\d{4}")
 _WINDOWS_DRIVE_PREFIX_LENGTH = 2
 _OMIT_METADATA_VALUE = object()
 _SENSITIVE_METADATA_VALUE_RE = re.compile(
     r"\b(?:bearer\s+[a-z0-9._~+/=-]{12,}|sk-[a-z0-9_-]{12,}|gh[pousr]_[a-z0-9_]{20,})\b",
     re.IGNORECASE,
 )
-
-
-def _close_response_reader(response_reader: Callable[[float], dict[str, Any]]) -> None:
-    close = getattr(response_reader, "close", None)
-    if callable(close):
-        try:
-            close()
-        except Exception:  # noqa: BLE001 - cleanup must not mask tool outcome.
-            pass
 
 
 @contextmanager
@@ -50,7 +49,7 @@ def _closing_response_reader(
     try:
         yield response_reader
     finally:
-        _close_response_reader(response_reader)
+        close_response_reader(response_reader)
 
 
 _PATH_METADATA_KEYS = {
@@ -270,7 +269,7 @@ def _normalize_result_payload(
     generated_artifacts = (
         tuple(
             sanitized
-            for item in raw_generated_artifacts
+            for item in raw_generated_artifacts[:_MAX_METADATA_ITEMS]
             if isinstance(item, dict)
             for sanitized in [_sanitize_generated_artifact(item)]
             if sanitized is not None
@@ -289,16 +288,17 @@ def _normalize_result_payload(
     content_type = str(result.get("content_type") or "text").strip() or "text"
     if content_type not in {"text", "mcp_ui"}:
         content_type = "text"
-    ui_payload = result.get("ui_payload")
-    if not isinstance(ui_payload, dict):
-        ui_payload = None
+    output = str(result.get("output") or "")
+    if len(output) > _MAX_BRIDGE_OUTPUT_CHARS:
+        output = output[:_MAX_BRIDGE_OUTPUT_CHARS]
+        metadata["output_truncated"] = True
     return MCPToolResult(
         tool_name=str(result.get("tool_name") or fallback_tool_name).strip()
         or fallback_tool_name,
-        output=str(result.get("output") or ""),
+        output=output,
         success=raw_success,
         content_type=content_type,
-        ui_payload=ui_payload,
+        ui_payload=_bounded_ui_payload(result.get("ui_payload")),
         generated_artifacts=generated_artifacts,
         error_code=error_code,
         metadata=metadata,
@@ -311,6 +311,17 @@ def _normalize_result_payload(
             else None
         ),
     )
+
+
+def _bounded_ui_payload(value: Any) -> dict[str, Any] | None:
+    """Keep a JSON-safe UI payload within the size bound; drop anything else."""
+    if not isinstance(value, dict):
+        return None
+    try:
+        encoded = json.dumps(value, ensure_ascii=True, allow_nan=False)
+    except (TypeError, ValueError, RecursionError):
+        return None
+    return value if len(encoded) <= _MAX_BRIDGE_UI_PAYLOAD_BYTES else None
 
 
 def _response_wait_timeout(request: ElectronToolBridgeRequest) -> float:
@@ -441,9 +452,17 @@ def execute_electron_tool(request: ElectronToolBridgeRequest) -> MCPToolResult:
                     else ""
                 ),
             )
+            # The auto-checkpoint reports "not a git repository" as success=False
+            # with no reason (restore_point_from_result reads it as not_git): an
+            # expected skip in a plain folder, not a failed tool call.
+            expected_skip = (
+                request.tool_name.startswith("__jenny_")
+                and not result.error_code
+                and not (result.metadata or {}).get("reason")
+            )
             log_event(
                 event_logger,
-                20 if result.success else 30,
+                20 if result.success or expected_skip else 30,
                 component="runtime.electron_tool_bridge",
                 event="sidecar.runtime.electron_tool.resolved",
                 message="Electron tool bridge response received",
@@ -549,8 +568,15 @@ def _raise_bridge_response_error(response: dict) -> None:
         error_payload = response["error"]
         data = error_payload.get("data")
         data = data if isinstance(data, dict) else {}
+        code = data.get("code")
+        message = str(error_payload.get("message") or "Electron tool bridge failed.")
         raise MCPError(
-            code=str(data.get("code") or CMP_TOOL_EXECUTION_FAILED),
-            message=str(error_payload.get("message") or "Electron tool bridge failed."),
+            # Only a well-formed project error code crosses the boundary.
+            code=(
+                code
+                if isinstance(code, str) and _ERROR_CODE_RE.fullmatch(code)
+                else CMP_TOOL_EXECUTION_FAILED
+            ),
+            message=message[:_MAX_BRIDGE_ERROR_MESSAGE_CHARS],
             retryable=data.get("retryable") is not False,
         )

@@ -872,7 +872,7 @@ def test_client_requires_reapproval_for_policy_changes(monkeypatch: Any, change:
     from sidecar.ai.mcp.tool_surface import summarize_tools, tools_digest
 
     original = {"name": "lookup", "inputSchema": {"type": "object"}}
-    summary, _ = summarize_tools([original])
+    summary = summarize_tools([original])
     transport = _FakeTransport("docs", [{**original, **change}])
     client = MCPClient()
     monkeypatch.setattr(client, "_build_transport", lambda *_args, **_kwargs: transport)
@@ -887,7 +887,7 @@ def test_client_rejects_unreviewed_tools_beyond_surface_limit(monkeypatch: Any) 
     from sidecar.ai.mcp.tool_surface import MAX_TOOLS, summarize_tools, tools_digest
 
     tools = [{"name": f"tool_{index}"} for index in range(MAX_TOOLS)]
-    summary, _ = summarize_tools(tools)
+    summary = summarize_tools(tools)
     transport = _FakeTransport("docs", [*tools, {"name": "unreviewed"}])
     client = MCPClient()
     monkeypatch.setattr(client, "_build_transport", lambda *_args, **_kwargs: transport)
@@ -933,7 +933,7 @@ def test_client_publishes_the_approved_surface_plus_resource_adapters(monkeypatc
 
     tools = [{"name": "lookup", "description": " Search ", "side_effecting": False,
               "actions": {"read": {"side_effecting": False}}, "input_schema": {"type": "object"}}]
-    summary, _ = summarize_tools(tools)
+    summary = summarize_tools(tools)
     transport = _FakeTransport("docs", tools)
     client = MCPClient()
     monkeypatch.setattr(client, "_build_transport", lambda *_args, **_kwargs: transport)
@@ -978,7 +978,7 @@ def test_client_logs_the_offending_tool_when_an_approved_surface_breaks_a_bound(
         events.append({"event": fields["event"], "data": fields["data"]})
 
     monkeypatch.setattr("sidecar.ai.mcp.client.log_event", _capture_event)
-    summary, _ = summarize_tools([{"name": "lookup", "description": "Search"}])
+    summary = summarize_tools([{"name": "lookup", "description": "Search"}])
     transport = _FakeTransport("docs", [{"name": "lookup", "description": "x" * 2049}])
     client = MCPClient()
     monkeypatch.setattr(client, "_build_transport", lambda *_args, **_kwargs: transport)
@@ -1003,7 +1003,7 @@ def test_read_only_auto_allow_applies_to_the_approved_claiming_tools(
 
     tools = [{"name": "list_unknowns", "annotations": {"readOnlyHint": True}},
              {"name": "delete_session", "annotations": {"readOnlyHint": True, "destructiveHint": True}}]
-    summary, _ = summarize_tools(tools)
+    summary = summarize_tools(tools)
     transport = _FakeTransport("rea", tools)
     client = MCPClient()
     monkeypatch.setattr(client, "_build_transport", lambda *_args, **_kwargs: transport)
@@ -1032,7 +1032,7 @@ def test_read_only_auto_allow_needs_an_approved_surface(monkeypatch: Any) -> Non
 def test_a_changed_read_only_claim_after_approval_requires_review(monkeypatch: Any, served: dict) -> None:
     from sidecar.ai.mcp.tool_surface import summarize_tools, tools_digest
 
-    summary, _ = summarize_tools([{"name": "list_unknowns", "annotations": {"readOnlyHint": True}}])
+    summary = summarize_tools([{"name": "list_unknowns", "annotations": {"readOnlyHint": True}}])
     transport = _FakeTransport("rea", [served])
     client = MCPClient()
     monkeypatch.setattr(client, "_build_transport", lambda *_args, **_kwargs: transport)
@@ -1052,7 +1052,7 @@ def test_a_surface_approved_before_claims_were_recorded_still_registers(monkeypa
 
     served = [{"name": "list_unknowns", "annotations": {"readOnlyHint": True}}]
     legacy_rows = [{k: v for k, v in row.items() if k != "read_only_claim"}
-                   for row in summarize_tools(served)[0]]
+                   for row in summarize_tools(served)]
     transport = _FakeTransport("rea", served)
     client = MCPClient()
     monkeypatch.setattr(client, "_build_transport", lambda *_args, **_kwargs: transport)

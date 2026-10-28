@@ -23,7 +23,7 @@ function handle(event, { weekOffset = 0, mode = 'week', body = null, monthModule
   });
 }
 
-test('rail navigation targets the first week of the adjacent month', () => {
+test('rail navigation targets the first week titled with the adjacent month', () => {
   const next = handle(eventFor('[data-cal-rail-nav]', { calRailNav: 'next' }));
   assert.deepEqual(next, {
     handled: true,
@@ -36,11 +36,26 @@ test('rail navigation targets the first week of the adjacent month', () => {
   const previous = handle(eventFor('[data-cal-rail-nav]', { calRailNav: 'prev' }));
   assert.deepEqual(previous, {
     handled: true,
-    weekOffset: -6,
+    // May 1 2026 is a Friday: its week (Apr 26) is titled April by its
+    // Wednesday, so the target is the week of May 3.
+    weekOffset: -5,
     pendingFocusSelector: '[data-cal-rail-nav="prev"]',
     pendingAnnounce: new Date(2026, 4, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
     preserveQuickAdd: true,
   });
+});
+
+test('rail next never sticks on a week titled with the current month', () => {
+  // Week of Jul 26 2026 is titled July (Wed Jul 29); Aug 1 is a Saturday, so
+  // targeting the 1st would land on this same week forever.
+  let weekOffset = 7;
+  const months = [];
+  for (let step = 0; step < 3; step += 1) {
+    weekOffset = handle(eventFor('[data-cal-rail-nav]', { calRailNav: 'next' }), { weekOffset }).weekOffset;
+    const wednesday = gridModule.listWeekDays(gridModule.computeWeekStart(NOW, weekOffset))[3];
+    months.push(wednesday.getMonth());
+  }
+  assert.deepEqual(months, [7, 8, 9]);
 });
 
 test('week navigation returns the next, previous, and today projections', () => {

@@ -59,6 +59,28 @@
       area: AREA_LABELS.app,
     },
     {
+      // One down model server was 4-5 cards per launch: the sidecar's engine init
+      // and catalog probe, then main's start/refresh records of the same failure.
+      id: 'engineUnreachable',
+      events: ['backend.start_model_unavailable', 'backend.managed_sidecar_initialize_failed',
+        'sidecar.config_refresh_failed', 'ai.engines.factory.init_failed',
+        'ai.engines.catalog.openai_compatible_discovery_failed'],
+      match: function (group) {
+        var data = group.data || {};
+        return string(group.error_code) === 'CMP-AI-0002' || /CMP-AI-0002/.test(string(group.message))
+          || data.error_type === 'EngineConnectionError' || data.classification === 'connection_error';
+      },
+      title: function () { return jt('diagnostics.issues.explain.engineUnreachable.title', "Jenny can't reach your model server"); },
+      cause: function () { return jt('diagnostics.issues.explain.engineUnreachable.cause', 'The engine chosen in Settings is not answering, so chat cannot run until it does. Start that server, or choose another engine or model in Settings. Details shows the address Jenny tried.'); },
+      action: null, area: AREA_LABELS.localEngine,
+    },
+    {
+      id: 'workspaceGitFallback', events: ['ai.tools.workspace_manifest.orientation_degraded'],
+      title: function () { return jt('diagnostics.issues.explain.workspaceGitFallback.title', 'Git could not read this workspace'); },
+      cause: function () { return jt('diagnostics.issues.explain.workspaceGitFallback.cause', 'Jenny lists workspace files with Git, and that failed here, so it used a simpler listing. File tools still work. Run git status in the folder to see why; a folder owned by another Windows user is a common cause.'); },
+      action: null, area: AREA_LABELS.workspace,
+    },
+    {
       // The toast's own copy, so Needs attention says what the warning means.
       id: 'ollamaTrayConflict', events: ['ollama.tray_app_conflict_detected'],
       title: function () { return jt('models.ollama.tray.conflictTitle', 'Ollama Tray App Conflict'); },

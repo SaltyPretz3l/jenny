@@ -268,7 +268,7 @@ span.inv-artifact-figure-frame {
   font-size: var(--font-size-caption);
 }
 
-/* The pending card's Cancel. */
+/* The pending figure's Stop. */
 .inv-artifact-figure-action {
   padding: 0;
   border: 0;
@@ -290,29 +290,79 @@ span.inv-artifact-figure-frame {
   opacity: 0.6;
 }
 
-.inv-artifact-figure-placeholder {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  gap: 12px;
-  box-sizing: border-box;
-  inline-size: 100%;
-  max-inline-size: 448px;
-  padding: 24px;
-  background: var(--bg-surface-2);
+/* An image being rendered develops in place: the finished figure's frame, a skeleton sheen until
+   the first preview frame, then that frame sharpening as the steps advance (--inv-render-progress,
+   0 to 1, set by the live progress module), with the real step progress as one line on the
+   bottom edge. Reduced motion zeroes the sheen and the transitions through the motion tokens. */
+.inv-artifact-figure-developing {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  aspect-ratio: var(--inv-image-ratio, 1 / 1);
   border-radius: 10px;
-  text-align: center;
+  background: var(--bg-surface-2);
+  outline: 1px solid var(--border-default);
+  outline-offset: -1px;
 }
 
-.inv-artifact-figure-pending-title {
-  color: var(--text-primary);
-  font-size: var(--font-size-body);
+.inv-artifact-figure-developing::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(90deg, transparent 0%, var(--skeleton-shimmer) 48%, transparent 100%);
+  background-size: 240% 100%;
+  background-repeat: no-repeat;
+  animation: skeleton-shimmer var(--skeleton-duration) linear infinite;
 }
 
-.inv-artifact-figure-pending-note {
-  color: var(--text-muted);
-  font-size: var(--font-size-caption);
+.inv-artifact-figure--pending[data-inv-render-preview] .inv-artifact-figure-developing::before {
+  display: none;
+}
+
+.inv-artifact-figure-preview {
+  position: absolute;
+  inset: -4%;
+  inline-size: 108%;
+  block-size: 108%;
+  object-fit: cover;
+  filter: blur(calc((1 - var(--inv-render-progress, 0)) * 10px + 1px));
+  opacity: 0;
+  transition: opacity var(--motion-duration-emphasis) var(--motion-ease-standard),
+    filter var(--motion-duration-emphasis) linear;
+}
+
+.inv-artifact-figure--pending[data-inv-render-preview] .inv-artifact-figure-preview {
+  opacity: 1;
+}
+
+.inv-artifact-figure-progress {
+  position: absolute;
+  inset: auto 0 0;
+  block-size: 2px;
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+
+.inv-artifact-figure-progress-fill {
+  display: block;
+  block-size: 100%;
+  inline-size: calc(var(--inv-render-progress, 0) * 100%);
+  background: var(--accent);
+  transition: inline-size var(--motion-duration-regular) var(--motion-ease-standard);
+}
+
+.inv-artifact-figure-phase {
+  animation: shimmer-text var(--motion-duration-sheen) var(--motion-ease-standard) infinite;
+}
+
+.inv-artifact-figure-stop {
+  margin-inline-start: auto;
+}
+
+/* The skeleton token is not one of the zeroed motion tokens: hold the sheen still. */
+@media (prefers-reduced-motion: reduce) {
+  .inv-artifact-figure-developing::before {
+    animation: none;
+  }
 }
 
 .image-edit-draft { display: flex; align-items: center; gap: 10px; padding: 8px 12px; color: var(--text-primary); }

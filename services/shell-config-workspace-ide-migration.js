@@ -46,4 +46,4 @@ function collectWorkspaceIdeDropCounts(value, toolsWorkspaceRoot) {
   return counts;
 }
 
-module.exports = { collectWorkspaceIdeDropCounts, migrateWorkspaceIdeV36 };
+module.exports = { collectWorkspaceIdeDropCounts, isStructuredWorkspaceIde, migrateWorkspaceIdeV36 };

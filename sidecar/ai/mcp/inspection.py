@@ -69,7 +69,7 @@ def inspect_server(  # noqa: PLR0911 -- explicit bounded validation/failure cont
         )
         probe_transport = client._build_transport(config, sse_enabled=sse_enabled)
         raw_tools = probe_transport.list_tools(cancel_handle=cancel_handle)
-        tools, malformed_count = summarize_tools(raw_tools)
+        tools = summarize_tools(raw_tools)
         raw_prompts = _list_inspection_prompts(probe_transport, cancel_handle=cancel_handle)
         prompts, malformed_prompt_count = summarize_prompts(raw_prompts)
         return {
@@ -81,7 +81,6 @@ def inspect_server(  # noqa: PLR0911 -- explicit bounded validation/failure cont
             "tools": [{k: v for k, v in row.items() if k != "inputSchema"} for row in tools],
             "tools_digest": tools_digest(tools, read_only_claims=config.read_only_auto_allow),
             "tool_count": len(tools),
-            "malformed_tool_count": malformed_count,
             "prompts": prompts,
             "prompts_digest": prompts_digest(prompts),
             "prompt_count": len(prompts),

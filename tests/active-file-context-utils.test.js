@@ -111,3 +111,122 @@ test('a mention containing a longer backtick run gets an even longer fence', () 
   // Inner run is 4 backticks, so the wrapping fence must be >=5.
   assert.match(block, /=== doc\.md ===\n`````md\na\n````\nnested\n````\nb\n`````/);
 });
+
+// --- PDF documents (kind: 'pdf') ---
+
+const PDF = {
+  path: 'docs/q3-review.pdf',
+  kind: 'pdf',
+  pages: { start: 4, end: 4, total: 38 },
+  selection: false,
+  scanned: false,
+  slice: 'Revenue grew 12% quarter over quarter.',
+};
+
+test('pdf: a single page renders the document header, citation hint and fenced page text', () => {
+  const block = buildActiveFileContextBlock(PDF, []);
+  assert.match(block, /^\[Active document context — what the user is reading in their PDF viewer\]\n/);
+  assert.match(block, /File: docs\/q3-review\.pdf \(page 4 of 38\)\n/);
+  assert.doesNotMatch(block, /text the user selected/);
+  assert.match(block, /Cite it as "docs\/q3-review\.pdf, page 4"/);
+  assert.match(block, /read_file with pages="N" or pages="N-M"/);
+  assert.match(block, /\n```\nRevenue grew 12% quarter over quarter\.\n```$/);
+  assert.doesNotMatch(block, /Active editor context/);
+});
+
+test('pdf: a page range renders "pages 4-5" and cites the range', () => {
+  const block = buildActiveFileContextBlock({ ...PDF, pages: { start: 4, end: 5, total: 38 } }, []);
+  assert.match(block, /File: docs\/q3-review\.pdf \(pages 4-5 of 38\)/);
+  assert.match(block, /Cite it as "docs\/q3-review\.pdf, pages 4-5"/);
+});
+
+test('pdf: a selection is labelled as user-selected text', () => {
+  const block = buildActiveFileContextBlock({ ...PDF, selection: true, slice: 'grew 12%' }, []);
+  assert.match(block, /File: docs\/q3-review\.pdf \(page 4 of 38, text the user selected\)/);
+  assert.match(block, /the text the user selected/);
+  assert.match(block, /\n```\ngrew 12%\n```$/);
+});
+
+test('pdf: a scanned page has no fence and points at read_file with pages (OCR)', () => {
+  const block = buildActiveFileContextBlock({ ...PDF, scanned: true, slice: '' }, []);
+  assert.match(block, /File: docs\/q3-review\.pdf \(page 4 of 38\)/);
+  assert.match(block, /no text layer/);
+  assert.match(block, /read_file with pages="4"/);
+  assert.match(block, /OCR/);
+  assert.doesNotMatch(block, /```/);
+});
+
+test('pdf: a page sent before its text was extracted points at read_file without claiming a scan', () => {
+  const block = buildActiveFileContextBlock({ ...PDF, pending: true, slice: '' }, []);
+  assert.match(block, /File: docs\/q3-review\.pdf \(page 4 of 38\)/);
+  assert.match(block, /was not ready when the message was sent/);
+  assert.doesNotMatch(block, /no text layer/);
+  assert.match(block, /read_file with pages="4"/);
+  assert.doesNotMatch(block, /```/);
+});
+
+test('pdf: a scanned page range suggests the range in pages', () => {
+  const block = buildActiveFileContextBlock(
+    { ...PDF, scanned: true, slice: '', pages: { start: 2, end: 3, total: 9 } },
+    []
+  );
+  assert.match(block, /read_file with pages="2-3"/);
+});
+
+test('pdf: invalid page numbers drop the section', () => {
+  const bad = [
+    { start: 0, end: 1, total: 38 },
+    { start: 5, end: 4, total: 38 },
+    { start: 4, end: 39, total: 38 },
+    { start: 1.5, end: 2, total: 38 },
+    { start: 1, end: 2.5, total: 38 },
+    { start: 1, end: 2, total: 38.5 },
+    { start: '4', end: 4, total: 38 },
+    { start: 1, end: 1, total: 100001 },
+    { start: 1, end: 1, total: 0 },
+    { start: NaN, end: 1, total: 3 },
+    null,
+  ];
+  for (const pages of bad) {
+    assert.equal(buildActiveFileContextBlock({ ...PDF, pages }, []), null, JSON.stringify(pages));
+  }
+  assert.equal(buildActiveFileContextBlock({ ...PDF, pages: undefined }, []), null);
+});
+
+test('pdf: a non-.pdf path or an empty path drops the section', () => {
+  assert.equal(buildActiveFileContextBlock({ ...PDF, path: 'docs/notes.txt' }, []), null);
+  assert.equal(buildActiveFileContextBlock({ ...PDF, path: '' }, []), null);
+  assert.equal(buildActiveFileContextBlock({ ...PDF, path: 'docs/pdf' }, []), null);
+  assert.match(buildActiveFileContextBlock({ ...PDF, path: 'docs/Q3.PDF' }, []), /File: docs\/Q3\.PDF \(page 4 of 38\)/);
+});
+
+test('pdf: an empty slice without scanned drops the section but mentions survive', () => {
+  assert.equal(buildActiveFileContextBlock({ ...PDF, slice: '' }, []), null);
+  assert.equal(buildActiveFileContextBlock({ ...PDF, slice: '  \n ' }, []), null);
+  const block = buildActiveFileContextBlock({ ...PDF, slice: '' }, [{ path: 'a.js', content: 'kept' }]);
+  assert.doesNotMatch(block, /Active document context/);
+  assert.match(block, /=== a\.js ===/);
+});
+
+test('pdf: an oversized page slice is truncated with the shared note', () => {
+  const block = buildActiveFileContextBlock({ ...PDF, slice: 'p'.repeat(8000) }, []);
+  assert.match(block, /active file truncated at 6000 chars/);
+  assert.ok(!block.includes('p'.repeat(6001)));
+});
+
+test('pdf: page text containing ``` is wrapped in a longer fence', () => {
+  const block = buildActiveFileContextBlock({ ...PDF, slice: 'a\n```\nb' }, []);
+  assert.match(block, /\n````\na\n```\nb\n````$/);
+});
+
+test('pdf: an unknown kind or a missing kind keeps the code section', () => {
+  assert.match(buildActiveFileContextBlock({ ...ACTIVE, kind: 'code' }, []), /Active editor context/);
+  assert.match(buildActiveFileContextBlock({ ...ACTIVE, kind: undefined }, []), /Active editor context/);
+});
+
+test('pdf: coexists with @-mentions; the renderer owns active-vs-mention dedupe', () => {
+  const block = buildActiveFileContextBlock(PDF, [{ path: 'src/a.py', content: 'print(1)' }]);
+  assert.match(block, /Active document context/);
+  assert.match(block, /\n\n\[Files the user referenced with @ in their message\]/);
+  assert.match(block, /=== src\/a\.py ===/);
+});

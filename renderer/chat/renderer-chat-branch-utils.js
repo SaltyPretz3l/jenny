@@ -46,6 +46,7 @@
     // Split view W1-4b: the session this controller's pane holds (renderer-pane-session-context.js).
     var sessionContext = options.sessionContext
       || (globalThis.rendererPaneSessionContext || require('./renderer-pane-session-context')).createPaneSessionContext({ state: state, paneId: options.paneId });
+    var isPrimarySession = typeof options.isPrimarySession === 'function' ? options.isPrimarySession : function () { return false; };
     var getCurrentSessionId = typeof options.getCurrentSessionId === 'function'
       ? options.getCurrentSessionId
       : function () { return sessionContext.getSessionId(); };
@@ -93,6 +94,9 @@
     function resolveBusyReason(sessionId) {
       if (!sessionId) {
         return jt('chat.branch.startConversationFirst', 'Start a conversation before branching.');
+      }
+      if (isPrimarySession(sessionId)) {
+        return jt('chat.branch.primaryProtected', 'Your Jenny chat cannot be branched; it stays one chat.');
       }
       if (isSessionStreaming(sessionId) || hasPendingToolApprovalForSession(sessionId)) {
         return BRANCH_BUSY_REASON;

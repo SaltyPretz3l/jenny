@@ -601,7 +601,8 @@
           if (fix.dataset.toolFix === 'settings') openSettings('tools');
           if (fix.dataset.toolFix === 'project') {
             panelApi()?.view('main', false);
-            panel.querySelector('#composerProjectPillSlot button')?.click();
+            // Row 63: the project pill sits on the composer bar, outside this panel.
+            doc.getElementById('composerProjectPillSlot')?.querySelector('button')?.click();
           }
           return;
         }

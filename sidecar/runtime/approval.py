@@ -35,12 +35,13 @@ _LEGACY_DECISIONS = frozenset({"approve", "allow", "allowed"}) | _LEGACY_DENY_DE
 _ResponseReader = Callable[[float], dict[str, Any]]
 
 
-def _close_response_reader(response_reader: _ResponseReader) -> None:
+def close_response_reader(response_reader: _ResponseReader) -> None:
+    """Close a one-shot reverse-request reader; cleanup never masks the outcome."""
     close = getattr(response_reader, "close", None)
     if callable(close):
         try:
             close()
-        except Exception:  # noqa: BLE001 - cleanup must not mask approval outcome.
+        except Exception:  # noqa: BLE001 - cleanup must not mask the request outcome.
             pass
 
 
@@ -122,7 +123,10 @@ def approval_resolution_from_response(
     if isinstance(result, dict):
         raw_decision = result.get("decision")
         decision = raw_decision.strip().lower() if isinstance(raw_decision, str) else ""
-        if decision in PLAN_DECISIONS:
+        # A plan token never outranks an explicit approved=false in the same
+        # frame (tool review C6 #1): the contradiction skips this branch and
+        # denies through the unknown-decision fallthrough below.
+        if decision in PLAN_DECISIONS and result.get("approved") is not False:
             raw_feedback = result.get("feedback")
             if raw_feedback is not None and not isinstance(raw_feedback, str):
                 return ApprovalResolution(approved=False, status="malformed")
@@ -152,11 +156,6 @@ def approval_resolution_from_response(
             )
 
     return ApprovalResolution(approved=False, status="denied")
-
-
-def approval_decision_from_response(response: dict[str, Any], expected_id: int) -> bool:
-    """Compatibility helper for binary approval callers."""
-    return approval_resolution_from_response(response, expected_id).approved
 
 
 def _incoming_frame_correlation(payload: dict[str, Any]) -> dict[str, Any]:
@@ -226,7 +225,7 @@ def request_tool_approval(
         )
     finally:
         if response_reader is not None:
-            _close_response_reader(response_reader)
+            close_response_reader(response_reader)
 
 
 def _approval_log_context(

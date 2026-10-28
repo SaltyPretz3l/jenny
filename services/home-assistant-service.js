@@ -104,6 +104,17 @@ class HomeAssistantService extends EventEmitter {
     return event ? { ...event } : null;
   }
 
+  // One reminder by id, copied, without cloning the whole reminder list.
+  readReminder(id) {
+    const reminder = this._readReminder(id);
+    return reminder ? { ...reminder } : null;
+  }
+
+  // The facade's clock, so tool results stamp the same time the journal does.
+  now() {
+    return this.nowProvider();
+  }
+
   getProactive() {
     const reminders = this.configService.getState?.()?.proactive?.reminders;
     return { reminders: Array.isArray(reminders) ? reminders.map((entry) => ({ ...entry })) : [] };
@@ -323,7 +334,13 @@ class HomeAssistantService extends EventEmitter {
   }
 
   // NOTE: not `_events` — EventEmitter already owns that instance property.
+  // CalendarService replaces (never mutates) its `events` array, so reading it
+  // directly is safe and skips getState()'s full instance expansion and clone,
+  // which each upsert/delete otherwise paid two or three times.
   _calendarEvents() {
+    if (Array.isArray(this.calendarService.events)) {
+      return this.calendarService.events;
+    }
     const state = this.calendarService.getState();
     return Array.isArray(state?.events) ? state.events : [];
   }
@@ -335,7 +352,9 @@ class HomeAssistantService extends EventEmitter {
 
   _readEvent(id) {
     const entityId = normalizeString(id);
-    return entityId ? this._calendarEvents().find((event) => event.id === entityId) || null : null;
+    const event = entityId ? this._calendarEvents().find((entry) => entry.id === entityId) : null;
+    // A copy: the journal keeps `prior`, and the live record must never alias it.
+    return event ? { ...event } : null;
   }
 
   // CalendarService.createEvent returns the full POST-state and appends the new

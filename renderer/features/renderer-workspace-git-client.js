@@ -16,12 +16,17 @@
   }
   root.rendererWorkspaceGitClient = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-  // The 14 bridge methods, each an ipcRenderer.invoke pass-through. Listed
+  // The 25 bridge methods, each an ipcRenderer.invoke pass-through. Listed
   // once so the typed surface and the degrade shapes stay in lock-step.
   const GIT_METHODS = [
     'getStatus', 'getDiff', 'getCommitDiff', 'getFileAtHead', 'getLog', 'getBranches',
     'blameRange', 'stage', 'unstage', 'commit', 'discardFile', 'checkout',
-    'stash', 'undoLastCommit',
+    'stash', 'undoLastCommit', 'resolveDelete', 'checkIgnored',
+    // Row 82 P4 (G1/G2).
+    'getFileAtIndex', 'getFileAtCommit', 'getCommitFiles', 'listStashes', 'getLastCommitMessage',
+    'deleteBranch', 'applyPatch',
+    // Row 82 cleanup G2/G3.
+    'blameFile', 'discardFiles',
   ];
 
   function bridgeUnavailable(op) {
@@ -59,21 +64,37 @@
       return Boolean(api && typeof api.getStatus === 'function');
     }
 
-    async function call(op, payload) {
-      const api = getApi();
-      if (!api || typeof api[op] !== 'function') {
-        return bridgeUnavailable(op);
-      }
+    async function invoke(op, payload) {
       try {
-        return await api[op](payload);
+        return await getApi()[op](payload);
       } catch (error) {
         return callFailed(op, error);
       }
     }
 
+    // An optional AbortSignal (never sent: it cannot cross IPC) settles the call at
+    // once as { reason: 'aborted' }; main finishes its bounded git run unobserved.
+    function call(op, payload, signal) {
+      const api = getApi();
+      if (!api || typeof api[op] !== 'function') {
+        return Promise.resolve(bridgeUnavailable(op));
+      }
+      const aborted = () => ({ ok: false, available: true, isRepo: true, op, reason: 'aborted' });
+      if (!signal || typeof signal.addEventListener !== 'function') return invoke(op, payload);
+      if (signal.aborted) return Promise.resolve(aborted());
+      return new Promise((resolve) => {
+        const onAbort = () => resolve(aborted());
+        signal.addEventListener('abort', onAbort, { once: true });
+        invoke(op, payload).then((result) => {
+          signal.removeEventListener('abort', onAbort);
+          resolve(result);
+        });
+      });
+    }
+
     const client = { getApi, isAvailable };
     for (const method of GIT_METHODS) {
-      client[method] = (payload) => call(method, payload || {});
+      client[method] = (payload, options) => call(method, payload || {}, options && options.signal);
     }
     return client;
   }

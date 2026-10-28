@@ -11,22 +11,17 @@
  * rings the implicated nodes (kind ∈ 'hub'|'cycle'|'orphan'; 'hubs' chip ->
  * 'hub', 'cycles' chip -> 'cycle' over the union of every cycle's ids,
  * 'orphans' chip -> 'orphan'), announces a summary via an aria-live region,
- * and frames the implicated nodes by computing their bounding box from
- * `view.getNodePosition(id)` and calling
- * `transform.fitToContent(bounds)`. Clicking the SAME chip again (or a
- * different chip) clears the previous highlight first — only one kind is
- * ever highlighted at a time, mirroring the plan's "clicking again clears".
+ * and flies the camera to the implicated nodes' bounding box (from
+ * `view.getNodePosition(id)`) via `transform.flyToFit(bounds)` — the clamp
+ * bounds stay the whole map, so the pan is never trapped inside the finding.
+ * Clicking the SAME chip again (or a different chip) clears the previous
+ * highlight first — only one kind is ever highlighted at a time.
  *
  * ── Public interface — createMapFindings({hostEl, view, transform}) ────────
- *   .update(graph)   Rebuilds the chip bar from graph.findings. Clears any
- *                    active highlight (the previous selection may no longer
- *                    be valid against the new graph).
- *   .clear()         Empties hostEl and clears the active highlight (does
- *                    NOT touch view state — callers that also want the ring
- *                    cleared should still hold a reference and call
- *                    view.applyFindingHighlight(kind, []) themselves, but in
- *                    practice update()/dispose() always follow this with a
- *                    fresh state).
+ *   .update(graph)   Rebuilds the chip bar from graph.findings and drops any
+ *                    active highlight, view ring included (the previous
+ *                    selection may no longer be valid against the new graph).
+ *   .clear()         Empties hostEl and drops the active highlight + ring.
  *   .dispose()       Removes listeners + clears hostEl. Idempotent.
  */
 (function (root, factory) {
@@ -117,8 +112,10 @@
       return hostEl && hostEl.ownerDocument ? hostEl.ownerDocument : null;
     }
 
+    // The chip rebuild (hostEl.innerHTML) detaches the region; a detached
+    // node can never announce, so re-create it whenever it is disconnected.
     function ensureLiveRegion() {
-      if (liveRegionEl || !hostEl) return;
+      if ((liveRegionEl && liveRegionEl.isConnected) || !hostEl) return;
       const documentRef = doc();
       if (!documentRef) return;
       const el = documentRef.createElement('div');
@@ -165,7 +162,6 @@
         view.applyFindingHighlight(previous.kind, []);
       }
       activeChipId = null;
-      syncActiveClasses();
     }
 
     function syncActiveClasses() {
@@ -183,16 +179,12 @@
       if (activeChipId === defId) {
         // Toggle off.
         clearHighlight();
+        syncActiveClasses();
         announce('');
         return;
       }
       // Switching (or first activation): clear any previous highlight first.
-      if (activeChipId && activeChipId !== defId) {
-        const prevDef = CHIP_DEFS.find((c) => c.id === activeChipId);
-        if (prevDef && typeof view.applyFindingHighlight === 'function') {
-          view.applyFindingHighlight(prevDef.kind, []);
-        }
-      }
+      clearHighlight();
       const ids = def.idsOf(currentFindings);
       activeChipId = defId;
       syncActiveClasses();
@@ -203,8 +195,8 @@
       const label = count === 1 ? def.singular : def.label;
       announce(`${count} ${label}: ${ids.map((id) => String(id)).join(', ') || 'none'}`);
       const bounds = boundsForIds(ids);
-      if (bounds && typeof transform.fitToContent === 'function') {
-        transform.fitToContent(bounds);
+      if (bounds && typeof transform.flyToFit === 'function') {
+        transform.flyToFit(bounds, 'finding');
       }
     }
 
@@ -223,7 +215,6 @@
 
     function renderChips() {
       if (!hostEl || typeof chip !== 'function') return;
-      const documentRef = doc();
       const markup = CHIP_DEFS
         .map((def) => chip({
           id: def.id,
@@ -233,24 +224,22 @@
         }))
         .join('');
       hostEl.innerHTML = markup;
-      if (documentRef) {
-        ensureLiveRegion();
-      }
+      ensureLiveRegion();
       syncActiveClasses();
     }
 
     function update(graph) {
       if (disposed) return;
       currentFindings = (graph && graph.findings) || { hubs: [], cycles: [], orphans: [] };
-      activeChipId = null;
+      clearHighlight();
       renderChips();
     }
 
     function clear() {
       if (disposed || !hostEl) return;
+      clearHighlight();
       hostEl.innerHTML = '';
       liveRegionEl = null;
-      activeChipId = null;
       currentFindings = { hubs: [], cycles: [], orphans: [] };
     }
 
@@ -272,7 +261,6 @@
       clear,
       dispose,
       _internals: {
-        CHIP_DEFS,
         get activeChipId() { return activeChipId; },
       },
     };

@@ -42,7 +42,7 @@ function buildController(t) {
 
   const el = () => dom.window.document.createElement('div');
   const state = {
-    ui: { activeView: 'chat', activeSettingsSection: 'models', composerPopoverOpen: false, commandPopoverOpen: false },
+    ui: { activeView: 'chat', activeSettingsSection: 'models', composerPopoverOpen: false },
     logs: [],
     memoryManager: {},
     personality: {},
@@ -55,7 +55,6 @@ function buildController(t) {
       chatInput: el(),
       composerAttachMenu: el(),
       composerAttachShortcut: el(),
-      composerTerminalShortcut: el(),
     },
     callbacks: { refreshSettingsSection: () => Promise.resolve(null) },
     controllers: {},

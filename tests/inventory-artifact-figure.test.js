@@ -58,14 +58,26 @@ test('attached and tool figures share the frame with Copy and Save as only, and 
   assert.equal(legacy.querySelector('img').getAttribute('alt'), 'chart');
 });
 
-test('pending figure reserves the image ratio, numeric strings included, and escapes its labels', () => {
-  for (const [opts, ratio] of [[{}, '1 / 1'], [{ width: 0, height: 768 }, '1 / 1'], [{ width: 1024, height: 768 }, '1024 / 768'], [{ width: '512', height: '512' }, '512 / 512']]) {
-    const html = figure.renderPendingFigure({ ...opts, labels: { title: HOSTILE, note: HOSTILE, cancel: HOSTILE } });
+test('pending figure reserves the image ratio, numeric strings included, and escapes its caption', () => {
+  for (const [opts, ratio, size] of [[{}, null, ''], [{ width: 0, height: 768 }, null, ''],
+    [{ width: 1024, height: 768 }, '--inv-image-ratio: 1024 / 768', '1024 × 768 · '], [{ width: '512', height: '512' }, '--inv-image-ratio: 512 / 512', '512 × 512 · ']]) {
+    const html = figure.renderPendingFigure({ ...opts, callId: HOSTILE, title: HOSTILE, prompt: HOSTILE, labels: { phase: HOSTILE, stop: HOSTILE } });
     assert.ok(!html.includes(HOSTILE));
     const doc = parse(html);
-    assert.equal(doc.querySelector('.inv-artifact-figure-placeholder').style.aspectRatio, ratio);
-    assert.equal(doc.querySelector('[data-inv-image-cancel]').textContent, HOSTILE);
+    const pending = doc.querySelector('.inv-artifact-figures > .inv-artifact-figure--pending');
+    assert.equal(pending.getAttribute('data-inv-image-render'), HOSTILE);
+    assert.equal(pending.getAttribute('aria-busy'), 'true');
+    // The finished figure's frame: the media carries the ratio the image will have.
+    assert.equal(pending.querySelector('.inv-artifact-figure-media').getAttribute('style'), ratio);
+    assert.equal(pending.querySelector('.inv-artifact-figure-title').textContent, HOSTILE);
+    assert.equal(pending.querySelector('.inv-artifact-figure-meta').textContent, `${size}${HOSTILE}`);
+    assert.equal(pending.querySelector('.inv-artifact-figure-phase').getAttribute('role'), 'status');
+    assert.equal(pending.querySelector('.inv-artifact-figure-prompt').textContent, HOSTILE);
+    assert.equal(pending.querySelector('[data-inv-image-cancel]').textContent, HOSTILE);
   }
+  const bare = parse(figure.renderPendingFigure({ callId: 'c', labels: { phase: 'Starting', stop: 'Stop' } }));
+  assert.equal(bare.querySelector('.inv-artifact-figure-title'), null);
+  assert.equal(bare.querySelector('.inv-artifact-figure-prompt'), null);
 });
 
 test('the markdown reference opens the viewer through the shared image attributes', () => {

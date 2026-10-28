@@ -170,3 +170,34 @@ test('onHide runs once per hide, including when a new show replaces the menu', (
   contextMenu.hide();
   assert.deepEqual(hides, ['hide', 'hide'], 'a second hide with no menu is a no-op');
 });
+
+test('row 63 composer menus: heading, footer, glyph column, upward placement and focus on the checked row', (t) => {
+  const { window, doc, trigger, picks } = setup(t);
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 });
+  trigger.getBoundingClientRect = () => ({ left: 40, right: 120, top: 700, bottom: 730, width: 80, height: 30 });
+  contextMenu.show({
+    anchorEl: trigger, rootEl: trigger, placement: 'above', focusChecked: true, className: 'composer-run-mode-menu',
+    heading: 'Run mode', footer: 'Shift+Tab switches modes from the message box.',
+    items: [
+      { label: 'Ask', description: 'Asks first.', iconHtml: '<svg data-glyph="ask"></svg>', checked: false, value: 'ask', action: () => picks.push('ask') },
+      { label: 'Plan', description: 'Plans first.', iconHtml: '<svg data-glyph="plan"></svg>', checked: true, value: 'plan', action: () => picks.push('plan') },
+    ],
+  });
+  const menu = doc.querySelector('.inv-context-menu');
+  assert.ok(menu.classList.contains('composer-run-mode-menu'));
+  assert.equal(menu.getAttribute('aria-label'), 'Run mode', 'the heading names the menu');
+  assert.equal(menu.firstElementChild.className, 'inv-context-menu-heading');
+  assert.equal(menu.lastElementChild.className, 'inv-context-menu-footer');
+  assert.equal(menu.lastElementChild.getAttribute('role'), 'presentation');
+  const rows = [...menu.querySelectorAll('.inv-context-menu-item')];
+  assert.deepEqual(rows.map((row) => row.getAttribute('data-value')), ['ask', 'plan']);
+  assert.equal(rows[0].firstElementChild.className, 'inv-context-menu-icon');
+  assert.equal(rows[0].firstElementChild.getAttribute('aria-hidden'), 'true');
+  assert.ok(rows[0].querySelector('svg[data-glyph="ask"]'));
+  assert.equal(doc.activeElement, rows[1], 'focusChecked opens on the current choice');
+  // jsdom lays nothing out (height 0): the menu's bottom sits 6px above the anchor, aligned to its leading edge.
+  assert.equal(menu.style.left, '40px');
+  assert.equal(menu.style.top, '694px');
+  rows[0].click();
+  assert.deepEqual(picks, ['ask']);
+});

@@ -255,6 +255,55 @@ test('a resetActions rejection logs but still disarms and does not call onAfterR
   dom.window.close();
 });
 
+test('a failed reset is shown inline beside the trigger until the next arm', async () => {
+  const { dom, documentRef } = buildDom();
+  let fail = true;
+  const harness = createHarness(dom, documentRef, {
+    resetActions: { appearance: () => (fail ? Promise.reject(new Error('storage unavailable')) : Promise.resolve()) },
+  });
+  harness.fieldReset.mount();
+
+  const trigger = documentRef.getElementById('appearanceResetButton');
+  const container = trigger.closest('.settings-actions');
+  trigger.click();
+  container.querySelector('[data-action="confirm"]').click();
+  await flushAsync();
+
+  const alert = container.querySelector('.settings-reset-error');
+  assert.ok(alert, 'the failure is on screen');
+  assert.equal(alert.getAttribute('role'), 'alert');
+  assert.match(alert.textContent, /Could not reset: storage unavailable/);
+
+  fail = false;
+  trigger.click();
+  assert.equal(container.querySelector('.settings-reset-error'), null, 'the next arm clears it');
+  container.querySelector('[data-action="confirm"]').click();
+  await flushAsync();
+  assert.equal(container.querySelector('.settings-reset-error'), null, 'a successful reset shows no error');
+
+  dom.window.close();
+});
+
+test('a reset action that throws synchronously is shown inline too', () => {
+  const { dom, documentRef } = buildDom();
+  const harness = createHarness(dom, documentRef, {
+    resetActions: { appearance: () => { throw new Error('boom'); } },
+  });
+  harness.fieldReset.mount();
+
+  const trigger = documentRef.getElementById('appearanceResetButton');
+  const container = trigger.closest('.settings-actions');
+  trigger.click();
+  container.querySelector('[data-action="confirm"]').click();
+
+  assert.match(container.querySelector('.settings-reset-error').textContent, /boom/);
+  assert.equal(trigger.hidden, false);
+  harness.fieldReset.dispose();
+  assert.equal(container.querySelector('.settings-reset-error'), null, 'dispose removes it');
+
+  dom.window.close();
+});
+
 // ── dispose ──────────────────────────────────────────────────────────────
 
 test('dispose() removes listeners and any still-armed confirm group', () => {

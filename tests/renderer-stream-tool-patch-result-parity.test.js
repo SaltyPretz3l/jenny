@@ -150,6 +150,12 @@ const RESULT_CASES = [
     canonical: { state: 'errored', is_error: true },
     expected: 'errored',
   },
+  {
+    name: 'sidecar time limit (metadata.timed_out)',
+    wire: { isError: true, metadata: { timed_out: true } },
+    canonical: { state: 'errored', is_error: true, metadata: { timed_out: true } },
+    expected: 'timed_out',
+  },
 ];
 
 for (const resultCase of RESULT_CASES) {
@@ -289,12 +295,14 @@ test('control: a classic tool-call-block target is patched in place without a re
     type: 'tool_result',
     sessionId: SESSION_ID,
     callId: CALL_ID,
-    toolName: 'Read',
+    // The raw wire id: the rendered display name ("Read") must survive the patch.
+    toolName: 'read_file',
     content: UNIQUE_OUTPUT,
   }, { eventType: 'tool_result' });
   frameHarness.drain();
 
   const block = dom.window.document.querySelector('.tool-call-block');
+  assert.equal(block.querySelector('.tool-call-name').textContent, 'Read');
   assert.equal(block.getAttribute('data-tool-status'), 'completed');
   assert.equal(block.querySelector('.tool-call-output').textContent, UNIQUE_OUTPUT);
   assert.equal(patched.length, 1);
@@ -345,4 +353,43 @@ test('real createStreamHandler wiring: a result on a production minimal row queu
   const row = chatTimeline.querySelector('.tool-call-row');
   assert.equal(row.getAttribute('data-tool-status'), 'completed', 'the status flips first');
   assert.ok(harness.calls.renderMessages - renderMessagesBefore >= 1, 'the authoritative render follows');
+});
+
+test('real createStreamHandler wiring: a failed result on a classic block takes the render, not the field patch', async (t) => {
+  const dom = new JSDOM(`
+    <div id="chatTimeline">
+      <div class="chat-row" data-tool-call-id="${CALL_ID}" data-row-state="running">
+        <div class="tool-call-block" data-call-id="${CALL_ID}" data-tool-status="running">
+          <span class="tool-call-name">Read</span>
+          <span class="tool-call-status tool-call-status-running"><span class="tool-call-status-label">Running</span></span>
+        </div>
+      </div>
+    </div>
+  `);
+  dom.window.requestAnimationFrame = (callback) => { callback(Date.now()); return 1; };
+  dom.window.cancelAnimationFrame = () => {};
+  dom.window.jennyShell = { sessions: { async getMessages() { return { data: [] }; } } };
+  const chatTimeline = dom.window.document.getElementById('chatTimeline');
+  const harness = createStreamHarness({ domOverrides: { chatTimeline }, stateOverrides: { window: dom.window } });
+  t.after(() => {
+    harness.restore();
+    dom.window.close();
+  });
+
+  await harness.emit({ type: 'started', sessionId: SESSION_ID, streamId: 'stream-classic-fail' });
+  await harness.emit({
+    type: 'tool_use', sessionId: SESSION_ID, streamId: 'stream-classic-fail', callId: CALL_ID,
+    toolName: 'read_file', status: 'running',
+  });
+  await flushMicrotasks(5);
+  const renderMessagesBefore = harness.calls.renderMessages;
+  await harness.emit({
+    type: 'tool_result', sessionId: SESSION_ID, streamId: 'stream-classic-fail', callId: CALL_ID,
+    toolName: 'read_file', content: 'ENOENT: README.md', isError: true, errorCode: 'CMP-TOOL-0003',
+  });
+  await flushMicrotasks(5);
+
+  // No field patch: the block keeps its pre-render state until the render lands.
+  assert.equal(chatTimeline.querySelector('.tool-call-block').getAttribute('data-tool-status'), 'running');
+  assert.ok(harness.calls.renderMessages - renderMessagesBefore >= 1, 'the failure presentation needs the render');
 });

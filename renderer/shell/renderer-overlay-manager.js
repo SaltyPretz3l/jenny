@@ -133,7 +133,8 @@
     function getFocusable(rootEl) {
       if (!rootEl || typeof rootEl.querySelectorAll !== 'function') return [];
       return Array.prototype.slice.call(rootEl.querySelectorAll(FOCUSABLE_SELECTOR))
-        .filter((el) => el && el.offsetParent !== null);
+        // offsetParent is null for position:fixed elements; client rects are not.
+        .filter((el) => el && (el.offsetParent !== null || el.getClientRects?.().length > 0));
     }
 
     function handleTabKey(event, entry) {

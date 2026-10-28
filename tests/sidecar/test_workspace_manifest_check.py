@@ -34,6 +34,7 @@ _FIXTURE_DOMAINS = (
     ("sidecar-runtime", "docs/manifests/sidecar-runtime.md", "Runtime", "Sidecar Runtime"),
     ("plugin-system", "docs/manifests/plugin-system.md", "Plugins", "Plugin System"),
     ("hosted-runtime", "docs/manifests/hosted-runtime.md", "Host", "Hosted Runtime"),
+    ("cli-runtime", "docs/manifests/cli-runtime.md", "CLI", "CLI Runtime"),
 )
 
 
@@ -260,6 +261,17 @@ def _write_valid_fixture(repo_root: Path) -> None:
             domain="hosted-runtime", summary="Private browser host",
             paths=["server/"], entrypoints=["server/main.js"],
             tests=["tests/server/http-server.test.js"], related_docs=["AGENTS.md"],
+        ),
+    )
+
+    _write_file(repo_root / "cli/main.js")
+    _write_file(repo_root / "tests/cli/print-mode.test.js")
+    _write_file(
+        repo_root / "docs/manifests/cli-runtime.md",
+        _domain_manifest(
+            domain="cli-runtime", summary="The jenny command-line tool",
+            paths=["cli/"], entrypoints=["cli/main.js"],
+            tests=["tests/cli/print-mode.test.js"], related_docs=["AGENTS.md"],
         ),
     )
 

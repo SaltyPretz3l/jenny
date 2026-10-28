@@ -481,3 +481,89 @@ test('appendClientLog forwarding never resurrects logs.append and is a safe no-o
   assert.equal(appendCalls.length, 0, 'must not fall back to the dead logs.append path');
   assert.doesNotThrow(() => forwardClientLog(null, 'INFO', 'x', {}));
 });
+
+test('with no matching file, Enter and Tab close the popover and reach the composer', async () => {
+  const dom = buildDom();
+  const { controller, win, doc } = makeController(dom);
+  controller.attach();
+  for (const key of ['Enter', 'Tab']) {
+    const input = typeTrigger(win, doc, 'see @zzz');
+    await flush();
+    assert.equal(controller.isOpen(), true);
+    const ev = new win.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+    input.dispatchEvent(ev);
+    assert.equal(ev.defaultPrevented, false, `${key} is not swallowed`);
+    assert.equal(controller.isOpen(), false);
+    assert.equal(input.value, 'see @zzz');
+  }
+});
+
+test('an Enter that commits an IME composition is left to the IME', async () => {
+  const dom = buildDom();
+  const { controller, win, doc } = makeController(dom);
+  controller.attach();
+  const input = typeTrigger(win, doc, '@app');
+  await flush();
+  for (const init of [{ isComposing: true }, { keyCode: 229 }]) {
+    const ev = new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, ...init });
+    input.dispatchEvent(ev);
+    assert.equal(ev.defaultPrevented, false);
+    assert.equal(input.value, '@app', 'nothing accepted mid-composition');
+  }
+  assert.equal(controller.isOpen(), true);
+});
+
+test('results keep the best eight by score then path without sorting every file', async () => {
+  const dom = buildDom();
+  const files = Array.from({ length: 40 }, (_, i) => `dir${i % 7}/file${String(39 - i).padStart(2, '0')}.js`);
+  const { controller, win, doc } = makeController(dom, { files: () => files });
+  controller.attach();
+  typeTrigger(win, doc, '@file');
+  await flush();
+  const expected = files
+    .map((path) => ({ path, score: 1000 - path.toLowerCase().indexOf('file') }))
+    .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
+    .slice(0, 8)
+    .map((item) => item.path);
+  assert.deepEqual(rowPaths(doc), expected);
+});
+
+test('several inputs in one frame re-score once, and Enter before the frame uses the latest query', async () => {
+  const dom = buildDom();
+  const frames = [];
+  dom.window.requestAnimationFrame = (callback) => { frames.push(callback); return frames.length; };
+  dom.window.cancelAnimationFrame = () => {};
+  let scored = 0;
+  const palette = { ...PALETTE, scoreMatch: (path, query) => { scored += 1; return PALETTE.scoreMatch(path, query); } };
+  const win = dom.window;
+  const doc = win.document;
+  const controller = createMentionAutocomplete({
+    document: doc,
+    window: win,
+    getInput: () => doc.getElementById('chatInput'),
+    getMountEl: () => doc.body,
+    getWorkspaceFs: () => ({ listAllFiles: async () => ({ files: [...FILES] }) }),
+    paletteUtils: palette,
+  });
+  controller.attach();
+  typeTrigger(win, doc, '@a');
+  await flush();
+  frames.splice(0).forEach((callback) => callback());
+  scored = 0;
+  const typed = typeTrigger(win, doc, '@ap');
+  typed.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'p', bubbles: true, cancelable: true }));
+  typeTrigger(win, doc, '@app');
+  typeTrigger(win, doc, '@READ');
+  assert.equal(scored, 0, 'scoring waits for the frame; a typed key does not force it');
+  frames.splice(0).forEach((callback) => callback());
+  assert.equal(scored, FILES.length, 'one re-score for the burst');
+  assert.deepEqual(rowPaths(doc), ['README.md']);
+
+  scored = 0;
+  const input = typeTrigger(win, doc, 'x @deep');
+  const ev = new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+  input.dispatchEvent(ev);
+  assert.equal(ev.defaultPrevented, true);
+  assert.match(input.value, /^x @src\/deep\/util\.js /, 'the pending refresh ran before accepting');
+  controller.dispose();
+});

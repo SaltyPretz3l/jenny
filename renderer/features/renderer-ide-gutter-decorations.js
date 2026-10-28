@@ -6,7 +6,12 @@
  * switch via the ide:active-file-changed event, and git refresh). The pure
  * line-diff + decoration mapping are exported for unit tests and never touch
  * Monaco. Decorations apply to the file's model through the editor host, so they
- * survive tab switches and vanish when the model is disposed on close. */
+ * survive tab switches and vanish when the model is disposed on close.
+ * Row 82 G2: the same HEAD baseline also yields the change blocks with their HEAD
+ * text (diffChangeBlocks), a click on a change bar opens the hunk peek
+ * (renderer-ide-hunk-peek.js), and the buffer-to-HEAD line map feeds inline blame
+ * (renderer-ide-inline-blame.js); both are built here so the controller adds no
+ * wiring. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(require('../shared/async-fence'));
@@ -44,6 +49,14 @@
     return String(text == null ? '' : text).replace(/\r\n?/g, '\n').split('\n');
   }
 
+  // The degraded op script: delete-all + insert-all, flagged so the change block it
+  // yields can say it is coarse (cleanup wave G5).
+  function coarseOps(n, m) {
+    const ops = new Array(n).fill('delete').concat(new Array(m).fill('insert'));
+    ops.coarse = true;
+    return ops;
+  }
+
   // Myers diff over the changed core of two line arrays -> an ordered op script of
   // 'equal' | 'delete' | 'insert'. Common prefix/suffix are trimmed by the
   // caller; over either guard the core degrades to one delete-all + insert-all
@@ -54,7 +67,7 @@
     if (n === 0) { return new Array(m).fill('insert'); }
     if (m === 0) { return new Array(n).fill('delete'); }
     if (n > MAX_DIFF_LINES || m > MAX_DIFF_LINES || n * m > MAX_DIFF_CELLS) {
-      return new Array(n).fill('delete').concat(new Array(m).fill('insert'));
+      return coarseOps(n, m);
     }
     const max = n + m;
     const offset = max + 1;
@@ -70,7 +83,7 @@
 
     for (let d = 0; ; d += 1) {
       if (d > maxDistance) {
-        return new Array(n).fill('delete').concat(new Array(m).fill('insert'));
+        return coarseOps(n, m);
       }
       // Only the k-range [-d, d] is live at depth d; snapshotting the whole
       // frontier per level would make the trace O(D * (n + m)) instead of O(D^2).
@@ -134,40 +147,68 @@
     return { lo, core: diffCore(oldLines.slice(lo, hiA), newLines.slice(lo, hiB)) };
   }
 
-  // HEAD-vs-buffer line diff -> change regions in NEW-file coordinates (1-based).
-  // added: new lines with no removed counterpart; modified: new lines replacing
-  // removed ones; deleted: a single boundary marker at the line now occupying the
-  // deletion point (the removed lines no longer exist in the buffer).
-  function diffLineRegions(oldText, newText) {
-    const newLines = splitLines(newText);
-    const { lo, core } = diffOps(splitLines(oldText), newLines);
-    const regions = [];
-    const deletedLines = new Set();
-    let newIdx = lo; // the `lo` common-prefix lines are unchanged
+  // Row 82 G2: HEAD-vs-buffer change blocks in buffer coordinates (the arrays line up
+  // with Monaco's lines, a trailing '' standing for the final newline), each with its
+  // HEAD lines. anchorLine is the first changed buffer line, or for a pure deletion
+  // the boundary line the gutter marks (as diffLineRegions clamps it). Either side may
+  // be pre-split (or pre-keyed: the hunk peek's stage patch). A block from a degraded
+  // diff carries coarse: true (Revert and Stage then act on the whole region).
+  function diffChangeBlocks(oldText, newText) {
+    const newLines = Array.isArray(newText) ? newText : splitLines(newText);
+    const oldLines = Array.isArray(oldText) ? oldText : splitLines(oldText);
+    const { lo, core } = diffOps(oldLines, newLines);
+    const blocks = [];
+    let oldIdx = lo;
+    let newIdx = lo;
     let k = 0;
     while (k < core.length) {
-      if (core[k] === 'equal') { newIdx += 1; k += 1; continue; }
-      const hunkStart = newIdx;
-      let dels = 0;
-      let ins = 0;
+      if (core[k] === 'equal') { oldIdx += 1; newIdx += 1; k += 1; continue; }
+      const oldStart0 = oldIdx;
+      const newStart0 = newIdx;
       while (k < core.length && core[k] !== 'equal') {
-        if (core[k] === 'insert') { ins += 1; newIdx += 1; } else { dels += 1; }
+        if (core[k] === 'insert') newIdx += 1; else oldIdx += 1;
         k += 1;
       }
-      if (ins > 0) {
-        regions.push({ type: dels > 0 ? 'modified' : 'added', startLine: hunkStart + 1, endLine: hunkStart + ins });
-      } else if (dels > 0) {
-        // Several deletion-only hunks can clamp to the same boundary line (e.g. a
-        // multi-line file edited down to one line, losing its trailing newline):
-        // collapse them into one marker so the gutter never double-paints a line.
-        const startLine = Math.min(hunkStart, Math.max(0, newLines.length - 1)) + 1;
-        if (!deletedLines.has(startLine)) {
-          deletedLines.add(startLine);
-          regions.push({ type: 'deleted', startLine, endLine: startLine });
-        }
-      }
+      const newCount = newIdx - newStart0;
+      const oldCount = oldIdx - oldStart0;
+      const anchorLine = newCount > 0 ? newStart0 + 1 : Math.min(newStart0, Math.max(0, newLines.length - 1)) + 1;
+      blocks.push({
+        type: newCount === 0 ? 'deleted' : (oldCount === 0 ? 'added' : 'modified'),
+        oldStart0, oldCount, newStart0, newCount, anchorLine,
+        endLine: newCount > 0 ? newStart0 + newCount : anchorLine,
+        oldLines: oldLines.slice(oldStart0, oldIdx),
+        newLines: newLines.slice(newStart0, newIdx),
+        ...(core.coarse === true ? { coarse: true } : {}),
+      });
     }
-    return regions;
+    return blocks;
+  }
+
+  // HEAD-vs-buffer line diff -> change regions in NEW-file coordinates (1-based):
+  // the change blocks' gutter spans. A deleted block marks the boundary line now at the
+  // deletion point; several deletion-only blocks can clamp to the same line (a file
+  // edited down to one line, losing its final newline): one marker, never a double paint.
+  function diffLineRegions(oldText, newText) {
+    const marked = new Set();
+    return diffChangeBlocks(oldText, newText)
+      .filter((block) => block.type !== 'deleted' || (!marked.has(block.anchorLine) && marked.add(block.anchorLine)))
+      .map((block) => ({ type: block.type, startLine: block.anchorLine, endLine: block.endLine }));
+  }
+
+  // A buffer line's number in HEAD, or null when the line was added or changed since
+  // HEAD (or past HEAD's last real line: the trailing '' is not blameable).
+  function headLineFor(blocks, line, headLines) {
+    const line0 = Math.floor(Number(line)) - 1;
+    if (!Number.isInteger(line0) || line0 < 0 || !Array.isArray(headLines)) return null;
+    let delta = 0;
+    for (const block of blocks || []) {
+      if (line0 < block.newStart0) break;
+      if (line0 < block.newStart0 + block.newCount) return null;
+      delta += block.oldCount - block.newCount;
+    }
+    const head0 = line0 + delta;
+    const usable = headLines.length && headLines[headLines.length - 1] === '' ? headLines.length - 1 : headLines.length;
+    return head0 >= 0 && head0 < usable ? head0 + 1 : null;
   }
 
   // Change regions -> Monaco model decorations (linesDecorationsClassName paints
@@ -196,9 +237,9 @@
       : (typeof clearTimeout === 'function' ? clearTimeout : null);
 
     // Own thin git client for HEAD reads (self-bootstraps off windowRef). HEAD
-    // text is cached per path: undefined = not yet fetched (cache miss), null =
-    // no git baseline (skip), '' = new/untracked file (all-added), string = the
-    // committed text.
+    // is cached per path as its normalized split lines: undefined = not yet
+    // fetched (cache miss), null = no git baseline (skip), [''] = new/untracked
+    // file (all-added), otherwise the committed lines.
     const clientUtils = options.clientUtils
       || globalRef.rendererWorkspaceGitClient
       || (typeof require === 'function' ? (() => {
@@ -211,6 +252,7 @@
         : null);
 
     const headCache = new Map();
+    let blocksMemo = null; // { path, head, value, blocks }: one diff per buffer state
     const fence = asyncFence.createDisposalFence();
     const headCacheGate = asyncFence.createGenerationGate();
     let timer = null;
@@ -225,6 +267,59 @@
       if (editorHost && typeof editorHost.setGutterDecorations === 'function') {
         editorHost.setGutterDecorations(path, []);
       }
+      inlineBlame?.clear();
+    }
+
+    // Row 82 G2: the change blocks against the current buffer (null without a HEAD
+    // baseline), memoized per buffer state so the peek, Next/Previous and blame share one diff.
+    function getChangeBlocks(path) {
+      const norm = String(path || '');
+      const head = headCache.get(norm);
+      if (!editorHost || !norm || !Array.isArray(head)) return null;
+      const value = editorHost.getValue(norm);
+      if (blocksMemo && blocksMemo.path === norm && blocksMemo.head === head && blocksMemo.value === value) return blocksMemo;
+      blocksMemo = { path: norm, head, value, blocks: diffChangeBlocks(head, value) };
+      return blocksMemo;
+    }
+    function headLineAt(path, line) {
+      const memo = getChangeBlocks(path);
+      return memo ? headLineFor(memo.blocks, line, memo.head) : null;
+    }
+    const cursorLine = () => Number(editorHost?.getCursorInfo?.()?.lineNumber) || 1;
+    const resolveUtils = (globalName, requirePath) => options[globalName] || globalRef[globalName]
+      || (typeof require === 'function' ? (() => { try { return require(requirePath); } catch (_error) { return null; } })() : null) || {};
+    const inlineBlame = resolveUtils('rendererIdeInlineBlame', './renderer-ide-inline-blame').createIdeInlineBlame?.({
+      editorHost, gitClient, getIde: options.getIde, headLineFor: headLineAt, headFor: (path) => headCache.get(String(path || '')), appendClientLog, setTimeoutFn, clearTimeoutFn,
+    }) || null;
+    // The baseline generation bumps on every git refresh, the root switch included (it
+    // empties the status store), so the peek's stage re-check reads it as the root epoch.
+    const hunkPeek = resolveUtils('rendererIdeHunkPeek', './renderer-ide-hunk-peek').createIdeHunkPeek?.({
+      editorHost, gitClient, getDom: options.getDom, getChangeBlocks, appendClientLog,
+      refreshGit: options.refreshGit, showToastMessage: options.showToastMessage, getRootEpoch: () => headCacheGate.current(),
+    }) || null;
+
+    // The primary editor is one Monaco instance reused across files: hook it once.
+    // Clicking a change bar opens the peek; the caret feeds inline blame; an edit
+    // drops the blame text at once (the debounced recompute re-asks after).
+    const hookedEditors = new WeakSet();
+    function hookEditor(path) {
+      const editor = editorHost?.editorFor?.(path) || null;
+      if (!editor || hookedEditors.has(editor)) return;
+      hookedEditors.add(editor);
+      const laneTarget = editorHost.getMonaco?.()?.editor?.MouseTargetType?.GUTTER_LINE_DECORATIONS;
+      // The peek finds the block under the line itself (a line with none opens nothing).
+      editor.onMouseDown?.((event) => {
+        const target = event && event.target;
+        const active = editorHost.getActivePath();
+        if (!target || laneTarget === undefined || target.type !== laneTarget || !target.position || !active) return;
+        hunkPeek?.openAt(active, target.position.lineNumber);
+      });
+      editor.onDidChangeCursorSelection?.((event) => {
+        const active = editorHost.getActivePath();
+        if (active && editorHost.editorFor?.(active) === editor) inlineBlame?.handleCursor(active, event?.selection?.positionLineNumber || cursorLine());
+      });
+      editor.onDidChangeModelContent?.(() => { inlineBlame?.clear(); hunkPeek?.close(); });
+      editor.onDidScrollChange?.(() => hunkPeek?.close());
     }
 
     async function recompute(path) {
@@ -238,8 +333,7 @@
         clearGutter(norm);
         return;
       }
-      const reader = windowRef && windowRef.rendererIdeActiveEditorReader;
-      if (reader && typeof reader.isLargeFile === 'function' && reader.isLargeFile() === true) {
+      if (editorHost.isLargeFile?.(norm) === true) {
         clearGutter(norm);
         return;
       }
@@ -251,7 +345,7 @@
           return null;
         });
         if (fence.isDisposed() || !headCacheGate.isCurrent(cacheToken)) return;
-        head = (res && res.ok === true) ? (res.found ? String(res.content == null ? '' : res.content) : '') : null;
+        head = (res && res.ok === true) ? splitLines(res.found ? res.content : '') : null;
         headCache.set(norm, head);
         if (headCache.size > MAX_HEAD_CACHE) {
           headCache.delete(headCache.keys().next().value);
@@ -265,6 +359,8 @@
         return;
       }
       editorHost.setGutterDecorations(norm, computeGutterDecorations(head, editorHost.getValue(norm)));
+      hookEditor(norm);
+      inlineBlame?.handleCursor(norm, cursorLine());
     }
 
     function schedule(path) {
@@ -298,12 +394,30 @@
     function refreshActive() {
       headCacheGate.bump();
       headCache.clear();
+      blocksMemo = null;
+      inlineBlame?.invalidate();
       schedule(editorHost ? editorHost.getActivePath() : '');
     }
 
     function handleActiveFileChanged(event) {
       const detailPath = event && event.detail && event.detail.path;
+      hunkPeek?.close();
+      inlineBlame?.clear();
       schedule(detailPath || (editorHost ? editorHost.getActivePath() : ''));
+    }
+
+    // Go to Next / Previous Change (wraps), from the cursor line of the active file.
+    function goToChange(direction) {
+      const active = editorHost?.getActivePath?.() || '';
+      const memo = getChangeBlocks(active);
+      if (!memo || !memo.blocks.length) return false;
+      const line = cursorLine();
+      const anchors = memo.blocks.map((block) => block.anchorLine);
+      const target = direction < 0
+        ? ([...anchors].reverse().find((anchor) => anchor < line) ?? anchors[anchors.length - 1])
+        : (anchors.find((anchor) => anchor > line) ?? anchors[0]);
+      editorHost.revealPosition?.(active, target, 1);
+      return true;
     }
 
     if (windowRef && typeof windowRef.addEventListener === 'function') {
@@ -314,9 +428,17 @@
       schedule,
       refreshActive,
       recompute,
+      getChangeBlocks,
+      headLineAt,
+      goToChange,
+      hunkPeek,
+      inlineBlame,
       dispose() {
         headCacheGate.bump();
         fence.dispose();
+        hunkPeek?.dispose();
+        inlineBlame?.dispose();
+        blocksMemo = null;
         if (timer && clearTimeoutFn) {
           clearTimeoutFn(timer);
         }
@@ -333,6 +455,8 @@
   return {
     createIdeGutterDecorations,
     diffLineRegions,
+    diffChangeBlocks,
+    headLineFor,
     computeGutterDecorations,
     splitLines,
     GUTTER_CLASS,

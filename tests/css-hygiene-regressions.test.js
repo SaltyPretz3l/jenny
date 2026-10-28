@@ -193,6 +193,14 @@ test('retired feature and dead utility selectors stay removed', () => {
       '.composer-signal-group',
       '.composer-meta-signal',
     ],
+    // The Workspace dock's composer has no meta row, mode toggle or icon tools.
+    'styles/ide-chat-dock.css': [
+      '.composer-icon-tools',
+      '.composer-mode {',
+      '.composer-mode-button',
+      '.composer-meta',
+      '.composer-signal-group',
+    ],
     'styles/views-artifacts.css': [
       '.artifacts-shell',
       '.artifacts-page-header',

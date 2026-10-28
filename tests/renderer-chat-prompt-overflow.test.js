@@ -5,15 +5,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require('playwright-core');
 
+const { SKIP, browserPath } = require('./helpers/composer-layout-harness');
+
 const root = path.resolve(__dirname, '..');
-const browserPath = [
-  process.env.JENNY_TEST_CHROMIUM,
-  process.platform === 'win32' && 'C:/Program Files/Google/Chrome/Application/chrome.exe',
-  chromium.executablePath(),
-].find((candidate) => candidate && fs.existsSync(candidate));
 
 test('long user prompts stay inside the lane while code scrolls within its block', {
-  skip: !browserPath && 'No local Chromium available; set JENNY_TEST_CHROMIUM',
+  skip: SKIP,
 }, async () => {
   const browser = await chromium.launch({ executablePath: browserPath, headless: true });
   try {

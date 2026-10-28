@@ -30,11 +30,11 @@ const SOURCE = fs.readFileSync(path.join(__dirname, '..', 'renderer/chat/rendere
 
 const DOCUMENT_NODES = [
   'homeNavButton', 'newChatButton', 'jumpToTopButton', 'jumpToLastPromptButton', 'jumpToBottomButton',
-  'composerCommandPopover', 'toastViewport', 'composerModelSelect', 'composerEffortSelect',
+  'toastViewport', 'composerModelSelect', 'composerEffortSelect',
   'artifactReviewPanel',
 ];
 
-function buildHarness(t, { paneId, coordinator = false, rail = false } = {}) {
+function buildHarness(t, { paneId, coordinator = false, rail = false, calls = null } = {}) {
   const dom = new JSDOM(`<!doctype html><body>
     ${DOCUMENT_NODES.map((id) => `<div id="${id}"></div>`).join('')}
     <div id="chatView">
@@ -150,7 +150,7 @@ function buildHarness(t, { paneId, coordinator = false, rail = false } = {}) {
   const callbacks = new Proxy({
     setActivityChangeListener: (fn) => log.push(fn ? 'activity.set' : 'activity.clear'),
     handleSend: async () => { log.push('handleSend'); },
-  }, { get: (target, key) => (key in target ? target[key] : () => undefined) });
+  }, { get: (target, key) => (key in target ? target[key] : () => { calls?.push(key); }) });
   const bindings = context.rendererChatEventUtils.createChatEventBindings({
     state: { ui: { activeView: 'chat' }, currentSessionId: 'session-a' },
     sessionContext: { paneId, getSessionId: () => (paneId === 0 ? 'session-a' : 'session-b'), setSessionId() {}, isCurrent: () => false },
@@ -189,7 +189,6 @@ const PANE_ZERO_SET = [
   'chatInput:input',
   'chatInput:paste',
   'chatInput:contextmenu',
-  'composerCommandPopover:click',
   'chatThreadScroll:scroll',
   // timeline-perf 2026-09-30: the Ctrl-held tracker replaces the always-on
   // non-passive chatView wheel listener (attached only while Ctrl is down).
@@ -199,7 +198,6 @@ const PANE_ZERO_SET = [
   'window:pointermove',
   'window:wheel',
   'window:keydown',
-  'composerWrap:click',
   'chatTimeline:input',
   'transcript.bind',
   'chatTimeline:click',
@@ -219,7 +217,6 @@ const PANE_ONE_SET = [
   'chatInput:contextmenu',
   'chatThreadScroll:scroll',
   'chatView:wheel',
-  'composerWrap:click',
   'chatTimeline:input',
   'transcript.bind',
   'chatTimeline:click',
@@ -366,3 +363,22 @@ test('paneId 0 attaches the non-passive wheel listener only while Ctrl is held',
   assert.equal(wheelEntry.removed, true, 'dispose detaches the wheel listener');
   assert.ok(byId('chatView'));
 });
+
+// perf 2026-10-25: pane 0's renderComposerState (the chrome pipeline) ends
+// with the height and visual syncs, so the input handler no longer runs them
+// first (two forced layouts per keystroke). A pane's renderComposerState is
+// its own control sync, so a pane keeps the explicit calls.
+for (const [paneId, expected] of [[0, 0], [1, 1]]) {
+  test(`one keystroke in pane ${paneId} runs the composer syncs ${expected + 1} time(s)`, (t) => {
+    const calls = [];
+    const { window, bindings, byId } = buildHarness(t, { paneId, calls });
+    bindings.bind();
+    calls.length = 0;
+    byId('chatInput').dispatchEvent(new window.Event('input', { bubbles: true }));
+    const count = (name) => calls.filter((entry) => entry === name).length;
+    assert.equal(count('renderComposerState'), 1);
+    assert.equal(count('syncComposerInputHeight'), expected, 'explicit height sync in the handler');
+    assert.equal(count('syncComposerVisualState'), expected, 'explicit visual sync in the handler');
+    bindings.dispose();
+  });
+}

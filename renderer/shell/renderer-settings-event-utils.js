@@ -474,18 +474,18 @@
           showSessionActionError(error, errorTitle);
         }
       }
+      // Runs a Settings action and reports a throw or rejection under its title.
+      function runSettingsAction(action, errorTitle) {
+        Promise.resolve().then(action).catch((error) => showSessionActionError(error, errorTitle));
+      }
       function openControlTowerAction(controlTowerAction) {
         if (controlTowerAction?.dataset?.settingsControlAction === 'resume-setup' && typeof handleRunSetupAgain === 'function') {
-          Promise.resolve().then(() => handleRunSetupAgain()).catch((error) => {
-            showSessionActionError(error, jt('settings.shell.setupRunAgainFailed', 'Setup Run Again Failed'));
-          });
+          runSettingsAction(handleRunSetupAgain, jt('settings.shell.setupRunAgainFailed', 'Setup Run Again Failed'));
           return;
         }
         const chooseRoot = deps.callbacks?.handleWorkspaceRootChoose;
         if (controlTowerAction?.dataset?.settingsControlAction === 'choose-workspace' && typeof chooseRoot === 'function') {
-          Promise.resolve().then(() => chooseRoot()).catch((error) => {
-            showSessionActionError(error, jt('settings.controlTower.chooseFolderFailed', 'Could not choose a folder'));
-          });
+          runSettingsAction(chooseRoot, jt('settings.controlTower.chooseFolderFailed', 'Could not choose a folder'));
           return;
         }
         const sectionId = String(controlTowerAction?.dataset?.settingsControlSection || '').trim();
@@ -507,10 +507,8 @@
       const sectionBinders = settingsSectionBinders.createSettingsSectionBinders?.({
         state,
         windowRef: typeof window !== 'undefined' ? window : globalThis,
-        constants: { TOAST_SOURCE },
         getLazySectionDom,
         callbacks: {
-          renderAll,
           renderSettings,
           handlePersonalityTabChange,
           getPersonalityActiveFile,
@@ -519,7 +517,6 @@
           handlePersonalitySave,
           handlePersonalityReset,
           handlePersonalityOpenFolder,
-          showShellErrorToast,
           toErrorMessage,
           appendClientLog,
           showSessionActionError,
@@ -623,6 +620,16 @@
       }, listenerOptions);
       bindDescriptorFields(settingsView, ['use24HourTime', 'uiLanguageSelect', 'transcriptViewDefaultSelect']);
 
+      // Dictation (row 84): the switch is a feature flag (features adapter, like
+      // spell check); the microphone and the model row bind in the section module.
+      const dictationSettingsSection = typeof document !== 'undefined' ? document.getElementById('dictationSettingsSection') : null;
+      if (dictationSettingsSection) {
+        bindDescriptorFields(dictationSettingsSection, ['dictationEnabledToggle']);
+        globalThis.rendererSettingsDictationSection?.bindDictationSection?.({
+          container: dictationSettingsSection, state, renderSettings, registerListener, listenerOptions,
+        });
+      }
+
       // Web search provider section: renders inside the same toolsConfigFieldList
       // container, in toolsWebList. Provider/URL fields
       // are descriptor fields bound above (features adapter); the per-provider
@@ -666,10 +673,10 @@
       function refreshWebSearchSecretStatus() {
         const api = webSearchApi();
         if (!api || typeof api.getWebSearchSecretStatus !== 'function') {
-          return;
+          return null;
         }
         const statusToken = webSearchSecretStatusGate.capture();
-        Promise.resolve(api.getWebSearchSecretStatus()).then((status) => {
+        return Promise.resolve(api.getWebSearchSecretStatus()).then((status) => {
           if (!webSearchSecretStatusGate.isCurrent(statusToken)) {
             return;
           }
@@ -682,7 +689,7 @@
             return;
           }
           renderSettings();
-        }).catch(() => {});
+        });
       }
       let webSearchSecretsHydrated = false;
       function ensureWebSearchSecretStatus() {
@@ -690,7 +697,13 @@
           return;
         }
         webSearchSecretsHydrated = true;
-        refreshWebSearchSecretStatus();
+        // A failed read leaves the hints unhydrated, so the next provider change retries it.
+        refreshWebSearchSecretStatus()?.catch((error) => {
+          webSearchSecretsHydrated = false;
+          if (typeof appendClientLog === 'function') {
+            appendClientLog('WARN', 'settings.web_search_secret_status_failed', { message: String(error?.message || error).slice(0, 200) });
+          }
+        });
       }
       // If the flag is already on when Settings binds (not just flipped on via a
       // provider change), hydrate the configured-key hints once up front.
@@ -711,8 +724,8 @@
             .then((snapshot) => {
               const probe = snapshot?.web_search_probe || {};
               if (status) status.textContent = probe.ok === true
-                ? jt('settings.shell.webSearchConnected', 'Connected to {provider}.', { provider: String(probe.provider || jt('settings.tools.webSearch.selectedProviderFallback', 'the selected provider')) }).replace('{provider}', () => String(probe.provider || jt('settings.tools.webSearch.selectedProviderFallback', 'the selected provider')))
-                : jt('settings.shell.webSearchConnectionFailed', 'Connection failed: {error}', { error: String(probe.error || jt('settings.tools.webSearch.providerUnavailableFallback', 'provider unavailable')).slice(0, 160) }).replace('{error}', () => String(probe.error || jt('settings.tools.webSearch.providerUnavailableFallback', 'provider unavailable')).slice(0, 160));
+                ? jt('settings.shell.webSearchConnected', 'Connected to {provider}.', { provider: String(probe.provider || jt('settings.tools.webSearch.selectedProviderFallback', 'the selected provider')) })
+                : jt('settings.shell.webSearchConnectionFailed', 'Connection failed: {error}', { error: String(probe.error || jt('settings.tools.webSearch.providerUnavailableFallback', 'provider unavailable')).slice(0, 160) });
             })
             .catch(() => {
               if (status) status.textContent = jt('settings.shell.webSearchTestUnavailable', 'Connection test unavailable. Local chat is unaffected.');
@@ -735,6 +748,9 @@
         const value = String(input.value || '');
         webSearchSecretStatusGate.bump();
         Promise.resolve(api.setWebSearchSecret({ keyId: resolved.keyId, value })).then((status) => {
+          // The key is stored: an input still holding it would read as an unsaved
+          // draft to the Tools patch guard and hold the lists.
+          input.value = '';
           if (status && typeof status === 'object') {
             webSearchSecretStatusGate.bump();
             state.webSearchSecrets = status;
@@ -818,21 +834,15 @@
         }
         const action = target.dataset.action;
         if (action === 'settingsOpenSetupHelp') {
-          Promise.resolve(showSetupHelp?.()).catch((error) => {
-            showSessionActionError(error, jt('settings.shell.setupHelpFailed', 'Setup Help Failed'));
-          });
+          runSettingsAction(() => showSetupHelp?.(), jt('settings.shell.setupHelpFailed', 'Setup Help Failed'));
           return;
         }
         if (action === 'settingsOpenFactoryReset') {
-          Promise.resolve(showFactoryReset?.()).catch((error) => {
-            showSessionActionError(error, jt('settings.shell.factoryResetFailed', 'Factory Reset Failed'));
-          });
+          runSettingsAction(() => showFactoryReset?.(), jt('settings.shell.factoryResetFailed', 'Factory Reset Failed'));
           return;
         }
         if (typeof handleRunSetupAgain === 'function') {
-          Promise.resolve(handleRunSetupAgain()).catch((error) => {
-            showSessionActionError(error, jt('settings.shell.setupRunAgainFailed', 'Setup Run Again Failed'));
-          });
+          runSettingsAction(handleRunSetupAgain, jt('settings.shell.setupRunAgainFailed', 'Setup Run Again Failed'));
         }
       }, listenerOptions);
 

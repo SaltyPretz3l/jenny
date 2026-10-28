@@ -138,6 +138,21 @@
     );
   }
 
+  // A result's stored attachments (a Python chart) in their persisted
+  // snake_case shape; the live and hydrated rows read the same refs.
+  function normalizeTrustedAttachmentRefs(attachments) {
+    if (!Array.isArray(attachments)) return [];
+    return attachments.map((attachment) => ({
+      id: String(attachment?.id || '').trim(),
+      kind: String(attachment?.kind || '').trim(),
+      mime_type: String(attachment?.mimeType || attachment?.mime_type || '').trim(),
+      byte_length: Number(attachment?.byteLength ?? attachment?.byte_length ?? 0),
+      width: Number(attachment?.width || 0),
+      height: Number(attachment?.height || 0),
+      asset_path: String(attachment?.assetPath || attachment?.asset_path || '').trim(),
+    })).filter((attachment) => attachment.id && attachment.asset_path);
+  }
+
   return Object.freeze({
     clonePlainObject,
     cloneSortKey,
@@ -146,6 +161,7 @@
     normalizeGeneratedArtifact,
     normalizeId,
     normalizeToolLifecycleStatus,
+    normalizeTrustedAttachmentRefs,
     pushDistinct,
     sortKeyCompare,
   });

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import os
 import re
+import threading
+import time
+from collections import OrderedDict
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -12,6 +15,7 @@ from sidecar.ai.error_codes import CMP_TOOL_CAP_EXCEEDED, CMP_TOOL_INVALID_PATH,
 from sidecar.ai.tools.builtins.owned_process import (
     OwnedProcessCapacityError,
     OwnedProcessResult,
+    OwnedProcessService,
     OwnedProcessShutdownError,
     get_owned_process_service,
 )
@@ -27,6 +31,8 @@ _ALWAYS_NEUTRAL_CONFIG = (
     ("credential.helper", ""),
     ("core.pager", "cat"),
     ("log.showSignature", "false"),
+    # Non-ASCII paths print literally instead of as octal escapes.
+    ("core.quotePath", "false"),
 )
 _EXECUTABLE_CONFIG_KEY = re.compile(
     r"^(?:"
@@ -40,6 +46,16 @@ _UNVERIFIED_CONFIG_MESSAGE = (
     "The repository's Git configuration could not be verified, so the read-only "
     "command was not run."
 )
+# Discovered config key lists are reused briefly so one tool call does not pay
+# a `git config --list` per git command. The key covers every config file a
+# repository-controlled edit could touch (repo, worktree and global config by
+# stat); a list that names an include is never cached, because an included
+# file can change without touching any of them.
+CONFIG_KEYS_TTL_SECONDS = 30.0
+_CONFIG_KEYS_CACHE_LIMIT = 64
+_GIT_POINTER_MAX_BYTES = 8 * 1024
+_CONFIG_KEYS_LOCK = threading.Lock()
+_CONFIG_KEYS_CACHE: OrderedDict[tuple[object, ...], tuple[float, tuple[str, ...]]] = OrderedDict()
 
 
 def git_environment() -> dict[str, str]:
@@ -112,23 +128,100 @@ def _configured_keys(result: object) -> list[str]:
     return [key.decode("utf-8", errors="replace") for key in output.split(b"\0") if key]
 
 
-def run_owned_git_process(
-    arguments: list[str],
+def _stat_identity(path: Path) -> tuple[int, int] | None:
+    try:
+        file_stat = path.stat()
+    except FileNotFoundError:
+        return None
+    return (file_stat.st_mtime_ns, file_stat.st_size)
+
+
+def _read_git_pointer(path: Path) -> str:
+    with path.open("rb") as handle:
+        raw = handle.read(_GIT_POINTER_MAX_BYTES + 1)
+    if len(raw) > _GIT_POINTER_MAX_BYTES:
+        raise OSError("git pointer file is too large")
+    return raw.decode("utf-8").strip()
+
+
+def _git_dirs(repo_root: Path) -> tuple[Path, Path]:
+    """The checkout's own git dir and the common dir that holds its ``config``."""
+    entry = repo_root / ".git"
+    if entry.is_dir():
+        return entry, entry
+    pointer = _read_git_pointer(entry)
+    if not pointer.lower().startswith("gitdir:"):
+        raise OSError("unsupported .git file")
+    git_dir = Path(pointer[len("gitdir:"):].strip())
+    git_dir = git_dir if git_dir.is_absolute() else repo_root / git_dir
+    commondir_file = git_dir / "commondir"
+    if not commondir_file.exists():
+        return git_dir, git_dir
+    common = Path(_read_git_pointer(commondir_file))
+    return git_dir, common if common.is_absolute() else git_dir / common
+
+
+def config_keys_cache_key(
+    repo_root: Path, *, trusted_repo_root: Path | None, env: dict[str, str]
+) -> tuple[object, ...] | None:
+    """Stat identity of every config file the discovery reads, or None if unknown."""
+    try:
+        git_dir, common_dir = _git_dirs(repo_root)
+        files = [repo_root / ".git", common_dir / "config", git_dir / "config.worktree"]
+        for home_key in ("HOME", "USERPROFILE"):
+            home = env.get(home_key)
+            if home:
+                files.extend((Path(home) / ".gitconfig", Path(home) / ".config" / "git" / "config"))
+        stats = tuple((str(path), _stat_identity(path)) for path in files)
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    trust = trusted_repo_root.as_posix() if trusted_repo_root is not None else None
+    return (os.path.normcase(str(repo_root)), trust, stats)
+
+
+def _cached_config_keys(key: tuple[object, ...] | None) -> tuple[str, ...] | None:
+    if key is None:
+        return None
+    now = time.monotonic()
+    with _CONFIG_KEYS_LOCK:
+        entry = _CONFIG_KEYS_CACHE.get(key)
+        if entry is None:
+            return None
+        if now - entry[0] > CONFIG_KEYS_TTL_SECONDS:
+            del _CONFIG_KEYS_CACHE[key]
+            return None
+        _CONFIG_KEYS_CACHE.move_to_end(key)
+        return entry[1]
+
+
+def _store_config_keys(key: tuple[object, ...] | None, configured_keys: list[str]) -> None:
+    if key is None or any(
+        name.casefold().startswith(("include.", "includeif.")) for name in configured_keys
+    ):
+        return
+    with _CONFIG_KEYS_LOCK:
+        _CONFIG_KEYS_CACHE[key] = (time.monotonic(), tuple(configured_keys))
+        _CONFIG_KEYS_CACHE.move_to_end(key)
+        while len(_CONFIG_KEYS_CACHE) > _CONFIG_KEYS_CACHE_LIMIT:
+            _CONFIG_KEYS_CACHE.popitem(last=False)
+
+
+def reset_config_keys_cache() -> None:
+    with _CONFIG_KEYS_LOCK:
+        _CONFIG_KEYS_CACHE.clear()
+
+
+def _discover_config_keys(
+    service: OwnedProcessService,
+    argv: list[str],
     *,
     cwd: Path,
     timeout_seconds: float,
     env: dict[str, str],
-    trusted_repo_root: Path | None = None,
-) -> OwnedProcessResult:
-    trust_arguments = (
-        ["-c", f"safe.directory={trusted_repo_root.as_posix()}"]
-        if trusted_repo_root is not None
-        else []
-    )
-    service = get_owned_process_service()
+) -> list[str]:
     try:
         discovery = service.run(
-            [arguments[0], *trust_arguments, "config", "--list", "-z", "--name-only"],
+            argv,
             cwd=cwd,
             timeout_seconds=timeout_seconds,
             env=env,
@@ -139,7 +232,39 @@ def run_owned_git_process(
             message=f"git process capacity unavailable: {error}",
             retryable=True,
         ) from error
-    configured_keys = _configured_keys(discovery)
+    return _configured_keys(discovery)
+
+
+def run_owned_git_process(  # noqa: PLR0913 - explicit process contract.
+    arguments: list[str],
+    *,
+    cwd: Path,
+    timeout_seconds: float,
+    env: dict[str, str],
+    trusted_repo_root: Path | None = None,
+    repo_root: Path | None = None,
+) -> OwnedProcessResult:
+    trust_arguments = (
+        ["-c", f"safe.directory={trusted_repo_root.as_posix()}"]
+        if trusted_repo_root is not None
+        else []
+    )
+    service = get_owned_process_service()
+    cache_key = (
+        config_keys_cache_key(repo_root, trusted_repo_root=trusted_repo_root, env=env)
+        if repo_root is not None
+        else None
+    )
+    cached = _cached_config_keys(cache_key)
+    if cached is not None:
+        configured_keys = list(cached)
+    else:
+        configured_keys = _discover_config_keys(
+            service,
+            [arguments[0], *trust_arguments, "config", "--list", "-z", "--name-only"],
+            cwd=cwd, timeout_seconds=timeout_seconds, env=env,
+        )
+        _store_config_keys(cache_key, configured_keys)
     arguments = [
         arguments[0],
         *neutralizing_config_arguments(configured_keys),
@@ -215,8 +340,12 @@ def validate_git_blob_ref(ref: str) -> None:
 
 
 __all__ = [
+    "CONFIG_KEYS_TTL_SECONDS",
+    "OwnedProcessResult",
+    "config_keys_cache_key",
     "git_environment",
     "neutralizing_config_arguments",
+    "reset_config_keys_cache",
     "resolve_git_blob_path",
     "run_owned_git_process",
     "validate_git_blob_ref",

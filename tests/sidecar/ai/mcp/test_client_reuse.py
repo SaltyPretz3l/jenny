@@ -371,7 +371,7 @@ def _stub_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[MCPSe
         return process
 
     monkeypatch.setattr(transport_stdio.subprocess, "Popen", counting_popen)
-    digest = tools_digest(summarize_tools(_TOOLS)[0])
+    digest = tools_digest(summarize_tools(_TOOLS))
     config = MCPServerConfig(
         name="rea",
         transport="stdio",

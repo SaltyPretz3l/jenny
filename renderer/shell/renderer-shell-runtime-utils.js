@@ -42,9 +42,10 @@
     const sourceState = state && typeof state === 'object' ? state : {};
     const normalizedSessionId = String(sessionId || '').trim();
     const sessions = Array.isArray(sourceState.sessions) ? sourceState.sessions : [];
-    const session = sessions.find(
-      (entry) => String(entry?.id || '').trim() === normalizedSessionId
-    ) || null;
+    // A caller that already holds the summary passes it (options.session) and skips the list scan.
+    const session = (options.session && String(options.session.id || '').trim() === normalizedSessionId ? options.session : null)
+      || sessions.find((entry) => String(entry?.id || '').trim() === normalizedSessionId)
+      || null;
     const messageStore = sourceState.messagesBySession;
     const hasHydratedMessages = Boolean(
       normalizedSessionId
@@ -52,9 +53,11 @@
       && typeof messageStore.has === 'function'
       && messageStore.has(normalizedSessionId)
     );
-    const hydratedMessages = hasHydratedMessages
+    // A strip chip of a background chat reads only the summary count: copy the list on first use.
+    let hydratedCopy = null;
+    const hydratedMessages = () => hydratedCopy || (hydratedCopy = hasHydratedMessages
       ? (messageStore.get(normalizedSessionId) || []).filter(Boolean)
-      : [];
+      : []);
     const useHydratedMessageCount = hasHydratedMessages
       && normalizedSessionId === String(sourceState.currentSessionId || '').trim();
     const lastModelUsed = String(session?.last_model_used || '').trim();
@@ -62,7 +65,7 @@
     const model = lastModelUsed || preferredModel;
     const modelSource = lastModelUsed ? 'last_used' : preferredModel ? 'preferred' : '';
     const persistedMessageCount = Math.floor(toNonnegativeFiniteNumber(session?.message_count));
-    const messageCount = useHydratedMessageCount ? hydratedMessages.length : persistedMessageCount;
+    const messageCount = useHydratedMessageCount ? hydratedMessages().length : persistedMessageCount;
     const estimateTokens = typeof options.estimateTokens === 'function'
       ? options.estimateTokens
       : null;
@@ -70,7 +73,7 @@
       options.contextOverheadTokens ?? sourceState.ui?.contextOverheadTokens ?? 0
     );
     const usedTokens = hasHydratedMessages && estimateTokens
-      ? toNonnegativeFiniteNumber(estimateTokens(hydratedMessages)) + overheadTokens
+      ? toNonnegativeFiniteNumber(estimateTokens(hydratedMessages())) + overheadTokens
       : null;
     const contextLimit = toNonnegativeFiniteNumber(
       options.contextLimit ?? sourceState.status?.effective_context_length ?? 0
@@ -81,7 +84,7 @@
     return {
       sessionId: normalizedSessionId,
       session,
-      messages: hydratedMessages,
+      get messages() { return hydratedMessages(); },
       hasHydratedMessages,
       messageCount,
       messageCountSource: useHydratedMessageCount ? 'messages' : 'summary',
@@ -424,7 +427,48 @@
           : jt('shell.runtime.contextFilling', 'Context {percent} — the context window is filling up.', { percent: summary.percentLabel });
     }
 
-    function renderComposerEnhancements() {
+    /* Row 63: the ring reads the same next-send estimate as the Session summary. The feed
+       repaints the ring alone when that estimate or the draft changes, and refreshes it when the
+       chat's inputs change outside a reply. */
+    let _contextFeed = null;
+
+    function isContextTurnActive(sessionId) {
+      const streams = windowRef.rendererMultiStreamController;
+      if (streams && typeof streams.isSessionStreaming === 'function') return streams.isSessionStreaming(sessionId);
+      return Boolean(String(state.activeStreamId || '').trim());
+    }
+
+    function contextInputsKey() {
+      const sessionId = String(state.currentSessionId || '').trim();
+      const session = getCurrentSessionSummary(sessionId);
+      return [sessionId, getContextMeterMessages(sessionId).length, session?.updated_at || '',
+        getActiveComposerModel(sessionId), session?.run_mode || '', JSON.stringify(session?.context_preferences || null)].join('\u001f');
+    }
+
+    function getComposerDraftText() {
+      const input = composerContextUsageSlot?.closest?.('.composer-wrap')
+        ?.querySelector?.('[data-chat-node="chatInput"], #chatInput');
+      return input ? String(input.value || '') : '';
+    }
+
+    function ensureContextFeed() {
+      if (_contextFeed || !composerContextUsageSlot) return _contextFeed;
+      const previewModule = windowRef.rendererContextPreview;
+      const doc = windowRef.document;
+      if (!previewModule || typeof previewModule.bindComposerFeed !== 'function' || !doc) return null;
+      _contextFeed = previewModule.bindComposerFeed({
+        win: windowRef,
+        doc,
+        getSessionId: () => state.currentSessionId,
+        getInputsKey: contextInputsKey,
+        isTurnActive: () => isContextTurnActive(String(state.currentSessionId || '').trim()),
+        request: (sessionId) => windowRef.jennyShell?.chat?.getNextTurnContextSummary?.(sessionId, {}),
+        paint: renderContextRing,
+      });
+      return _contextFeed;
+    }
+
+    function renderContextRing() {
       const sessionId = String(state.currentSessionId || '').trim();
       if (composerContextUsageSlot) {
         const contextPopoverWasOpen = Boolean(
@@ -434,6 +478,11 @@
           .querySelector('[data-next-turn-context-summary]');
         const previousPreviewText = previousPreview?.textContent || '';
         const previousPreviewWasPending = previousPreview?.dataset?.contextPreviewPending === 'true';
+        const focused = composerContextUsageSlot.ownerDocument?.activeElement;
+        const focusSelector = focused && composerContextUsageSlot.contains(focused)
+          ? (focused.matches('[data-inv-chip]') ? '[data-inv-chip="composer-context-ring"]'
+            : focused.dataset?.action ? `[data-action="${focused.dataset.action}"]` : null)
+          : null;
 
         let nextRingHtml = '';
         let usageSummary = null;
@@ -449,6 +498,9 @@
           const usageOptions = {
             fallbackEstimate: buildComposerContextUsageFallback(sessionId, activeModel),
             activeModel,
+            turnActive: isContextTurnActive(sessionId),
+            draftText: getComposerDraftText(),
+            draftAttachments: getQueuedAttachments(),
             autoCompactEnabled: contextMeterOptions.autoCompactEnabled,
             manualCompactionEnabled: sessionDisplay.messageCount > 0 || compactionActivity?.pending === true,
             compactionActivity,
@@ -487,17 +539,26 @@
             const nextPopover = composerContextUsageSlot.querySelector('.inv-popover');
             const nextChip = composerContextUsageSlot.querySelector('[data-inv-chip="composer-context-ring"]');
             const nextPreview = composerContextUsageSlot.querySelector('[data-next-turn-context-summary]');
-            if (nextPreview && previousPreviewText) nextPreview.textContent = previousPreviewText;
+            if (nextPreview && previousPreviewText) {
+              nextPreview.textContent = previousPreviewText;
+              nextPreview.hidden = previousPreview.hidden;
+            }
             windowRef.inventory?.popover?.open?.(nextPopover, { trigger: nextChip, focus: false });
             windowRef.rendererContextMeterDetails?.positionPopover?.(nextPopover, nextChip);
             if (previousPreviewWasPending) {
               void windowRef.rendererContextMeterDetails?.loadPreview?.(nextPopover, state);
             }
           }
+          if (focusSelector) composerContextUsageSlot.querySelector(focusSelector)?.focus();
         }
 
         announceContextUsageSeverity(sessionId, usageSummary);
       }
+    }
+
+    function renderComposerEnhancements() {
+      renderContextRing();
+      ensureContextFeed()?.sync();
       if (composerPlanUsageSlot) {
         /* ChatGPT plan-usage ring: its own store/memo/popover, sibling of the
            context ring; empty string when inactive keeps the slot inert. */

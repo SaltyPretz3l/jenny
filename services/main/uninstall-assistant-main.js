@@ -18,12 +18,10 @@ const { ShellConfigService } = require('../shell-config-service');
 const { resolveUiLanguage, t } = require('../i18n-main');
 const { createRemovalPreparation, normalizeArchiveOptions } = require('./data-lifecycle-ipc-registration');
 const { createTrustedSenderAuthorizer } = require('./ipc-sender-authorization');
+// Owned by the boot gate so main.js can route this mode before its heavy requires.
+const { isUninstallAssistantMode } = require('./main-boot-gate');
 
 const UNINSTALL_DOCUMENT_PATH = path.resolve(__dirname, '..', '..', 'uninstall.html');
-
-function isUninstallAssistantMode(argv = process.argv) {
-  return Array.isArray(argv) && argv.includes('--uninstall-assistant');
-}
 
 function normalizeRemovalOptions(payload) {
   const source = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};

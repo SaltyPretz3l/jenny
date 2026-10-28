@@ -6,6 +6,7 @@ const { pathToFileURL } = require('node:url');
 const { DatabaseSync } = require('node:sqlite');
 const { PLACEHOLDER_TEMPLATES, PERSONALITY_WORKSPACE_SCHEMA_VERSION } = require('../personality-workspace-service');
 const runtimeArchive = require('./runtime-archive');
+const { isPrimaryRole } = require('../backend/primary-session');
 
 function regularPath(root, target, directory = false) {
   const stat = fs.lstatSync(target);
@@ -116,6 +117,51 @@ function listDirectoryEntries(targetPath) {
   }
 }
 
+// Row 69 mints the primary "Jenny" chat right after the first window opens. A
+// restore replaces the whole sessions store, so that chat, still empty, does not
+// make the profile used; any message in it, or any other chat, does.
+function isUntouchedPrimaryChat(summary) {
+  return isPrimaryRole(summary) && Number(summary?.message_count || 0) === 0;
+}
+
+const MAX_BOOTSTRAP_SESSION_FILE_BYTES = 256 * 1024;
+
+// A small regular file inside root, parsed; null for anything else.
+function readBootstrapJson(root, target) {
+  try {
+    const stat = regularPath(root, target);
+    if (!stat || stat.size > MAX_BOOTSTRAP_SESSION_FILE_BYTES) return null;
+    return JSON.parse(fs.readFileSync(target, 'utf8'));
+  } catch (_error) {
+    return null;
+  }
+}
+
+// Without a live store (restore promotion runs before the app opens one): the
+// sessions directory may hold only its index, an active-turn marker with no
+// turns, and the record of each untouched primary chat.
+function isUntouchedSessionsDirectory(userDataPath) {
+  const directory = path.join(userDataPath, 'sessions');
+  const entries = listDirectoryEntries(directory);
+  if (!entries.length) return true;
+  const index = readBootstrapJson(userDataPath, path.join(directory, '_index.json'));
+  const sessions = index?.sessions;
+  if (!sessions || typeof sessions !== 'object' || Array.isArray(sessions)) return false;
+  const ids = Object.keys(sessions);
+  if (!ids.every((id) => isUntouchedPrimaryChat(sessions[id]))) return false;
+  const records = new Set(ids.map((id) => `${id}.json`));
+  return entries.every((name) => {
+    if (name === '_index.json') return true;
+    if (name === '_active_turns.state') {
+      const marker = readBootstrapJson(userDataPath, path.join(directory, name));
+      return Array.isArray(marker?.session_ids) && marker.session_ids.length === 0;
+    }
+    if (!records.has(name)) return false;
+    const messages = readBootstrapJson(userDataPath, path.join(directory, name))?.session?.messages;
+    return Array.isArray(messages) && messages.length === 0;
+  });
+}
+
 // Canonical stores only. Derived index caches (derived-indexes.js) are never
 // consulted: they rebuild from canonical data and a restore promotion drops them.
 function isMeaningfullyFresh({ userDataPath, sessionStore = null } = {}) {
@@ -125,8 +171,8 @@ function isMeaningfullyFresh({ userDataPath, sessionStore = null } = {}) {
   if (!runtimeArchive.isUntouchedRuntimeCoordinationBootstrap(userDataPath)) return false;
   if (!isUntouchedPersonalityBootstrap(userDataPath) || !isUntouchedMemoryBootstrap(userDataPath)) return false;
   if (sessionStore && typeof sessionStore.listSessions === 'function') {
-    if ((sessionStore.listSessions() || []).length > 0) return false;
-  } else if (listDirectoryEntries(path.join(userDataPath, 'sessions')).length > 0) {
+    if ((sessionStore.listSessions() || []).some((summary) => !isUntouchedPrimaryChat(summary))) return false;
+  } else if (!isUntouchedSessionsDirectory(userDataPath)) {
     return false;
   }
   const meaningfulPaths = [

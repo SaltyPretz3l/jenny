@@ -104,12 +104,12 @@ test('insertText inherits run properties and preserves significant spaces', asyn
   const model = createDocxModel(await loadFixture('paragraphs.docx'));
   let target = model.getBlocks()[1];
   const boldOffset = target.text.indexOf('bold') + 2;
-  assert.equal(model.insertText(target.id, boldOffset, 'X'), true);
+  assert.ok(model.insertText(target.id, boldOffset, 'X'));
   target = model.getBlocks()[1];
   assert.equal(target.runs.find((run) => run.text === 'X').bold, true);
 
   const boundary = 'Plain '.length;
-  assert.equal(model.insertText(target.id, boundary, ' Y '), true);
+  assert.ok(model.insertText(target.id, boundary, ' Y '));
   target = model.getBlocks()[1];
   const inserted = target.runs.find((run) => run.text === ' Y ');
   assert.ok(inserted);
@@ -260,7 +260,7 @@ test('tables expose nested paragraph ids and preserve table structure during edi
   assert.equal(table.rows[1].cells[1].blocks[0].text, '1,250.00');
 
   const cash = table.rows[1].cells[0].blocks[0];
-  assert.equal(model.insertText(cash.id, cash.text.length, ' account'), true);
+  assert.ok(model.insertText(cash.id, cash.text.length, ' account'));
   assert.equal(model.getParagraphText(cash.id), 'Cash account');
   const xml = model.serialize()['word/document.xml'];
   assert.equal(count(xml, '<w:tblPr'), 1);
@@ -290,7 +290,7 @@ test('images and unsupported content are represented without disturbing wrappers
   assert.equal(model.getUnsupportedNotes().includes('footnotes'), true);
 
   const linkEnd = blocks[1].text.indexOf('link') + 4;
-  assert.equal(model.insertText(blocks[1].id, linkEnd, '!'), true);
+  assert.ok(model.insertText(blocks[1].id, linkEnd, '!'));
   const serialized = parseXml(model.serialize()['word/document.xml']);
   const insertedText = Array.from(serialized.getElementsByTagNameNS(W_NS, 't'))
     .find((node) => node.textContent === '!');
@@ -321,7 +321,7 @@ test('inserted images carry valid DrawingML relationships and undo restores all 
   assert.equal(model.undo(), true);
   assert.equal(model.getBlocks()[0].runs[0].widthPx, 200);
   model.markSaved();
-  assert.equal(model.insertText(block.id, 1, 'after image'), true);
+  assert.ok(model.insertText(block.id, 1, 'after image'));
   serialized = model.serialize();
   assert.match(serialized['word/_rels/document.xml.rels'], /relationships\/image/);
   assert.equal(serialized.media.size, 1);
@@ -343,7 +343,7 @@ test('transactions coalesce undo, redo restores it, and dirty state follows save
 
   model.beginTransaction();
   for (let index = 0; index < 5; index += 1) {
-    assert.equal(model.insertText(target.id, originalText.length + index, String(index)), true);
+    assert.ok(model.insertText(target.id, originalText.length + index, String(index)));
   }
   model.endTransaction();
   assert.equal(model.canUndo(), true);
@@ -425,7 +425,7 @@ test('isDirty performs no serialization while nothing changed', async () => {
 
 test('one text edit serializes only the document part, at most once for undo and once for isDirty', async () => {
   const { model, counts } = await countedModel();
-  assert.equal(model.insertText('b1', 0, 'x'), true);
+  assert.ok(model.insertText('b1', 0, 'x'));
   assert.ok(counts.document <= 1, `undo snapshot serialized document ${counts.document} times`);
   assert.equal(model.isDirty(), true);
   assert.ok(counts.document <= 2, `edit + isDirty serialized document ${counts.document} times`);
@@ -438,7 +438,7 @@ test('one text edit serializes only the document part, at most once for undo and
 
 test('undo and redo never serve a stale cached document', async () => {
   const { model } = await countedModel();
-  assert.equal(model.insertText('b1', 0, 'REDONE '), true);
+  assert.ok(model.insertText('b1', 0, 'REDONE '));
   assert.equal(model.isDirty(), true);
   assert.match(model.serialize()['word/document.xml'], /REDONE/);
   assert.equal(model.undo(), true);

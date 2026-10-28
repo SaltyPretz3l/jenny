@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import subprocess
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -19,16 +18,7 @@ from sidecar.ai.tools.workspace_store import (
     StoreRef,
     WorkspaceStoreKind,
 )
-
-
-def _make_junction(link: Path, target: Path) -> bool:
-    result = subprocess.run(
-        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
-        capture_output=True,
-        check=False,
-        text=True,
-    )
-    return result.returncode == 0
+from tests.sidecar._platform_skips import make_dir_link, windows_only
 
 
 def test_store_refs_are_typed_opaque_and_reject_traversal(tmp_path: Path) -> None:
@@ -80,10 +70,7 @@ def test_jenny_dir_trailing_re_strips_trailing_dots_and_spaces() -> None:
     assert normalize(".jennyx.") == ".jennyx"
 
 
-@pytest.mark.skipif(
-    os.name != "nt",
-    reason="trailing dots and spaces alias existing path segments only on Windows",
-)
+@windows_only("trailing dots and spaces alias existing path segments")
 def test_store_refuses_a_trailing_dot_or_space_jenny_state_dir_root(tmp_path: Path) -> None:
     # End-to-end demonstration: a real `.jenny` directory referenced through a
     # trailing-dot/space alias is still refused. On Windows this already
@@ -275,10 +262,7 @@ def test_sqlite_open_refuses_late_leaf_alias_before_connect(
 
     def swap_leaf(_ref: StoreRef) -> None:
         leaf.unlink()
-        try:
-            os.link(outside, leaf)
-        except OSError:
-            pytest.skip("hard-link creation unavailable in this environment")
+        os.link(outside, leaf)
 
     def writing_connect(*args: object, **kwargs: object):
         nonlocal connect_called
@@ -510,7 +494,7 @@ def test_quarantine_link_branch_is_deterministically_repaired(
     )
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows junctions only")
+@windows_only("junctions")
 @pytest.mark.parametrize(
     "kind",
     [
@@ -532,8 +516,7 @@ def test_each_store_kind_quarantines_junction_root(
     jenny = tmp_path / ".jenny"
     jenny.mkdir(exist_ok=True)
     junction = jenny / kind.value
-    if not _make_junction(junction, outside):
-        pytest.skip("mklink /J not permitted in this environment")
+    make_dir_link(junction, outside)
     store = GuardedWorkspaceStore(tmp_path)
     ref = store.resolve(kind, "safe/result.txt")
 
@@ -549,7 +532,7 @@ def test_each_store_kind_quarantines_junction_root(
     os.rmdir(quarantined[0])
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows junctions only")
+@windows_only("junctions")
 def test_quarantine_kind_repairs_its_own_junction_root(tmp_path: Path) -> None:
     outside = tmp_path / "outside-quarantine"
     outside.mkdir()
@@ -558,8 +541,7 @@ def test_quarantine_kind_repairs_its_own_junction_root(tmp_path: Path) -> None:
     jenny = tmp_path / ".jenny"
     jenny.mkdir()
     junction = jenny / "quarantine"
-    if not _make_junction(junction, outside):
-        pytest.skip("mklink /J not permitted in this environment")
+    make_dir_link(junction, outside)
     store = GuardedWorkspaceStore(tmp_path)
     probe = store.resolve(WorkspaceStoreKind.QUARANTINE, "probe.txt")
 
@@ -574,7 +556,7 @@ def test_quarantine_kind_repairs_its_own_junction_root(tmp_path: Path) -> None:
     os.rmdir(unsafe_layouts[0])
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows junctions only")
+@windows_only("junctions")
 def test_atomic_write_refuses_late_parent_junction_swap(tmp_path: Path, monkeypatch) -> None:
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -587,8 +569,7 @@ def test_atomic_write_refuses_late_parent_junction_swap(tmp_path: Path, monkeypa
     def swap_parent(_ref: StoreRef) -> None:
         nonlocal outside_temp
         os.replace(parent, moved_parent)
-        if not _make_junction(parent, outside):
-            pytest.skip("mklink /J not permitted in this environment")
+        make_dir_link(parent, outside)
         temp_name = next(moved_parent.glob(".result.txt.*.tmp")).name
         outside_temp = outside / temp_name
         outside_temp.write_text("outside sentinel", encoding="utf-8")

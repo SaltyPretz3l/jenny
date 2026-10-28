@@ -11,9 +11,7 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import Any
-
-import httpx
+from typing import TYPE_CHECKING, Any
 
 from sidecar.ai.config import read_environment_value
 from sidecar.ai.engines.http_utils import (
@@ -30,7 +28,13 @@ from sidecar.ai.error_codes import (
 from sidecar.runtime import diagnostics
 from sidecar.runtime.bounded_io import BoundedIOError
 from sidecar.runtime.chat_models import TerminalChatStateError
+from sidecar.runtime.exact_secret_redaction import redact_exact_secrets
 from sidecar.runtime.turn_state import TURN_STATE_CANCELLED
+
+# httpx (~70 ms with the click/pygments its CLI module imports) loads on first
+# client use, so the functions below import it locally, off sidecar startup.
+if TYPE_CHECKING:
+    import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +95,7 @@ _SHARED_SSL_CONTEXTS_LOCK = threading.Lock()
 
 
 def _shared_ssl_context() -> ssl.SSLContext:
+    import httpx
     key = (read_environment_value("SSL_CERT_FILE"), read_environment_value("SSL_CERT_DIR"))
     with _SHARED_SSL_CONTEXTS_LOCK:
         context = _SHARED_SSL_CONTEXTS.get(key)
@@ -143,6 +148,7 @@ class ProviderHttpService:
         headers: dict[str, str],
         timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
     ) -> None:
+        import httpx
         self._provider = provider
         self._client = httpx.Client(
             base_url=base_url.rstrip("/"),
@@ -245,6 +251,7 @@ class ProviderHttpService:
         server sees the disconnect even while it is still prefilling. The
         pooled client is never closed: an httpx.Client cannot be reopened.
         """
+        import httpx
         _raise_if_cancelled(cancel_handle, self._provider)
         severer = _SocketSeverer()
         client = httpx.Client(
@@ -281,6 +288,7 @@ class ProviderHttpService:
         client: httpx.Client | None = None,
         extensions: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        import httpx
         _raise_if_cancelled(cancel_handle, self._provider)
         try:
             response = self._send_bounded_response(
@@ -314,6 +322,7 @@ class ProviderHttpService:
         client: httpx.Client | None = None,
         extensions: dict[str, Any] | None = None,
     ) -> httpx.Response:
+        import httpx
         request_kwargs: dict[str, Any] = {"params": query}
         if method != "GET":
             request_kwargs["json"] = payload
@@ -432,6 +441,7 @@ def _cancel_requested(cancel_handle: Any) -> bool:
 
 
 def _transport_error(provider: str, error: Exception) -> ProviderHttpError:
+    import httpx
     if isinstance(error, httpx.TimeoutException):
         return ProviderHttpError(
             provider=provider,
@@ -549,7 +559,7 @@ def _parse_body(response: httpx.Response) -> Any:
 
 
 def _sanitize_secret_text(value: str) -> str:
-    sanitized = _SECRET_TOKEN_RE.sub("<redacted-token>", value)
+    sanitized = _SECRET_TOKEN_RE.sub("<redacted-token>", redact_exact_secrets(value))
     return _AUTH_VALUE_RE.sub(lambda match: f"{match.group(1)}=<redacted-token>", sanitized)
 
 

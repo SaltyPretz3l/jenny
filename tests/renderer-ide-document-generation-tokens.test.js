@@ -3,14 +3,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
+const { createDeferred: deferred } = require('./helpers/deferred');
 const { createIdePdfPane } = require('../renderer/features/renderer-ide-pdf-host');
 const { createIdeDocxPane } = require('../renderer/features/renderer-ide-docx-host');
-
-function deferred() {
-  let resolve;
-  const promise = new Promise(done => { resolve = done; });
-  return { promise, resolve };
-}
 
 // Observe retained entries through a Map fake during synchronous construction.
 // No production source text or new production introspection API is needed.
@@ -36,7 +31,7 @@ function harness(t, format, wait = null) {
       getDocument() {
         workers += 1;
         return {
-          promise: Promise.resolve({ numPages: 1, annotationStorage: { resetModified() {} } }),
+          promise: Promise.resolve({ numPages: 1, annotationStorage: { resetModified() {} }, getPage: async () => ({}) }),
           destroy() { destroyed += 1; },
         };
       },
@@ -67,7 +62,13 @@ function harness(t, format, wait = null) {
       },
     })
     : createIdeDocxPane({
-      getHost: () => hostEl, richUtils: {},
+      getHost: () => hostEl,
+      richUtils: {
+        discoverRelatedParts: () => [],
+        createCompositeDocxModel: ({ createDocxModel }) => ({
+          ...createDocxModel(), getRegions: () => [], getStateVersion: () => 0, getUnsupportedNotes: () => [],
+        }),
+      },
       zipUtils: {
         async readZip() {
           if (++reads === 1 && wait) await wait.promise;
@@ -76,7 +77,7 @@ function harness(t, format, wait = null) {
         readEntryText: async () => '<document/>',
       },
       modelUtils: { createDocxModel: () => ({ getBlocks: () => [], getWarnings: () => [], isDirty: () => false }) },
-      renderUtils: { renderBlocks: doc => doc.createDocumentFragment() },
+      renderUtils: { renderRegions: doc => doc.createDocumentFragment() },
     }));
   t.after(() => { pane.dispose(); dom.window.close(); });
   const tokens = () => maps.flatMap(map => [...map.entries()])

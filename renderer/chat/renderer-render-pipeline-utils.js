@@ -112,7 +112,7 @@
       renderArtifactReviewPanel,
       isArtifactReviewVisible = function noopArtifactReviewVisible() { return false; },
       renderContextPanel, renderPinnedNotes, renderHomePanel, shouldRenderHomePanel = function noopShouldRenderHomePanel() { return false; }, renderAttachmentTray,
-      renderComposerStatusNotice, setComposerStatusNotice, clearComposerStatusNotice, renderToastViewport, renderComposerPopover, renderCommandPopover,
+      renderComposerStatusNotice, setComposerStatusNotice, clearComposerStatusNotice, renderToastViewport, renderComposerPopover,
       clearActivity, failActivity,
       beginActivity, getCurrentRuntimePreferences, getRuntimePreferencesFromSession = null,
       renderComposerEnhancements, onSurfaceLifecycleSync,
@@ -337,6 +337,7 @@
           return Boolean(state && state.features && state.features.featureFlags
             && state.features.featureFlags.agent_progress_durable === true);
         },
+        isPrimarySession: (id) => (globalThis.stringUtils?.isPrimarySessionId || (() => false))(state.sessions, id), // row 76: the offer card's Always-allow row
         getFeatureFlags: function readRendererFeatureFlags() {
           return (state && state.features && state.features.featureFlags) || {};
         },
@@ -414,7 +415,6 @@
         clearComposerStatusNotice: (...a) => clearComposerStatusNotice?.(...a),
         renderToastViewport: (...a) => renderToastViewport(...a),
         renderComposerPopover: (...a) => renderComposerPopover(...a),
-        renderCommandPopover: (...a) => renderCommandPopover(...a),
         renderHomePanel: (...a) => renderHomePanel(...a),
         shouldRenderHomePanel: (...a) => shouldRenderHomePanel(...a),
         renderContextPanel: (...a) => renderContextPanel?.(...a),

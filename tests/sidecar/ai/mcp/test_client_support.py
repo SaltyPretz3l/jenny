@@ -47,7 +47,7 @@ def test_read_only_auto_allow_maps_only_a_qualifying_claim(
 def test_read_only_auto_allow_honours_the_claim_on_an_approved_digest_row() -> None:
     from sidecar.ai.mcp.tool_surface import summarize_tools
 
-    rows, _ = summarize_tools([{"name": "list_unknowns", "annotations": _READ_ONLY}, {"name": "open_binary"}])
+    rows = summarize_tools([{"name": "list_unknowns", "annotations": _READ_ONLY}, {"name": "open_binary"}])
     descriptors = {
         row["name"]: descriptor_from_payload("rea", row, read_only_auto_allow=True) for row in rows
     }

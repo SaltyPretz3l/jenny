@@ -288,3 +288,111 @@ test('languageForPath maps the extension through monacoUtils and defaults to pla
   const bare = createEditorDocuments({});
   assert.equal(bare.languageForPath('a.js'), 'plaintext');
 });
+
+// ── Row 82 slice S: per-tab language / indentation overrides, BOM flag ───────
+
+function withIndentModel(model, options = { insertSpaces: true, tabSize: 2 }) {
+  model.indentOptions = { ...options };
+  model.updateCalls = [];
+  model.getOptions = () => ({ ...model.indentOptions });
+  model.updateOptions = (next) => { model.updateCalls.push(next); Object.assign(model.indentOptions, next); };
+  model.detectIndentation = (insertSpaces, tabSize) => { model.detectCalls = [[insertSpaces, tabSize]]; Object.assign(model.indentOptions, { insertSpaces: false, tabSize: 4 }); };
+  return model;
+}
+
+function makeIndentMonaco() {
+  const fake = makeFakeMonaco();
+  const create = fake.api.editor.createModel;
+  fake.api.editor.createModel = (...args) => withIndentModel(create(...args));
+  fake.api.editor.setModelLanguage = (model, id) => { model.language = id; model.languageCalls = (model.languageCalls || 0) + 1; };
+  return fake;
+}
+
+test('a fresh file doc starts with no language override, no indent override and no BOM', () => {
+  const { store } = makeStore();
+  const doc = store.openFile({ path: 'a.js', content: 'x' });
+  assert.equal(doc.languageOverride, null);
+  assert.equal(doc.indent, null);
+  assert.equal(doc.bom, false);
+  assert.equal(store.openFile({ path: 'b.js', content: 'x', encoding: 'utf-8-bom' }).bom, true, 'the read result carries the BOM flag');
+  assert.equal(store.openFile({ path: 'b.js', content: 'x', encoding: 'utf-8' }).bom, false, 'a refresh re-reads it');
+  assert.equal(store.openFile({ path: 'c.js', content: '\ufeffx' }).bom, true, 'a desktop read keeps the BOM as a leading U+FEFF');
+});
+
+test('setLanguage overrides the model language for that tab; null returns to the extension language', () => {
+  const { store } = makeStore();
+  const fake = makeIndentMonaco();
+  const doc = store.openFile({ path: 'a.js', content: 'x', monacoApi: fake.api });
+  assert.equal(doc.model.language, 'javascript');
+
+  assert.equal(store.setLanguage('a.js', 'python', fake.api), true);
+  assert.equal(doc.languageOverride, 'python');
+  assert.equal(doc.model.language, 'python');
+
+  store.setLanguage('a.js', null, fake.api);
+  assert.equal(doc.languageOverride, null);
+  assert.equal(doc.model.language, 'javascript', 'Auto Detect re-derives from the path');
+
+  assert.equal(store.setLanguage('missing.js', 'python', fake.api), false);
+  store.openDiff({ id: 'diff://x', languagePath: 'a.js' });
+  assert.equal(store.setLanguage('diff://x', 'python', fake.api), false, 'only file docs take an override');
+});
+
+test('setIndent records the override and applies it to the model; tabSize is kept when omitted', () => {
+  const { store } = makeStore();
+  const fake = makeIndentMonaco();
+  const doc = store.openFile({ path: 'a.js', content: 'x', monacoApi: fake.api });
+
+  assert.equal(store.setIndent('a.js', { insertSpaces: false, tabSize: 4, source: 'file' }), true);
+  assert.deepEqual(doc.indent, { insertSpaces: false, tabSize: 4, source: 'file' });
+  assert.deepEqual(doc.model.updateCalls.at(-1), { insertSpaces: false, tabSize: 4 });
+  assert.deepEqual(store.getIndentInfo('a.js'), { insertSpaces: false, tabSize: 4, source: 'file' });
+
+  store.setIndent('a.js', { insertSpaces: true });
+  assert.deepEqual(doc.indent, { insertSpaces: true, tabSize: 4, source: 'file' }, 'omitted tabSize keeps the current width');
+  assert.equal(store.setIndent('missing.js', { insertSpaces: true, tabSize: 2 }), false);
+});
+
+test('getIndentInfo reports the model options with source default until something overrides', () => {
+  const { store } = makeStore();
+  const fake = makeIndentMonaco();
+  store.openFile({ path: 'a.js', content: 'x', monacoApi: fake.api });
+  assert.deepEqual(store.getIndentInfo('a.js'), { insertSpaces: true, tabSize: 2, source: 'default' });
+  assert.deepEqual(store.getIndentInfo('nope', 3), { insertSpaces: true, tabSize: 3, source: 'default' }, 'no doc: falls back to the given width');
+});
+
+test('detectIndentation runs Monaco detection with the defaults and records the result as a file override', () => {
+  const { store } = makeStore();
+  const fake = makeIndentMonaco();
+  const doc = store.openFile({ path: 'a.js', content: '\tx', monacoApi: fake.api });
+  assert.equal(store.detectIndentation('a.js', true, 2), true);
+  assert.deepEqual(doc.model.detectCalls, [[true, 2]]);
+  assert.deepEqual(doc.indent, { insertSpaces: false, tabSize: 4, source: 'file' });
+  assert.equal(store.detectIndentation('missing.js'), false);
+});
+
+test('overrides never persist: closing and re-opening a document starts clean', () => {
+  const { store } = makeStore();
+  const fake = makeIndentMonaco();
+  const first = store.openFile({ path: 'a.js', content: 'x', monacoApi: fake.api });
+  store.setLanguage('a.js', 'python', fake.api);
+  store.setIndent('a.js', { insertSpaces: false, tabSize: 8 });
+  store.deleteDocument('a.js');
+
+  const second = store.openFile({ path: 'a.js', content: 'x', monacoApi: makeIndentMonaco().api });
+  assert.notEqual(second, first);
+  assert.equal(second.languageOverride, null);
+  assert.equal(second.indent, null);
+  assert.equal(second.model.language, 'javascript');
+});
+
+test('a model created after an override was set starts with that language and indentation', () => {
+  const { store } = makeStore();
+  const fake = makeIndentMonaco();
+  store.openFile({ path: 'a.js', content: 'x' }); // fallback path: no model yet
+  store.setLanguage('a.js', 'python');
+  store.setIndent('a.js', { insertSpaces: false, tabSize: 8 });
+  const doc = store.openFile({ path: 'a.js', content: 'x', monacoApi: fake.api });
+  assert.equal(doc.model.language, 'python');
+  assert.deepEqual(doc.model.updateCalls.at(-1), { insertSpaces: false, tabSize: 8 });
+});

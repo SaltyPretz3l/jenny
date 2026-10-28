@@ -429,7 +429,9 @@
       return Boolean(receipt && !disposed && activeReceipts.has(receipt.id));
     }
 
-    function dispose() {
+    // retainFailedPayloads: a split pane's store shares state.failedSendPayloadsById
+    // with pane 0, whose Retry markers must survive the pane closing.
+    function dispose({ retainFailedPayloads = false } = {}) {
       if (disposed) return;
       disposed = true;
       for (const { receipt, canonicalAttachmentOwner, durableSubmissionOwner } of activeReceipts.values()) {
@@ -438,7 +440,7 @@
         }
       }
       activeReceipts.clear();
-      clearFailedPayloads();
+      if (!retainFailedPayloads) clearFailedPayloads();
       if (state.sendReceiptController === api) state.sendReceiptController = null;
     }
 

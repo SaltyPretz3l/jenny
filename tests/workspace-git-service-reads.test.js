@@ -57,7 +57,7 @@ function createService(root, { flag = true, exec, rootContextProvider = null } =
 
 function repoExec(root, handler) {
   return async (_cwd, args) => {
-    if (args.includes('--is-inside-work-tree')) return { success: true, stdout: 'true\n' };
+    if (args.includes('--is-inside-work-tree')) return { success: true, stdout: `true\n${root}\n` };
     if (args.includes('--show-toplevel')) return { success: true, stdout: `${root}\n` };
     return handler(args);
   };

@@ -149,6 +149,22 @@ test('a retired plugin session never renders the unbound-chat nudge', (t) => {
   assert.ok(dom.window.document.getElementById('workspaceRootNudge'), 'the same session without session_type still shows the nudge');
 });
 
+test('row 69: the folderless primary Jenny chat never renders the unbound-chat nudge', (t) => {
+  const session = { id: 'chat_jenny', project_id: 'project_general', session_role: 'primary' };
+  const state = makeState({
+    workspaceRoot: { path: 'C:\\dev\\jenny', status: { state: 'checking', message: 'Checking workspace root.' } },
+    currentSessionId: session.id,
+    sessions: [session],
+  });
+  const { dom, controller } = createHarness(t, { state });
+  controller.render();
+  assert.equal(dom.window.document.getElementById('workspaceRootNudge'), null, 'the primary chat is folderless by design');
+
+  session.session_role = null;
+  controller.render();
+  assert.ok(dom.window.document.getElementById('workspaceRootNudge'), 'an ordinary General chat still shows the nudge');
+});
+
 test('the action invokes the injected transition chooser, never the legacy bridge mutator', async (t) => {
   let called = 0;
   let legacyCalls = 0;

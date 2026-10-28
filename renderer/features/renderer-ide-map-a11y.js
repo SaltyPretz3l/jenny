@@ -22,34 +22,16 @@
   'use strict';
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
-  const globalRefForOwnership = typeof globalThis !== 'undefined' ? globalThis : {};
-
-  function resolveEventOwnership() {
-    if (globalRefForOwnership.rendererIdeMapEventOwnership) {
-      return globalRefForOwnership.rendererIdeMapEventOwnership;
-    }
-    if (typeof require === 'function') {
-      try {
-        return require('./renderer-ide-map-event-ownership');
-      } catch (_error) {
-        /* unavailable */
-      }
-    }
-    return {};
-  }
-
   // WIDE-029: the viewport's keydown listener also sees every keystroke
-  // bubbled up from its own descendants — the controls bar's filter/select,
-  // the Overview panel's question field, the minimap, the findings chip bar.
+  // bubbled up from its own descendants — the controls bar's search field,
+  // the Overview panel's question field, the findings chip bar.
   // ownsMapKeyboardEvent gates on the ACTUAL event.target (not just the
   // listener's currentTarget) so typing/arrow-editing inside any of those
   // stays untouched; map shortcuts fire only when a map node or the bare
-  // canvas owns the event. Falls back to permissive (always true) if the
-  // sibling module is ever unavailable, matching the pre-WIDE-029 behavior.
-  const eventOwnership = resolveEventOwnership();
-  const ownsMapKeyboardEvent = typeof eventOwnership.ownsMapKeyboardEvent === 'function'
-    ? eventOwnership.ownsMapKeyboardEvent
-    : () => true;
+  // canvas owns the event. The IDE script manifest loads the ownership
+  // module first.
+  const { ownsMapKeyboardEvent } = globalThis.rendererIdeMapEventOwnership
+    || require('./renderer-ide-map-event-ownership');
 
   // Direction unit vectors in SCREEN space (y grows downward, matching the
   // content coordinate system used by the layout/transform).
@@ -59,6 +41,7 @@
     left: { x: -1, y: 0 },
     right: { x: 1, y: 0 },
   };
+  const ARROW_DIR = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
 
   // Candidates must lie within a 90-degree cone; selection uses angle-weighted
   // distance with layout-order tie-breaks.
@@ -123,8 +106,11 @@
       return contentEl && contentEl.ownerDocument ? contentEl.ownerDocument : null;
     }
 
+    // renderAtlas (replaceChildren) detaches the region from the content
+    // layer; a detached node can never announce, so re-create it whenever it
+    // is disconnected.
     function ensureLiveRegion() {
-      if (liveRegionEl || !contentEl) return;
+      if ((liveRegionEl && liveRegionEl.isConnected) || !contentEl) return;
       const documentRef = doc();
       if (!documentRef) return;
       const el = documentRef.createElement('div');
@@ -159,7 +145,7 @@
     function applyStaticRoles() {
       if (viewportEl) {
         viewportEl.setAttribute('role', 'application');
-    viewportEl.setAttribute('aria-roledescription', jt('ide.map.a11y.roleDescription', 'File map'));
+        viewportEl.setAttribute('aria-roledescription', jt('ide.map.a11y.roleDescription', 'File map'));
         if (!viewportEl.hasAttribute('aria-label')) {
           viewportEl.setAttribute('aria-label', jt('ide.map.a11y.label', 'Workspace file map'));
         }
@@ -260,30 +246,19 @@
       if (el && typeof el.focus === 'function') {
         el.focus();
       }
-      if (node) {
-        frameNodeIfOffscreen(node);
-      }
+      frameNodeIfOffscreen(node);
       return Boolean(el);
     }
 
-    function moveFocusTo(nodeId) {
-      if (!nodeId) return;
-      focusNode(nodeId);
-    }
-
     function handleArrow(dir) {
-      const nodes = navigableNodesInOrder();
-      const next = nearestInDirection(nodes, focusedNodeId, dir);
-      if (next) {
-        moveFocusTo(next);
-      }
+      const next = nearestInDirection(navigableNodesInOrder(), focusedNodeId, dir);
+      if (next) focusNode(next);
     }
 
     function handleHomeEnd(which) {
       const nodes = navigableNodesInOrder();
       if (!nodes.length) return;
-      const target = which === 'end' ? nodes[nodes.length - 1] : nodes[0];
-      if (target) moveFocusTo(target.id);
+      focusNode((which === 'end' ? nodes[nodes.length - 1] : nodes[0]).id);
     }
 
     // `[`/`]` neighbor cycle: gathers import-kind edges touching the focused
@@ -325,7 +300,7 @@
       const ids = cycleState.ids.filter((id) => isNavigable(id));
       cycleState.ids = ids;
       if (!ids.length) {
-      announce(wantOutbound ? jt('ide.map.a11y.noOutbound', 'No outbound dependencies.') : jt('ide.map.a11y.noInbound', 'No inbound dependents.'));
+        announce(wantOutbound ? jt('ide.map.a11y.noOutbound', 'No outbound dependencies.') : jt('ide.map.a11y.noInbound', 'No inbound dependents.'));
         return;
       }
       cycleState.index = (cycleState.index + 1) % ids.length;
@@ -357,23 +332,12 @@
       // viewport listener.
       if (!ownsMapKeyboardEvent(event.target)) return;
       const key = event.key;
+      if (ARROW_DIR[key]) {
+        event.preventDefault();
+        handleArrow(ARROW_DIR[key]);
+        return;
+      }
       switch (key) {
-        case 'ArrowUp':
-          event.preventDefault();
-          handleArrow('up');
-          break;
-        case 'ArrowDown':
-          event.preventDefault();
-          handleArrow('down');
-          break;
-        case 'ArrowLeft':
-          event.preventDefault();
-          handleArrow('left');
-          break;
-        case 'ArrowRight':
-          event.preventDefault();
-          handleArrow('right');
-          break;
         case 'Home':
           event.preventDefault();
           handleHomeEnd('home');
@@ -440,15 +404,7 @@
         clearTimeout(spotlightTimer);
         spotlightTimer = null;
       }
-      if (liveRegionEl) {
-        liveRegionEl.textContent = '';
-        // A full renderGraph() innerHTML rebuild detaches the live region; a
-        // detached node can never announce, so drop it and let the next
-        // announce() re-create a connected one.
-        if (liveRegionEl.isConnected === false) {
-          liveRegionEl = null;
-        }
-      }
+      if (liveRegionEl) liveRegionEl.textContent = '';
       refreshSummary(null);
     }
 
@@ -479,9 +435,7 @@
       reset,
       dispose,
       _internals: {
-        nearestInDirection,
         get focusedNodeId() { return focusedNodeId; },
-        neighborCycle,
       },
     };
   }

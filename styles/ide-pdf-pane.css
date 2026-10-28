@@ -1,21 +1,12 @@
 @import url("../node_modules/pdfjs-dist/web/pdf_viewer.css");
 
+/* Pane box, clipping, button hover/pressed/focus and separator basics are
+ * shared with the DOCX pane in ide-document-pane.css (loaded first). */
+
+/* The toolbar sizes off the pane (container), not the window: the dock or
+ * rail can squeeze the editor column at any window width. */
 .ide-pdf-pane {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  /* The pane sits in the Workspace editor column; anything that does not fit
-   * must stay inside it rather than paint over the chat dock beside it. The
-   * toolbar sizes off the pane (container), not the window: the dock or rail
-   * can squeeze the editor column at any window width. */
-  overflow: hidden;
   container: ide-pdf / inline-size;
-  background: var(--bg-base);
-  color: var(--text-primary);
 }
 
 .ide-pdf-toolbar {
@@ -50,20 +41,8 @@
   cursor: pointer;
 }
 
-.ide-pdf-button:hover,
-.ide-pdf-button[aria-pressed="true"] {
-  background: color-mix(in srgb, var(--accent) 14%, var(--bg-panel));
-  color: var(--text-primary);
-}
-
 .ide-pdf-button[aria-pressed="true"] {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
-}
-
-.ide-pdf-button:focus-visible,
-.ide-pdf-pane .inv-text-field-control:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
 }
 
 .ide-pdf-page-field,
@@ -119,9 +98,7 @@
 
 .ide-pdf-separator {
   align-self: stretch;
-  width: 1px;
   margin: 4px 2px;
-  background: var(--line);
 }
 
 .ide-pdf-error {
@@ -134,9 +111,18 @@
   color: var(--text-primary);
 }
 
+/* Row 65: [sidebar][pages]. One sidebar serves the visible document. */
+.ide-pdf-body {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .ide-pdf-documents {
   position: relative;
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -161,6 +147,307 @@
 
 .ide-pdf-viewer-scroll .pdfViewer .page {
   margin: 0 auto 12px;
+}
+
+/* Toolbar icon buttons and the find option toggles: tighter padding. */
+.ide-pdf-icon-button {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 5px;
+}
+
+.ide-pdf-find-options {
+  display: inline-flex;
+  gap: 1px;
+}
+
+.ide-pdf-find-option {
+  min-width: 22px;
+  padding: 3px 4px;
+}
+
+.ide-pdf-underline {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ── Outline and pages sidebar ── */
+.ide-pdf-sidebar {
+  display: flex;
+  flex: 0 0 208px;
+  flex-direction: column;
+  min-height: 0;
+  border-inline-end: 1px solid var(--line);
+  background: var(--bg-panel);
+  font-size: var(--font-size-footnote);
+}
+
+.ide-pdf-sidebar[hidden] {
+  display: none;
+}
+
+.ide-pdf-sidebar-head {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 6px 8px;
+}
+
+.ide-pdf-sidebar-title {
+  padding: 2px 4px;
+  color: var(--text-muted);
+}
+
+.ide-pdf-sidebar-switch {
+  width: 100%;
+}
+
+.ide-pdf-sidebar-switch .inv-segmented-option {
+  flex: 1 1 0;
+}
+
+.ide-pdf-sidebar-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.ide-pdf-outline,
+.ide-pdf-outline ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ide-pdf-outline {
+  padding: 2px 4px 10px;
+}
+
+.ide-pdf-outline-row {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  width: 100%;
+  border: 0;
+  border-radius: 4px;
+  padding-block: 3px;
+  padding-inline: calc(4px + var(--ide-pdf-outline-depth, 0) * 14px) 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.ide-pdf-outline-row:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text-primary);
+}
+
+.ide-pdf-outline-row:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+/* Current section: a tinted row in primary text, no side bar. */
+.ide-pdf-outline-row--current {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text-primary);
+}
+
+.ide-pdf-outline-row:focus-visible,
+.ide-pdf-thumb:focus-visible,
+.ide-pdf-ask-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ide-pdf-outline-twisty {
+  display: inline-flex;
+  flex: 0 0 12px;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+.ide-pdf-outline-twisty--open svg {
+  transform: rotate(90deg);
+}
+
+.ide-pdf-outline-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ide-pdf-outline-page {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ide-pdf-thumbs {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0 14px;
+}
+
+.ide-pdf-thumb {
+  /* A 5000-page document lays out only the thumbnails near the view. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 104px auto 156px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  border-radius: 3px;
+  padding: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+/* Letter-shaped until the page bitmap arrives. */
+.ide-pdf-thumb-paper {
+  display: block;
+  width: 104px;
+  aspect-ratio: 8.5 / 11;
+  border-radius: 2px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.ide-pdf-thumb-paper:has(> .ide-pdf-thumb-image:not([hidden])) {
+  aspect-ratio: auto;
+}
+
+.ide-pdf-thumb-image {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.ide-pdf-thumb:hover .ide-pdf-thumb-paper {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+/* Current page: an accent ring around the page, label in primary text. */
+.ide-pdf-thumb--current .ide-pdf-thumb-paper,
+.ide-pdf-thumb--current:hover .ide-pdf-thumb-paper {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.ide-pdf-thumb--current .ide-pdf-thumb-label {
+  color: var(--text-primary);
+}
+
+/* ── "Ask Jenny" above a text selection ── */
+.ide-pdf-ask {
+  position: absolute;
+  z-index: 4;
+}
+
+.ide-pdf-ask[hidden] {
+  display: none;
+}
+
+.ide-pdf-ask-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: var(--surface-popover-background, var(--bg-panel));
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-footnote);
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 28%);
+}
+
+.ide-pdf-ask-button svg {
+  color: var(--accent);
+}
+
+.ide-pdf-ask-button:hover {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-panel));
+}
+
+/* ── Password prompt, in place of the pages ── */
+.ide-pdf-password {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 64px 16px 0;
+  background: var(--bg-base);
+  text-align: center;
+}
+
+.ide-pdf-password-icon {
+  color: var(--text-muted);
+}
+
+.ide-pdf-password-title {
+  font-size: var(--font-size-heading);
+  font-weight: 600;
+}
+
+.ide-pdf-password-copy {
+  max-width: 360px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+}
+
+.ide-pdf-password-row {
+  display: flex;
+  gap: 6px;
+  width: min(360px, 100%);
+  margin-top: 6px;
+}
+
+.ide-pdf-password-field {
+  display: flex;
+  flex: 1 1 auto;
+}
+
+.ide-pdf-password-field .inv-text-field-control {
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.ide-pdf-password-error {
+  color: var(--danger, #e5484d);
+  font-size: var(--font-size-footnote);
+}
+
+.ide-pdf-password-error[hidden] {
+  display: none;
+}
+
+/* Narrow pane: the sidebar floats over the pages instead of pushing them
+ * (the sidebar closes itself after a navigation in this mode). */
+@container ide-pdf (max-width: 560px) {
+  .ide-pdf-sidebar {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    z-index: 3;
+    box-shadow: 0 6px 18px rgb(0 0 0 / 28%);
+  }
 }
 
 /* ~870px fits the navigation row on one line; below that it wraps. */

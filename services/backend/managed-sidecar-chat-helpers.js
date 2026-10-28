@@ -17,9 +17,9 @@ const {
 const { buildPreparedMessages } = require('./chat-stream-reasoning');
 const { buildResumePayload } = require('../session-recovery-service');
 const { normalizeManagedToolPreferences } = require('./backend-service-utils');
+const { withDirectoryToolGate } = require('./session-directory-tool-gate');
 const { admitSessionHandoffForTurn } = require('./session-handoff-context');
 const { admitSessionMailForTurn } = require('./session-mail-admission');
-const { admitReportReservation } = require('./session-report-admission');
 const { supportsSessionHandoffContext, supportsSessionMessageContext } = require('../session-runtime/inference-protocol');
 
 // Electron-side stream ceilings, keyed by engine type to mirror the sidecar's
@@ -30,7 +30,7 @@ const { supportsSessionHandoffContext, supportsSessionMessageContext } = require
 // abort (which also forces a sidecar restart). The local idle ceiling is
 // derived from the configured working-time limit plus a 60s settlement margin.
 // The absolute backstop remains finite and expands when that margin exceeds it.
-const CLOUD_ENGINE_TYPES = new Set(['chatgpt', 'codex-cli']);
+const CLOUD_ENGINE_TYPES = new Set(['chatgpt', 'codex-cli', 'api-provider']);
 const CHAT_STREAM_ABSOLUTE_TIMEOUT_MS = 1_800_000;
 // 1,800s cloud per-tool timeout + 60s margin: a silent (non-streaming) tool
 // call may legitimately produce no stream events for its full budget.
@@ -380,27 +380,30 @@ const sameWireKinds = (a, b) => a.sessionMessages === b.sessionMessages && a.ses
 // The tool-preference input of a turn. The handoff-only preparation turn (cp5a) is restricted to
 // complete_session_handoff by its own path: a stored or requested preference can neither widen nor
 // narrow it, and normalizeManagedToolPreferences (which drops enabled_tools) is not involved.
-function managedToolPreferenceInput(toolPreferences, { catalog, handoffPreparation = null } = {}) {
-  return handoffPreparation
-    ? { enabled_tools: ['complete_session_handoff'], disabled_tools: [], disabled_tool_families: [] }
-    : normalizeManagedToolPreferences(toolPreferences, { catalog });
+// With a `service`, any other turn also gets the session-directory tool gate (primary and linked chats only).
+function managedToolPreferenceInput(toolPreferences, {
+  catalog, handoffPreparation = null, service = null, sessionId = '', session = null,
+} = {}) {
+  if (handoffPreparation) return { enabled_tools: ['complete_session_handoff'], disabled_tools: [], disabled_tool_families: [] };
+  const normalized = normalizeManagedToolPreferences(toolPreferences, { catalog });
+  return service ? withDirectoryToolGate(service, { sessionId, session }, normalized) : normalized;
 }
 
 // Context rows that join a model turn just before its user anchor: the first turn's handoff
 // (cp5a, fail-closed: throws a coded error, the turn never runs without it) then queued addressed
-// session mail (cp4, best-effort). Only a brand-new turn inserts; a retry or resume reuses the rows
-// already before its anchor. A linked child's terminal-report slot (cp5b, fail-closed too) is reserved
-// between the two for every new turn identity (also an edit or failure retry), never for a checkpoint
-// resume (`resumed`) or a handoff preparation turn. `rebuild` says the history must be derived again
-// (rows were placed or the negotiated kinds changed since `previousKinds`).
+// session mail (cp4, best-effort). Only a brand-new turn inserts a handoff; an edit or resume reuses the
+// rows already before its anchor. Mail also joins a failure retry (`mailRetry`): the failed attempt may
+// have died before admission (a wake turn whose model load hit model_busy, 2026-10-27), and admission
+// takes only still-queued records, so rows a first attempt placed are never duplicated. A linked
+// child's terminal-report slot is reserved earlier, before the model loads (managed-sidecar-chat.js),
+// so a load failure still reports. `rebuild` says the history must be derived again (rows were placed
+// or the negotiated kinds changed since `previousKinds`).
 function admitTurnContextRows(service, {
-  sessionHandoff = null, brandNew, sessionId, turnId, userMessageId, preparedMessages, lease, previousKinds,
-  handoffPreparation = null, resumed = false,
+  sessionHandoff = null, brandNew, mailRetry = false, sessionId, turnId, userMessageId, preparedMessages, lease, previousKinds,
 }) {
   const handoffRow = sessionHandoff
     ? admitSessionHandoffForTurn({ service, sessionId, turnId, userMessageId, handoff: sessionHandoff, brandNew, lease }) : null;
-  admitReportReservation(service, { sessionId, turnId, lease, handoffPreparation, resumed });
-  const mail = brandNew ? admitSessionMailForTurn({
+  const mail = brandNew || mailRetry ? admitSessionMailForTurn({
     service, sessionId, turnId, userMessageId, preparedMessages, lease,
   }) : null;
   const kinds = wireContextKinds(service.sidecarClient);

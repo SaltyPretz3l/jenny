@@ -91,6 +91,9 @@ function buildDeps(documentRef, overrides) {
   const deps = {
     documentRef,
     windowRef: documentRef.defaultView,
+    // The shell always binds the overlay manager before this modal; it owns
+    // Escape, the focus trap and the inert background.
+    overlayManager: { open: () => true, close: () => true },
     state: buildState(overrides && overrides.stateOverrides),
     adapters: { appearance: appearanceAdapter, zoom: zoomAdapter, offline: offlineAdapter },
     runtimePrefs: {
@@ -236,22 +239,26 @@ test('scrim click and close-button click both close the modal', () => {
   assert.equal(controller.isOpen(), false);
 });
 
-test('no overlayManager injected: local Escape fallback closes the modal', () => {
+test('no overlay manager: a WARN, and the modal still opens and closes with the background untouched', () => {
   const documentRef = buildDom();
-  const { deps } = buildDeps(documentRef);
+  const harness = buildDeps(documentRef);
   const appShell = documentRef.createElement('div');
   documentRef.body.appendChild(appShell);
-  deps.inertTargets = [appShell];
-  const controller = createQuickSettingsModal(deps);
+  harness.deps.overlayManager = null;
+  harness.deps.inertTargets = [appShell];
+  const controller = createQuickSettingsModal(harness.deps);
 
-  controller.open();
+  assert.equal(controller.open(), true);
   assert.equal(controller.isOpen(), true);
-  assert.equal(appShell.hasAttribute('inert'), true, 'fallback removes the background from interaction');
+  assert.equal(appShell.hasAttribute('inert'), false);
+  assert.deepEqual(harness.appendClientLogCalls.find((call) => call[0] === 'WARN'),
+    ['WARN', 'quick_settings.overlay_manager_unavailable', { present: false }]);
   documentRef.dispatchEvent(new documentRef.defaultView.KeyboardEvent('keydown', {
     key: 'Escape', bubbles: true, cancelable: true,
   }));
+  assert.equal(controller.isOpen(), true, 'Escape belongs to the overlay manager');
+  assert.equal(controller.close(), true);
   assert.equal(controller.isOpen(), false);
-  assert.equal(appShell.hasAttribute('inert'), false, 'fallback restores the prior background state');
 });
 
 test('model slot exposes only a shortcut to the authoritative model profile', async () => {
@@ -310,23 +317,19 @@ test('model shortcut is hidden for provider-owned generation controls', async ()
     /engine owns its generation controls/i);
 });
 
-test('fallback Escape is ignored when defaultPrevented or isComposing', () => {
+test('an overlay manager that refuses the overlay is logged and never asked to close it', () => {
   const documentRef = buildDom();
-  const { deps } = buildDeps(documentRef);
-  const controller = createQuickSettingsModal(deps);
+  const harness = buildDeps(documentRef);
+  const closeCalls = [];
+  harness.deps.overlayManager = { open: () => false, close: (id) => { closeCalls.push(id); return true; } };
+  const controller = createQuickSettingsModal(harness.deps);
 
-  controller.open();
-  const prevented = new documentRef.defaultView.KeyboardEvent('keydown', {
-    key: 'Escape', bubbles: true, cancelable: true,
-  });
-  prevented.preventDefault();
-  documentRef.dispatchEvent(prevented);
-  assert.equal(controller.isOpen(), true, 'defaultPrevented Escape must not close');
-
-  documentRef.dispatchEvent(new documentRef.defaultView.KeyboardEvent('keydown', {
-    key: 'Escape', bubbles: true, cancelable: true, isComposing: true,
-  }));
-  assert.equal(controller.isOpen(), true, 'isComposing Escape must not close');
+  assert.equal(controller.open(), true);
+  assert.ok(harness.appendClientLogCalls.some((call) => call[1] === 'quick_settings.overlay_manager_unavailable'
+    && call[2].present === true));
+  controller.close();
+  controller.dispose();
+  assert.deepEqual(closeCalls, []);
 });
 
 // ── Composer-only model ownership ────────────────────────────────────────

@@ -181,7 +181,7 @@ describe('registerWorkspaceFsIpcHandlers', () => {
 });
 
 describe('registerWorkspaceGitIpcHandlers', () => {
-  test('wires all 14 workspaceGit channels and forwards the payload', async () => {
+  test('wires all 16 workspaceGit channels and forwards the payload', async () => {
     const ipc = createFakeIpcMain();
     const { proxy } = createRecorder();
     registerWorkspaceGitIpcHandlers(ipc, proxy);
@@ -192,9 +192,10 @@ describe('registerWorkspaceGitIpcHandlers', () => {
       'workspaceGit.getLog', 'workspaceGit.getBranches', 'workspaceGit.blameRange',
       'workspaceGit.stage', 'workspaceGit.unstage', 'workspaceGit.commit',
       'workspaceGit.discardFile', 'workspaceGit.checkout', 'workspaceGit.stash',
-      'workspaceGit.undoLastCommit',
+      'workspaceGit.undoLastCommit', 'workspaceGit.resolveDelete', 'workspaceGit.checkIgnored',
+      ...['getFileAtIndex', 'getFileAtCommit', 'getCommitFiles', 'listStashes', 'getLastCommitMessage', 'deleteBranch', 'applyPatch', 'blameFile', 'discardFiles'].map((m) => `workspaceGit.${m}`), // Row 82 P4 + cleanup
     ];
-    assert.equal(ipc.invoke.size, 14);
+    assert.equal(ipc.invoke.size, 25);
     for (const methodPath of paths) {
       assert.equal(ipc.invoke.has(invokeChannel(methodPath)), true, `expected ${methodPath}`);
     }
@@ -524,6 +525,7 @@ describe('registerMainIpcHandlers', () => {
       'system.setStatsWatch',
       'diagnostics.logs.getSnapshot',
       'updates.getState',
+      'cli.path.getState', 'cli.path.install', 'cli.path.remove',
       'personality.getState',
       'memory.contextFiles.getState',
     ]) {

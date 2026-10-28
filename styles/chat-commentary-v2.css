@@ -32,9 +32,12 @@
 
 /*
  * The commentary kicker is a screen-reader-only affordance (its child carries
- * .sr-only); the visible signal is the dimmed bubble text above. Keep it inline
- * so it never reserves layout space of its own.
+ * .sr-only); the visible signal is the dimmed bubble text above. It never
+ * reserves layout space: .chat-row is a flex column, where an inline span is
+ * still a flex item and took a row-gap slot, dropping commentary text 8px
+ * below every other row's first line. `contents` hands the slot to the
+ * absolutely positioned sr-only child, which takes none.
  */
 .chat-commentary-kicker {
-  display: inline;
+  display: contents;
 }

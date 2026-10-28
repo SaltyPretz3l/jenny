@@ -702,7 +702,10 @@ class ProviderStreamNormalizer:
                                     "tool_calls": [...]},
                           "finish_reason": "stop"|"tool_calls"|null}]}
         """
-        if str(raw_chunk.get("object") or "") == FINISH_REASON_PROVIDER_ERROR:
+        # OpenRouter and other hosted providers send a bare ``{"error": {...}}``
+        # frame without ``object``; with no choices it is the same failure.
+        bare_error = isinstance(raw_chunk.get("error"), Mapping) and not raw_chunk.get("choices")
+        if bare_error or str(raw_chunk.get("object") or "") == FINISH_REASON_PROVIDER_ERROR:
             error_body = raw_chunk.get("error") or raw_chunk.get("message") or ""
             yield from self._classify_inband_error(str(error_body))
             return

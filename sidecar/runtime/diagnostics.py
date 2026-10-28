@@ -31,6 +31,7 @@ from sidecar.runtime.diagnostics_stream import (
     DiagnosticsFanoutHandler,
     DiagnosticsStreamHandler,
 )
+from sidecar.runtime.exact_secret_redaction import redact_exact_secrets
 
 SCHEMA_VERSION = 1
 SEGMENT_MAX_BYTES = 5 * 1024 * 1024
@@ -64,11 +65,14 @@ _SENSITIVE_KEY_PARTS = {
 _SENSITIVE_KEY_PAIRS = {
     ("access", "key"),
     ("api", "key"),
+    # Dictation audio (speech.transcribe params): recorded speech, never logged.
+    ("audio", "b64"),
     ("auth", "token"),
     ("private", "key"),
     ("session", "key"),
 }
 _SENSITIVE_COMPACT_KEYS = {
+    "audiob64",
     "apikey",
     "api-key",
     "accesstoken",
@@ -126,7 +130,7 @@ def _redact_key_value(match: re.Match[str]) -> str:
 
 
 def _sanitize_text(value: str, *, limit: int = 512) -> str:
-    sanitized = _PRIVATE_PATH_RE.sub("[redacted:path]", value)
+    sanitized = _PRIVATE_PATH_RE.sub("[redacted:path]", redact_exact_secrets(value))
     sanitized = _CREDENTIAL_URL_RE.sub("[redacted:dsn]", sanitized)
     sanitized = _DATA_URL_RE.sub("data:[redacted]", sanitized)
     sanitized = _COOKIE_HEADER_RE.sub(_redact_key_value, sanitized)

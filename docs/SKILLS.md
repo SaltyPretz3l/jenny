@@ -90,7 +90,7 @@ Jenny resolves configured skill scopes in this order:
 
 | Scope | Application root | Runtime config key | Enable flag | Intended use |
 |---|---|---|---|---|
-| Bundled | The app-shipped `skills/` directory | `skills_bundled_root` | `skills_bundled_enabled` | Skills that ship with Jenny. The repository currently contains seven. |
+| Bundled | The app-shipped `skills/` directory | `skills_bundled_root` | `skills_bundled_enabled` | Skills that ship with Jenny. The repository currently contains eight, including `/review` (code review findings through `report_findings`). |
 | User | `~/.companion/skills` | `skills_user_root` | `skills_user_enabled` | Personal skills available independently of the selected tools workspace. |
 | Project | `<session project root>/.jenny/skills` | `skills_project_root` | `skills_project_enabled` | Instructions specific to the chat's canonical project. A project without a folder has no project skill root. |
 

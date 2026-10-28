@@ -56,7 +56,7 @@ function fakePtyApi(spawnResult) {
     },
     async write(payload) { this.calls.write.push(payload); },
     async resize(payload) { this.calls.resize.push(payload); },
-    async kill(payload) { this.calls.kill.push(payload); },
+    async kill(payload) { this.calls.kill.push(payload); return { ok: true, killed: true, terminationConfirmed: true }; },
     onData(cb) { dataListeners.push(cb); const self = this; return () => { self.unsubData += 1; }; },
     onExit(cb) { exitListeners.push(cb); const self = this; return () => { self.unsubExit += 1; }; },
     emitData(p) { for (const cb of [...dataListeners]) cb(p); },

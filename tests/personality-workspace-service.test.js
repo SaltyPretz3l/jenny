@@ -21,6 +21,7 @@ const {
 } = require('../services/personality-workspace-service');
 const { PERSONALITY_ERROR_CODES } = require('../services/backend/error-codes');
 const { cleanupTrackedResources, trackDirectory } = require('./helpers/resource-cleanup');
+const { fileSymlinkSkip } = require('./helpers/platform-skips');
 
 test.afterEach(cleanupTrackedResources);
 
@@ -719,7 +720,7 @@ test('a future schema rejects reads and writes without modifying workspace files
   assert.deepEqual(await fs.readFile(path.join(workspacePath, PERSONALITY_STATE_FILENAME)), future);
 });
 
-test('a realpath escape through a workspace file is refused', async (t) => {
+test('a realpath escape through a workspace file is refused', { skip: fileSymlinkSkip() }, async () => {
   const { userDataPath, workspacePath } = await createWorkspace();
   const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'jenny-personality-escape-'));
   trackDirectory(outside);
@@ -727,15 +728,7 @@ test('a realpath escape through a workspace file is refused', async (t) => {
   await service.ensureSeeded();
   const target = path.join(workspacePath, 'MEMORY.md');
   await fs.rm(target, { force: true });
-  try {
-    await fs.symlink(path.join(outside, 'MEMORY.md'), target, 'file');
-  } catch (error) {
-    if (error?.code === 'EPERM') {
-      t.skip('Creating a containment-test link is not permitted on this host.');
-      return;
-    }
-    throw error;
-  }
+  await fs.symlink(path.join(outside, 'MEMORY.md'), target, 'file');
 
   await assert.rejects(service.getNotesState(), { code: 'CONTEXT_FILE_PATH_UNSAFE' });
   await assert.rejects(fs.access(path.join(outside, 'MEMORY.md')));

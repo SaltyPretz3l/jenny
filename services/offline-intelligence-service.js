@@ -337,6 +337,11 @@ class OfflineIntelligenceService {
     return this._getSettings().mode;
   }
 
+  // Settings-only: the Model Library default a "Default" chat runs on.
+  getPreferredLocalModel() {
+    return normalizeString(this._getSettings().preferredLocalModel);
+  }
+
   async _probeLocalCatalog() {
     const previousModels = Array.isArray(this.lastState?.localCatalog?.models)
       ? this.lastState.localCatalog.models

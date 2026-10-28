@@ -23,16 +23,8 @@
   text-overflow: ellipsis;
 }
 
-/* Detached HEAD / unborn repo read as full sentences, not a terse branch chip,
- * so drop the base uppercase + tracking. Detached is risky (new commits land on
- * no branch and can be GC'd) so it reads as danger; unborn keeps the neutral
- * secondary colour. */
-.ide-scm-branch--detached,
-.ide-scm-branch--unborn {
-  text-transform: none;
-  letter-spacing: normal;
-}
-
+/* Detached HEAD is risky (new commits land on no branch and can be GC'd) so it
+ * reads as danger; unborn keeps the neutral secondary colour. */
 .ide-scm-branch--detached {
   color: var(--state-danger);
 }
@@ -79,6 +71,23 @@
 
 .ide-scm-group-head .ide-scm-action--stage-all {
   margin-inline-start: auto;
+}
+
+/* Row 82 G1: Discard All / Stage All, Unstage All at the group header's end. */
+.ide-scm-group-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-inline-start: auto;
+}
+
+.ide-scm-group-actions .ide-scm-action--stage-all {
+  margin-inline-start: 0;
+}
+
+.ide-scm-action--discard-all.ide-scm-danger:hover {
+  color: var(--state-danger);
+  border-color: var(--state-danger-border);
 }
 
 .ide-scm-row {
@@ -148,6 +157,40 @@
   font-size: var(--font-size-caption);
 }
 
+/* Row 75 conflict kind: only for kinds that change the decision (a delete on
+ * one side, an add on both). It keeps its width; the folder hint truncates first. */
+.ide-scm-row-kind {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  color: var(--state-danger);
+  font-size: var(--font-size-caption);
+}
+
+/* Markers confirm under a conflicted row: one line, two text actions, no box. */
+.ide-scm-row-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  padding: 2px 4px 6px 24px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  line-height: 1.45;
+}
+
+.ide-scm-row-confirm b {
+  color: var(--state-warning);
+  font-weight: 500;
+}
+
+.ide-scm-row-confirm .ide-scm-action {
+  padding-inline: 4px;
+}
+
+.ide-scm-row-confirm .ide-scm-action--confirm {
+  color: var(--text-primary);
+}
+
 /* Jenny changed this file (row 40 W6): opens her turn in Changes. Always shown. */
 .ide-scm-jenny {
   flex: 0 0 auto;
@@ -210,18 +253,14 @@
   border-color: var(--line);
 }
 
-.ide-scm-action--discard.ide-scm-danger:hover {
+.ide-scm-action--discard.ide-scm-danger:hover,
+.ide-scm-action--delete-resolve.ide-scm-danger:hover {
   color: var(--state-danger);
   border-color: var(--state-danger-border);
 }
 
-/* Badge colours by git state (re-themeable palette tokens). */
-.ide-scm-badge[data-git-state="modified"],
-.ide-scm-badge[data-git-state="renamed"],
-.ide-scm-badge[data-git-state="copied"] {
-  color: var(--state-warning);
-}
-
+/* Badge colours by git state (re-themeable palette tokens); modified, renamed
+ * and copied keep the base badge's warning colour. */
 .ide-scm-badge[data-git-state="untracked"],
 .ide-scm-badge[data-git-state="added"] {
   color: var(--state-success);
@@ -247,6 +286,16 @@
 
 .ide-scm-commit-hint {
   color: var(--state-warning);
+  font-size: var(--font-size-footnote);
+}
+
+/* Row 82 G1: "Amend last commit" and "Sign off" under the message. */
+.ide-scm-commit-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 12px;
+  color: var(--text-secondary);
   font-size: var(--font-size-footnote);
 }
 
@@ -471,4 +520,38 @@
 .ide-scm-history-retry {
   align-self: flex-start;
   margin-top: 2px;
+}
+
+/* Row 82 G1: an expanded card lists its files; each opens its own diff. */
+.ide-scm-card-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ide-scm-card--expanded {
+  border-color: var(--line-strong, var(--line));
+}
+
+.ide-scm-card-files {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding-inline-start: 8px;
+}
+
+.ide-scm-card-file {
+  border-radius: 5px;
+}
+
+.ide-scm-card-file:hover {
+  background: var(--bg-surface-2);
+}
+
+.ide-scm-card-files-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  padding: 2px 0 4px;
 }

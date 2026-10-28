@@ -82,10 +82,24 @@
     return `${startLabel} – ${endLabel}`;
   }
 
+  // toLocaleDateString builds a fresh Intl.DateTimeFormat per call; per-cell
+  // labels reuse one per locale tag instead (same output).
+  const dateFormatters = new Map();
+  function cachedDateFormat(name, options) {
+    const tag = globalThis.jennyI18n?.tag?.();
+    const key = `${tag || ''}|${name}`;
+    let formatter = dateFormatters.get(key);
+    if (!formatter) {
+      formatter = new Intl.DateTimeFormat(tag, options);
+      dateFormatters.set(key, formatter);
+    }
+    return formatter;
+  }
+
   // Full, unabbreviated date for screen-reader labels ("Monday, June 9") so a
   // day column/header announces its date rather than the bare "Mon 9" text.
   function formatFullDateLabel(date) {
-    return date.toLocaleDateString(globalThis.jennyI18n?.tag?.(), { weekday: 'long', month: 'long', day: 'numeric' });
+    return cachedDateFormat('full', { weekday: 'long', month: 'long', day: 'numeric' }).format(date);
   }
 
   // Greedy interval lane packing: blocks sorted by start claim the first free
@@ -121,17 +135,22 @@
     return sorted;
   }
 
+  // ---- shared event helpers (week grid, month, agenda and rail call these) ----
+
   function categoryClass(instance) {
-    const categoryId = /^[a-z][a-z0-9-]*$/.test(String(instance.categoryId || ''))
+    const categoryId = /^[a-z][a-z0-9-]*$/.test(String(instance?.categoryId || ''))
       ? instance.categoryId
       : 'default';
     return `cal-event--${categoryId}`;
   }
 
-  // showTime hides the visible time line on short blocks (where it would crowd
-  // the title) WITHOUT dropping it from the accessible name — the aria-label
-  // always carries the time so the event reads fully to assistive tech.
-  function buildEventButton(actionButton, instance, timeLabel, showTime = true) {
+  function instanceTitle(instance) {
+    return String(instance?.title || '').trim() || jt('dashboard.calendar.agenda.noTitle', '(no title)');
+  }
+
+  // The data-cal-* hooks the controller's shared click handler reads to open
+  // the form; read-only (feed) instances never carry an editable event id.
+  function eventDataset(instance) {
     const readonly = instance.readonly === true;
     const dataset = { 'cal-instance': '1' };
     if (instance.instanceId) {
@@ -143,18 +162,68 @@
     if (readonly) {
       dataset['cal-readonly'] = '1';
     }
-    const title = String(instance.title || '').trim() || jt('dashboard.calendar.agenda.noTitle', '(no title)');
-    // Recurrence-unsupported (↻) and approximate-time (~) hints share one
-    // corner marker; the title carries the full reason for assistive tech.
+    return dataset;
+  }
+
+  // Recurrence-unsupported (↻) and approximate-time (~) hints share one corner
+  // marker; the title carries the full reason for assistive tech.
+  function eventMarkerHtml(instance) {
     const markerGlyphs = `${instance.recurrenceUnsupported === true ? '↻' : ''}`
       + `${instance.tzApprox === true ? '~' : ''}`;
+    if (!markerGlyphs) {
+      return '';
+    }
     const markerTitle = [
       instance.recurrenceUnsupported === true ? jt('dashboard.calendar.agenda.partialRecurrence', 'Recurrence only partially supported') : '',
       instance.tzApprox === true ? jt('dashboard.calendar.agenda.approximateFeedTime', 'Approximate time (unrecognized feed time zone)') : '',
     ].filter(Boolean).join('; ');
-    const marker = markerGlyphs
-      ? `<span class="cal-event__marker" title="${escapeHtml(markerTitle)}">${markerGlyphs}</span>`
-      : '';
+    return `<span class="cal-event__marker" title="${escapeHtml(markerTitle)}">${markerGlyphs}</span>`;
+  }
+
+  // Half-open overlap of an instance with [rangeStartMs, rangeEndMs).
+  function instanceOverlapsRange(instance, rangeStartMs, rangeEndMs) {
+    const start = parseLocalDateTime(instance?.start);
+    const end = parseLocalDateTime(instance?.end);
+    return Boolean(start && end && end.getTime() > rangeStartMs && start.getTime() < rangeEndMs);
+  }
+
+  // All-day events lead the day; then by start string, then title.
+  function compareInstances(a, b) {
+    if ((a.allDay === true) !== (b.allDay === true)) {
+      return a.allDay === true ? -1 : 1;
+    }
+    if (String(a.start) !== String(b.start)) {
+      return String(a.start) < String(b.start) ? -1 : 1;
+    }
+    return String(a.title || '') < String(b.title || '') ? -1 : 1;
+  }
+
+  // "in 35m" / "now" for an upcoming start; '' beyond a day out. Rounds first so
+  // a start under 30s away reads "now", never "in 0m".
+  function formatRelative(now, start) {
+    const mins = Math.round((start.getTime() - now.getTime()) / 60000);
+    if (mins <= 0) {
+      return 'now';
+    }
+    if (mins < 60) {
+      return `in ${mins}m`;
+    }
+    const hrs = Math.floor(mins / 60);
+    const rem = mins % 60;
+    if (hrs < 24) {
+      return rem ? `in ${hrs}h ${rem}m` : `in ${hrs}h`;
+    }
+    return '';
+  }
+
+  // showTime hides the visible time line on short blocks (where it would crowd
+  // the title) WITHOUT dropping it from the accessible name — the aria-label
+  // always carries the time so the event reads fully to assistive tech.
+  function buildEventButton(actionButton, instance, timeLabel, showTime = true) {
+    const readonly = instance.readonly === true;
+    const dataset = eventDataset(instance);
+    const title = instanceTitle(instance);
+    const marker = eventMarkerHtml(instance);
     return actionButton({
       plain: true,
       className: `cal-event ${categoryClass(instance)}${readonly ? ' cal-event--readonly' : ''}`,
@@ -183,8 +252,10 @@
       if (!start || !end || end.getTime() <= dayStart || start.getTime() >= dayEnd) {
         continue;
       }
-      const startMin = Math.max(0, Math.round((start.getTime() - dayStart) / 60000));
-      const endMin = Math.min(MINUTES_PER_DAY, Math.round((end.getTime() - dayStart) / 60000));
+      // Wall-clock minutes (not elapsed ms) so a DST day's blocks line up with
+      // the hour gutter and the now-line, which are wall-clock too.
+      const startMin = start.getTime() <= dayStart ? 0 : minutesOfDay(start);
+      const endMin = end.getTime() >= dayEnd ? MINUTES_PER_DAY : minutesOfDay(end);
       blocks.push({
         instance,
         startMin,
@@ -212,15 +283,9 @@
     const dayEnd = addLocalDays(day, 1).getTime();
     const dayInstances = [];
     for (const instance of instances) {
-      if (!instance.allDay) {
-        continue;
+      if (instance.allDay && instanceOverlapsRange(instance, dayStart, dayEnd)) {
+        dayInstances.push(instance);
       }
-      const start = parseLocalDateTime(instance.start);
-      const end = parseLocalDateTime(instance.end);
-      if (!start || !end || end.getTime() <= dayStart || start.getTime() >= dayEnd) {
-        continue;
-      }
-      dayInstances.push(instance);
     }
     const visibleMarkup = dayInstances.slice(0, 3)
       .map((instance) => buildAllDayChip(actionButton, instance))
@@ -237,12 +302,13 @@
     const fullLabel = formatFullDateLabel(day);
     const popoverId = `calAllDayPop-${dayKey}`;
     const count = overflow.length;
+    const moreLabel = jtn('dashboard.calendar.grid.moreAllDayEvents', count, { count, date: fullLabel }, '{count} more all-day event on {date}', '{count} more all-day events on {date}');
     return visibleMarkup + chip({
       label: jt('dashboard.calendar.grid.moreCount', '+{count} more', { count }),
       hasPopup: true,
       ariaControls: popoverId,
-      ariaLabel: jtn('dashboard.calendar.grid.moreAllDayEvents', count, { count, date: fullLabel }, '{count} more all-day event on {date}', '{count} more all-day events on {date}'),
-      title: jtn('dashboard.calendar.grid.moreAllDayEvents', count, { count, date: fullLabel }, '{count} more all-day event on {date}', '{count} more all-day events on {date}'),
+      ariaLabel: moreLabel,
+      title: moreLabel,
       className: 'cal-week__allday-more',
     }) + popover({
       domId: popoverId,
@@ -369,14 +435,20 @@
 
   return {
     MINUTES_PER_DAY,
-    assignDayLanes,
     buildCalendarGridMarkup,
+    categoryClass,
+    compareInstances,
     computeWeekStart,
     computeWeekOffsetForDate,
+    eventDataset,
+    eventMarkerHtml,
     formatFullDateLabel,
     formatLocalDate,
+    formatRelative,
     formatTimeShort,
     formatWeekRangeLabel,
+    instanceOverlapsRange,
+    instanceTitle,
     listWeekDays,
     minutesOfDay,
     parseLocalDateTime,

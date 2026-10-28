@@ -51,12 +51,17 @@ function createHarness({ values = {}, activeStream = false, bridge = null, reset
       return { status: 'applied', state: { values: {}, fields: ENGINE_TUNING_FIELDS, groups: ENGINE_TUNING_GROUPS } };
     },
   };
-  const statuses = [];
   const section = createAdvancedTuningSection({
     inventory, resetLimitsToDefaults, getEngineType,
     getBridge: () => activeBridge,
-    onStatus: (status) => statuses.push(status),
   });
+  // The page status as shown: its tone (from the status row) and its text.
+  const status = () => {
+    const node = sectionDom.advancedTuningStatus;
+    const row = node.querySelector('.inv-status-row');
+    const tone = row ? (Array.from(row.classList).find((name) => /^inv-status-row--(pending|success|warning|danger)$/.test(name)) || 'inv-status-row--default').slice('inv-status-row--'.length) : 'default';
+    return { tone, text: node.hidden ? '' : node.textContent.trim() };
+  };
   if (loaded) {
     section.setState({
       values, fields: ENGINE_TUNING_FIELDS, groups: ENGINE_TUNING_GROUPS, activeStream,
@@ -68,7 +73,7 @@ function createHarness({ values = {}, activeStream = false, bridge = null, reset
     target.addEventListener(eventName, handler);
     listeners.push({ target, eventName });
   });
-  return { dom, documentRef, sectionDom, section, calls, statuses, listeners, window: dom.window };
+  return { dom, documentRef, sectionDom, section, calls, status, listeners, window: dom.window };
 }
 
 function fire(documentRef, window, element, type, detail) {

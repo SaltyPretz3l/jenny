@@ -385,3 +385,23 @@ test('dispose stops the Working tree page too', async () => {
   assert.equal(h.rail.getWorkingTree(), null);
   assert.equal(h.detailPanel.querySelector('.changes-wt .file-diff'), null);
 });
+
+test('a chat findings list opens the Working tree page with its findings on their lines', async () => {
+  const h = wtHarness();
+  const opener = h.document.getElementById('opener');
+  const reviewFindings = {
+    sessionId: 'sess_a', toolCallId: 'call_7', focusIndex: 1,
+    findings: [{ index: 1, severity: 'high', title: 'b is wrong', body: 'Keep a.', file: 'src/a.js', line: 1, endLine: 1 }],
+  };
+  assert.equal(h.rail.openWorkingTree({ ownerSessionId: 'sess_a', opener, reviewFindings }), true);
+  // The listing, then the open file's diff.
+  for (let pass = 0; pass < 6; pass += 1) await settle();
+  const page = h.detailPanel.querySelector('.changes-detail-page');
+  assert.equal(page.dataset.changesScope, 'working_tree');
+  const marked = page.querySelector('.diff-line-add[data-review-severity="high"]');
+  assert.ok(marked, 'the added line carries the finding dot');
+  const comment = marked.nextElementSibling.querySelector('.review-diff-comment');
+  assert.equal(comment.getAttribute('data-review-focus'), 'true');
+  assert.equal(comment.getAttribute('data-tool-call-id'), 'call_7');
+  assert.notEqual(h.document.activeElement.getAttribute('data-value'), 'working_tree', 'the page scrolls to the comment instead of focusing the switch');
+});

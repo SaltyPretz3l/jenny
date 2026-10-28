@@ -44,6 +44,15 @@ test('turn_article_stream_mismatch treats held phase as INFO and fallback as WAR
     'turn_article_stream_mismatch',
     { phase: 'patch_fallback' },
   ), 'WARN');
+  // 2026-10-27: a new reply's first full render draws the missing article; only a sticky rollback is a finding.
+  assert.equal(controller.resolveChatTimelineRolloutSignalLevel(
+    'turn_article_stream_mismatch',
+    { phase: 'full_render', stickyRollback: false },
+  ), 'INFO');
+  assert.equal(controller.resolveChatTimelineRolloutSignalLevel(
+    'turn_article_stream_mismatch',
+    { phase: 'full_render', stickyRollback: true },
+  ), 'WARN');
 });
 
 function makeTurnEventsMap(turnEvents) {

@@ -377,7 +377,7 @@ function normalizeLocalRuntime(rawLocalRuntime, fallback = {}) {
   const engineType = String(rawEngine.type || fallback.engine || '').trim().toLowerCase();
   const residency = ['remote', 'cli'].includes(rawModel.residency)
     ? rawModel.residency
-    : ({ chatgpt: 'remote', 'codex-cli': 'cli' })[engineType] || 'local';
+    : ({ chatgpt: 'remote', 'api-provider': 'remote', 'codex-cli': 'cli' })[engineType] || 'local';
   const providerResidency = residency !== 'local';
   const readinessModelLoaded = providerResidency ? null :
     rawReadiness.model_loaded === true

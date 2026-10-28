@@ -171,6 +171,22 @@ test('a deleted recipient is a permanent failure; Retry answers recipient_delete
   assert.equal(f.store.getSession(dst), null);
 });
 
+test('a failed send publishes a change for the sender and its summary counts it until it is cancelled', async (t) => {
+  const { f, src, dst, prepared, send } = await setup(t);
+  f.store.deleteSession(dst);
+  f.events.length = 0;
+  f.coordination.length = 0;
+  assert.equal(f.store.getSessionSummary(src).failed_delivery_count, 0);
+  assert.equal((await send()).operation.state, 'failed');
+  assert.equal(f.store.getSessionSummary(src).failed_delivery_count, 1, 'the "Needs you" row source');
+  assert.ok(f.events.some((event) => event.session_id === src), 'chatMessages.onChanged fires for the sender');
+  assert.ok(f.coordination.includes(src), 'the coordination signal fires for the sender');
+  const listed = await f.service.list({ ...V, session_id: src, direction: 'inbox', limit: 1 });
+  assert.equal(listed.counts.failed_delivery, 1, 'the renderer sync reads the same count from list()');
+  assert.equal((await f.service.cancel({ ...V, operation_id: prepared.operation_id })).ok, true);
+  assert.equal(f.store.getSessionSummary(src).failed_delivery_count, 0);
+});
+
 test('a full destination inbox fails with recipient_backpressure and delivers on Retry once space exists', async (t) => {
   const { f, dst, send, retry, outbox } = await setup(t);
   const inbox = Array.from({ length: 256 }, (_, n) => mailFixtures.makeInbox(n + 1, {}, {

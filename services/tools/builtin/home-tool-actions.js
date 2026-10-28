@@ -17,6 +17,11 @@ const {
   HOME_CALENDAR_RECURRENCE_PRESETS,
   MAX_CALENDAR_EVENT_NOTES_CHARS,
   MAX_CALENDAR_EVENT_TITLE_CHARS,
+  addWallClockMinutes,
+  formatLocalDateTime,
+  parseLocalDateTime,
+  parseRangeBound,
+  wallClockDurationMinutes,
 } = require('../../home-calendar-schema');
 const {
   MAX_PROACTIVE_REMINDER_LABEL_CHARS,
@@ -35,13 +40,22 @@ const MAX_OVERLAP_LINES = 12;
 const CALENDAR_HINT = '(The user sees this list rendered as a calendar in chat.'
   + ' Summarize what matters — conflicts, gaps, what changed — rather than repeating every entry.)';
 
+// Validation reasons (invalid_*, *_required) are argument mistakes and a
+// missing record is not_found; neither touched anything. Write failures keep
+// the bare metadata so the sidecar still treats them as execution faults.
+function failureClass(reason) {
+  if (/^invalid_|_required$/.test(reason)) return { failure_class: 'bad_arguments', effects: 'none' };
+  if (reason === 'not_found') return { failure_class: 'not_found', effects: 'none' };
+  return {};
+}
+
 function failure({ reason, message, summary, errorCode = TOOL_ERROR_CODES.EXECUTION_FAILED }) {
   return {
     content: message,
     summary,
     isError: true,
     errorCode,
-    metadata: { result_kind: 'home', status: 'failed', reason },
+    metadata: { result_kind: 'home', status: 'failed', reason, ...failureClass(reason) },
   };
 }
 
@@ -59,27 +73,66 @@ function clip(value, max) {
   return { text: text.slice(0, max), clipped: text.length > max };
 }
 
+// The one parser for every model-supplied Home wall-clock field: the exact
+// "YYYY-MM-DDTHH:MM" shape, then the calendar schema's strict local parse
+// (rejects Feb 30 and a skipped DST minute).
+function parseHomeDateTime(value) {
+  const token = typeof value === 'string' ? value.trim() : '';
+  const date = LOCAL_DATETIME_RE.test(token) ? parseLocalDateTime(token) : null;
+  return date ? { token, date } : null;
+}
+
+// An optional date argument: absent is `{ value: '' }`; anything present must
+// parse or the call fails with `invalid_<key>` (never silently ignored).
+function readLocalDateTime(input, key) {
+  const raw = input?.[key];
+  if (raw === undefined || raw === null || (typeof raw === 'string' && !raw.trim())) {
+    return { value: '' };
+  }
+  const parsed = parseHomeDateTime(raw);
+  if (!parsed) {
+    return {
+      error: failure({
+        reason: `invalid_${key}`,
+        message: `${key} must be a real local date and time as "YYYY-MM-DDTHH:MM".`,
+        summary: `Invalid ${key}`,
+      }),
+    };
+  }
+  return { value: parsed.token, parsed };
+}
+
+// calendar_list bounds are looser than event fields: the calendar accepts a
+// bare date and strips a trailing zone, and a bare range_end covers that whole
+// day (parseRangeBound, shared with CalendarService). An unparseable bound
+// used to be ignored silently; now it is refused.
+function readRangeBound(input, key) {
+  const raw = input?.[key];
+  if (raw === undefined || raw === null || (typeof raw === 'string' && !raw.trim())) {
+    return { value: '' };
+  }
+  const token = typeof raw === 'string' ? raw.trim() : '';
+  const date = parseRangeBound(token, key === 'range_end');
+  if (!date) {
+    return {
+      error: failure({
+        reason: `invalid_${key}`,
+        message: `${key} must be a local date ("YYYY-MM-DD") or date and time ("YYYY-MM-DDTHH:MM").`,
+        summary: `Invalid ${key}`,
+      }),
+    };
+  }
+  return { value: token, date };
+}
+
 // 'YYYY-MM-DDTHH:MM' is a one-shot ('once_at'); a bare 'HH:MM' is the daily
 // cadence. Anything else is rejected rather than coerced — a reminder that
 // silently lands on the wrong cadence is worse than a refusal.
 function reminderScheduleFromRemindAt(value) {
   const token = normalizeString(value);
-  if (LOCAL_DATETIME_RE.test(token)) {
-    const [dateToken, timeToken] = token.split('T');
-    const [year, month, day] = dateToken.split('-').map(Number);
-    const [hour, minute] = timeToken.split(':').map(Number);
-    if (hour > 23 || minute > 59) return null;
-    const date = new Date(year, month - 1, day, hour, minute);
-    if (
-      date.getFullYear() !== year
-      || date.getMonth() !== month - 1
-      || date.getDate() !== day
-      || date.getHours() !== hour
-      || date.getMinutes() !== minute
-    ) {
-      return null;
-    }
-    return { scheduleType: 'once_at', onceAt: token };
+  const parsed = parseHomeDateTime(token);
+  if (parsed) {
+    return { scheduleType: 'once_at', onceAt: parsed.token };
   }
   if (CLOCK_TIME_RE.test(token)) {
     const [hour, minute] = token.split(':').map(Number);
@@ -124,10 +177,18 @@ function describeOverlaps(instances, overlaps) {
 }
 
 function calendarList(service, input, meta) {
-  const listing = service.listCalendar({
-    start: normalizeString(input?.range_start),
-    end: normalizeString(input?.range_end),
-  });
+  const rangeStart = readRangeBound(input, 'range_start');
+  if (rangeStart.error) return rangeStart.error;
+  const rangeEnd = readRangeBound(input, 'range_end');
+  if (rangeEnd.error) return rangeEnd.error;
+  if (rangeStart.date && rangeEnd.date && rangeEnd.date <= rangeStart.date) {
+    return failure({
+      reason: 'invalid_range',
+      message: 'range_end must be after range_start.',
+      summary: 'Invalid calendar range',
+    });
+  }
+  const listing = service.listCalendar({ start: rangeStart.value, end: rangeEnd.value });
   let journalEntries;
   try {
     const journal = service.listJournal?.();
@@ -157,32 +218,63 @@ function calendarList(service, input, meta) {
         ? `\n(Not fetched yet, so not included: ${listing.uncoveredFeeds.join(', ')}.)` : '')
       + `\n${CALENDAR_HINT}`,
     summary: `Listed ${shown.length} calendar entr${shown.length === 1 ? 'y' : 'ies'}`,
+    // instance_count is the full listing everywhere (top level and
+    // calendar metadata); listed_count is how many the text above names.
     extra: {
       action: 'calendar_list',
       range_start: listing.rangeStart,
       range_end: listing.rangeEnd,
-      instance_count: shown.length,
-      omitted_count: Math.max(0, omitted),
+      instance_count: listing.instances.length,
+      listed_count: shown.length,
       calendar: shapeCalendarMetadata({
         listing,
         journalEntries,
         sessionId: meta?.sessionId,
-        now: new Date(),
+        now: typeof service.now === 'function' ? service.now() : new Date(),
         overlaps,
       }),
     },
   });
 }
 
+// Moving an event's start without naming an end keeps its length: the
+// calendar would otherwise keep the OLD end and stretch or invert the event.
+function preservedEnd(service, eventId, start, input) {
+  const prior = typeof service.readEvent === 'function' ? service.readEvent(eventId) : null;
+  if (!prior) return '';
+  if (input?.all_day !== undefined && (input.all_day === true) !== (prior.allDay === true)) return '';
+  const priorStart = parseLocalDateTime(prior.start);
+  const priorEnd = parseLocalDateTime(prior.end);
+  if (!priorStart || !priorEnd || priorEnd <= priorStart) return '';
+  // Wall-clock minutes, so a move across a DST change keeps the local length.
+  const minutes = wallClockDurationMinutes(priorStart, priorEnd);
+  return formatLocalDateTime(addWallClockMinutes(start.date, minutes));
+}
+
 function eventUpsert(service, input, meta) {
-  const start = normalizeString(input?.start);
   const requestedId = normalizeString(input?.id);
-  if (!requestedId && !LOCAL_DATETIME_RE.test(start)) {
+  const startArg = readLocalDateTime(input, 'start');
+  if (startArg.error) return startArg.error;
+  const start = startArg.value;
+  if (!requestedId && !start) {
     return failure({
       reason: 'invalid_start',
       message: 'A new event needs start as a local "YYYY-MM-DDTHH:MM" string.',
       summary: 'Event needs a start time',
     });
+  }
+  const endArg = readLocalDateTime(input, 'end');
+  if (endArg.error) return endArg.error;
+  let end = endArg.value;
+  if (start && end && end < start) {
+    return failure({
+      reason: 'invalid_range',
+      message: 'end must not be before start.',
+      summary: 'Event ends before it starts',
+    });
+  }
+  if (requestedId && start && !end) {
+    end = preservedEnd(service, requestedId, startArg.parsed, input);
   }
   const category = normalizeString(input?.category).toLowerCase();
   if (category && !HOME_CALENDAR_COLOR_IDS.includes(category)) {
@@ -206,7 +298,7 @@ function eventUpsert(service, input, meta) {
     ...(requestedId ? { id: requestedId } : {}),
     ...(input?.title === undefined ? {} : { title: title.text }),
     ...(start ? { start } : {}),
-    ...(normalizeString(input?.end) ? { end: normalizeString(input.end) } : {}),
+    ...(end ? { end } : {}),
     ...(input?.all_day === undefined ? {} : { allDay: input.all_day === true }),
     ...(category ? { categoryId: category } : {}),
     ...(input?.notes === undefined ? {} : { notes: notes.text }),
@@ -313,7 +405,8 @@ function reminderUpsert(service, input, meta) {
   const when = state?.scheduleType === 'once_at' ? state.onceAt : state?.dailyAt || remindAt;
   return success({
     content: `${outcome.op === 'create' ? 'Added' : 'Updated'} reminder "${state?.label || 'Reminder'}"`
-      + ` for ${when}. Reminders surface on Home as nudges — nothing fires automatically.`
+      + ` for ${when}. At that time Jenny raises it as a notification while she is running,`
+      + ' and it is listed on Home.'
       + `${outcome.journaled === false
         ? ' It could NOT be added to the undo journal, so it cannot be undone from Home.'
         : ' It can be undone from the receipt in chat or from Home.'}`
@@ -337,6 +430,36 @@ function reminderUpsert(service, input, meta) {
   });
 }
 
+function readReminder(service, id) {
+  if (typeof service.readReminder === 'function') return service.readReminder(id);
+  return service.getProactive().reminders.find((reminder) => reminder.id === id) || null;
+}
+
+// What a confirmed delete removes, so the model can say it before asking:
+// deleting a recurring event's id removes the whole series.
+function deleteScope(existing, isEvent) {
+  if (isEvent) {
+    const recurrence = normalizeString(existing?.recurrence).toLowerCase();
+    if (recurrence && recurrence !== 'none') {
+      return {
+        kind: 'series',
+        text: `a ${recurrence} recurring event, so EVERY occurrence in the series is removed, not just one`,
+      };
+    }
+    return { kind: 'single', text: `a single event at ${existing?.start || 'an unknown time'}` };
+  }
+  if (existing?.scheduleType === 'daily_at') {
+    return { kind: 'series', text: `a daily reminder at ${existing.dailyAt || '?'}, so it stops for every day` };
+  }
+  if (existing?.scheduleType === 'interval_minutes') {
+    return {
+      kind: 'series',
+      text: `a repeating reminder every ${existing.intervalMinutes || '?'} minutes, so every repeat stops`,
+    };
+  }
+  return { kind: 'single', text: `a one-time reminder at ${existing?.onceAt || 'an unknown time'}` };
+}
+
 // Deletes are the one destructive action, so they self-gate: the first call
 // mutates NOTHING and reports exactly what would be removed; only a second
 // call carrying confirm:true performs the delete. That round-trip is what puts
@@ -356,9 +479,7 @@ function deleteAction(service, input, meta, kind) {
   // listCalendar's expanded instances: instances only cover the -7d/+60d
   // window, so a precheck that read them would refuse to delete an event three
   // months out that deleteEvent itself can find and remove.
-  const existing = isEvent
-    ? service.readEvent(entityId)
-    : service.getProactive().reminders.find((reminder) => reminder.id === entityId);
+  const existing = isEvent ? service.readEvent(entityId) : readReminder(service, entityId);
   const name = isEvent
     ? existing?.title || ''
     : existing?.label || '';
@@ -370,15 +491,18 @@ function deleteAction(service, input, meta, kind) {
     });
   }
   if (input?.confirm !== true) {
+    const scope = deleteScope(existing, isEvent);
     return success({
       status: 'confirmation_required',
-      content: `This would delete the ${noun} "${name || '(untitled)'}" (id ${entityId}).`
-        + ' Nothing has been deleted. Confirm with the user, then call again with confirm: true.',
+      content: `This would delete the ${noun} "${name || '(untitled)'}" (id ${entityId}): ${scope.text}.`
+        + ' Nothing has been deleted. Tell the user exactly what will be removed, confirm with them,'
+        + ' then call again with confirm: true.',
       summary: `Confirm deletion of ${noun}`,
       extra: {
         action: isEvent ? 'event_delete' : 'reminder_delete',
         [isEvent ? 'event_id' : 'reminder_id']: entityId,
         target_label: name,
+        target_scope: scope.kind,
       },
     });
   }

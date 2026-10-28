@@ -209,3 +209,42 @@ test('buildAgentSnapshotProjection tolerates an empty options object', () => {
   assert.strictEqual(snapshot.lastError, null);
   assert.deepStrictEqual(snapshot.setup, { workspaceRootConfigured: false, complete: false });
 });
+
+test('projectActiveTurn anchors a settled turn on the latest assistant message, not the stale live entry', () => {
+  // A denied approval leaves its turn in turns_by_id (never reconciled); the next turn completes
+  // and is reconciled, so the phase model's live-map fallback would keep reporting "denied".
+  const liveState = {
+    active_turn_id: '',
+    turns_by_id: {
+      turn_denied: {
+        turn_id: 'turn_denied', status: 'denied', error: 'User rejected approval', rows: [],
+        primary_assistant_message_id: 'error_stream_1',
+      },
+    },
+    reconciled_rows_by_turn_id: {
+      turn_ok: {
+        turn: { turn_id: 'turn_ok', status: 'completed', primary_assistant_message_id: 'a2' },
+        rows: [{ kind: 'assistant_text', payload: { text: 'done' } }],
+      },
+    },
+  };
+  const withMessages = baseState({
+    ui: { chatTimelineLiveStateBySession: new Map([['s1', liveState]]) },
+    messagesBySession: new Map([['s1', [
+      { id: 'u1', role: 'user' }, { id: 'error_stream_1', role: 'assistant' },
+      { id: 'u2', role: 'user' }, { id: 'a2', role: 'assistant' },
+    ]]]),
+  });
+  assert.strictEqual(projectActiveTurn(withMessages, 's1', false).terminal, 'completed');
+
+  // Without an anchoring message the phase model's own fallback still applies.
+  const withoutMessages = baseState({ ui: { chatTimelineLiveStateBySession: new Map([['s1', liveState]]) } });
+  assert.strictEqual(projectActiveTurn(withoutMessages, 's1', false).terminal, 'denied');
+
+  // An active turn always wins over the anchor.
+  const active = baseState({
+    ui: { chatTimelineLiveStateBySession: new Map([['s1', { ...liveState, active_turn_id: 'turn_denied' }]]) },
+    messagesBySession: withMessages.messagesBySession,
+  });
+  assert.strictEqual(projectActiveTurn(active, 's1', false).terminal, 'denied');
+});

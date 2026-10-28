@@ -7,18 +7,25 @@
 /* ---------- Composer message strip ---------- */
 .composer-message-strip {
   display: grid;
-  gap: var(--space-3);
+  gap: var(--space-1);
   min-inline-size: 0;
   margin: 0 0 var(--space-4);
   color: var(--text-muted);
   font-size: var(--font-size-footnote);
 }
 
+/* Option C (2026-10-20): one line per receipt, the same grammar as a queued send's line:
+   dot, "Sent to “X”", what happened, when or why, then its actions at the end. */
 .composer-message-strip__receipt {
-  display: grid;
-  gap: var(--space-1);
   min-inline-size: 0;
 }
+
+.composer-message-strip__receipt .composer-message-strip__link:first-of-type { margin-inline-start: auto; }
+
+.composer-message-strip__more { padding-inline-start: calc(6px + var(--space-4)); }
+
+/* On a session_message row in the conversation: no strip band, only its line. */
+.composer-message-strip.session-message-receipt { margin: var(--space-1) 0 0; }
 
 .composer-message-strip__sent {
   color: var(--text-secondary);
@@ -342,10 +349,9 @@ button.chat-review__chip { cursor: pointer; }
 }
 
 .session-row__unread-dot {
-  order: 2;
-  flex: 0 0 auto;
-  inline-size: 6px;
-  block-size: 6px;
+  /* Placed in the fixed dot column by chats-panel-row-trail.css. */
+  inline-size: var(--session-row-dot-size);
+  block-size: var(--session-row-dot-size);
   border-radius: var(--radius-pill);
   background: var(--accent-primary);
 }

@@ -2,7 +2,8 @@
 
 const { summarizeCompactionSnapshot } = require('./session-compaction-snapshot');
 const { normalizeSpawnedFrom, isCoordinationContainerFrozen } = require('./session-coordination-records');
-const { countUnreadInbox } = require('./session-mail-records');
+const { countFailedOutbox, countUnreadInbox } = require('./session-mail-records');
+const { normalizeSessionRole } = require('./primary-session');
 
 // Renderer-facing projection of a normalized session record (the "summary"
 // carried by the session index and every `sessions:*` IPC reply). Extracted
@@ -77,8 +78,12 @@ function buildSessionSummary(session) {
       ? session.session_mail?.reporting_enabled === true : null,
     // Inbox messages the user has not seen yet; 0 when there is no mail or the container is frozen.
     unread_message_count: isCoordinationContainerFrozen(session.session_mail) ? 0 : countUnreadInbox(session.session_mail),
+    // Sent messages that could not be delivered (the "Needs you" row); 0 when there is no mail or the container is frozen.
+    failed_delivery_count: isCoordinationContainerFrozen(session.session_mail) ? 0 : countFailedOutbox(session.session_mail),
     // Addressed messages bind both incarnations; an imported or legacy chat gets one on its first turn.
     messaging_addressable: Boolean(String(session.session_incarnation || '').trim()),
+    // Row 69: 'primary' on the profile's one Jenny chat, null on every other chat.
+    session_role: normalizeSessionRole(session.session_role),
   };
 }
 

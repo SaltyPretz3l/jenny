@@ -5,12 +5,14 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+const { windowsOnly } = require('./helpers/platform-skips');
+
 // Pure-function tests for scripts/dev/jenny-process-identity.ps1. The dev
 // cleanup script itself is never executed here (it stops processes); only the
 // function-only file is dot-sourced and fed synthetic records.
 
 const IDENTITY_SCRIPT = path.resolve(__dirname, '..', 'scripts', 'dev', 'jenny-process-identity.ps1');
-const SKIP = process.platform === 'win32' ? false : 'Windows PowerShell only';
+const SKIP = windowsOnly('powershell.exe 5.1');
 const REPO = 'G:\\repo';
 const VENV_PYTHON = `${REPO}\\.venv\\Scripts\\python.exe`;
 const ELECTRON = `${REPO}\\node_modules\\electron\\dist\\electron.exe`;

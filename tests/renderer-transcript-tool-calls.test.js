@@ -364,7 +364,8 @@ test('tool transcript legacy view model accepts camelCase result compatibility f
   assert.equal(viewModel.status, 'completed');
   assert.equal(viewModel.isRunning, false);
   assert.equal(viewModel.outputText, 'Compatibility result.');
-  assert.equal(viewModel.durationLabel, '0.1s');
+  // The one tool-duration label (tool-call-utils formatToolDurationMs): sub-second reads in ms.
+  assert.equal(viewModel.durationLabel, '80ms');
   assert.equal(viewModel.generatedArtifacts.length, 1);
   assert.equal(viewModel.metadata.exitCode, 0);
 });

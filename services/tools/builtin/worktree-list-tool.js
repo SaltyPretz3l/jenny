@@ -1,19 +1,8 @@
 'use strict';
 
-const { TOOL_ERROR_CODES } = require('../../backend/error-codes');
+const { manifestSchema, serviceFailure, serviceUnavailable } = require('./tool-result');
 
-function serviceUnavailable() {
-  return {
-    content: 'Worktree service is unavailable.',
-    summary: 'Worktree list unavailable',
-    isError: true,
-    errorCode: TOOL_ERROR_CODES.DISABLED,
-    metadata: {
-      result_kind: 'worktree_list',
-      unavailable: true,
-    },
-  };
-}
+const RESULT_KIND = 'worktree_list';
 
 function renderWorktree(entry) {
   const branch = entry.branch || (entry.detached ? 'detached' : 'unknown branch');
@@ -25,15 +14,10 @@ function renderWorktree(entry) {
 
 module.exports = {
   name: 'worktree_list',
-  description: 'List Git worktrees for the configured workspace root, combining Git-discovered state with Jenny registry entries.',
+  ...manifestSchema('worktree_list'),
   category: 'builtin',
   readOnly: true,
   workspaceRequired: true,
-  parameters: {
-    type: 'object',
-    properties: {},
-    required: [],
-  },
 
   summarize() {
     return 'List worktrees';
@@ -41,7 +25,10 @@ module.exports = {
 
   async execute(_input, context) {
     if (!context.worktreeService || typeof context.worktreeService.listWorktrees !== 'function') {
-      return serviceUnavailable();
+      return serviceUnavailable(RESULT_KIND, {
+        label: 'Worktree list',
+        content: 'Worktree service is unavailable.',
+      });
     }
     const request = {
       workspaceRoot: context.workingDirectory,
@@ -51,16 +38,7 @@ module.exports = {
     }
     const result = await context.worktreeService.listWorktrees(request);
     if (!result.success) {
-      return {
-        content: result.message || 'Worktree list failed.',
-        summary: 'Worktree list failed',
-        isError: true,
-        errorCode: result.error_code || TOOL_ERROR_CODES.EXECUTION_FAILED,
-        metadata: {
-          result_kind: 'worktree_list',
-          reason: result.reason || 'execution_failed',
-        },
-      };
+      return serviceFailure(RESULT_KIND, result, { label: 'Worktree list' });
     }
     const worktrees = Array.isArray(result.worktrees) ? result.worktrees : [];
     return {
@@ -70,7 +48,7 @@ module.exports = {
       summary: `List ${worktrees.length} worktree(s)`,
       isError: false,
       metadata: {
-        result_kind: 'worktree_list',
+        result_kind: RESULT_KIND,
         repository_root: result.repository_root,
         registry_path: result.registry_path,
         count: worktrees.length,

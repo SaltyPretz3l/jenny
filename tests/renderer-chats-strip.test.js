@@ -278,6 +278,29 @@ test('chip click opens that session; the strip New Chat starts a fresh one', asy
   );
 });
 
+test('chips order newest-first by ISO timestamp and the peek uses the Chats time vocabulary', async (t) => {
+  const { window, shell } = await loadRendererTestApp(t);
+  const doc = window.document;
+  await waitForUi(window, 60);
+  await seedSessions(window, shell, [
+    buildSidebarSession('chip-old', 'Old One', '2020-03-04T10:00:00.000Z'),
+    buildSidebarSession('chip-new', 'New One', minutesAgoIso(2)),
+    buildSidebarSession('chip-mid', 'Mid One', minutesAgoIso(90)),
+  ]);
+
+  await collapseChatPanel(window);
+  assert.deepEqual(
+    getChips(window).map((chip) => chip.dataset.stripSessionId),
+    ['chip-new', 'chip-mid', 'chip-old']
+  );
+  const oldChip = getChips(window).find((chip) => chip.dataset.stripSessionId === 'chip-old');
+  oldChip.dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true }));
+  await waitForUi(window, 20);
+  const meta = doc.getElementById('chatsStripPeekMeta').textContent;
+  // Earlier years use the sidebar's short numeric date, never "3d" or a four-digit year.
+  assert.match(meta, /^\d{1,2}\/\d{1,2}\/20 · /, `got "${meta}"`);
+});
+
 test('hovering a chip opens the quick-peek with title/time/model and leaving closes it', async (t) => {
   const { window, shell } = await loadRendererTestApp(t);
   const doc = window.document;

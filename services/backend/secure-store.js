@@ -9,9 +9,13 @@ const SECRET_TYPE_SENTRY_DSN = 'sentry_dsn';
 const SECRET_TYPE_WEB_SEARCH_PROVIDER_KEY = 'web_search_provider_key';
 const SECRET_TYPE_MCP_AUTH_TOKEN = 'mcp_auth_token';
 const SECRET_TYPE_MODEL_PROVIDER_OAUTH = 'model_provider_oauth';
+const SECRET_TYPE_MODEL_PROVIDER_API_KEY = 'model_provider_api_key';
 const WEB_SEARCH_PROVIDER_KEY_PREFIX = 'web_search_provider_key:';
 const MCP_AUTH_TOKEN_KEY_PREFIX = 'mcp_auth_token:';
 const MODEL_PROVIDER_OAUTH_KEY_PREFIX = 'model_provider_oauth:';
+const MODEL_PROVIDER_API_KEY_PREFIX = 'model_provider_api_key:';
+// API-provider instance ids (row 78); mirrors api-provider-config.js.
+const MODEL_PROVIDER_API_KEY_ID_RE = /^[a-z][a-z0-9-]{1,31}$/;
 const PLUGIN_REMOTE_MCP_KEY_PREFIX = 'plugin_remote_mcp:';
 const PLUGIN_FULL_HOST_KEY_PREFIX = 'plugin_full_host:';
 const MODEL_PROVIDER_OAUTH_IDS = Object.freeze(['chatgpt']);
@@ -149,6 +153,7 @@ const KNOWN_SECRET_TYPES = Object.freeze([
   SECRET_TYPE_WEB_SEARCH_PROVIDER_KEY,
   SECRET_TYPE_MCP_AUTH_TOKEN,
   SECRET_TYPE_MODEL_PROVIDER_OAUTH,
+  SECRET_TYPE_MODEL_PROVIDER_API_KEY,
 ]);
 
 function normalizeSecretType(value, fallback = '') {
@@ -195,6 +200,14 @@ function modelProviderOAuthKeyName(providerId) {
     throw new Error('SecureStore: unknown model provider OAuth id.');
   }
   return `${MODEL_PROVIDER_OAUTH_KEY_PREFIX}${token}`;
+}
+
+function modelProviderApiKeyName(instanceId) {
+  const token = String(instanceId || '').trim();
+  if (!MODEL_PROVIDER_API_KEY_ID_RE.test(token)) {
+    throw new Error('SecureStore: unknown model provider instance id.');
+  }
+  return `${MODEL_PROVIDER_API_KEY_PREFIX}${token}`;
 }
 
 class SecureStore {
@@ -526,9 +539,53 @@ class SecureStore {
   deleteModelProviderOAuth(providerId) {
     return this.delete(modelProviderOAuthKeyName(providerId));
   }
+
+  // API-provider keys (row 78): one per provider instance. Main-process only;
+  // the renderer reaches nothing but the presence probe and a write-only setter.
+  getModelProviderApiKey(instanceId) {
+    return this.get(modelProviderApiKeyName(instanceId));
+  }
+
+  hasModelProviderApiKey(instanceId) {
+    const keyName = modelProviderApiKeyName(instanceId);
+    this._assertAppReady();
+    const record = this.store.read({})[keyName];
+    return Boolean(record && record.encrypted === true && String(record.value || '').trim());
+  }
+
+  setModelProviderApiKey(instanceId, value) {
+    return this.set(modelProviderApiKeyName(instanceId), String(value || '').trim(), {
+      secretType: SECRET_TYPE_MODEL_PROVIDER_API_KEY,
+    });
+  }
+
+  deleteModelProviderApiKey(instanceId) {
+    return this.delete(modelProviderApiKeyName(instanceId));
+  }
+
+  // Drops keys whose provider instance no longer exists; returns the instance
+  // ids removed. The file is rewritten only when one was present.
+  purgeOrphanModelProviderApiKeys(liveInstanceIds = []) {
+    this._assertAppReady();
+    const live = new Set(Array.isArray(liveInstanceIds) ? liveInstanceIds : []);
+    const payload = this.store.read({});
+    const orphans = Object.keys(payload).filter((key) => (
+      key.startsWith(MODEL_PROVIDER_API_KEY_PREFIX)
+      && !live.has(key.slice(MODEL_PROVIDER_API_KEY_PREFIX.length))
+    ));
+    if (orphans.length === 0) {
+      return [];
+    }
+    for (const key of orphans) {
+      delete payload[key];
+    }
+    this.store.write(payload);
+    return orphans.map((key) => key.slice(MODEL_PROVIDER_API_KEY_PREFIX.length));
+  }
 }
 
 module.exports = {
+  SECRET_TYPE_MODEL_PROVIDER_API_KEY,
   SECRET_TYPE_MODEL_PROVIDER_OAUTH,
   WEB_SEARCH_PROVIDER_KEY_IDS,
   SecureStore,

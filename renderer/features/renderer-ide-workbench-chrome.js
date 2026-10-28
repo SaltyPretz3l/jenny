@@ -179,8 +179,11 @@
   }
 
   // A view's label and count from the registry; a throwing provider never breaks chrome.
+  // views[id].labelOverride() (row 82 T2: a renamed terminal) wins when it is non-empty.
   function viewLabel(views, id) {
     try {
+      const override = views[id] && typeof views[id].labelOverride === 'function' ? views[id].labelOverride() : '';
+      if (override) return String(override);
       const text = views[id] && typeof views[id].label === 'function' ? views[id].label() : null;
       return text == null ? String(id) : String(text);
     } catch (_error) {
@@ -223,24 +226,21 @@
     }
   }
 
-  function runViewAction(views, id, name) {
+  // anchorEl: the clicked header button, for an action that opens a menu (T2's profile chevron).
+  function runViewAction(views, id, name, anchorEl) {
     try {
-      if (views[id] && typeof views[id].onAction === 'function') views[id].onAction(name);
+      if (views[id] && typeof views[id].onAction === 'function') views[id].onAction(name, anchorEl);
     } catch (_error) {
       /* a view's action must not break the workbench */
     }
   }
 
   return {
-    ICONS: ICONS,
     viewActions: viewActions,
     runViewAction: runViewAction,
     viewLabel: viewLabel,
-    viewCount: viewCount,
     viewBadge: viewBadge,
-    escapeHtml: escapeHtml,
     countMarkup: countMarkup,
-    tabMarkup: tabMarkup,
     headerMarkup: headerMarkup,
     boundBadge: boundBadge,
     boundView: boundView,

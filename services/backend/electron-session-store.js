@@ -74,6 +74,7 @@ const { preserveRuntimeContinuations } = require('./runtime-continuation-records
 const { normalizeFailureRetryReasoningSnapshots } = require('./session-failure-retry-reasoning');
 const { normalizeSuggestedChanges, settleSuggestedChangesOnRead } = require('./suggested-changes-store');
 const { normalizeCoordinationFields, stripCoordinationFields } = require('./session-coordination-records');
+const { isPrimaryRole, normalizeSessionRole } = require('./primary-session');
 // TURN_EVENT_LOG_VERSION and the turn-event append/persist helpers now live in
 // ./session-turn-events (imported above and re-exported below); the constant is
 // still surfaced from this module for backward compatibility with importers.
@@ -187,6 +188,7 @@ function normalizeSession(sessionId, input = {}, { reuseTaggedMessages = false }
     run_mode: normalizeRunMode(input.run_mode, { planModeFallback: normalizePlanMode(input.plan_mode) === true }),
     pre_plan_run_mode: input.pre_plan_run_mode === 'auto' || input.pre_plan_run_mode === 'ask' ? input.pre_plan_run_mode : '',
     lockdown: input.lockdown === true,
+    session_role: normalizeSessionRole(input.session_role),
     pinned: input.pinned === true,
     archived_at: input.archived_at ? String(input.archived_at) : null,
     context_preferences: normalizeContextPreferences(input.context_preferences),
@@ -252,6 +254,7 @@ class ElectronSessionStore {
       journal: { append: sessionJournal },
       logger: this._logger,
       storeName: 'session_store',
+      activeTurnMarker: true,
     });
     this.turnEventLogVersion = TURN_EVENT_LOG_VERSION;
     this.conversationStore = createConversationStorePort(this, { kind: 'electron' });
@@ -396,12 +399,15 @@ class ElectronSessionStore {
     }));
   }
 
-  getSessionSummary(sessionId) {
-    const id = String(sessionId || '').trim();
-    const sessions = this._backend.getIndexSnapshot().sessions;
+  // Index summary reads: peek (hot paths) shares the summary by reference and must only be read.
+  peekSessionSummary(sessionId) {
+    const id = String(sessionId || '').trim(), sessions = this._backend.getIndexSnapshot().sessions;
     const summary = id && sessions && Object.hasOwn(sessions, id) ? sessions[id] : null;
-    return summary && typeof summary === 'object' && !Array.isArray(summary)
-      ? { ...structuredClone(summary), id } : null;
+    return summary && typeof summary === 'object' && !Array.isArray(summary) ? summary : null;
+  }
+  getSessionSummary(sessionId) {
+    const summary = this.peekSessionSummary(sessionId);
+    return summary ? { ...structuredClone(summary), id: String(sessionId).trim() } : null;
   }
 
   // Bulk lifecycle summaries plus active turns, without loading transcript bodies.
@@ -424,11 +430,11 @@ class ElectronSessionStore {
   }
 
   // `sessionType` / `imageConfig` retain the legacy schema-v17 image adapter.
-  createSession({ title, preferences, sessionType, pluginSession, imageConfig, composerDraft, linkedTaskId, projectId } = {}) {
+  createSession({ title, preferences, sessionType, pluginSession, imageConfig, composerDraft, linkedTaskId, projectId, sessionRole } = {}) {
     if (projectId !== undefined && !normalizeProjectId(projectId)) return null;
     const sessionId = createSessionId();
     return this._createSessionRecord(sessionId, {
-      title, preferences, sessionType, pluginSession, imageConfig, composerDraft, linkedTaskId, projectId,
+      title, preferences, sessionType, pluginSession, imageConfig, composerDraft, linkedTaskId, projectId, sessionRole,
     });
   }
 
@@ -495,6 +501,12 @@ class ElectronSessionStore {
 
   getActiveTurn(sessionId) {
     return normalizeActiveTurn(this.getSession(sessionId)?.active_turn);
+  }
+
+  // Cache-neutral active turn from the backend's scan registry (no transcript load): for
+  // monitors such as the session directory that poll a chat they do not own.
+  peekActiveTurn(sessionId) {
+    return normalizeActiveTurn(this._backend.getActiveTurnSnapshots().get(sessionId));
   }
 
   renameSession(sessionId, title) {
@@ -907,6 +919,7 @@ class ElectronSessionStore {
     const safePatch = { ...patch };
     delete safePatch.runtime_continuations;
     delete safePatch.suggested_changes;
+    delete safePatch.session_role; // row 69: only the primary-session seam writes the role
     stripCoordinationFields(safePatch);
     return this._updateSessionRecord(sessionId, safePatch, {
       bumpUpdatedAt: true,
@@ -937,7 +950,7 @@ class ElectronSessionStore {
     const candidateIds = [];
     for (const [sessionId, summary] of Object.entries(indexSessions)) {
       if (sessionId === currentSessionId) continue;
-      if (summary.pinned === true) continue;
+      if (summary.pinned === true || isPrimaryRole(summary)) continue;
       if (Number(summary.message_count || 0) > 0) continue;
       const title = String(summary.title || '').trim();
       if (title && title !== 'New Chat') continue;

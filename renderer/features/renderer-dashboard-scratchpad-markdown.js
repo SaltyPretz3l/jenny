@@ -116,7 +116,7 @@
             className: 'dashboard-scratchpad__check' + (item.checked ? ' is-checked' : ''),
             ariaPressed: item.checked === true,
             ariaLabel: item.label || jt('dashboard.scratchpad.markdown.checklistItem', 'Checklist item'),
-            title: jt('dashboard.scratchpad.markdown.markState', 'Mark {label} {state}', { label: item.label || jt('dashboard.scratchpad.markdown.checklistItemGeneric', 'checklist item'), state: item.checked ? 'not done' : 'done' }),
+            title: jt('dashboard.scratchpad.markdown.markState', 'Mark {label} {state}', { label: item.label || jt('dashboard.scratchpad.markdown.checklistItemGeneric', 'checklist item'), state: item.checked ? jt('dashboard.scratchpad.markdown.stateNotDone', 'not done') : jt('dashboard.scratchpad.markdown.stateDone', 'done') }),
             dataset: { 'scratchpad-check': String(item.lineIndex) },
             trustedHtml: inner,
           });

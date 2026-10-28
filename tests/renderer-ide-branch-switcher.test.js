@@ -431,3 +431,29 @@ test('the branch picker exposes its keyboard selection to assistive technology',
     sw.dispose();
   });
 });
+
+// The dirty guard used to count only git's dirty files: a clean tree with an
+// unsaved editor buffer switched branches with no guard at all.
+test('switchToBranch guards unsaved editor buffers even when git reports a clean tree', async () => {
+  let captured = null;
+  const confirmDialog = {
+    confirmBranchSwitch: async (payload) => { captured = payload; return 'cancel'; },
+    confirm: async () => true,
+  };
+  const gitClient = makeGitClient();
+  const sw = createIdeBranchSwitcher({
+    getDom: () => ({}),
+    gitClient,
+    confirmDialog,
+    callbacks: {
+      getCurrentBranch: () => 'main',
+      getDirtyCount: () => 0,
+      getUnsavedCount: () => 2,
+      isRepo: () => true,
+      isAvailable: () => true,
+    },
+  });
+  await sw.switchToBranch('feature');
+  assert.equal(captured && captured.count, 2, 'the guard ran with the unsaved buffers counted');
+  assert.deepEqual(callsTo(gitClient, 'checkout'), [], 'cancel keeps the branch');
+});

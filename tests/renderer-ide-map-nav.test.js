@@ -91,7 +91,6 @@ function stubSiblings(globalRef, overrides = {}) {
         dispose: () => {},
       };
     },
-    renderBucketStrip: () => {},
   };
   globalRef.rendererIdeMapStates = {
     createMapStates: () => ({

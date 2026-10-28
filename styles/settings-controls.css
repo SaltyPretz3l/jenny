@@ -118,8 +118,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .settings-field,
-  .approved-memory-item {
+  .settings-field {
     transition: none !important;
     transform: none !important;
     animation: none !important;
@@ -222,54 +221,6 @@
   margin-top: var(--space-7);
 }
 
-.approved-memory-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-7);
-  margin-top: var(--space-8);
-}
-
-.approved-memory-item {
-  padding: var(--space-8);
-  border-radius: var(--radius-base);
-  border: 1px solid var(--settings-shell-muted-border);
-  background: color-mix(in srgb, var(--settings-shell-muted-bg) 64%, transparent);
-  box-shadow:
-    var(--shadow-sm),
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
-  transition:
-    border-color var(--motion-duration-fast) var(--motion-ease-standard),
-    box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.approved-memory-item:hover {
-  border-color: color-mix(in srgb, var(--settings-shell-accent) 24%, var(--settings-shell-muted-border));
-  box-shadow:
-    0 4px 16px color-mix(in srgb, var(--settings-shell-accent) 6%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 6%, transparent);
-}
-
-.approved-memory-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-6);
-  margin-bottom: var(--space-6);
-}
-
-.approved-memory-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-4) var(--space-6);
-  align-items: center;
-}
-
-.approved-memory-empty {
-  color: var(--text-secondary);
-  font-size: var(--font-size-footnote);
-  line-height: 1.6;
-}
-
 .approved-memory-input,
 .approved-memory-textarea {
   width: 100%;
@@ -361,8 +312,7 @@
   resize: vertical;
 }
 
-.personality-user-field .inv-text-field-control,
-.personality-notes-field .inv-text-field-control {
+.personality-user-field .inv-text-field-control {
   min-height: 4em;
   resize: vertical;
 }
@@ -477,9 +427,12 @@
 /* Settings rows whose switch is labelled by the row's own name: the switch still
    needs an accessible name, so the built-in label is hidden visually rather than
    dropped. Same geometry as .sr-only (shell-chrome.css), which the toggle
-   primitive cannot be given directly -- it hardcodes .inv-toggle-label. */
+   primitive cannot be given directly -- it hardcodes .inv-toggle-label. The
+   usage table caption and the usage action status share the same hiding. */
 .mcp-servers-row-toggle .inv-toggle-label,
-.skills-settings-row-toggle .inv-toggle-label {
+.skills-settings-row-toggle .inv-toggle-label,
+.usage-table caption,
+#usageActionStatus[data-visual="hidden"] {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -492,24 +445,14 @@
 }
 
 /* ── Flat row variant ───────────────────────────────────────────────────── */
-/* settings-field--row is the list idiom the open sections use for select and
-   text controls (.settings-field-row in settings-grid.css), exposed through
-   the settingsField builder so generated rows (Advanced engine tuning) keep
-   the error/busy slots without the per-field card chrome. One hairline
-   between siblings, no border, background, or shadow. */
-.settings-field--row {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-7);
-  padding: var(--space-5) var(--space-2);
-  border: none;
-  border-radius: var(--radius-sm);
-  background: none;
-  box-shadow: none;
-}
+/* settings-field--row is the list idiom the open sections use (chrome, hairline,
+   text and control layout: settings-rows.css), exposed through the settingsField
+   builder so generated rows (Advanced engine tuning) keep the error/busy slots. */
 
 /* A generated row next to a legacy .settings-field-row (lists mid-migration)
-   keeps the same hairline, whichever comes first. */
+   keeps the same hairline, whichever comes first. Also what resets the
+   .settings-field + .settings-field gap and the error border colour on a
+   sibling row: settings-rows.css only matches that at lower specificity. */
 .settings-field--row + .settings-field--row,
 .settings-field-row + .settings-field--row,
 .settings-field--row + .settings-field-row {
@@ -518,55 +461,10 @@
   border-radius: 0;
 }
 
-.settings-field--row:hover {
-  border-color: transparent;
-  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
-  box-shadow: none;
-}
-
-.settings-field--row .settings-field-title {
-  font-size: var(--font-size-body);
-  font-weight: 500;
-}
-
-.settings-field--row .settings-field-help {
-  font-size: var(--font-size-footnote);
-  max-width: 52ch;
-}
-
-.settings-field--row .settings-field-control {
-  justify-content: flex-end;
-  flex: none;
-}
-
-/* A select in a flat row keeps the width band the legacy .settings-field-row
-   gave its .select-shell, so mounted and generated rows line up. */
+/* A select in a flat row does not flex; its width band is set in
+   settings-rows.css. */
 .settings-field--row .select-shell {
   flex: none;
-  min-width: 180px;
-  max-width: 320px;
-}
-
-/* A generated select is as wide as its longest option; cap it so one long
-   option (a language name) cannot squeeze the row's text into a sliver. */
-.settings-field--row .inv-select-field,
-.settings-field--row .inv-select-field-control {
-  max-width: 280px;
-}
-
-/* Long-text preferences (summary guidance): the control takes its own line
-   under the text column instead of squeezing beside it. */
-.settings-field--row.settings-field--block {
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--space-4);
-}
-
-.settings-field--row.settings-field--block .settings-field-control {
-  justify-content: stretch;
-}
-
-.settings-field--row.settings-field--block .settings-field-control > * {
-  flex: 1 1 auto;
 }
 
 .settings-tuning-presets {
@@ -716,4 +614,53 @@
   outline: 2px solid var(--focus-outline);
   outline-offset: 2px;
   border-radius: 2px;
+}
+
+/* Settings > About & Updates "Command-line tool" row
+   (renderer/shell/renderer-settings-cli-path.js). Reuses the update row's
+   .settings-setup-row / .settings-note / .settings-actions; only the path and
+   the manual export line need their own type. */
+.cli-path-settings-row {
+  margin-block-start: var(--space-7);
+}
+
+.cli-path-settings-text {
+  min-inline-size: 0;
+}
+
+.cli-path-settings-actions {
+  flex: none;
+  margin-block-start: 0;
+}
+
+.cli-path-settings-path,
+.cli-path-settings-manual {
+  display: block;
+  margin-block-start: var(--space-2);
+  color: var(--text-muted);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-code);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.cli-path-settings-manual {
+  display: inline-block;
+  padding-block: var(--space-1);
+  padding-inline: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-primary);
+  user-select: all;
+}
+
+.cli-path-settings-status {
+  margin-block-start: var(--space-3);
+}
+
+.cli-path-settings-status[hidden],
+.cli-path-settings-path[hidden],
+.cli-path-settings-manual[hidden],
+.cli-path-settings-actions[hidden] {
+  display: none;
 }

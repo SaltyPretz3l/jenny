@@ -21,6 +21,7 @@ from sidecar.runtime.process_containment import (
     process_exists,
 )
 from sidecar.runtime.subprocess_manager import SubprocessManager
+from tests.sidecar._platform_skips import windows_only
 
 # ---------------------------------------------------------------------------
 # The real containment objects (the part the fakes cannot vouch for)
@@ -106,7 +107,7 @@ def test_posix_containment_kill_tree_signals_the_whole_group(
     assert signals == [(5152, _POSIX_SIGKILL)]
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Win32 Job Object interrogation")
+@windows_only("Win32 Job Object interrogation")
 def test_windows_job_object_reports_and_reaps_a_real_child() -> None:
     """End-to-end proof of the receipt against the actual kernel.
 

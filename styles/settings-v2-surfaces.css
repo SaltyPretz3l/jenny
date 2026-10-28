@@ -58,6 +58,12 @@
   transition: width var(--motion-duration-regular) var(--motion-ease-emphasis);
 }
 
+/* A full bar is finished: the sheen stops instead of running forever. */
+.settings-progress-fill[data-complete="true"] {
+  animation: none;
+  background-size: 100% 100%;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .settings-progress-fill {
     transition: none;

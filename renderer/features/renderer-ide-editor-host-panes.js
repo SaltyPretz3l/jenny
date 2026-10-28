@@ -30,23 +30,35 @@
       global: 'rendererIdePdfHost',
       factory: 'createIdePdfPane',
       scripts: [
+        { src: 'renderer/shared/bytes-base64.js', global: 'rendererBytesBase64' },
+        { src: 'renderer/features/renderer-ide-pdf-runtime.js', global: 'rendererIdePdfRuntime' },
+        { src: 'renderer/features/renderer-ide-pdf-toolbar.js', global: 'rendererIdePdfToolbar' },
+        { src: 'renderer/features/renderer-ide-pdf-thumbnails.js', global: 'rendererIdePdfThumbnails' },
+        { src: 'renderer/features/renderer-ide-pdf-sidebar.js', global: 'rendererIdePdfSidebar' },
+        { src: 'renderer/features/renderer-ide-pdf-reading-context.js', global: 'rendererIdePdfReadingContext' },
+        { src: 'renderer/features/renderer-ide-pdf-password.js', global: 'rendererIdePdfPassword' },
+        { src: 'renderer/features/renderer-ide-pdf-save-state.js', global: 'rendererIdePdfSaveState' },
         { src: 'renderer/features/renderer-ide-pdf-host.js', global: 'rendererIdePdfHost' },
       ],
-      stylesheets: ['styles/ide-pdf-pane.css'], // @imports pdf.js's own pdf_viewer.css
+      // The shared pane basics first; ide-pdf-pane.css @imports pdf.js's own pdf_viewer.css.
+      stylesheets: ['styles/ide-document-pane.css', 'styles/ide-pdf-pane.css'],
     },
     docx: {
       global: 'rendererIdeDocxHost',
       factory: 'createIdeDocxPane',
       scripts: [
         { src: 'renderer/inventory/file-input.js', global: 'inventoryFileInput' },
+        { src: 'renderer/shared/bytes-base64.js', global: 'rendererBytesBase64' },
         { src: 'renderer/features/renderer-ide-docx-zip.js', global: 'rendererIdeDocxZip' },
+        { src: 'renderer/features/renderer-ide-docx-ooxml.js', global: 'rendererIdeDocxOoxml' },
         { src: 'renderer/features/renderer-ide-docx-image-model.js', global: 'rendererIdeDocxImageModel' },
         { src: 'renderer/features/renderer-ide-docx-model.js', global: 'rendererIdeDocxModel' },
         { src: 'renderer/features/renderer-ide-docx-rich.js', global: 'rendererIdeDocxRich' },
         { src: 'renderer/features/renderer-ide-docx-render.js', global: 'rendererIdeDocxRender' },
+        { src: 'renderer/features/renderer-ide-docx-package.js', global: 'rendererIdeDocxPackage' },
         { src: 'renderer/features/renderer-ide-docx-host.js', global: 'rendererIdeDocxHost' },
       ],
-      stylesheets: ['styles/ide-docx-pane.css'],
+      stylesheets: ['styles/ide-document-pane.css', 'styles/ide-docx-pane.css'],
     },
   });
 
@@ -64,9 +76,12 @@
     return null;
   }
 
-  function documentError(code, message) {
+  // `reason`: a pane's localized refusal (password-protected, too large, ...)
+  // that the open-failure toast appends.
+  function documentError(code, message, reason = '') {
     const error = new Error(String(message || 'The document could not be opened.'));
     error.code = code || DOCUMENT_UNSUPPORTED_CODE;
+    if (reason) error.reason = String(reason);
     return error;
   }
 
@@ -275,7 +290,7 @@
         }
         if (!result || result.ok !== true) {
           if (!existing) pane.close(normalizedPath);
-          throw documentError(DOCUMENT_UNSUPPORTED_CODE, result?.message || 'The document could not be opened.');
+          throw documentError(DOCUMENT_UNSUPPORTED_CODE, result?.message || 'The document could not be opened.', result?.message);
         }
         let doc = existing;
         if (!doc || doc.kind !== 'document') {
@@ -314,6 +329,13 @@
     function getDocumentFormat(path) {
       const doc = getDoc(path);
       return doc?.kind === 'document' ? String(doc.format || '') : '';
+    }
+
+    // Calls a PDF pane method for an open PDF document; undefined otherwise.
+    function callPdfPane(path, method, ...args) {
+      const doc = getDoc(path);
+      if (doc?.kind !== 'document' || doc.format !== 'pdf' || typeof doc.pane?.[method] !== 'function') return undefined;
+      return doc.pane[method](String(path || ''), ...args);
     }
 
     // Base64 of the document as the pane would save it, or null.
@@ -369,6 +391,7 @@
     return {
       activateBinaryDocument,
       activateImageDocument,
+      callPdfPane,
       dispose,
       getDocumentBytes,
       getDocumentFormat,
@@ -384,7 +407,6 @@
   return {
     DOCUMENT_FORMATS,
     DOCUMENT_RUNTIMES,
-    DOCUMENT_UNSUPPORTED_CODE,
     createEditorHostPanes,
   };
 });

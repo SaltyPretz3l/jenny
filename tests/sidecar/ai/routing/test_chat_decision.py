@@ -348,7 +348,7 @@ def test_preflight_budget_estimate_includes_exact_vision_surcharge(
     surcharge = vision_token_surcharge((image,))
     captured_estimates: list[int] = []
     budget = object()
-    tracker = SimpleNamespace(backend=None)
+    tracker = SimpleNamespace(backend=None, charge_tool_schemas=lambda _payload, _num_tools: None)
     status = SimpleNamespace(tokens_used=0, should_compact=False)
     kernel = SimpleNamespace(
         _config=SimpleNamespace(tools_enabled=False),

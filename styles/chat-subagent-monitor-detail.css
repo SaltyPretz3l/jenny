@@ -38,6 +38,73 @@
   font-weight: 500;
 }
 
+/* A heading that shares its row with a count or the Copy button. */
+.subagent-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin: 0 0 var(--space-4);
+}
+
+.subagent-section-head .subagent-section-heading {
+  margin: 0;
+}
+
+.subagent-section-meta {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.subagent-copy-button {
+  min-height: 24px;
+  margin-inline-end: calc(var(--space-3) * -1);
+}
+
+/* The task the parent wrote: plain text, three lines until Show all. */
+.subagent-task-text {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.subagent-task-preview {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.subagent-task:has(> .subagent-task-toggle[aria-expanded="true"]) > .subagent-task-preview,
+.subagent-task-toggle[aria-expanded="true"] .subagent-task-more,
+.subagent-task-toggle[aria-expanded="false"] .subagent-task-less {
+  display: none;
+}
+
+.subagent-task-full {
+  order: -1;
+}
+
+.subagent-task {
+  display: flex;
+  flex-direction: column;
+}
+
+/* "Reached its step limit": a muted line under the status, warning dot only. */
+.subagent-detail-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  line-height: 1.45;
+}
+
 .subagent-step-list {
   display: grid;
   gap: var(--space-3);
@@ -46,39 +113,86 @@
   list-style: none;
 }
 
-.subagent-step {
+.subagent-step,
+.subagent-step-group-trigger {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   gap: var(--space-4);
   min-width: 0;
-  font-size: var(--font-size-footnote);
 }
 
-.subagent-step .subagent-monitor-dot {
-  align-self: center;
+.subagent-step {
+  font-size: var(--font-size-footnote);
+  line-height: 1.45;
+}
+
+/* The dot sits on the first line (the name), whatever wraps below it. */
+.subagent-step .subagent-monitor-dot,
+.subagent-detail-note .subagent-monitor-dot {
+  margin-top: calc((1.45em - 6px) / 2);
 }
 
 .subagent-step-copy {
+  display: grid;
+  flex: 1 1 auto;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+/* Name, ×N and target on ONE line; the target gives way (ellipsis, full
+   text in its title) so a long path never wraps the row. */
+.subagent-step-line {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0 var(--space-4);
+  align-items: baseline;
+  gap: var(--space-3);
   min-width: 0;
 }
 
 .subagent-step-name {
+  flex: 0 0 auto;
   color: var(--text-primary);
   font-weight: 500;
 }
 
-.subagent-step-target {
-  min-width: 0;
+.subagent-step-count {
+  flex: 0 0 auto;
   color: var(--text-muted);
-  font-family: var(--font-family-mono);
+}
+
+.subagent-step-target {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-step-range {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
   overflow-wrap: anywhere;
 }
 
+/* A group of repeated calls: the whole row toggles its calls (the inventory
+   collapsible brings the cursor and focus ring). */
+.subagent-step--group {
+  display: block;
+}
+
+.subagent-step-group-trigger {
+  border-radius: var(--radius-sm);
+}
+
+.subagent-step-group-trigger:hover .subagent-step-name {
+  color: var(--text-link);
+}
+
+.subagent-step-group-calls {
+  padding: var(--space-3) 0 0 calc(6px + var(--space-4));
+}
+
 .subagent-step-detail {
-  flex-basis: 100%;
   color: var(--state-danger);
   overflow-wrap: anywhere;
 }

@@ -554,3 +554,23 @@ test('the safety policy is captured with the turn and a checkpoint resume keeps 
   assert.deepEqual(resumed.request.safetyPolicy, policy);
   adapter.discard(resumed);
 });
+
+test('a canonical start held behind another chat\'s generation names that chat (F20)', async t => {
+  const { adapter, sessionId } = createAdapterHarness(t);
+  const prepared = await adapter.prepareImmediate(request(sessionId), {}, { workId: 'work-held', turnId: 'turn-held' });
+  adapter.register('work-held', prepared);
+  const work = { work_id: 'work-held', turn_id: 'turn-held', session_id: sessionId,
+    project_id: AUTHORITY.project_id, input: prepared.input };
+  const route = adapter.resolveRoute(work);
+  const held = [];
+  for (let index = 0; index < 64; index += 1) {
+    const lease = adapter.lanes.tryAcquireInference({ ownerId: `beta_${index}`, sessionId: 'sess_beta', route });
+    if (lease.status !== 'granted') break;
+    held.push(lease.lease);
+  }
+  assert.ok(held.length > 0);
+  assert.throws(() => adapter.prepareCanonical(work, route), (error) => error.code === 'lane_capacity'
+    && error.retryable === true && error.blocking_session_id === 'sess_beta');
+  for (const lease of held) adapter.lanes.release(lease, { producerSettled: true });
+  assert.equal(adapter.prepareCanonical(work, route), true);
+});

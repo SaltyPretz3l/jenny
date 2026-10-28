@@ -60,10 +60,10 @@
     function ensureUiState() {
       if (!state.ui || typeof state.ui !== 'object') state.ui = {};
       if (!state.ui.taskRail || typeof state.ui.taskRail !== 'object') {
-        state.ui.taskRail = { filter: 'open', draftTitle: '', busyTaskId: '', editTaskId: '', lastError: '', scope: 'current' };
+        state.ui.taskRail = { filter: 'all', draftTitle: '', busyTaskId: '', editTaskId: '', expandedTaskId: '', lastError: '', scope: 'current' };
       }
       const ui = state.ui.taskRail;
-      if (!['open', 'done', 'all'].includes(ui.filter)) ui.filter = 'open';
+      if (!['open', 'done', 'all'].includes(ui.filter)) ui.filter = 'all';
       // 'current' follows the active chat's project; 'all'; or a project id.
       ui.scope = typeof ui.scope === 'string' && ui.scope.trim() ? ui.scope.trim() : 'current';
       ui.draftTitle = String(ui.draftTitle || '');
@@ -266,12 +266,12 @@
     function renderRailContent(surface) {
       const host = prepareSurface(surface);
       if (!host) return false;
+      // The list re-renders wholesale (opening a row, folds, refreshes); keep its scroll.
+      const scrollTop = host.querySelector?.('.task-rail-list')?.scrollTop || 0;
       host.innerHTML = typeof render.renderTaskRailSurface === 'function'
-        ? render.renderTaskRailSurface(buildRows(), ensureUiState(), {
-            escapeHtml,
-            checklist: currentChecklist(),
-            scope: scopeHelper(),
-          }) : '';
+        ? render.renderTaskRailSurface(buildRows(), ensureUiState(), { escapeHtml, checklist: currentChecklist(), checklistFoldOpen: ensureUiState().checklistFoldOpen === String(state.currentSessionId || ''), scope: scopeHelper() }) : '';
+      const list = host.querySelector?.('.task-rail-list');
+      if (list && scrollTop) list.scrollTop = scrollTop;
       syncCount();
       return true;
     }
@@ -300,6 +300,7 @@
       syncCount();
     }
 
+    const findInPanel = (selector, attr, id) => Array.from(panelEl?.querySelectorAll?.(selector) || []).find((el) => el.getAttribute(attr) === id) || null;
     function rowById(taskId) {
       const id = String(taskId || '').trim();
       return buildRows().find((row) => row.followUpId === id) || null;
@@ -336,8 +337,7 @@
       syncToggle();
       const id = String(taskId || '').trim();
       if (!id) return true;
-      const row = Array.from(panelEl?.querySelectorAll?.('[data-task-id]') || [])
-        .find((entry) => entry.getAttribute('data-task-id') === id);
+      const row = findInPanel('[data-task-id]', 'data-task-id', id);
       row?.scrollIntoView?.({ block: 'center', behavior: 'auto' });
       const reduced = windowRef?.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true;
       if (row && !reduced) {
@@ -394,8 +394,7 @@
     }
 
     function saveEditor(taskId) {
-      const editor = Array.from(panelEl?.querySelectorAll?.('[data-task-editor]') || [])
-        .find((entry) => entry.getAttribute('data-task-editor') === taskId);
+      const editor = findInPanel('[data-task-editor]', 'data-task-editor', taskId);
       const fields = editor?.querySelectorAll?.('.inv-text-field-control') || [];
       const label = String(fields[0]?.value || '').trim();
       if (!label) return fields[0]?.focus?.();
@@ -451,34 +450,40 @@
         label: jt('common.delete', 'Delete'), danger: true,
         action: () => runMutation(row.followUpId, () => companionApi.deleteFollowUp(row.followUpId)),
       });
-      contextMenu.show({ anchorEl: anchor, rootEl: panelEl, restoreFocusTo: anchor, items });
+      anchor.setAttribute('aria-expanded', 'true'); // Keeps the hover-only button visible while its menu is open.
+      contextMenu.show({ anchorEl: anchor, rootEl: panelEl, restoreFocusTo: anchor, items, onHide: () => anchor.setAttribute('aria-expanded', 'false') });
     }
 
     async function handlePanelClick(event) {
       if (disposed || !isTasksMode()) return;
       const target = event.target;
-      const filterGroup = target?.closest?.('[data-action="task-rail-filter"]');
-      if (filterGroup) {
+      if (target?.closest?.('[data-action="task-rail-filter"]')) {
         const option = target.closest?.('[data-value]');
-        if (option) {
-          ensureUiState().filter = ['open', 'done', 'all'].includes(option.dataset.value) ? option.dataset.value : 'open';
-          rerender();
-        }
-        return;
+        return option ? setFilter(option.dataset.value) : undefined;
       }
       const button = target?.closest?.('[data-action]');
       if (!button) return;
       const action = button.dataset.action;
       const taskId = String(button.dataset.taskId || '').trim();
       const row = rowById(taskId);
+      const ui = ensureUiState();
       if (action === 'task-rail-scope') return openScopeMenu(button);
       if (action === 'task-rail-add') return addTask();
       if (action === 'task-rail-send-list') return sendListToChat();
       if (action === 'task-rail-start' && row) return openOrStartSession(row);
       if (action === 'task-rail-open-session' && row?.linkedSessionId) return activateWorkspaceSession(row.linkedSessionId);
       if (action === 'task-rail-overflow') return showOverflow(button, row);
+      // A keyboard toggle (click detail 0) keeps focus on the re-rendered control; the checklist fold is per chat.
+      if (action === 'task-rail-toggle') { ui.expandedTaskId = ui.expandedTaskId === taskId ? '' : taskId; rerender(); return event.detail === 0 ? findInPanel('[data-action="task-rail-toggle"]', 'data-task-id', taskId)?.focus?.() : undefined; }
+      if (action === 'task-rail-checklist-fold') { const sid = String(state.currentSessionId || ''); ui.checklistFoldOpen = ui.checklistFoldOpen === sid ? null : sid; rerender(); return event.detail === 0 ? panelEl?.querySelector?.('[data-action="task-rail-checklist-fold"]')?.focus?.() : undefined; }
+      if (action === 'task-rail-edit' && row) { ui.editTaskId = taskId; return rerender(); }
       if (action === 'task-rail-edit-save') return saveEditor(taskId);
-      if (action === 'task-rail-edit-cancel') { ensureUiState().editTaskId = ''; return rerender(); }
+      if (action === 'task-rail-edit-cancel') { ui.editTaskId = ''; return rerender(); }
+    }
+
+    function setFilter(value) {
+      ensureUiState().filter = ['open', 'done', 'all'].includes(value) ? value : 'all';
+      rerender();
     }
 
     function handlePanelChange(event) {
@@ -494,8 +499,7 @@
 
     function handleSegmentedChange(event) {
       if (disposed || !isTasksMode() || event.detail?.id !== 'task-rail-filter') return;
-      ensureUiState().filter = ['open', 'done', 'all'].includes(event.detail.value) ? event.detail.value : 'open';
-      rerender();
+      setFilter(event.detail.value);
     }
 
     function handlePanelKeydown(event) {

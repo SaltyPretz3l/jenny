@@ -24,9 +24,11 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
+import struct
 import uuid
 from typing import Any, Iterable
 
+from sidecar.ai.engines.vision_input import MAX_VISION_PIXELS
 from sidecar.runtime.diagnostics import log_event
 
 logger = logging.getLogger(__name__)
@@ -60,6 +62,17 @@ _BUDGET_DROP_LOG_EVENT = "ai.tools.trusted_attachments.budget_dropped"
 
 # Safe-ref fields persisted into canonical turn events. Never bytes/base64.
 _REF_FIELDS = ("id", "kind", "mime_type", "byte_length", "width", "height", "page_number")
+
+# Signature sniffing (a local parser: preview_image imports this module).
+_PNG_IHDR_END = 24
+_WEBP_MIN_BYTES = 30
+_VP8L_SIGNATURE = 0x2F
+_JPEG_MARKER_PREFIX = 0xFF
+_JPEG_MIN_SEGMENT_LENGTH = 2  # the length field counts itself
+_JPEG_SCAN_OR_END = frozenset({0xD9, 0xDA})
+_JPEG_STANDALONE_MARKERS = frozenset({0x01, *range(0xD0, 0xD8)})
+_JPEG_SOF_MARKERS = frozenset({*range(0xC0, 0xC4), *range(0xC5, 0xC8), *range(0xC9, 0xCC),
+                               *range(0xCD, 0xD0)})
 
 
 def base64_encoded_length(decoded_byte_length: int) -> int:
@@ -117,6 +130,62 @@ def _bounded_dimension(value: object) -> int:
     return value
 
 
+def _png_size(data: bytes) -> tuple[int, int] | None:
+    if data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR" or len(data) < _PNG_IHDR_END:
+        return None
+    width, height = struct.unpack(">II", data[16:_PNG_IHDR_END])
+    return width, height
+
+
+def _jpeg_size(data: bytes) -> tuple[int, int] | None:
+    """Walk the marker segments to the first start-of-frame; bounded by the data."""
+    if data[:3] != b"\xff\xd8\xff":
+        return None
+    offset = 2
+    while offset + 9 <= len(data) and data[offset] == _JPEG_MARKER_PREFIX:
+        marker = data[offset + 1]
+        if marker == _JPEG_MARKER_PREFIX or marker in _JPEG_STANDALONE_MARKERS:
+            offset += 1 if marker == _JPEG_MARKER_PREFIX else 2  # fill byte / no payload
+            continue
+        length = int.from_bytes(data[offset + 2 : offset + 4], "big")
+        if marker in _JPEG_SOF_MARKERS:
+            height = int.from_bytes(data[offset + 5 : offset + 7], "big")
+            width = int.from_bytes(data[offset + 7 : offset + 9], "big")
+            return width, height
+        if marker in _JPEG_SCAN_OR_END or length < _JPEG_MIN_SEGMENT_LENGTH:
+            return None  # no frame header before the scan, or a malformed segment
+        offset += 2 + length
+    return None
+
+
+def _webp_size(data: bytes) -> tuple[int, int] | None:
+    if data[:4] != b"RIFF" or data[8:12] != b"WEBP" or len(data) < _WEBP_MIN_BYTES:
+        return None
+    chunk = data[12:16]
+    if chunk == b"VP8 " and data[23:26] == b"\x9d\x01\x2a":
+        return (int.from_bytes(data[26:28], "little") & 0x3FFF,
+                int.from_bytes(data[28:30], "little") & 0x3FFF)
+    if chunk == b"VP8L" and data[20] == _VP8L_SIGNATURE:
+        bits = int.from_bytes(data[21:25], "little")
+        return (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
+    if chunk == b"VP8X":
+        return int.from_bytes(data[24:27], "little") + 1, int.from_bytes(data[27:30], "little") + 1
+    return None
+
+
+_SNIFFERS = {"image/png": _png_size, "image/jpeg": _jpeg_size, "image/webp": _webp_size}
+
+
+def _pixels_match_declaration(data: bytes, mime_type: str, width: int, height: int) -> bool:
+    """The decoded bytes must carry the declared format's signature, real dimensions
+    within the vision pixel cap and, unless undeclared (0 x 0), the declared size."""
+    sniffer = _SNIFFERS.get(mime_type)
+    size = sniffer(data) if sniffer is not None else None
+    if size is None or not size[0] or not size[1] or size[0] * size[1] > MAX_VISION_PIXELS:
+        return False
+    return (width, height) in {(0, 0), size}
+
+
 def _validated_attachment(  # noqa: PLR0911 - fail-closed validation ladder.
     entry: dict[str, Any],
 ) -> dict[str, Any] | None:
@@ -148,8 +217,10 @@ def _validated_attachment(  # noqa: PLR0911 - fail-closed validation ladder.
         return None
     if len(decoded) != byte_length:
         return None
-    width = entry.get("width")
-    height = entry.get("height")
+    width = _bounded_dimension(entry.get("width"))
+    height = _bounded_dimension(entry.get("height"))
+    if not _pixels_match_declaration(decoded, mime_type.lower(), width, height):
+        return None
     page_number = entry.get("page_number")
     normalized: dict[str, Any] = {
         "id": attachment_id.strip(),
@@ -157,8 +228,8 @@ def _validated_attachment(  # noqa: PLR0911 - fail-closed validation ladder.
         "mime_type": mime_type.lower(),
         "data_base64": data_base64,
         "byte_length": byte_length,
-        "width": _bounded_dimension(width),
-        "height": _bounded_dimension(height),
+        "width": width,
+        "height": height,
         "source_tool": str(entry.get("source_tool") or ""),
     }
     if isinstance(page_number, int) and not isinstance(page_number, bool) and page_number > 0:

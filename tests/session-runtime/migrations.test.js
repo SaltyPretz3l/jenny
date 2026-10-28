@@ -56,7 +56,7 @@ for (const failMigration of [false, true]) test(`legacy split summaries have pro
 });
 
 test('session schema 21 migration defaults missing and malformed attribution to General', () => {
-  assert.equal(STORE_SCHEMA_VERSION, 25);
+  assert.equal(STORE_SCHEMA_VERSION, 26);
   const migrated = migrateStorePayload({
     schema_version: 20,
     sessions: {

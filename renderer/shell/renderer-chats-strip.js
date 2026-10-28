@@ -56,44 +56,29 @@
       boundListeners.push({ target, type, handler, options });
     }
 
-    // The expanded controller owns calendar-aware relative time. Keep an
-    // absent-safe fallback for isolated harnesses that load this module alone.
+    // The Chats tree module owns the relative-time vocabulary; resolve it
+    // lazily at call time so script order cannot matter.
     function formatRelativeTime(value) {
-      const sharedFormatter = rootRef.rendererChatsPanel?.formatSessionTime;
-      if (typeof sharedFormatter === 'function') return sharedFormatter(value);
-      const parsed = value ? new Date(value) : null;
-      if (!parsed || Number.isNaN(parsed.valueOf())) return '';
-      const now = new Date();
-      const minutes = Math.floor(Math.max(now.valueOf() - parsed.valueOf(), 0) / 60000);
-      if (minutes < 1) return 'now';
-      if (minutes < 60) return `${minutes}m`;
-      const hours = Math.floor(minutes / 60);
-      if (hours < 24) return `${hours}h`;
-      const parsedDay = Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
-      const nowDay = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
-      const days = Math.max(Math.floor((nowDay - parsedDay) / 86400000), 1);
-      if (days < 7) return `${days}d`;
-      const options = { month: 'short', day: 'numeric' };
-      if (parsed.getFullYear() !== now.getFullYear()) options.year = 'numeric';
-      return parsed.toLocaleDateString(globalThis.jennyI18n?.tag?.(), options);
+      const tree = rootRef.rendererChatsPanelTree
+        || (typeof require === 'function' ? require('./renderer-chats-panel-tree') : null);
+      return typeof tree?.formatSessionTime === 'function' ? tree.formatSessionTime(value) : '';
     }
 
-    function formatModelLabel(session) {
-      const deriveDisplayState = rootRef.rendererShellRuntimeUtils?.deriveCanonicalSessionDisplayState;
-      const displayState = typeof deriveDisplayState === 'function'
-        ? deriveDisplayState(state, session?.id)
-        : null;
+    // One canonical display-state derive per chip, handed the chip's own summary so it
+    // does not scan the whole history for it.
+    function deriveChipDisplayState(session) {
+      const derive = rootRef.rendererShellRuntimeUtils?.deriveCanonicalSessionDisplayState;
+      return typeof derive === 'function' ? derive(state, session?.id, { session }) : null;
+    }
+
+    function formatModelLabel(session, displayState = deriveChipDisplayState(session)) {
       const model = String(
-        displayState?.model || session?.last_model_used || session?.preferred_model || 'pending'
+        displayState?.model || session?.last_model_used || session?.preferred_model || jt('sidebar.chats.modelPending', 'pending')
       ).replace(/\s+/g, ' ').trim();
       return model.length <= 26 ? model : `${model.slice(0, 23).trim()}...`;
     }
 
-    function formatMessageCount(session) {
-      const deriveDisplayState = rootRef.rendererShellRuntimeUtils?.deriveCanonicalSessionDisplayState;
-      const displayState = typeof deriveDisplayState === 'function'
-        ? deriveDisplayState(state, session?.id)
-        : null;
+    function formatMessageCount(session, displayState = deriveChipDisplayState(session)) {
       const count = Math.max(Number(displayState?.messageCount ?? session?.message_count ?? 0), 0);
       return jtn('sidebar.chatsStrip.messageCount', count, { count: count }, '{count} message', '{count} messages');
     }
@@ -106,8 +91,13 @@
       const pendingDeletes = new Set(
         Array.isArray(state.ui?.pendingSessionDeletes) ? state.ui.pendingSessionDeletes : []
       );
-      const byRecency = (left, right) => String(right?.updated_at || right?.created_at || '')
-        .localeCompare(String(left?.updated_at || left?.created_at || ''));
+      // ISO-8601 timestamps order correctly as plain strings (newest first).
+      const stampOf = (session) => String(session?.updated_at || session?.created_at || '');
+      const byRecency = (left, right) => {
+        const l = stampOf(left);
+        const r = stampOf(right);
+        return l === r ? 0 : (r < l ? -1 : 1);
+      };
       const live = sessions.filter(
         (session) => session?.id && !session.archived_at && !pendingDeletes.has(session.id)
       );
@@ -228,7 +218,7 @@
     function refreshPeekState(chip) {
       if (!peekEl || !chip) return;
       const stateLabel = rootRef.rendererWorkspaceChromeUtils?.sessionStatusLabel?.(chip.dataset.sessionDominantState)
-        || (chip.classList.contains('chats-strip__chip--pinned') ? 'Pinned' : '');
+        || (chip.classList.contains('chats-strip__chip--pinned') ? jt('shell.workspaceChrome.pinned', 'Pinned') : '');
       const stateRow = peekEl.querySelector('#chatsStripPeekState');
       stateRow.textContent = stateLabel;
       stateRow.hidden = !stateLabel;
@@ -383,20 +373,23 @@
       // change so streaming frames cannot churn the strip or its open peek.
       const signature = JSON.stringify({
         total: listed.total,
-        items: items.map((session) => ({
-          id: session.id,
-          title: session.title || '',
-          pinned: session.pinned === true,
-          active: session.id === state.currentSessionId,
-          timestamp: session.updated_at || session.created_at || '',
-          model: formatModelLabel(session),
-          messageCount: formatMessageCount(session),
-          preview: session.last_message_preview || '',
-          type: session.session_type || '',
-          provider: session.plugin_session?.provider_name || '',
-          icon: session.plugin_session?.icon_token || '',
-          lockdown: isOfflineLockdownVisible(session),
-        })),
+        items: items.map((session) => {
+          const displayState = deriveChipDisplayState(session);
+          return {
+            id: session.id,
+            title: session.title || '',
+            pinned: session.pinned === true,
+            active: session.id === state.currentSessionId,
+            timestamp: session.updated_at || session.created_at || '',
+            model: formatModelLabel(session, displayState),
+            messageCount: formatMessageCount(session, displayState),
+            preview: session.last_message_preview || '',
+            type: session.session_type || '',
+            provider: session.plugin_session?.provider_name || '',
+            icon: session.plugin_session?.icon_token || '',
+            lockdown: isOfflineLockdownVisible(session),
+          };
+        }),
       });
       if (signature === _chipsSignature) { patchRuntimeState(); return; }
       _chipsSignature = signature;

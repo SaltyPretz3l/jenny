@@ -78,7 +78,15 @@ import sys
 # (only a database below SCHEMA_VERSION runs them). Still eager by construction: the
 # store_reflection and store_vectors mixins (MemoryStore bases), recall_pipeline and
 # reflection_epochs (built with MemoryService when the container opens the store).
-_MEASURED_SIDECAR_MODULES = 390
+# 2026-10-19 tool-review size split: four modules now reached at startup
+# (lsp/languages, owned_process_capture, pdf_page_selection, trash_maintenance)
+# were extracted from modules already on the path; no new eager code. The
+# split's owned_process_posix and python_runtime/wheelhouse_manifest load on use.
+# 2026-10-22: 400. Four small modules reached from already-eager seams: context_count (row 66
+# count ladder, token_budget and chat_decision), primary_chat_overlay (row 69, prompt_modes),
+# tool_budget_pairs (row 69, tool_budget_filter) and advisory_file_lock (both ledgers).
+# subagent_transcript (row 67) now loads with the first child run.
+_MEASURED_SIDECAR_MODULES = 400
 _MAX_SIDECAR_MODULES = _MEASURED_SIDECAR_MODULES + 5
 # Floored as well as capped: without a lower bound, a later graph reduction to
 # (say) 320 would leave this recorded 345 stale and silently widen the slack to
@@ -150,3 +158,28 @@ def test_server_import_defers_provider_engines() -> None:
         "importing sidecar.server eagerly loaded provider engines: "
         f"{sorted(loaded & _DEFERRED_PROVIDER_MODULES)}"
     )
+
+
+# 2026-10-19 (row 62 Wave C): httpx (~70 ms with the click/pygments its CLI module
+# drags in), filelock and asyncio (~40 ms) load on first use. Total sys.modules
+# after ``import sidecar.server`` fell 704 -> 593 on the owner's machine; the
+# sidecar.* count asserted above did not move.
+_DEFERRED_THIRD_PARTY_PACKAGES = ("httpx", "filelock", "asyncio", "click", "pygments")
+
+
+def test_server_and_router_import_defer_http_and_lock_packages() -> None:
+    code = (
+        "import json, sys\n"
+        "import sidecar.server\n"
+        "import sidecar.ai.routing.router\n"
+        f"roots = {_DEFERRED_THIRD_PARTY_PACKAGES!r}\n"
+        "print(json.dumps(sorted(n for n in sys.modules if n.split('.')[0] in roots)))\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    loaded = json.loads(completed.stdout)
+    assert loaded == [], f"startup imported packages that must load on first use: {loaded}"

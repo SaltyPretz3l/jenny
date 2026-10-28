@@ -81,7 +81,8 @@
       rootEl = el;
 
       keydownHandler = (event) => {
-        if (!isOpen()) {
+        // An IME composition's Enter/Escape belong to the composition.
+        if (!isOpen() || event.isComposing) {
           return;
         }
         if (event.key === 'Escape') {

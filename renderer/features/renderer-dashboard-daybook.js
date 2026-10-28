@@ -36,9 +36,6 @@
   const ASK_REGION_SELECTOR = '.home-info-strip__ask';
   const ASK_FIELD_SELECTOR = '[data-home-ask-input="1"]';
   const ASK_SEND_SELECTOR = '.home-ask__send';
-  // The ask-config panel. Escape has to know whether it is open BEFORE it
-  // decides what Escape means (F3).
-  const ASK_PANEL_SELECTOR = '.home-ask__panel';
 
   function noop() {}
 
@@ -288,12 +285,14 @@
 
     /* Hero ask line (delegated off the info strip, which survives the strip's
      * 30s chrome repaint):
-     *   Enter             - start a NEW chat carrying the draft and SEND.
+     *   Enter             - open a new chat (an untouched empty one is
+     *                       reused), prefill the composer and SEND.
      *   Shift+Enter       - insert a newline; the field autosizes.
-     *   Ctrl/Cmd+Enter    - same new chat + config, but prefill only.
+     *   Ctrl/Cmd+Enter    - the same new chat, but prefill only.
+     *   IME composition   - every key belongs to the input method: an Enter
+     *                       that commits a candidate never submits.
      *   empty Enter       - navigate + focus only, nothing written.
-     *   Escape            - close the settings panel if it is open, otherwise
-     *                       blur. It NEVER destroys typed text.
+     *   Escape            - blur. It NEVER destroys typed text.
      *   click the send    - the same path as Enter, so there is exactly one
      *                       submit path rather than a keyboard-only feature.
      * The field clears only once onAsk reports success: a rejected create or an
@@ -398,15 +397,15 @@
       if (target?.dataset?.homeAskInput !== '1') {
         return;
       }
+      // Same guard as the chat composer (renderer-enter-keydown-utils.js):
+      // Chromium can report the commit keystroke with isComposing already
+      // false, so keyCode 229 is checked too.
+      if (event.isComposing === true || event.keyCode === 229) {
+        return;
+      }
       const key = String(event.key || '');
       if (key === 'Escape') {
-        // The popover primitive installs its own document-level Escape-to-close
-        // that runs AFTER this delegated handler, so an open panel is left to
-        // it. Either way the draft is never touched.
-        const panel = askRegionOf(target)?.querySelector?.(ASK_PANEL_SELECTOR) || null;
-        if (panel && panel.hidden !== true) {
-          return;
-        }
+        // Blur only: Escape never touches the draft.
         target.blur?.();
         return;
       }

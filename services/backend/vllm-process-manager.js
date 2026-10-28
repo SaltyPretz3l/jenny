@@ -3,6 +3,7 @@ const { spawn } = require('child_process');
 const http = require('http');
 
 const { sanitizeSpawnEnv } = require('./sanitize-spawn-env');
+const { pathLookupCommand } = require('./executable-on-path');
 const { FileJsonStore } = require('./file-json-store');
 const {
   isProcessAlive,
@@ -10,6 +11,8 @@ const {
   waitForProcessExit,
 } = require('./process-utils');
 
+// Gated Hugging Face model downloads need the user's hub token.
+const VLLM_CREDENTIAL_ENV = ['HF_TOKEN', 'HUGGING_FACE_HUB_TOKEN'];
 const VLLM_ALLOWED_ENV = [/^VLLM_/i, /^CUDA_/i, /^HF_/i, /^HUGGING_FACE_HUB_/i, /^TRANSFORMERS_/i, /^TORCH_/i, /^NCCL_/i, /^PYTHONPATH$/i, /^PYTHONHOME$/i];
 
 const VLLM_PORT = 8000;
@@ -373,7 +376,7 @@ class VLLMProcessManager {
       stdio: ['ignore', 'ignore', 'pipe'],
       detached: false,
       windowsHide: true,
-      env: sanitizeSpawnEnv(process.env, { allow: VLLM_ALLOWED_ENV }),
+      env: sanitizeSpawnEnv(process.env, { allow: VLLM_ALLOWED_ENV, allowCredentials: VLLM_CREDENTIAL_ENV }),
     });
   }
 
@@ -461,8 +464,8 @@ class VLLMProcessManager {
     if (!this._resolveCommandPromise) {
       this._resolveCommandPromise = new Promise((resolve) => {
         const { execFile } = require('child_process');
-        const cmd = process.platform === 'win32' ? 'where' : 'which';
-        execFile(cmd, ['vllm'], { encoding: 'utf-8', timeout: 3000, windowsHide: true }, (error, stdout) => {
+        const [cmd, args] = pathLookupCommand('vllm');
+        execFile(cmd, args, { encoding: 'utf-8', timeout: 3000, windowsHide: true }, (error, stdout) => {
           if (error) {
             resolve(null);
             return;

@@ -580,3 +580,18 @@ test('a cancel that lands after the render but before publication publishes noth
   const output = f.calls.find(([kind]) => kind === 'run')[1].outputPath;
   assert.equal(fs.existsSync(output), false, 'the rendered scratch PNG is removed');
 });
+
+test('a throwing chat restore still removes the call signal listener', async (t) => {
+  const f = fixture(t);
+  const added = [];
+  const removed = [];
+  f.context.abortSignal = {
+    aborted: false,
+    addEventListener: (type, listener) => added.push([type, listener]),
+    removeEventListener: (type, listener) => removed.push([type, listener]),
+  };
+  f.handoff.restoreAndRelease = async () => { throw new Error('restore failed'); };
+  await assert.rejects(f.tool.execute(f.input, f.context), /restore failed/);
+  assert.equal(added.length, 1);
+  assert.deepEqual(removed, added);
+});

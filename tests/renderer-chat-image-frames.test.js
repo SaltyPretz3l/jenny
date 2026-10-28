@@ -9,7 +9,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
 
-const toolShellUtils = require('../renderer/chat/renderer-tool-shell-utils');
 const toolCallUtils = require('../renderer/chat/tool-call-utils');
 const artifactCards = require('../renderer/chat/renderer-artifact-card-utils');
 const figure = require('../renderer/inventory/artifact-figure');
@@ -39,10 +38,8 @@ function pythonFigures(html) {
   };
 }
 
-test('both Python surfaces render one framed figure per source and count only refused legacy images', (t) => {
+test('the Python detail renders one framed figure per source and counts only refused legacy images', (t) => {
   withInventory(t);
-  const shell = toolShellUtils.createToolShellRenderer({ escapeHtml, toolCallUtils, sanitizeHtmlFragment: null })
-    .renderToolShell(pythonModel());
   const detail = createToolDetailBody({ toolCallUtils }).buildDetailBodyMarkup(pythonModel());
   const expected = {
     figures: [
@@ -52,14 +49,13 @@ test('both Python surfaces render one framed figure per source and count only re
     grouped: 2,
     notice: '2',
   };
-  assert.deepEqual(pythonFigures(shell), expected);
   assert.deepEqual(pythonFigures(detail), expected);
 });
 
 test('a single Python image is not grouped and reads "Python output image"', (t) => {
   withInventory(t);
   const model = { ...pythonModel(), outputText: JSON.stringify({ images: ['data:image/png;base64,YQ=='] }), trustedAttachmentImages: [] };
-  const html = toolShellUtils.createToolShellRenderer({ escapeHtml, toolCallUtils, sanitizeHtmlFragment: null }).renderToolShell(model);
+  const html = createToolDetailBody({ toolCallUtils }).buildDetailBodyMarkup(model);
   assert.deepEqual(pythonFigures(html), {
     figures: [{ src: 'data:image/png;base64,YQ==', alt: 'Python output image', id: '' }], grouped: 0, notice: '',
   });

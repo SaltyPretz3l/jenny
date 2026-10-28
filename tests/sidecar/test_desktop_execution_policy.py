@@ -84,6 +84,7 @@ def test_sandbox_tool_allowlist_matches_typed_files_and_bridge() -> None:
         "list_dir",
         "create_artifact",
         "mermaid_generate",
+        "report_findings",
         "ask_user",
         "exit_plan_mode",
         "propose_command",

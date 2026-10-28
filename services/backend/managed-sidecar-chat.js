@@ -87,12 +87,13 @@ const {
   summarizePromptMessages,
 } = require('./managed-sidecar-chat-helpers');
 const { resolveConfiguredLocalMaxLoopWallSeconds } = require('./chat-stream-admission');
+const { APPLICATION_TURN_HANDOFF_PREPARATION } = require('./session-handoff-context');
 const { computeInterruptedTurnReceipts, acknowledgeInterruptedTurnReceipts } = require('./interrupted-turn-receipts');
 const { buildManagedStartResult, retainManagedRuntimeController } = require('./chat-lifecycle-contracts');
 const { ensureSessionTurnActorRegistry } = require('./session-turn-actor');
-const { buildApprovedPlanSendFields } = require('./approved-plan-context');
-const { buildProposeSendFields, isProposeRunMode } = require('./propose-mode');
-const { activeUseRequestFields } = require('../workspace-active-use-tracker');
+const { admitReportReservation } = require('./session-report-admission');
+const { isProposeRunMode } = require('./propose-mode');
+const { buildChatSendOptionalFields } = require('./chat-send-optional-fields');
 const { retainRuntimeSettlementHandler } = require('./sidecar-client-request-rpc');
 const {
   assertRuntimeOperationsProtocol, assertRuntimeBudgetProtocol,
@@ -102,11 +103,6 @@ const { prepareManagedCheckpointHistory, createManagedContinuationSend } = requi
 // ceilings than local ones) — see resolveChatStreamCeilings in
 // managed-sidecar-chat-helpers.js for the values and rationale.
 const CHAT_STREAM_REQUEST_SETTLE_GRACE_MS = 1_000;
-// Owner D3: the safety policy captured with the turn (session runtime) or the live chatUi state rides every chat.send (omitted when unknown).
-function safetyRequestFields(service, captured) {
-  const chatUi = captured ? null : service?.configService?.getChatUiState?.();
-  return captured ? { ...captured } : (chatUi ? { safety_mode: chatUi.safetyMode, auto_approve_streak_cap: chatUi.autoApproveStreakCap } : {});
-}
 async function startManagedSidecarChatStream(service, {
   sessionId,
   prompt,
@@ -129,7 +125,7 @@ async function startManagedSidecarChatStream(service, {
   runtimeExecutionAuthority = null, runtimeOperationGateway = null,
   runtimeRoute = null, runtimeAssertCurrent = null, runtimeOnInferenceSettlement = null,
   runtimeContinuation = null, runtimeAdmission = null, safetyPolicy = null,
-  sessionHandoffPreparation = null, sessionHandoff = null,
+  sessionHandoffPreparation = null, sessionHandoff = null, applicationTurn = '',
 }) {
   const {
     exchangeTitle, existingSession, imageAttachments, normalizedAttachments,
@@ -226,9 +222,8 @@ async function startManagedSidecarChatStream(service, {
       normalizedInteractiveResponse,
       normalizedAttachments,
       transcriptPrompt,
-      userMessageId, skillInvocation,
-      reuseExistingUserMessage: Boolean(editedAnchorMessageId),
-      failureRetry,
+      userMessageId, skillInvocation, applicationTurn: sessionHandoffPreparation ? APPLICATION_TURN_HANDOFF_PREPARATION : applicationTurn,
+      reuseExistingUserMessage: Boolean(editedAnchorMessageId), failureRetry,
       turnLease: activeTurnLease, runtimeAdmission,
       getSuspendedDecision: () => controller._runtimeDecisionControl?.suspendedDecision(),
       exchangeTitle, isUserStop: () => controller.signal.reason?.cancel_reason === CANCEL_REASON_USER,
@@ -385,12 +380,17 @@ async function startManagedSidecarChatStream(service, {
         return;
       }
 
+      // A linked child's report slot (cp5b, fail-closed) for every new turn identity, never a checkpoint resume or a
+      // handoff preparation turn; before the model loads, so a load failure still reports `failed` (2026-10-27).
+      admitReportReservation(service, { sessionId: resolvedSessionId, turnId, lease: activeTurnLease,
+        handoffPreparation: sessionHandoffPreparation, resumed: Boolean(checkpointHistory) });
+
       ensureNotAborted();
       const requestedModel = String(runtimePreferredModel || normalizedPreferences.preferred_model || '').trim();
       const requestedEngine = String(runtimePreferredEngineType || '').trim().toLowerCase();
       const lockdownRequest = resolveSessionLockdownRequest(service, sessionSummary,
-        { requestedEngine, requestedModel }, managedToolPreferenceInput(toolPreferences,
-          { catalog: service.currentStatus?.tools_status, handoffPreparation: sessionHandoffPreparation }));
+        { requestedEngine, requestedModel }, managedToolPreferenceInput(toolPreferences, { service, sessionId: resolvedSessionId,
+          session: sessionSummary, catalog: service.currentStatus?.tools_status, handoffPreparation: sessionHandoffPreparation }));
       const requestToolPreferences = lockdownRequest.toolPreferences;
       const modelTimingStartedAt = Date.now();
       runtimeAssertCurrent?.();
@@ -488,13 +488,12 @@ async function startManagedSidecarChatStream(service, {
         traceId: requestTraceId,
       });
 
-      // The first turn's handoff row (fail-closed: a coded error, never a turn without it) and queued session
-      // mail join only a brand-new model turn (a resume or edit/failure retry reuses the rows before its anchor);
-      // the history is rebuilt when rows were placed or the readiness checks changed the negotiated kinds.
+      // The first turn's handoff row (fail-closed) joins only a brand-new model turn; queued mail also joins a failure
+      // retry, whose failed attempt may have died before admission (a model load). A resume or edit reuses its rows.
       const contextAdmission = admitTurnContextRows(service, {
         sessionHandoff, brandNew: userRowPersisted && !checkpointHistory && !editedAnchorMessageId && !failureRetry,
+        mailRetry: userRowPersisted && !checkpointHistory && failureRetry === true,
         sessionId: resolvedSessionId, turnId, userMessageId, preparedMessages, lease: activeTurnLease, previousKinds: wireKinds,
-        handoffPreparation: sessionHandoffPreparation, resumed: Boolean(checkpointHistory),
       });
       if (contextAdmission.rebuild) {
         wireKinds = contextAdmission.kinds;
@@ -663,13 +662,13 @@ async function startManagedSidecarChatStream(service, {
         trace_id: requestTraceId,
         session_id: resolvedSessionId,
         session_offline_lockdown: lockdownRequest.active,
-        ...activeUseRequestFields(service, toolContext.workspaceRoot),
+        // Workspace active use, approved plan, propose mode, primary role (row 69), safety policy.
+        ...buildChatSendOptionalFields(service, { sessionId: resolvedSessionId, sessionSummary, sessionMessages,
+          planMode: normalizedPreferences.plan_mode, workspaceRoot: toolContext.workspaceRoot, safetyPolicy }),
         session_incarnation: activeTurnLease.identity.sessionIncarnation,
         generation: activeTurnLease.identity.generation,
         session_start_date: sessionStartDate,
         mode: effectiveMode,
-        ...buildApprovedPlanSendFields(normalizedPreferences.plan_mode, sessionMessages),
-        ...buildProposeSendFields(service, resolvedSessionId, sessionSummary),
         interactive_response: normalizedInteractiveResponse,
         interactive_round_count: normalizedPreferences.interactive_round_count,
         messages: preparedMessages,
@@ -678,10 +677,10 @@ async function startManagedSidecarChatStream(service, {
         ...buildRequestReasoningEffortField(service, normalizedPreferences.reasoning_effort, requestedModel, requestedEngine),
         ...buildImageAttachmentSendParams(imageAttachments),
         ...(interruptedTurnReceipts ? { interrupted_turn_receipts: interruptedTurnReceipts } : {}),
-        memory_policy: memoryPolicy,
+        memory_policy: memoryPolicy, ...require('./session-context-usage').contextCalibrationSendField(sessionSummary),
         ...(contextBlocks?.length ? { context_blocks: contextBlocks } : {}),
         ...(requestToolPreferences ? { tool_preferences: requestToolPreferences } : {}), ...(sessionHandoffPreparation ? { handoff_preparation: sessionHandoffPreparation } : {}),
-        approval_mode: requestApprovalMode, ...safetyRequestFields(service, safetyPolicy),
+        approval_mode: requestApprovalMode,
         ...inferencePerformanceRequestField(service, { engineType, sessionId: resolvedSessionId, requestId }),
         ...(normalizedDebugOptions ? { debug_options: normalizedDebugOptions } : {}), ...(skillInvocation ? { skill_invocation: skillInvocation } : {}),
         execution_context: service.sessionExecutionAuthority.toExecutionContext(executionAuthority),

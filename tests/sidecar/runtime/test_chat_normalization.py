@@ -10,7 +10,9 @@ import pytest
 from sidecar.ai.engines import vision_input
 from sidecar.runtime import vision_attachments
 from sidecar.runtime.chat_normalization import (
+    CONTEXT_BLOCK_KINDS,
     MAX_CONTEXT_BLOCK_BYTES,
+    MAX_CONTEXT_BLOCKS,
     MAX_CONTEXT_BLOCKS_TOTAL_BYTES,
     approved_plan_from_params,
     memory_policy_from_params,
@@ -22,8 +24,10 @@ from sidecar.runtime.chat_normalization import (
     normalize_vision_attachments,
     plan_mode_from_params,
     reasoning_effort_from_params,
+    session_role_from_params,
     session_start_date_from_params,
 )
+from tests.sidecar._platform_skips import requires_file_symlinks
 
 _PNG_BASE64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
@@ -77,15 +81,13 @@ def test_normalize_vision_attachments_rejects_assets_outside_managed_root(
         )
 
 
+@requires_file_symlinks()
 def test_normalize_vision_attachments_rejects_symlink_escape(tmp_path: Path) -> None:
     image_root = tmp_path / "attachments" / "images"
     image_root.mkdir(parents=True)
     outside_image = _write_image(tmp_path / "outside.png")
     link_path = image_root / "escape.png"
-    try:
-        os.symlink(outside_image, link_path)
-    except (OSError, NotImplementedError):
-        pytest.skip("symlink creation is unavailable on this platform")
+    os.symlink(outside_image, link_path)
 
     with pytest.raises(ValueError, match="app-managed image asset store"):
         normalize_vision_attachments(
@@ -752,8 +754,19 @@ def test_normalize_context_blocks_keeps_every_allowlisted_kind_in_order() -> Non
         {"kind": "linked_session", "content": "recall"},
         {"kind": "active_file", "content": "open file"},
         {"kind": "workspace_presentation", "content": "## Workspace Presentation Updates"},
+        {"kind": "profile_overview", "content": "## Profile Overview"},
     ]
     assert normalize_context_blocks(blocks) == blocks
+    assert len(blocks) == len(CONTEXT_BLOCK_KINDS) == MAX_CONTEXT_BLOCKS == 7
+
+
+def test_session_role_is_a_closed_enum_or_absent() -> None:
+    # Row 69: "primary" or no key at all; null and any other value are invalid.
+    assert session_role_from_params({}) is None
+    assert session_role_from_params({"session_role": "primary"}) == "primary"
+    for bad in (None, "", "Primary", "child", 1, True, ["primary"]):
+        with pytest.raises(ValueError, match="session_role"):
+            session_role_from_params({"session_role": bad})
 
 
 def test_normalize_context_blocks_drops_unknown_kinds() -> None:

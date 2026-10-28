@@ -10,6 +10,7 @@ const {
   pruneLegacySessionFiles,
 } = require('../services/backend/session-legacy-file-prune');
 const { scheduleStartupRetentionTasks } = require('../services/main/startup-retention-tasks');
+const { fileSymlinkSkip } = require('./helpers/platform-skips');
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -158,18 +159,13 @@ test('reports an unreadable profile directory instead of a silent empty pass', a
   assert.deepEqual(missing.failed, [], 'a missing profile directory is not a failure');
 });
 
-test('never follows or deletes a link that carries a prunable name', async (t) => {
+test('never follows or deletes a link that carries a prunable name', { skip: fileSymlinkSkip() }, async (t) => {
   const root = makeProfile(t);
   writeSplitStore(root);
   const outside = makeProfile(t);
   const target = writeFile(outside, 'precious.json', 'do not delete', { mtimeMs: NOW - 90 * DAY_MS });
   const linkPath = path.join(root, `sessions.json.migrated-${NOW - 90 * DAY_MS}`);
-  try {
-    fs.symlinkSync(target, linkPath, 'file');
-  } catch (error) {
-    t.skip(`file symlinks unavailable here (${error.code})`);
-    return;
-  }
+  fs.symlinkSync(target, linkPath, 'file');
 
   const result = await pruneLegacySessionFiles({ legacyFilePath: path.join(root, 'sessions.json'), now: NOW });
 

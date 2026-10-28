@@ -57,7 +57,7 @@ const DEFAULT_LOCAL_ENGINES = Object.freeze({
   }),
 });
 const NINFER_ARTIFACT_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/;
-const NINFER_CONTEXT_SIZES = Object.freeze([16384, 32768, 65536, 131072, 153600, 262144]);
+const NINFER_CONTEXT_SIZES = Object.freeze([16384, 32768, 65536, 131072, 153600, 196608, 262144]);
 const DEFAULT_CODEX_CLI = Object.freeze({
   enabled: false,
   commandPath: '',
@@ -345,6 +345,7 @@ const VALID_PREFERRED_ENGINE_TYPES = Object.freeze([
   'openai-compatible',
   'codex-cli',
   'chatgpt',
+  'api-provider',
   'mock',
   // Deterministic scripted engine for agentic GUI testing (dev/CI).
   'replay',

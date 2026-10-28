@@ -115,6 +115,35 @@ test('sign-in shows connecting at once and cancel works while the sign-in call i
   dom.window.close();
 });
 
+test('a failed or state-less sign-in reply puts the row back and stops the countdown', async (t) => {
+  const replies = [
+    () => Promise.resolve({ ok: false, authorized: false, code: 'ipc_sender_unauthorized' }),
+    () => Promise.reject(new Error('bridge gone')),
+  ];
+  const bridge = {
+    async getState() { return cloudState({ auth: 'error', error: { message: 'Token expired.' } }); },
+    chatgptSignIn() { return replies.shift()(); },
+  };
+  const { dom, host, controller } = harness(bridge);
+  t.after(() => { controller.dispose(); dom.window.close(); });
+  const intervals = new Set();
+  let nextId = 1;
+  dom.window.setInterval = () => { const id = nextId++; intervals.add(id); return id; };
+  dom.window.clearInterval = (id) => { intervals.delete(id); };
+  controller.bind();
+  await settle();
+  const authState = () => host.querySelector('[data-settings-field="cloudModelsChatgptAccount"]').dataset.cloudAuthState;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    click(dom, host, 'cloudModelsChatgptSignIn');
+    await settle();
+    assert.equal(authState(), 'error', 'the earlier auth state is back');
+    assert.match(host.textContent, /Token expired\./);
+    assert.equal(intervals.size, 0, 'no countdown keeps ticking');
+    assert.equal(host.querySelector('[data-paste-countdown]'), null);
+  }
+  assert.equal(replies.length, 0);
+});
+
 test('an auth error is shown on the row with a retry action', async () => {
   const { dom, host, controller } = harness({
     async getState() { return cloudState({ error: { code: 'auth_port_in_use', message: 'The sign-in callback port is in use.' } }); },

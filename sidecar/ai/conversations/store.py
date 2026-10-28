@@ -119,8 +119,15 @@ def _placeholders(count: int) -> str:
     return ",".join("?" for _ in range(count))
 
 
-def _scope_sql(exclude: Sequence[str]) -> str:
-    return f" AND s.session_id NOT IN ({_placeholders(len(exclude))})" if exclude else ""
+def _scope_sql(project_id: str | None, exclude: Sequence[str]) -> str:
+    """The scope filter; ``project_id=None`` spans every project (the primary chat)."""
+    project = "" if project_id is None else " AND s.project_id = ?"
+    excluded = f" AND s.session_id NOT IN ({_placeholders(len(exclude))})" if exclude else ""
+    return project + excluded
+
+
+def _scope_params(project_id: str | None, exclude: Sequence[str]) -> tuple[str, ...]:
+    return (*(() if project_id is None else (project_id,)), *exclude)
 
 
 class ConversationStore:
@@ -314,7 +321,7 @@ class ConversationStore:
     # -- search reads --------------------------------------------------------
 
     def lexical_rows(
-        self, match: str, project_id: str, exclude: Sequence[str], *, cap: int
+        self, match: str, project_id: str | None, exclude: Sequence[str], *, cap: int
     ) -> list[tuple[MessageRow, str, float]]:
         """``(row, snippet, bm25)`` best first for an FTS5 ``match``, at most ``cap`` rows.
 
@@ -326,29 +333,30 @@ class ConversationStore:
             " snippet(messages_fts, 0, '', '', '…', 24), bm25(messages_fts)"
             " FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid"
             " JOIN sessions s ON s.session_id = m.session_id"
-            f" WHERE messages_fts MATCH ? AND s.project_id = ?{_scope_sql(exclude)}"
+            f" WHERE messages_fts MATCH ?{_scope_sql(project_id, exclude)}"
             " ORDER BY bm25(messages_fts), m.id DESC LIMIT ?"
         )
         with self._lock:
             rows = self._connection.execute(
-                sql, (match, project_id, *exclude, int(cap))
+                sql, (match, *_scope_params(project_id, exclude), int(cap))
             ).fetchall()
         return [(MessageRow(*row[:7]), str(row[7]), float(row[8])) for row in rows]
 
     def vector_rows(
-        self, model_key: str, dim: int, project_id: str, exclude: Sequence[str], *, cap: int
+        self, model_key: str, dim: int, project_id: str | None, exclude: Sequence[str], *,
+        cap: int,
     ) -> list[tuple[int, bytes, float]]:
         """Newest-first ``(message rowid, blob, norm)`` in scope, at most ``cap`` rows."""
         sql = (
             "SELECT v.message_rowid, v.blob, v.norm FROM message_vectors v"
             " JOIN messages m ON m.id = v.message_rowid"
             " JOIN sessions s ON s.session_id = m.session_id"
-            f" WHERE v.model_key = ? AND v.dim = ? AND s.project_id = ?{_scope_sql(exclude)}"
+            f" WHERE v.model_key = ? AND v.dim = ?{_scope_sql(project_id, exclude)}"
             " ORDER BY v.message_rowid DESC LIMIT ?"
         )
         with self._lock:
             rows = self._connection.execute(
-                sql, (model_key, dim, project_id, *exclude, int(cap))
+                sql, (model_key, dim, *_scope_params(project_id, exclude), int(cap))
             ).fetchall()
         return [(int(rowid), bytes(blob), float(norm)) for rowid, blob, norm in rows]
 

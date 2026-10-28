@@ -142,6 +142,35 @@ test('timeline_dom_write: successes collapse to one INFO per lane, failures alwa
   );
 });
 
+// The row-list lane's per-row reconcile reports 'reconcile_applied' on success;
+// it logged 72 WARNs in one owner day (2026-10-20) while every write succeeded.
+test('timeline_dom_write: a per-row reconcile is a healthy write, a thrown one stays WARN', () => {
+  const logged = [];
+  const controller = createChatTimelinePreferenceController({
+    state: {
+      currentSessionId: 'reconcile-session',
+      ui: {
+        chatTimelineRowModelBySession: new Map(),
+        chatTimelineRowModelMetaBySession: new Map(),
+      },
+    },
+    storage: null,
+    storageKeys: {},
+    callbacks: { appendClientLog(level, event, details) { logged.push({ level, event, details }); } },
+  });
+  const record = (outcome) => controller.recordChatTimelineRolloutSignal(
+    'reconcile-session', 'timeline_dom_write', { lane: 'turn_row_list', outcome },
+  );
+  for (let index = 0; index < 20; index += 1) record('reconcile_applied');
+  record('reconcile_threw');
+  record('reconcile_threw');
+
+  assert.deepEqual(
+    logged.map((entry) => `${entry.level}:${entry.details.outcome}`),
+    ['INFO:reconcile_applied', 'WARN:reconcile_threw', 'WARN:reconcile_threw'],
+  );
+});
+
 test('healthy rebuild and evidence rollout signals resolve to INFO without hiding anomalies', () => {
   const logged = [];
   const controller = createChatTimelinePreferenceController({

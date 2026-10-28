@@ -13,6 +13,8 @@ from types import ModuleType
 
 import pytest
 
+from tests.sidecar._platform_skips import windows_only
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -353,7 +355,7 @@ def test_run_ci_power_throttling_keeper_is_a_no_op_off_windows(monkeypatch: pyte
     assert module._start_power_throttling_keeper() is None
 
 
-@pytest.mark.skipif(not sys.platform.startswith("win"), reason="Windows power throttling only")
+@windows_only("power throttling")
 def test_run_ci_power_throttling_keeper_opts_out_a_spawned_child(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _load_script_module("power_throttling_keeper.py")
     # start() marks the tree as covered for child runners; keep that out of

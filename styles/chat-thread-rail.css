@@ -62,11 +62,6 @@
   margin-block-start: var(--tl-cluster-gap);
 }
 
-.turn-row-list .chat-row[data-row-kind="tool_step"][data-row-state="awaiting_approval"] {
-  padding-inline-start: var(--space-3);
-  border-inline-start: 3px solid var(--widget-tool-pending-border);
-}
-
 .turn-row-list .chat-row[data-row-kind="system_notice"] {
   padding-block: var(--space-1);
   font-size: var(--tl-font-ui);
@@ -226,7 +221,9 @@
     -1 * (var(--_dot-offset) + var(--thread-dot-hit-size) + var(--space-5))
     - var(--thread-dot-size) / 2
   );
-  top: var(--space-5);
+  /* Centred on the row's first line; --row-dot-center is set per row kind
+     below (a single fixed top sat 3-14px off prose and card first lines). */
+  top: calc(var(--row-dot-center, calc(var(--tl-row-h) / 2)) - var(--thread-dot-size) / 2);
   width: var(--thread-dot-size);
   height: var(--thread-dot-size);
   border-radius: 50%;
@@ -241,6 +238,43 @@
     background-color var(--motion-duration-fast) var(--motion-ease-standard),
     filter var(--motion-duration-fast) var(--motion-ease-standard),
     opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* First-line centre per row kind, from the row top (line box = padding +
+   half the line height). Machinery one-liners use the --tl-row-h default. */
+.chat-row[data-row-kind="assistant_text"] {
+  /* .chat-bubble line-height 1.6; the paragraph sits --space-1 down. */
+  --row-dot-center: calc(var(--space-1) + var(--tl-font-prose) * 0.8);
+}
+
+.chat-row[data-row-kind="batch"] {
+  /* Ask card: border + padding, then the caption-size kicker line. */
+  --row-dot-center: calc(1px + var(--space-6) + var(--tl-font-meta) * 0.6);
+}
+
+.chat-row[data-row-kind="recap"] {
+  /* Recap block margin + border + row padding, then the label line. */
+  --row-dot-center: calc(var(--space-3) + 1px + var(--space-5) + var(--tl-font-ui) * 0.675);
+}
+
+.chat-row[data-row-kind="plan_proposal"],
+.chat-row[data-row-kind="plan_document"] {
+  --row-dot-center: calc(1px + var(--space-3) + 0.6em);
+}
+
+.chat-row[data-row-kind="approval_gap"] {
+  /* Row + receipt padding, then the quiet receipt line. */
+  --row-dot-center: calc(2 * var(--space-2) + var(--tl-font-detail) * 0.58);
+}
+
+.chat-row[data-row-kind="approval_gap"][data-row-state="resolved"] {
+  /* The decision mark is taller than the text and baseline-aligned. */
+  --row-dot-center: calc(2 * var(--space-2) + var(--tl-font-detail) * 0.83);
+}
+
+.chat-row[data-row-kind="approval_gap"][data-row-state="awaiting_approval"] {
+  /* Card offset, then the caption-size "Approval needed" kicker line. */
+  --row-dot-center: calc(var(--space-2) + var(--space-3) + var(--tl-font-meta) * 0.6);
 }
 
 .chat-thread-node-nested .chat-thread-node-article .chat-row:hover .chat-row-node-dot {

@@ -418,6 +418,23 @@
   font-size: var(--tl-font-meta);
 }
 
+/* An app-started turn with no card to explain it (a child's auto-resume): one muted line in the
+   reply column, no bubble, no tray. Wake and preparation turns draw nothing. */
+.chat-app-turn-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space-1);
+  align-items: baseline;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--tl-font-meta);
+  line-height: 1.4;
+}
+
+.chat-app-turn-note-time::before {
+  content: "\00B7" " ";
+}
+
 @media (prefers-reduced-motion: reduce) {
   .chat-discarded-draft-chevron,
   .origin-chip {

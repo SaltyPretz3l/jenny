@@ -3,6 +3,11 @@
    (toggle the active view's panel), Ctrl+Shift+\ (split view W1-4c: open the
    most recent other tab beside, or close the non-focused pane).
 
+   Inside the Workspace view (row 82, picks O1/O2) Ctrl+1..5 and Ctrl+N belong to
+   the IDE keymap (editor groups, new file); Ctrl+Alt+1..5 switch views from
+   anywhere. Ctrl+B also fires from the Workspace's Monaco editor (VS Code's
+   toggle side bar works from the editor).
+
    Text-editing surfaces own Ctrl+1..5/N/B. The Ctrl+Shift+Space capture chord
    is exempt by design and may fire from anywhere, including editors. The
    split chord also fires from a chat composer (.composer-input) and stands
@@ -40,6 +45,16 @@
   function isForeignTextEditingSurfaceFocused(doc) {
     if (!isTextEditingSurfaceFocused(doc)) return false;
     return !(doc.activeElement.classList && doc.activeElement.classList.contains('composer-input'));
+  }
+
+  function closestOf(target, selector) {
+    try {
+      return target && typeof target.closest === 'function' ? target.closest(selector) : null;
+    } catch (_err) { return null; }
+  }
+
+  function isInsideWorkspaceView(event) {
+    return Boolean(closestOf(event.target, '#ideView'));
   }
 
   function isPaneSplitChord(event) {
@@ -108,6 +123,8 @@
       if (isCaptureChord(event)) {
         if (typeof openCapture === 'function') {
           event.preventDefault();
+          // A held chord auto-repeats keydown; act on the first press only.
+          if (event.repeat) return;
           openCapture();
           appendClientLog?.('INFO', 'shortcuts.scratchpad_capture', { key: 'Ctrl+Shift+Space' });
         }
@@ -116,8 +133,18 @@
       if (isPaneSplitChord(event)) {
         if (typeof togglePaneSplit !== 'function' || isForeignTextEditingSurfaceFocused(documentRef)) return;
         event.preventDefault();
+        if (event.repeat) return;
         const toggled = togglePaneSplit();
         appendClientLog?.('INFO', 'shortcuts.pane_split_toggle', { toggled: toggled === true });
+        return;
+      }
+      // Ctrl+Alt+1..5: the view tabs from anywhere, editors included (O1). AltGr
+      // reports Ctrl+Alt on Windows layouts that type characters with it.
+      if (event.ctrlKey && event.altKey && !event.metaKey && !event.shiftKey
+        && !event.defaultPrevented && !event.isComposing
+        && !(typeof event.getModifierState === 'function' && event.getModifierState('AltGraph'))
+        && DIGIT_KEYS.indexOf(digitOf(event)) >= 0) {
+        switchView(event, DIGIT_KEYS.indexOf(digitOf(event)), `Ctrl+Alt+${digitOf(event)}`);
         return;
       }
       if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) {
@@ -126,41 +153,62 @@
       if (event.defaultPrevented || event.isComposing) {
         return;
       }
+      const lowerKey = String(event.key || '').toLowerCase();
+      // Ctrl+B from the Workspace's Monaco editor toggles the side that holds Files.
+      const workspaceEditorB = lowerKey === 'b' && isInsideWorkspaceView(event)
+        && Boolean(closestOf(event.target, '.monaco-editor'));
       // UIUX-020: Monaco, the terminal, the composer, and every other
       // text-editing surface own their own keystrokes while focused --
       // digit/N/B must not steal focus out from under someone mid-edit.
       // The Ctrl+Shift+Space chord above is exempt by design; everything
       // past this point is not.
-      if (isTextEditingSurfaceFocused(documentRef)) {
+      if (isTextEditingSurfaceFocused(documentRef) && !workspaceEditorB) {
         return;
       }
       const key = String(event.key || '');
       const digitIndex = DIGIT_KEYS.indexOf(key);
-      if (digitIndex >= 0) {
-        event.preventDefault();
-        const viewId = viewOrder[digitIndex];
-        if (viewId && typeof setActiveView === 'function') {
-          setActiveView(viewId);
-          appendClientLog?.('INFO', 'shortcuts.view_switch', { viewId, key: `Ctrl+${key}` });
-          // Land focus on the destination toprail tab -- the same handoff
-          // activateRailTab() does for mouse/arrow-key rail navigation, so
-          // Ctrl+1..5 never leaves focus stranded on a control that just
-          // moved into a hidden/inert view.
-          rootRef.rendererTopNavShellController?.focusActiveViewTab?.(viewId);
-        }
+      const lower = key.toLowerCase();
+      // The Workspace keymap owns Ctrl+1..5 (editor groups) and Ctrl+N (new file).
+      if ((digitIndex >= 0 || lower === 'n') && isInsideWorkspaceView(event)) {
         return;
       }
-      const lower = key.toLowerCase();
+      if (digitIndex >= 0) {
+        switchView(event, digitIndex, `Ctrl+${key}`);
+        return;
+      }
       if (lower === 'n') {
         event.preventDefault();
+        if (event.repeat) return;
         newChat?.();
         appendClientLog?.('INFO', 'shortcuts.new_chat', { key: 'Ctrl+N' });
         return;
       }
       if (lower === 'b') {
         event.preventDefault();
+        if (event.repeat) return;
         const toggled = togglePanel?.();
         appendClientLog?.('INFO', 'shortcuts.panel_toggle', { toggled: toggled === true });
+      }
+    }
+
+    // Digit from the physical key so Ctrl+Alt+digit holds on layouts where Alt
+    // changes event.key.
+    function digitOf(event) {
+      const code = String(event.code || '');
+      return /^Digit[1-5]$/.test(code) ? code.slice(5) : String(event.key || '');
+    }
+
+    function switchView(event, digitIndex, chord) {
+      event.preventDefault();
+      const viewId = viewOrder[digitIndex];
+      if (viewId && typeof setActiveView === 'function') {
+        setActiveView(viewId);
+        appendClientLog?.('INFO', 'shortcuts.view_switch', { viewId, key: chord });
+        // Land focus on the destination toprail tab -- the same handoff
+        // activateRailTab() does for mouse/arrow-key rail navigation, so the
+        // chord never leaves focus stranded on a control that just moved into
+        // a hidden/inert view.
+        rootRef.rendererTopNavShellController?.focusActiveViewTab?.(viewId);
       }
     }
 

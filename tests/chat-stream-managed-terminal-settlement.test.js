@@ -430,3 +430,33 @@ test('a failed turn still names the chat from the prompt-derived title', async (
   });
   assert.equal(untitled.captured[0].title, null);
 });
+
+test('consumed mid-turn mail rides the terminal mutation ahead of the assistant row (row 70 W2a)', async () => {
+  const { buildIncludedRow } = require('../services/backend/session-message-envelope');
+  const { makeEnvelope } = require('./helpers/session-mail-fixtures');
+  const { createMidTurnMailState } = require('../services/backend/session-mail-mid-turn');
+  const consumedRow = buildIncludedRow(makeEnvelope(1), { turn_id: 'turn_1' });
+  const unconsumedRow = buildIncludedRow(makeEnvelope(2), { turn_id: 'turn_1' });
+  const { captured, ctx } = context();
+  ctx.midTurnMail = createMidTurnMailState();
+  ctx.midTurnMail.reserved.set('snap-1', { rows: [consumedRow], messageIds: [consumedRow.session_message.message_id] });
+  ctx.midTurnMail.reserved.set('snap-2', { rows: [unconsumedRow], messageIds: [unconsumedRow.session_message.message_id] });
+  ctx.midTurnMail.consumed.add(consumedRow.session_message.message_id);
+
+  await settleManagedAssistantCompletion(ctx);
+
+  assert.deepEqual(captured[0].messages.map((message) => message.id), [consumedRow.id, 'assistant_stream_1_seg1']);
+  assert.equal(captured[0].messages[0].role, 'context');
+  assert.equal(ctx.midTurnMail.settled, true);
+  assert.equal(ctx.midTurnMail.reserved.size, 0, 'finalized after the durable settle; the unconsumed snapshot released');
+
+  // A refused terminal persists nothing: the mail returns to queued instead.
+  const refused = context();
+  refused.ctx.midTurnMail = createMidTurnMailState();
+  refused.ctx.midTurnMail.reserved.set('snap-3', { rows: [consumedRow], messageIds: [consumedRow.session_message.message_id] });
+  refused.ctx.unfinishedToolRepairFailure = 'tool_repair_refused';
+  await settleManagedAssistantCompletion(refused.ctx);
+  assert.equal(refused.captured.length, 0);
+  assert.equal(refused.ctx.midTurnMail.settled, true);
+  assert.equal(refused.ctx.midTurnMail.reserved.size, 0);
+});

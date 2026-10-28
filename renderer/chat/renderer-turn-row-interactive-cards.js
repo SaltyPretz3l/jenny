@@ -64,7 +64,9 @@
     function buildProposalMarkup(row, messages, renderOptions) {
       const cards = (typeof globalThis !== 'undefined' && globalThis.rendererProposalCards)
         || (typeof require === 'function' ? (() => { try { return require('./renderer-proposal-cards'); } catch (_error) { return null; } })() : null);
-      return cards ? cards.buildProposalRowMarkup(row, messages, renderOptions, { escapeHtml }) : '';
+      // Row 76: the primary chat's offer card carries the Always-allow row; the predicate and flag travel with the markup deps.
+      const flags = typeof deps.getFeatureFlags === 'function' ? deps.getFeatureFlags() || {} : {};
+      return cards ? cards.buildProposalRowMarkup(row, messages, renderOptions, { escapeHtml, isPrimarySession: deps.isPrimarySession, launchPermissionEnabled: flags.primary_launch_permission !== false }) : '';
     }
 
     function buildInteractiveCardMarkup(toolCallMessage, row, messages, renderOptions) {

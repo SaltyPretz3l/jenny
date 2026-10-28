@@ -166,6 +166,7 @@ def _write_bytes_atomic(
             os.replace(temp_path, path)
         else:
             os.replace(temp_path.name, path.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            _fsync_directory_best_effort(parent_fd)
     except OSError as error:
         raise _failure(f"failed to write file: {error}") from error
     finally:
@@ -173,6 +174,19 @@ def _write_bytes_atomic(
         if parent_fd is not None:
             os.close(parent_fd)
     return True
+
+
+def _fsync_directory_best_effort(parent_fd: int) -> None:
+    """Make the rename itself durable on POSIX; the write already succeeded.
+
+    Only the dir-fd path (POSIX) pins a parent descriptor, and Windows cannot
+    fsync a directory handle anyway. A failure here leaves the new content in
+    place, so it must never turn the completed replace into a failed write.
+    """
+    try:
+        os.fsync(parent_fd)
+    except OSError:
+        pass
 
 
 def _create_atomic_temp(path: Path, parent_identity: NodeIdentity) -> tuple[int | None, int, Path]:

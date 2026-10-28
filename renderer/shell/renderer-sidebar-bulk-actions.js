@@ -97,7 +97,8 @@
     controls.delete.setAttribute('aria-expanded', 'false');
     groups.before(toolbar);
 
-    function rows() { return [...groups.querySelectorAll('.conversation-item[data-session-id]')]; }
+    // The primary "Jenny" chat (row 69) is never selectable: no move, archive or delete.
+    function rows() { return [...groups.querySelectorAll('.conversation-item[data-session-id]:not([data-session-role="primary"])')]; }
     function summary(id) { return state.sessions.find((item) => item.id === id); }
     function stamp(item) { return `${item?.updated_at || ''}|${item?.message_count || 0}`; }
     function pendingIds() { return state.ui.pendingSessionDeletes || []; }
@@ -152,16 +153,20 @@
       control.title = label;
       control.dataset.tooltip = label;
     }
+    // Last paint mode per row. A row the panel newly creates has no entry, so it
+    // still gets its first paint; an idle row repainted idle is skipped.
+    const paintedMode = new WeakMap();
     function paintRow(row) {
+      const mode = selecting ? 'selecting' : 'idle';
+      const previous = paintedMode.get(row);
+      if (previous === mode && !selecting) return;
       const open = row.querySelector('[data-session-open]');
-      const menu = row.querySelector('[data-session-action="menu"]');
       if (!open) return;
+      paintedMode.set(row, mode);
       row.classList.toggle('sidebar-bulk-selecting', selecting);
       row.classList.toggle('sidebar-bulk-selected', selecting && selected.has(row.dataset.sessionId));
-      if (menu) {
-        menu.hidden = selecting;
-        menu.tabIndex = selecting ? -1 : open.tabIndex;
-      }
+      // The row's `.sidebar-bulk-selecting` class hides the ⋯ menu in CSS (display:none, so it is
+      // neither visible nor focusable); its tab stop stays the panel's roving one throughout.
       if (selecting) {
         if (!Object.prototype.hasOwnProperty.call(open.dataset, 'bulkOriginalLabel')) open.dataset.bulkOriginalLabel = open.getAttribute('aria-label') || '';
         open.setAttribute('role', 'checkbox');
@@ -302,7 +307,7 @@
     function intercept(event) {
       if (!selecting) return;
       const row = event.target.closest?.('.conversation-item[data-session-id]');
-      if (!row || !groups.contains(row)) return;
+      if (!row || !groups.contains(row) || row.dataset.sessionRole === 'primary') return;
       if (event.type === 'keydown' && !['Enter', ' '].includes(event.key)) return;
       event.preventDefault(); event.stopImmediatePropagation();
       if (busy || confirmation || event.type === 'contextmenu') return;

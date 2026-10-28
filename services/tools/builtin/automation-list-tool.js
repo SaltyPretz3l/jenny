@@ -1,19 +1,9 @@
 'use strict';
 
-const { TOOL_ERROR_CODES } = require('../../backend/error-codes');
+const { manifestSchema, serviceFailure, serviceUnavailable } = require('./tool-result');
 
-function serviceUnavailable() {
-  return {
-    content: 'Automation service is unavailable.',
-    summary: 'Automation list unavailable',
-    isError: true,
-    errorCode: TOOL_ERROR_CODES.DISABLED,
-    metadata: {
-      result_kind: 'automation_list',
-      unavailable: true,
-    },
-  };
-}
+const RESULT_KIND = 'automation_list';
+const LABEL = 'Automation list';
 
 function renderAutomation(entry) {
   const enabled = entry.enabled ? 'enabled' : 'disabled';
@@ -30,15 +20,10 @@ function normalizeCount(value, fallback) {
 
 module.exports = {
   name: 'automation_list',
-  description: 'List read-only time-based automations from Jenny scheduler records.',
+  ...manifestSchema('automation_list'),
   category: 'builtin',
   readOnly: true,
   workspaceRequired: true,
-  parameters: {
-    type: 'object',
-    properties: {},
-    required: [],
-  },
 
   summarize() {
     return 'List automations';
@@ -46,20 +31,14 @@ module.exports = {
 
   async execute(_input, context) {
     if (!context.automationService || typeof context.automationService.listAutomations !== 'function') {
-      return serviceUnavailable();
+      return serviceUnavailable(RESULT_KIND, {
+        label: LABEL,
+        content: 'Automation service is unavailable.',
+      });
     }
     const result = await context.automationService.listAutomations();
     if (!result?.success) {
-      return {
-        content: result?.message || 'Automation list failed.',
-        summary: 'Automation list failed',
-        isError: true,
-        errorCode: result?.error_code || TOOL_ERROR_CODES.EXECUTION_FAILED,
-        metadata: {
-          result_kind: 'automation_list',
-          reason: result?.reason || 'execution_failed',
-        },
-      };
+      return serviceFailure(RESULT_KIND, result, { label: LABEL });
     }
     const automations = Array.isArray(result.automations) ? result.automations : [];
     const totalCount = normalizeCount(result.total_count, automations.length);
@@ -74,7 +53,7 @@ module.exports = {
       summary: `List ${automations.length} automation(s)`,
       isError: false,
       metadata: {
-        result_kind: 'automation_list',
+        result_kind: RESULT_KIND,
         count: automations.length,
         total_count: totalCount,
         omitted_count: omittedCount,

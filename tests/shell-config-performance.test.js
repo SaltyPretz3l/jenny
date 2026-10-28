@@ -120,4 +120,7 @@ test('the change reason is non-feature and never refreshes the managed sidecar c
   assert.equal(shouldRefreshManagedConfigForShellConfigReason('x', ['performance_telemetry_updated']), false);
   assert.equal(shouldBroadcastFeatureState('performance_telemetry_updated'), false);
   assert.equal(MANAGED_CONFIG_REFRESH_REASONS.has('performance_telemetry_updated'), false);
+  // Row 76: the primaryChat block (pause, launch permissions) is non-feature state too.
+  assert.equal(shouldBroadcastFeatureState('primary_chat_updated'), false);
+  assert.equal(shouldRefreshManagedConfigForShellConfigReason('primary_chat_updated'), false);
 });

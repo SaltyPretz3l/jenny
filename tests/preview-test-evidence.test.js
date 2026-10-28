@@ -78,7 +78,7 @@ describe('preview_test / per-event outcomes', () => {
 
   test('caller selectors are flattened and bounded to 80 chars in the line and metadata', async () => {
     const root = makeWorkspace();
-    const selector = `#a${'b'.repeat(200)}`;
+    const selector = `#a${'b'.repeat(150)}`;
     const service = stubService();
     const result = await makeTool().execute(
       { path: 'index.html', events: [{ action: 'click', selector }] },

@@ -128,3 +128,27 @@ test('an open button can carry its own dataset and label without a change id', (
   const none = parse(buildFileDiffMarkup({ path: 'a.txt', diffId: 'd1', hunks, actionButton }));
   assert.equal(none.querySelector('.file-diff-open'), null, 'no change id and no opt-in: still no button');
 });
+
+test('annotations sit under their new-side line; lines the hunks miss lead the body', () => {
+  const doc = parse(buildFileDiffBodyMarkup({
+    hunks,
+    annotations: [
+      { line: 49, severity: 'high', html: '<p class="note">on new</p>' },
+      { line: 47, severity: 'bad value!', html: '<p class="note">on context</p>' },
+      { line: 400, severity: 'low', html: '<p>far</p>', unplacedHtml: '<p class="note">outside</p>' },
+      { line: 0, html: '<p>ignored</p>' },
+    ],
+  }));
+  const rows = [...doc.body.querySelectorAll('.diff-line, .diff-annotation')];
+  assert.equal(rows[0].textContent, 'outside');
+  assert.ok(rows[0].classList.contains('diff-annotation--unplaced'));
+  const contextRow = doc.querySelector('.diff-line-context');
+  assert.equal(contextRow.getAttribute('data-review-severity'), 'medium', 'an unknown severity reads as medium');
+  assert.equal(contextRow.nextElementSibling.textContent, 'on context');
+  const added = doc.querySelector('.diff-line-add');
+  assert.equal(added.getAttribute('data-review-severity'), 'high');
+  assert.equal(added.nextElementSibling.textContent, 'on new');
+  // The removed line shares the number 49 on the old side and gets nothing.
+  assert.equal(doc.querySelector('.diff-line-remove').hasAttribute('data-review-severity'), false);
+  assert.equal(doc.body.textContent.includes('ignored'), false);
+});

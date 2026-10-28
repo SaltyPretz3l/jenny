@@ -31,7 +31,7 @@ function createCurtainDom(extraBody = '', options = {}) {
     + '<div id="startupOverlaySecondary"></div>'
     + '<div class="startup-overlay-actions" id="startupOverlayActions"></div></div></div>'
     + extraBody
-    + '</body></html>', { pretendToBeVisual: true });
+    + '</body></html>', { pretendToBeVisual: true, ...(options.url ? { url: options.url } : {}) });
 }
 
 function createController(documentRef, callbacks = {}, extra = {}) {
@@ -51,8 +51,12 @@ function createController(documentRef, callbacks = {}, extra = {}) {
   });
 }
 
-function createControlledHandoff(t, animated = false) {
-  const dom = createCurtainDom('<main id="appShell"></main>', { sky: animated });
+function createControlledHandoff(t, animated = false, { fullSkySeen } = {}) {
+  const dom = createCurtainDom('<main id="appShell"></main>', {
+    sky: animated,
+    ...(fullSkySeen === undefined ? {} : { url: 'https://jenny.test/' }),
+  });
+  if (fullSkySeen) dom.window.localStorage.setItem('jenny.startup.fullSkySeen', '1');
   const previous = {
     setTimeout: global.setTimeout,
     clearTimeout: global.clearTimeout,
@@ -63,12 +67,13 @@ function createControlledHandoff(t, animated = false) {
   const cleared = new Set();
   const marks = [];
   let collapseDone;
+  let collapseOptions = null;
   let readyCalls = 0;
   let removedCalls = 0;
   const sky = {
     start() {}, pause() {}, resume() {}, dispose() {},
     isAnimated() { return true; },
-    collapse({ onDone }) { collapseDone = onDone; },
+    collapse(options) { collapseOptions = options; collapseDone = options.onDone; },
   };
   global.setTimeout = (callback, delay) => {
     const id = scheduled.length + 1;
@@ -94,6 +99,7 @@ function createControlledHandoff(t, animated = false) {
     background: dom.window.document.getElementById('appShell'),
     get readyCalls() { return readyCalls; },
     get removedCalls() { return removedCalls; },
+    get collapseOptions() { return collapseOptions; },
     finishCollapse() { collapseDone(); },
     dismiss() {
       controller.notifyBootViewReady();
@@ -223,4 +229,28 @@ test('dispose in fatal mode clears the dialog and explicitly restores reachabili
   h.controller.dispose();
   assert.equal(h.overlay.getAttribute('role'), 'status');
   assert.equal(h.background.inert, false);
+});
+
+test('the first launch on a profile plays the full sky and records it; a returning launch skips the hold, collapses fast and hands input over at once', (t) => {
+  const first = createControlledHandoff(t, true, { fullSkySeen: false });
+  first.controller.notifyBootViewReady();
+  first.controller.notifyShellHydrated();
+  assert.equal(first.overlay.classList.contains('hidden'), false, 'the first launch holds for the minimum sky');
+  first.scheduled.find((entry) => entry.delay === 900).callback();
+  assert.equal(first.collapseOptions.durationMs, 750, 'the full collapse');
+  assert.equal(first.background.inert, true, 'the full sky keeps the shell isolated until removal');
+  assert.equal(first.dom.window.localStorage.getItem('jenny.startup.fullSkySeen'), '1');
+
+  const returning = createControlledHandoff(t, true, { fullSkySeen: true });
+  returning.controller.notifyBootViewReady();
+  returning.controller.notifyShellHydrated();
+  // Red before 2026-10-19: every launch waited out the 900 ms hold and a 750 ms collapse.
+  assert.equal(returning.overlay.classList.contains('hidden'), true, 'no hold on a returning launch');
+  assert.equal(returning.scheduled.some((entry) => entry.delay === 900), false);
+  assert.equal(returning.collapseOptions.durationMs, 250, 'the quick collapse');
+  assert.equal(returning.background.inert, false, 'input reaches the shell during the collapse');
+  assert.equal(returning.overlay.style.pointerEvents, 'none');
+  returning.finishCollapse();
+  assert.equal(returning.overlay.parentNode, null);
+  assert.deepEqual(returning.marks, ['shell-interactive']);
 });

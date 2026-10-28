@@ -11,6 +11,7 @@ const {
   KEEPER_SCRIPT,
   startPowerKeeper,
 } = require('../scripts/run-node-tests-safe-power');
+const { windowsOnly } = require('./helpers/platform-skips');
 
 function fakeSpawn(calls) {
   return (command, args, options) => {
@@ -69,7 +70,7 @@ test('a keeper that cannot start leaves the run unmarked and does not throw', ()
   assert.equal(env[ACTIVE_ENV_VAR], undefined);
 });
 
-test('the keeper helper process exits once its root process is gone', { skip: process.platform !== 'win32' }, async () => {
+test('the keeper helper process exits once its root process is gone', { skip: windowsOnly('power keeper helper, needs python on PATH') }, async () => {
   const root = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore', windowsHide: true });
   const keeper = spawn('python', [KEEPER_SCRIPT, '--root-pid', String(root.pid)], { stdio: 'ignore', windowsHide: true });
   const exited = new Promise((resolve, reject) => {

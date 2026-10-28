@@ -25,7 +25,7 @@ function createHarness(t, options = {}) {
   const { createLifecycleController } = require('../renderer/shell/renderer-lifecycle-utils');
   const element = () => dom.window.document.createElement('div');
   const state = options.state || {
-    ui: { activeView: 'chat', activeSettingsSection: 'models', composerPopoverOpen: false, commandPopoverOpen: false },
+    ui: { activeView: 'chat', activeSettingsSection: 'models', composerPopoverOpen: false },
     logs: [],
     sessions: [],
     runtimeDraft: {},
@@ -39,7 +39,6 @@ function createHarness(t, options = {}) {
       chatInput: options.chatInput || element(),
       composerAttachMenu: element(),
       composerAttachShortcut: element(),
-      composerTerminalShortcut: element(),
       ...(options.dom || {}),
     },
     callbacks,
@@ -124,7 +123,7 @@ test('runtime preferences expose the session pre-plan run mode for the plan togg
   // Alt+P toggle must read it from the session summary, not a module-local
   // shadow — otherwise a reload or session switch restores the wrong mode.
   const state = {
-    ui: { activeView: 'chat', activeSettingsSection: 'models', composerPopoverOpen: false, commandPopoverOpen: false },
+    ui: { activeView: 'chat', activeSettingsSection: 'models', composerPopoverOpen: false },
     logs: [],
     sessions: [{ id: 's1', run_mode: 'plan', plan_mode: true, pre_plan_run_mode: 'auto' }],
     currentSessionId: 's1',
@@ -145,7 +144,7 @@ test('creating a local draft session carries the draft run mode through the rebu
   // selects Auto with no session open must not have it silently reset to Ask
   // by opening a new chat.
   const state = {
-    ui: { activeView: 'chat', activeSettingsSection: 'models', composerPopoverOpen: false, commandPopoverOpen: false },
+    ui: { activeView: 'chat', activeSettingsSection: 'models', composerPopoverOpen: false },
     logs: [],
     sessions: [],
     currentSessionId: '',
@@ -191,7 +190,7 @@ test('leaving an old image chat view switches immediately with no plugin round-t
   let guardCalls = 0;
   let renderLayoutCalls = 0;
   const state = {
-    ui: { activeView: 'plugin', activeSettingsSection: 'models', composerPopoverOpen: false, commandPopoverOpen: false },
+    ui: { activeView: 'plugin', activeSettingsSection: 'models', composerPopoverOpen: false },
     logs: [],
     sessions: [],
     runtimeDraft: {},
@@ -242,7 +241,7 @@ for (const [label, panes, expected] of [
 ]) {
   test(`creating a chat re-latches pane 0 follow only when the chat lands there (CTR-001): ${label}`, async (t) => {
     const state = {
-      ui: { activeView: 'chat', activeSettingsSection: 'models', composerPopoverOpen: false, commandPopoverOpen: false },
+      ui: { activeView: 'chat', activeSettingsSection: 'models', composerPopoverOpen: false },
       logs: [],
       sessions: [],
       currentSessionId: panes ? panes.panes[panes.focusedPaneId].sessionId : 's0',
@@ -273,7 +272,7 @@ for (const [label, panes, expected] of [
 
 test('handleCreateSession always creates a plain chat; a plugin session type is no longer honoured', async (t) => {
   const state = {
-    ui: { activeView: 'chat', activeSettingsSection: 'models', composerPopoverOpen: false, commandPopoverOpen: false },
+    ui: { activeView: 'chat', activeSettingsSection: 'models', composerPopoverOpen: false },
     logs: [],
     sessions: [],
     currentSessionId: 's0',

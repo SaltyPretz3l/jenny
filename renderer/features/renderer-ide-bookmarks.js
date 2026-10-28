@@ -90,6 +90,37 @@
       return set ? [...set].sort((a, b) => a - b) : [];
     }
 
+    // Marks store line numbers, but the glyph decorations track edits on the
+    // model. Read the live ranges back into state before any line-based read so
+    // a re-apply never snaps the glyphs to stale lines. Lines collapsed onto one
+    // (deleted text) merge. No decorations on the model (recreated, textarea
+    // fallback) leaves state as the source of truth.
+    function syncFromModel(path) {
+      const norm = String(path || '');
+      const set = marks.get(norm);
+      const model = set ? editorHost?.getModel?.(norm) : null;
+      if (!model || typeof model.getAllDecorations !== 'function') {
+        return;
+      }
+      // Margin-only read: getAllDecorations also walks the bracket-pair
+      // provider (one decoration per pair), which scales with file size.
+      const decorations = typeof model.getAllMarginDecorations === 'function'
+        ? model.getAllMarginDecorations()
+        : model.getAllDecorations();
+      const live = new Set();
+      for (const decoration of decorations || []) {
+        const line = Number(decoration?.range?.startLineNumber);
+        if (decoration?.options?.glyphMarginClassName === BOOKMARK_GLYPH_CLASS && line >= 1) {
+          live.add(line);
+        }
+      }
+      if (!live.size) {
+        return;
+      }
+      totalMarks += live.size - set.size;
+      marks.set(norm, live);
+    }
+
     // State -> the active file's model decorations (glyph-margin lane), applied
     // through the host's bookmark-only delta path. No-op without the host method.
     function applyDecorations(path) {
@@ -117,6 +148,7 @@
       if (!norm || !(lineNumber >= 1)) {
         return false;
       }
+      syncFromModel(norm);
       const target = Math.floor(lineNumber);
       let set = marks.get(norm);
       let added;
@@ -158,6 +190,7 @@
     // strictly before (else the last). Reveal stays in-file (already active).
     function jumpInActive(direction) {
       const path = activePath();
+      syncFromModel(path);
       const lines = sortedLines(path);
       if (!path || !lines.length) {
         return false;
@@ -182,18 +215,29 @@
       return jumpInActive(-1);
     }
 
+    // A line reader for one file: the open model's getLineContent (no full-buffer
+    // copy), else a one-time split of the host value.
+    function lineReader(path) {
+      const model = editorHost?.getModel?.(path);
+      if (model && typeof model.getLineContent === 'function') {
+        const lineCount = typeof model.getLineCount === 'function' ? model.getLineCount() : Infinity;
+        return (line) => (line <= lineCount ? model.getLineContent(line) : '');
+      }
+      const value = typeof editorHost?.getValue === 'function' ? editorHost.getValue(path) : '';
+      const textLines = String(value == null ? '' : value).split('\n');
+      return (line) => textLines[line - 1] || '';
+    }
+
     // Every bookmark across all files as Quick-pick rows: file basename + line +
     // a trimmed snippet of the line text (read live from the open model). Sorted
     // by basename then line so the picker order is stable.
     function listRows() {
       const rows = [];
-      for (const path of marks.keys()) {
-        const value = editorHost && typeof editorHost.getValue === 'function'
-          ? editorHost.getValue(path)
-          : '';
-        const textLines = String(value == null ? '' : value).split('\n');
+      for (const path of [...marks.keys()]) {
+        syncFromModel(path);
+        const readLine = lineReader(path);
         sortedLines(path).forEach((line) => {
-          const snippet = (textLines[line - 1] || '').trim().slice(0, MAX_SNIPPET);
+          const snippet = String(readLine(line) || '').trim().slice(0, MAX_SNIPPET);
           rows.push({ path, line, basename: basenameOf(path), snippet });
         });
       }
@@ -201,8 +245,12 @@
       return rows;
     }
 
+    // The picker filters per keystroke; rows are built once per open.
+    let pickerRows = null;
+
     function matchRows(query) {
-      const rows = listRows();
+      pickerRows = pickerRows || listRows();
+      const rows = pickerRows;
       const needle = String(query || '').trim().toLowerCase();
       if (!needle) {
         return rows;
@@ -289,7 +337,19 @@
       : null;
 
     function openList() {
+      pickerRows = null;
       return picker ? picker.open() : false;
+    }
+
+    // Workspace root switch: drop every mark and wipe its glyphs so nothing
+    // paints into a same-named file under the new root.
+    function clear() {
+      for (const path of [...marks.keys()]) {
+        editorHost?.setBookmarkDecorations?.(path, []);
+      }
+      marks.clear();
+      totalMarks = 0;
+      pickerRows = null;
     }
 
     // Drop bookmarks for files no longer open (close / rename) so the gutter and
@@ -316,8 +376,9 @@
       if (disposed) {
         return;
       }
-      const detailPath = event && event.detail && event.detail.path;
-      applyDecorations(detailPath || activePath());
+      const path = (event && event.detail && event.detail.path) || activePath();
+      syncFromModel(path);
+      applyDecorations(path);
     }
 
     if (windowRef && typeof windowRef.addEventListener === 'function') {
@@ -342,6 +403,7 @@
       listRows,
       applyDecorations,
       pruneClosed,
+      clear,
       dispose,
     };
   }

@@ -24,6 +24,19 @@
     }
     return delivered;
   }
+  // Composer usable: present, enabled, writable, outside an inert subtree and
+  // laid out (a hidden composer has no client rects).
+  function composerUsable(doc) {
+    const input = doc && typeof doc.getElementById === 'function' ? doc.getElementById('chatInput') : null;
+    if (!input || input.disabled || input.readOnly) {
+      return false;
+    }
+    if (typeof input.closest === 'function' && input.closest('[inert]')) {
+      return false;
+    }
+    return typeof input.getClientRects !== 'function' || input.getClientRects().length > 0;
+  }
+  const COMPOSER_WATCH_MS = 60000;
   const audit = globalRef.__jennyStartupAudit || {
     enabled: false,
     config: null,
@@ -31,7 +44,12 @@
     flushedCount: 0,
     flushScheduled: false,
     flushInFlight: null,
-    mark(name, details = {}) {
+    onceMarks: new Set(),
+    paintObserver: null,
+    composerWatch: null,
+    // options.tsMs carries a mark's real time when it is observed after the
+    // fact (paint entries); otherwise the mark is stamped now.
+    mark(name, details = {}, options = {}) {
       const normalizedName = String(name || '').trim();
       if (!normalizedName) {
         return;
@@ -46,16 +64,87 @@
         source: 'renderer',
         performanceNow: Number(globalRef.performance?.now?.() || 0),
         timeOrigin: Number(globalRef.performance?.timeOrigin || 0),
-        ts_ms: Date.now(),
+        ts_ms: Number.isFinite(Number(options?.tsMs)) && Number(options.tsMs) > 0
+          ? Math.round(Number(options.tsMs)) : Date.now(),
         details: details && typeof details === 'object' && !Array.isArray(details) ? details : {},
       };
       this.marks.push(entry);
       this.flush();
     },
+    // Boot milestones fire once per renderer: later reloads of the same
+    // surface (session reloads, re-renders) are not startup.
+    markOnce(name, details = {}, options = {}) {
+      const normalizedName = String(name || '').trim();
+      if (!normalizedName || this.onceMarks.has(normalizedName)) {
+        return false;
+      }
+      this.onceMarks.add(normalizedName);
+      this.mark(normalizedName, details, options);
+      return true;
+    },
     enable(config = {}) {
       this.enabled = config?.enabled === true;
       this.config = config && typeof config === 'object' ? config : {};
+      if (this.enabled) {
+        this.observeFirstContentfulPaint();
+      }
       this.flush();
+    },
+    // Installed only once the audit is enabled; buffered:true replays the
+    // paint entry that happened before the config arrived.
+    observeFirstContentfulPaint() {
+      const Observer = globalRef.PerformanceObserver;
+      if (this.paintObserver || this.onceMarks.has('first-contentful-paint') || typeof Observer !== 'function') {
+        return;
+      }
+      const timeOrigin = Number(globalRef.performance?.timeOrigin || 0);
+      try {
+        this.paintObserver = new Observer((list) => {
+          const entry = list.getEntries().find((candidate) => candidate.name === 'first-contentful-paint');
+          if (!entry) {
+            return;
+          }
+          this.markOnce('first-contentful-paint', { startTime: Math.round(entry.startTime) }, {
+            tsMs: timeOrigin > 0 ? timeOrigin + entry.startTime : 0,
+          });
+          this.paintObserver?.disconnect?.();
+        });
+        this.paintObserver.observe({ type: 'paint', buffered: true });
+      } catch (_error) {
+        this.paintObserver = null;
+      }
+    },
+    // Called where the startup curtain releases input. Marks now when the
+    // composer is usable; otherwise (audit on only) watches until it is, for
+    // at most COMPOSER_WATCH_MS.
+    markComposerInteractive(doc, source = '') {
+      if (this.onceMarks.has('composer-interactive')) {
+        return;
+      }
+      if (composerUsable(doc)) {
+        this.markOnce('composer-interactive', { source });
+        return;
+      }
+      const Observer = globalRef.MutationObserver;
+      if (!this.enabled || this.composerWatch || typeof Observer !== 'function' || !doc?.body) {
+        return;
+      }
+      const stop = () => {
+        this.composerWatch?.observer?.disconnect?.();
+        clearTimeout(this.composerWatch?.timer);
+      };
+      const observer = new Observer(() => {
+        if (composerUsable(doc)) {
+          stop();
+          this.markOnce('composer-interactive', { source, deferred: true });
+        }
+      });
+      observer.observe(doc.body, {
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['disabled', 'readonly', 'inert', 'class', 'hidden', 'style'],
+      });
+      this.composerWatch = { observer, timer: setTimeout(stop, COMPOSER_WATCH_MS) };
     },
     flush() {
       const diagnostics = globalRef.jennyShell?.diagnostics;

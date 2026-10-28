@@ -175,13 +175,6 @@
   margin-inline-start: 0;
 }
 
-/* §17.1: terminal shortcut is main-chat-only (the IDE has its own terminal).
- * Unconditional — it must stay hidden at every dock width, not only inside
- * the narrow-layout port below. */
-.ide-chat-dock-body #composerTerminalShortcut {
-  display: none;
-}
-
 /* ── State-class re-authors (plan §9, mirror from surface-state.js) ─────────
  * .chat-thread-shell's base is opacity:0/pointer-events:none; only
  * .chat-view.chat-active reveals it, and the moved shell no longer matches.
@@ -295,10 +288,6 @@
     padding: var(--space-5);
   }
 
-  .ide-chat-dock-body .composer-icon-tools {
-    gap: var(--space-2);
-  }
-
   .ide-chat-dock-body .composer-entry-row {
     display: block;
     width: 100%;
@@ -310,17 +299,6 @@
     min-height: 54px;
     max-height: 120px; /* spec: dock caps auto-grow lower than main chat's 168px */
     font-size: var(--font-size-prose);
-  }
-
-  .ide-chat-dock-body .composer-mode {
-    margin-inline-end: auto;
-    padding: 1px;
-  }
-
-  .ide-chat-dock-body .composer-mode-button {
-    min-height: 26px;
-    padding: 0 10px;
-    font-size: var(--font-size-caption);
   }
 
   .ide-chat-dock-body .composer-stop-button svg {
@@ -360,30 +338,6 @@
 
   .ide-chat-dock-body .composer-model-picker-list {
     max-height: 220px;
-  }
-
-  .ide-chat-dock-body .composer-meta {
-    grid-template-columns: 1fr;
-    gap: var(--space-3);
-    padding-top: 0;
-    margin-top: var(--space-3);
-  }
-
-  .ide-chat-dock-body .composer-signal-group {
-    width: 100%;
-  }
-
-  .ide-chat-dock-body .composer-signal-group-runtime {
-    justify-content: flex-start;
-  }
-
-  .ide-chat-dock-body .composer-meta .composer-select-model select {
-    width: 104px;
-    min-width: 104px;
-  }
-
-  .ide-chat-dock-body .composer-meta .composer-select-effort select {
-    max-width: 76px;
   }
 
   .ide-chat-dock-body .composer-jump-tools {

@@ -649,3 +649,33 @@ test('reduced motion suppresses the badge fade transition class on both the head
     'no sidebar transition class under prefers-reduced-motion'
   );
 });
+
+test('in the app: locking the streaming chat from its row menu cancels the running turn', async (t) => {
+  const sessionId = 'session-lock-live';
+  const { window, shell } = await loadRendererTestApp(t, {
+    shell: {
+      features: { state: { featureFlags: { session_offline_lockdown: true } } },
+      chat: {
+        async startStream(_payload, { state }) {
+          state.sessions = [buildSidebarSession(sessionId, 'Live chat', '2026-09-04T12:00:00.000Z')];
+          state.messagesBySession.set(sessionId, []);
+          return { sessionId, streamId: 'stream-lock-live' };
+        },
+      },
+    },
+  });
+  withLockdownAck(t, window, shell);
+  const input = window.document.getElementById('chatInput');
+  input.value = 'Keep going';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  window.document.getElementById('sendButton').click();
+  await waitForUi(window, 30);
+  assert.equal(window.__rendererState.activeStreamId, 'stream-lock-live');
+
+  await openRowMenu(window, sessionId);
+  await clickMenuItemByLabel(window, 'Offline lockdown');
+  await waitForUi(window, 30);
+
+  assert.deepEqual(shell.__state.cancelCalls, ['stream-lock-live'], 'the lock stopped the live turn');
+  assert.equal(shell.__state.setPreferenceCalls.at(-1).preferences.lockdown, true);
+});

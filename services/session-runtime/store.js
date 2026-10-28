@@ -6,6 +6,7 @@ const { TERMINAL, isTerminalTombstone } = require('./terminal-retention-contract
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { RuntimeStoreError, isoNow, attemptMatches, requestWorkControl } = require('./store-control');
+const { summariesByRecency } = require('./summary-order');
 const {
   MAX_INDEX_BYTES,
   MAX_PENDING_INPUT_BYTES,
@@ -262,11 +263,10 @@ class RuntimeStore {
     if (position && (position.project_id !== projectId || position.session_id !== sessionId)) {
       throw new RuntimeStoreError('cursor_scope_mismatch');
     }
-    const summaries = this.index.summaries.filter((entry) => (
+    const ordered = summariesByRecency(this.index.summaries);
+    const summaries = projectId === null && sessionId === null ? ordered : ordered.filter((entry) => (
       (projectId === null || entry.project_id === projectId)
-      && (sessionId === null || entry.session_id === sessionId)
-    )).sort((left, right) => right.updated_at.localeCompare(left.updated_at)
-      || left.work_id.localeCompare(right.work_id));
+      && (sessionId === null || entry.session_id === sessionId)));
     const offset = position?.offset || 0;
     const items = summaries.slice(offset, offset + limit).map(cloneJson);
     const nextOffset = offset + items.length;
@@ -339,7 +339,7 @@ class RuntimeStore {
   _setReadOnly(reason, error = null) {
     this.readOnly = true;
     this.reason = reason;
-    try { this.logger?.('ERROR', 'runtime_store.read_only', { reason, error: error?.message || null }); }
+    try { this.logger?.('ERROR', 'runtime_store.read_only', { reason, error: error?.message || null, error_code: error?.code || null }); }
     catch (_error) { /* Diagnostics must not hide the original failure. */ }
   }
   _readDocument(filePath, maxBytes = MAX_INDEX_BYTES) {

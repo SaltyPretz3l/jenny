@@ -10,6 +10,7 @@ const { createArtifactOpenWith, systemPowerShellPath, fixedHelperPath } = requir
 const { createArtifactFileActions } = require('../services/artifact-file-actions');
 const { ArtifactWorkspaceService } = require('../services/artifact-workspace-service');
 const { ARTIFACT_ERROR_CODES } = require('../services/artifact-workspace-errors');
+const { linkDirectory, windowsOnly } = require('./helpers/platform-skips');
 
 test('packaged chooser uses the explicitly unpacked fixed helper', () => {
   assert.match(fixedHelperPath('C:\\Jenny\\resources\\app.asar\\services'), /app\.asar\.unpacked[\\/]services[\\/]artifact-open-with-win32\.ps1$/);
@@ -71,7 +72,7 @@ test('interaction timeout kills the helper and never exposes native path diagnos
   assert.deepEqual(result[0],{ok:false,reason:'open_with_timeout'});assert.equal(f.child.killed,true);
 });
 
-test('real Windows helper compiles and reports readiness without displaying a chooser', {skip:process.platform!=='win32'},async(t)=>{
+test('real Windows helper compiles and reports readiness without displaying a chooser', { skip: windowsOnly('compiles the C# open-with helper via PowerShell') },async(t)=>{
   const adapter=createArtifactOpenWith();t.after(()=>adapter.dispose());
   assert.deepEqual(await adapter.capabilities(),{openWith:true});
 });
@@ -101,8 +102,7 @@ test('Open with preserves real service session authority and junction containmen
   const scratchA = await service.getSessionScratchDir('session-a');
   const scratchB = await service.getSessionScratchDir('session-b');
   await fs.promises.rm(scratchA, { recursive: true });
-  try { await fs.promises.symlink(scratchB, scratchA, process.platform === 'win32' ? 'junction' : 'dir'); }
-  catch (error) { if (['EPERM', 'EACCES'].includes(error.code)) { t.skip('Junction/symlink permission unavailable'); return; } throw error; }
+  linkDirectory(scratchB, scratchA);
   await assert.rejects(actions.openWith('session-a', metadata.get('session-a').artifact_id), { code: ARTIFACT_ERROR_CODES.REAL_PATH_ESCAPES });
   assert.equal(opened, 1);
 });
@@ -144,7 +144,7 @@ test('external open and reveal enforce raster metadata through the real session 
     metadata = { ...original, file_name: filename, absolute_path: target,
       display_path: original.display_path.replace(/image\.png$/, filename) };
     await assert.rejects(service.openArtifactExternal('session-safe', metadata.artifact_id));
-    await assert.rejects(service.revealArtifact('session-safe', metadata.artifact_id));
+    await service.revealArtifact('session-safe', metadata.artifact_id); // reveal runs nothing
   }
-  assert.equal(opened.length, 1); assert.equal(revealed.length, 1);
+  assert.equal(opened.length, 1); assert.equal(revealed.length, 6);
 });

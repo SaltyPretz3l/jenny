@@ -352,7 +352,7 @@
       frameClock.reset();
       if (reducedMotion) {
         stopLoop();
-        core.resetMotion(sceneSimulation, { clearPointer: false, clearParallax: true });
+        core.resetMotion(sceneSimulation, { clearPointer: false });
         drawAllStatic();
       } else {
         scheduleFrame();

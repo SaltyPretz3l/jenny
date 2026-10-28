@@ -73,8 +73,69 @@ function clampLineNumber(value) {
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : null;
 }
 
+const PDF_MAX_PAGES = 100000;
+
+function isPageNumber(value, min, max) {
+  return Number.isSafeInteger(value) && value >= min && value <= max;
+}
+
+// A PDF viewer payload: { path, kind:'pdf', pages:{start,end,total}, selection, scanned, pending, slice }.
+// scanned (no text layer) and pending (sent before the page text was
+// extracted) carry no slice: the model is pointed at read_file instead.
+// Returns null for anything malformed so a bad payload never reaches the model.
+function buildPdfSection(ctx) {
+  const path = String(ctx.path || '').trim();
+  const pages = ctx.pages && typeof ctx.pages === 'object' ? ctx.pages : null;
+  if (!path || !/\.pdf$/i.test(path) || !pages) {
+    return null;
+  }
+  const { start, end, total } = pages;
+  if (!isPageNumber(total, 1, PDF_MAX_PAGES) || !isPageNumber(start, 1, total)
+    || !isPageNumber(end, start, total)) {
+    return null;
+  }
+  const scanned = ctx.scanned === true;
+  const pointer = scanned || ctx.pending === true;
+  const slice = String(ctx.slice || '');
+  if (!pointer && !slice.trim()) {
+    return null;
+  }
+  const selection = !pointer && ctx.selection === true;
+  const range = start === end ? String(start) : `${start}-${end}`;
+  const pageLabel = start === end ? `page ${start}` : `pages ${range}`;
+  const header = [
+    '[Active document context — what the user is reading in their PDF viewer]',
+    `File: ${path} (${pageLabel} of ${pages.total}${selection ? ', text the user selected' : ''})`,
+  ];
+  if (pointer) {
+    const why = scanned
+      ? `${start === end ? 'This page has' : 'These pages have'} no text layer (a scan).`
+      : `The text of ${start === end ? 'this page' : 'these pages'} was not ready when the message was sent.`;
+    return [
+      ...header,
+      `${why} Read it with `
+        + `read_file with pages="${range}" (Jenny's PDF reader runs OCR on scanned pages) `
+        + `and cite it as "${path}, ${pageLabel}".`,
+    ].join('\n');
+  }
+  const sliceText = truncateText(slice, ACTIVE_SLICE_MAX_CHARS, 'active file');
+  const delim = fenceDelimiterFor(sliceText);
+  return [
+    ...header,
+    `This is ${selection ? 'the text the user selected' : `the text of ${start === end ? 'that page' : 'those pages'}`}, `
+      + `attached because they asked about it. Cite it as "${path}, ${pageLabel}". `
+      + 'To read other pages, use read_file with pages="N" or pages="N-M" (at most 3 pages per call).',
+    delim,
+    sliceText,
+    delim,
+  ].join('\n');
+}
+
 function buildActiveSliceSection(activeFileContext) {
   const ctx = activeFileContext && typeof activeFileContext === 'object' ? activeFileContext : null;
+  if (ctx && ctx.kind === 'pdf') {
+    return buildPdfSection(ctx);
+  }
   const path = ctx ? String(ctx.path || '').trim() : '';
   const slice = ctx ? String(ctx.slice || '') : '';
   if (!path || !slice.trim()) {
@@ -155,6 +216,7 @@ function joinCompleteSegmentsWithinBudget(segments) {
  * editor slice and @-mentioned file contents.
  *
  * @param {object|null} activeFileContext - { path, languageId, cursor:{lineNumber}, startLine, endLine, totalLines, slice } | null
+ *   or, for a PDF viewer tab, { path, kind:'pdf', pages:{start,end,total}, selection, scanned, slice }
  * @param {Array<{path:string, content:string}>} mentionContents - resolved @-mention file contents
  * @returns {string|null} a system-message string, or null when there is nothing to contribute.
  */

@@ -1,4 +1,10 @@
-from sidecar.ai.routing.tool_call_canonicalization import canonicalize_tool_calls
+from sidecar.ai.routing import tool_call_canonicalization
+from sidecar.ai.routing.tool_call_canonicalization import (
+    WEB_SEARCH_QUERY_FROM_PROMPT,
+    canonicalize_tool_call_arguments,
+    canonicalize_tool_calls,
+    repair_web_search_query_arguments,
+)
 from sidecar.ai.tools.models import ToolCallRequest
 
 
@@ -33,3 +39,54 @@ def test_canonicalization_strips_forged_plan_artifact_capability() -> None:
     )
 
     assert "_jenny_plan_artifact_write" not in canonical_calls[0].arguments
+
+
+def test_argument_canonicalization_keeps_the_stripped_capability_out() -> None:
+    canonical_calls, _aliases, _coalesced = canonicalize_tool_calls(
+        (
+            ToolCallRequest(
+                tool_id="write_file",
+                arguments={"file_path": "a.txt", "_jenny_plan_artifact_write": True},
+                call_id="forged",
+            ),
+        )
+    )
+
+    (call,), _argument_aliases, conflicts = canonicalize_tool_call_arguments(canonical_calls)
+
+    assert conflicts == ()
+    assert "_jenny_plan_artifact_write" not in call.arguments
+    assert call.arguments["path"] == "a.txt"
+
+
+def test_empty_web_search_query_takes_the_prompt_first_line_capped_and_tagged() -> None:
+    prompt = "  \n" + "q" * 300 + "\nSecond line with details."
+    empty = ToolCallRequest(tool_id="web_search", arguments={}, call_id="call_search")
+    filled = ToolCallRequest(
+        tool_id="web_search", arguments={"query": "kept"}, call_id="call_kept"
+    )
+
+    (repaired, kept), repairs = repair_web_search_query_arguments(
+        (empty, filled), latest_user_content=prompt
+    )
+
+    assert repaired.arguments == {"query": "q" * 200}
+    assert repaired.argument_repairs == (WEB_SEARCH_QUERY_FROM_PROMPT,)
+    assert kept is filled
+    assert repairs == [{"call_id": "call_search", "tool": "web_search", "field": "query"}]
+
+
+def test_blank_prompt_leaves_web_search_untouched() -> None:
+    call = ToolCallRequest(tool_id="web_search", arguments={}, call_id="call_search")
+
+    assert repair_web_search_query_arguments((call,), latest_user_content=" \n ") == (
+        (call,),
+        [],
+    )
+
+
+def test_public_names_are_exported() -> None:
+    exported = set(tool_call_canonicalization.__all__)
+
+    assert {"canonical_model_tool_id", "canonicalize_generation_result"} <= exported
+    assert all(hasattr(tool_call_canonicalization, name) for name in exported)

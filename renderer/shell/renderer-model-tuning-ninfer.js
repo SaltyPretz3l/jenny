@@ -21,8 +21,8 @@
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
-  var DEFAULT_WINDOWS = [16384, 32768, 65536, 131072, 153600, 262144];
-  var DEFAULT_FP8_KV_WINDOWS = [153600, 262144];
+  var DEFAULT_WINDOWS = [16384, 32768, 65536, 131072, 153600, 196608, 262144];
+  var DEFAULT_FP8_KV_WINDOWS = [153600, 196608, 262144];
 
   function contextLabel(tokens) {
     var value = Number(tokens) || 0;

@@ -79,8 +79,8 @@ function createFakeStore(initial, { failFlush = false, failWrite = false, newerS
   };
 }
 
-test('schema 25 is the current session store schema and names exactly the five disclosure keys', () => {
-  assert.equal(STORE_SCHEMA_VERSION, 25);
+test('schema 26 is the current session store schema and names exactly the five disclosure keys', () => {
+  assert.equal(STORE_SCHEMA_VERSION, 26);
   assert.deepEqual([...DISCLOSURE_KEYS], ['environment', 'context', 'outputs', 'changes', 'background_tasks']);
   assert.deepEqual([...COORDINATION_FIELDS].sort(), [
     'chat_proposals', 'coordination_receipts', 'coordination_revision',
@@ -478,7 +478,7 @@ test('a schema-24 store queues the migration, adds the defaults and keeps every 
   assert.ok(logs.includes('session_store.split_schema_migration_completed'));
 
   const migrated = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
-  assert.equal(migrated.schema_version, 25);
+  assert.equal(migrated.schema_version, 26);
   const rest = { ...migrated.session };
   for (const key of COORDINATION_FIELDS) delete rest[key];
   assert.deepEqual(rest, legacySession, 'conversation content is untouched apart from the added fields');

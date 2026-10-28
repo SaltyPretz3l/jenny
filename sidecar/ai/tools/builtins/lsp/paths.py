@@ -2,22 +2,24 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
-from urllib.request import url2pathname
+from urllib.parse import unquote, urlparse
 
 from sidecar.ai.error_codes import CMP_TOOL_INVALID_PATH
 from sidecar.ai.tools.builtins.filesystem import workspace_relative_path
-from sidecar.ai.tools.builtins.lsp.manager import (
-    _EXTENSION_LANGUAGE_MAP,
-    LSPLanguage,
+from sidecar.ai.tools.builtins.lsp.languages import (
+    SUPPORTED_EXTENSIONS,
     resolve_language_for_path,
 )
+from sidecar.ai.tools.builtins.lsp_settings import LSPLanguage
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
 
 MAX_LSP_POSITION_VALUE = 2_147_483_647
+# vscode-uri writes Windows drives as ``file:///c%3A/...``; the decoded path keeps a leading slash.
+_DRIVE_PATH = re.compile(r"^/[A-Za-z]:")
 
 
 @dataclass(frozen=True)
@@ -61,7 +63,7 @@ def resolve_lsp_target(arguments: dict[str, object], workspace: WorkspaceGuard) 
         raise ToolExecutionFailure(
             code=CMP_TOOL_INVALID_PATH,
             message=(
-                f"{unsupported} Supported: {', '.join(_EXTENSION_LANGUAGE_MAP)}. "
+                f"{unsupported} Supported: {', '.join(SUPPORTED_EXTENSIONS)}. "
                 "For other file types use read_file, grep_search, or edit_file instead."
             ),
             retryable=False,
@@ -91,7 +93,10 @@ def _file_uri_path(uri: object) -> Path | None:
     )
     if invalid_uri:
         return None
-    candidate = Path(url2pathname(parsed.path))
+    path = unquote(parsed.path)
+    if _DRIVE_PATH.match(path):
+        path = path[1:]
+    candidate = Path(path)
     return candidate if candidate.is_absolute() else None
 
 

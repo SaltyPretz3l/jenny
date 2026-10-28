@@ -23,10 +23,13 @@ from sidecar.ai.tools.builtins.filesystem import is_binary_file
 from sidecar.ai.tools.builtins.grep_search import (
     DEFAULT_MAX_RESULTS,
     LARGE_FILE_HINT,
+    MATCH_SUMMARY_OP,
     MAX_CONTEXT_LINES,
     MAX_RESULTS,
     MAX_TIMED_OUT_FILES,
     MAX_TOTAL_RUNTIME_SECONDS,
+    REGEX_SEARCH_TIMEOUT_SECONDS,
+    _bounded_include_patterns,
     _bounded_int,
     _build_result,
     _iter_candidate_files,
@@ -61,20 +64,28 @@ MAX_TOTAL_FILES_VISITED = 5000
 # (at most 20) sources stay unpinned and the payload says identity_truncated.
 MAX_LEXICAL_SOURCE_HASHES = 16
 _MATCH_LINE_PARTS = 3
+# JSON-encoded characters of line texts per match-summary request; with a
+# maximal escaped pattern it stays inside the worker's 64 KiB protocol line.
+_SUMMARY_TEXT_BUDGET = 48_000
 
 
 @dataclass
 class _RootSearchContext:
     compiled: re.Pattern[str]
-    include_glob: str | None
+    # include_glob after bounded brace expansion; None when not given.
+    include_patterns: tuple[str, ...] | None
     context_lines: int
     state: _SearchState
     source_entries: list[tuple[str, str]]
     worker: _RegexSearchWorker
     started_at: float
     files_visited: int = 0
+    # Set after a match summary times out: later files skip the worker pass.
+    summaries_disabled: bool = False
     # display path -> (root, file) for every file with a regex match.
     lexical_files: dict[str, tuple[KnowledgeRoot, Path]] = field(default_factory=dict)
+    # display path -> (distinct matched terms, match count), to rank lexical hits.
+    lexical_strength: dict[str, tuple[int, int]] = field(default_factory=dict)
 
 
 def knowledge_search_tool(
@@ -87,7 +98,7 @@ def knowledge_search_tool(
         root_argument=arguments.get("root"),
         path_argument=arguments.get("path"),
     )
-    include_glob = _optional_string(arguments.get("include_glob"))
+    include_patterns = _bounded_include_patterns(_optional_string(arguments.get("include_glob")))
     context_lines = _bounded_int(
         arguments.get("context_lines"),
         default=0,
@@ -99,10 +110,10 @@ def knowledge_search_tool(
         maximum=MAX_RESULTS,
     )
 
-    state = _SearchState(max_results=max_results)
+    state = _SearchState(max_results=max_results, searched_root=_scope_label(roots, start_paths))
     search_context = _RootSearchContext(
         compiled=compiled,
-        include_glob=include_glob,
+        include_patterns=include_patterns,
         context_lines=context_lines,
         state=state,
         source_entries=[],
@@ -131,7 +142,7 @@ def knowledge_search_tool(
         query,
         roots=roots,
         start_paths=start_paths,
-        include=_glob_matcher(include_glob),
+        include=_glob_matcher(include_patterns),
     )
     return _knowledge_search_result(
         context=search_context,
@@ -170,12 +181,22 @@ def _resolve_search_scope(
     return roots, [None] * len(roots)
 
 
-def _glob_matcher(include_glob: str | None) -> Callable[[Path, Path], bool] | None:
+def _scope_label(roots: tuple[KnowledgeRoot, ...], start_paths: list[Path | None]) -> str:
+    """What the search covered, in display terms (for grep's narrowing hint)."""
+    if len(roots) == 1 and start_paths[0] is not None:
+        return display_path(roots[0], start_paths[0])
+    return ", ".join(root.label for root in roots)
+
+
+def _glob_matcher(
+    include_patterns: tuple[str, ...] | None,
+) -> Callable[[Path, Path], bool] | None:
     """The grep walker's ``include_glob`` rule as a ``(file, search root)`` predicate."""
-    if include_glob is None:
+    if include_patterns is None:
         return None
-    return lambda path, search_root: _matches_glob(
-        path, search_root=search_root, pattern=include_glob
+    return lambda path, search_root: any(
+        _matches_glob(path, search_root=search_root, pattern=pattern)
+        for pattern in include_patterns
     )
 
 
@@ -190,7 +211,7 @@ def _search_root(
     for candidate in _iter_candidate_files(
         start_path or root.path,
         root.guard,
-        (context.include_glob,) if context.include_glob else None,
+        context.include_patterns,
     ):
         if time.monotonic() - context.started_at >= MAX_TOTAL_RUNTIME_SECONDS:
             context.state.aborted_by_runtime_budget = True
@@ -233,8 +254,10 @@ def _search_root(
             continue
         if result.total_match_count:
             display = display_path(root, candidate)
-            context.source_entries.append((display, _first_match_snippet(result.lines)))
+            snippet, distinct = _match_summary(_line_texts(result.lines), context)
+            context.source_entries.append((display, snippet))
             context.lexical_files.setdefault(display, (root, candidate))
+            context.lexical_strength.setdefault(display, (distinct, result.total_match_count))
         # Worker lines are root-relative; re-anchor them to the display label.
         context.state.consume(
             replace(
@@ -246,15 +269,55 @@ def _search_root(
         )
 
 
-def _first_match_snippet(lines: list[str]) -> str:
+def _line_texts(lines: list[str]) -> list[str]:
+    """The text of each rendered ``path:line:text`` worker line (blank separators dropped)."""
+    texts: list[str] = []
     for line in lines:
         if not line:
             continue
         parts = line.split(":", 2)
-        if len(parts) == _MATCH_LINE_PARTS:
-            return parts[2]
-        return line
-    return ""
+        texts.append(parts[2] if len(parts) == _MATCH_LINE_PARTS else line)
+    return texts
+
+
+def _match_summary(texts: list[str], context: _RootSearchContext) -> tuple[str, int]:
+    """One file's snippet (its first matching line) and distinct matched-term count.
+
+    The regex worker computes both under its per-request timeout: the model's
+    pattern never runs in this process, where a polynomial pattern would hold
+    the GIL and stall the sidecar. With context_lines the first rendered line is
+    context, so it is only the fallback (no texts, or the summary timed out).
+    """
+    fallback = (texts[0] if texts else "", 0)
+    if not texts or context.summaries_disabled:
+        return fallback
+    summary_texts = _summary_texts(texts)
+    try:
+        summary = context.worker.request(
+            {
+                "op": MATCH_SUMMARY_OP,
+                "lines": summary_texts,
+                "pattern": context.compiled.pattern,
+                "flags": int(context.compiled.flags),
+            },
+            REGEX_SEARCH_TIMEOUT_SECONDS,
+        )
+    except FutureTimeoutError:
+        context.summaries_disabled = True
+        return fallback
+    index = summary.first_match_index
+    snippet = summary_texts[index] if index is not None and index < len(summary_texts) else texts[0]
+    return snippet, summary.distinct_match_count or 0
+
+
+def _summary_texts(texts: list[str]) -> list[str]:
+    """The leading texts whose JSON encoding fits one worker request."""
+    used = 0
+    for count, text in enumerate(texts):
+        used += len(json.dumps(text, ensure_ascii=False)) + 1
+        if used > _SUMMARY_TEXT_BUDGET:
+            return texts[:count]
+    return texts
 
 
 def _search_note(semantic: SemanticOutcome | None, skipped_binary_files: int) -> str | None:
@@ -279,14 +342,18 @@ def _knowledge_search_result(
     text_result = _build_result(pattern=pattern, state=context.state)
     passages = semantic.passages if semantic is not None else []
     sources = build_sources(
-        fuse_entries(context.source_entries, passages) if passages else context.source_entries
+        fuse_entries(context.source_entries, passages, context.lexical_strength)
+        if passages else context.source_entries
     )
     identity_truncated = attach_identities(
         sources, passages, context.lexical_files, limit=MAX_LEXICAL_SOURCE_HASHES
     )
+    # grep's header names a workspace-relative path; knowledge paths are
+    # labelled by registered folder, so the header is dropped.
+    grep_header = f"path: {context.state.searched_root} (workspace-relative)\n\n"
     payload: dict[str, object] = {
         "pattern": pattern,
-        "result": text_result.output,
+        "result": text_result.output.removeprefix(grep_header),
         "sources": sources,
         "missing_source_metadata": len(sources) == 0,
     }

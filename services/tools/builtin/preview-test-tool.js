@@ -10,16 +10,21 @@
  * is ever evaluated, and result text never includes resolved absolute paths. */
 
 const crypto = require('node:crypto');
-const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
-const { PRESS_KEY_SCHEMA_VALUES, safeBrowserReason } = require('../../browser-interaction-utils');
+const { waitForAbortable } = require('../../browser-session-input');
 const {
   formatRenderSummary,
   summarizeRenderBitmap,
 } = require('../../browser-render-summary');
 const { TOOL_ERROR_CODES } = require('../../backend/error-codes');
 const { normalizeString } = require('../../shared/normalize');
+const {
+  extensionOf,
+  realpathSafe,
+  toRelativePosix,
+} = require('../../shared/workspace-tool-helpers');
+const { toolFailure } = require('./tool-result');
 const {
   appliedEventsText,
   boundedEventSelector,
@@ -34,7 +39,6 @@ const {
   stripSensitiveValues,
 } = require('./preview-test-evidence');
 const {
-  EVENT_ACTIONS,
   normalizePreviewEvent,
   unknownArgumentFailure,
 } = require('./preview-test-arguments');
@@ -51,47 +55,24 @@ const VIEWPORTS = Object.freeze({
 });
 const MAX_ERROR_TEXTS = 10;
 const MAX_ERROR_TEXT_CHARS = 300;
-function failure({ reason, errorCode, message, summary }) {
-  return {
-    content: message,
-    summary,
-    isError: true,
-    errorCode,
-    metadata: {
-      result_kind: 'preview_test',
-      status: 'failed',
-      reason,
-    },
-  };
+// Electron's loadURL rejects with a Chromium net error (code ERR_*, "ERR_X (-n)
+// loading ..."), and the session service bounds a hung load with its own
+// timeout. Only those mean "the page failed to load"; anything else from
+// open() (capacity, a disposed service, stale authority) means no browser ran.
+const NAVIGATION_TIMEOUT_MESSAGE = 'Browser navigation timed out.';
+
+// Shared failure shape; this tool's callers pass `message` and `extra`.
+function failure({ reason, message, summary, errorCode, extra = {} }) {
+  return toolFailure('preview_test', {
+    content: message, summary, reason, errorCode, metadata: { status: 'failed', ...extra },
+  });
 }
 
-async function realpathSafe(fsLike, target) {
-  try {
-    return await fsLike.realpath(target);
-  } catch (_error) {
-    return path.resolve(target);
-  }
-}
-
-function toRelativePosix(value) {
-  if (typeof value !== 'string') {
-    return '';
-  }
-  const raw = value.trim().replace(/\\/g, '/');
-  if (!raw || raw.includes('\0') || raw.includes(':') || raw.startsWith('/')) {
-    return '';
-  }
-  const segments = raw.split('/').filter((segment) => segment && segment !== '.');
-  if (!segments.length || segments.some((segment) => segment === '..')) {
-    return '';
-  }
-  return segments.join('/');
-}
-
-function extensionOf(relPath) {
-  const name = relPath.split('/').pop() || relPath;
-  const dot = name.lastIndexOf('.');
-  return dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+function isNavigationFailure(error) {
+  const message = String(error?.message || '');
+  return /^ERR_[A-Z_]+$/.test(String(error?.code || ''))
+    || /\bERR_[A-Z_]+ \(-\d+\)/.test(message)
+    || message === NAVIGATION_TIMEOUT_MESSAGE;
 }
 
 function clampWaitMs(value) {
@@ -170,15 +151,9 @@ function boundedErrorText(value, sensitiveValues, { pageError = false } = {}) {
 function createPreviewTestTool({
   fsLike = require('node:fs/promises'),
   setTimeoutImpl = setTimeout,
-  clearTimeoutImpl = clearTimeout,
 } = {}) {
   const settle = (delayMs) => new Promise((resolve) => {
-    let timer = null;
-    timer = setTimeoutImpl(() => {
-      if (timer !== null) clearTimeoutImpl(timer);
-      resolve();
-    }, delayMs);
-    timer?.unref?.();
+    setTimeoutImpl(resolve, delayMs)?.unref?.();
   });
 
   return {
@@ -187,52 +162,7 @@ function createPreviewTestTool({
     category: 'builtin',
     readOnly: true,
     workspaceRequired: true,
-    parameters: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        path: {
-          type: 'string',
-          description: 'Workspace-relative path of the .html/.htm file to test.',
-        },
-        viewport: {
-          type: 'string',
-          enum: ['desktop', 'mobile', 'tablet'],
-          description: 'Viewport preset name as a string, not an object (width/height are not supported). Default desktop (1280x800); mobile is 390x844, tablet 820x1180.',
-        },
-        wait_ms: {
-          type: 'integer',
-          description: 'Settle time in milliseconds after load (and after events) before results are read. 0-5000, default 500.',
-        },
-        screenshot: {
-          type: 'boolean',
-          description: 'Capture the rendered page for the active vision-capable model and a screenshot artifact when storage has room (4 per session, 32 per workspace). Default false. Pixel delivery continues when storage is full and is distinct from a completed visual review.',
-        },
-        events: {
-          type: 'array',
-          description: 'Up to 10 bounded interactions applied in order after load. Each item: {action: "click"|"type"|"hover"|"focus"|"press", selector, text?, press_enter?, key?}. selector is required except for press, which sends key (Enter, Space or a literal " " or Spacebar, Tab, Escape, ArrowUp, ArrowDown, ArrowLeft or ArrowRight) to the focused element or, with a selector, to that element after focusing it. hover moves the pointer over the element; focus focuses any focusable element. Selector misses are reported per event, not fatal. Events use "action" (not "type") to name the interaction, e.g. [{"action":"click","selector":"#start"},{"action":"press","key":"Enter"}].',
-          items: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              action: { type: 'string', enum: [...EVENT_ACTIONS] },
-              selector: { type: 'string' },
-              key: { type: 'string', enum: [...PRESS_KEY_SCHEMA_VALUES] },
-              text: { type: 'string' },
-              press_enter: { type: 'boolean' },
-            },
-            required: ['action'],
-            anyOf: [{ required: ['selector'] }, { required: ['key'] }],
-          },
-        },
-        observe: {
-          type: 'array',
-          description: 'Up to 8 CSS selectors (1-200 characters each) read after the events and settle. For each, the result reports match count, whether the first match is visible, and its text (or value for form fields), bounded to 160 characters. Use it to verify an interaction had the expected effect. Page text is untrusted data.',
-          items: { type: 'string' },
-        },
-      },
-      required: ['path'],
-    },
+    // parameters: the manifest's schema, applied by withManifestSchema at registration.
 
     summarize(input) {
       const relPath = normalizeString(input?.path) || 'HTML file';
@@ -307,7 +237,8 @@ function createPreviewTestTool({
       }
 
       const waitMs = clampWaitMs(input?.wait_ms === undefined ? DEFAULT_WAIT_MS : input.wait_ms);
-      if (unknownArgumentFailure(input)) return failure({ ...unknownArgumentFailure(input), errorCode: TOOL_ERROR_CODES.EXECUTION_FAILED });
+      const unknownArgument = unknownArgumentFailure(input);
+      if (unknownArgument) return failure({ ...unknownArgument, errorCode: TOOL_ERROR_CODES.EXECUTION_FAILED });
       const rawEvents = input?.events;
       if (rawEvents !== undefined && !Array.isArray(rawEvents)) {
         return failure({
@@ -343,27 +274,19 @@ function createPreviewTestTool({
       }
 
       let resolvedRealPath;
-      let resolved;
       try {
-        resolved = context.pathPolicy.resolvePath(relPath, context);
+        const resolved = context.pathPolicy.resolvePath(relPath, context);
         resolvedRealPath = await context.pathPolicy.assertInsideRoot(resolved, context) || resolved;
       } catch (error) {
-        if (error?.code === 'ENOENT' && resolved) {
-          // A missing leaf cannot be realpathed by some path-policy fakes. It
-          // still proceeds only to the non-mutating stat gate, which reports
-          // unreadable_file; no browser window can open for a missing target.
-          resolvedRealPath = resolved;
-        } else {
-          context.logger?.('WARN', 'preview_test.path_rejected', {
-            error_name: String(error?.name || 'Error').slice(0, 64),
-          });
-          return failure({
-            reason: 'unsafe_path',
-            errorCode: TOOL_ERROR_CODES.EXECUTION_FAILED,
-            message: 'The requested file resolves outside the workspace and cannot be preview-tested.',
-            summary: 'Unsafe preview path',
-          });
-        }
+        context.logger?.('WARN', 'preview_test.path_rejected', {
+          error_name: String(error?.name || 'Error').slice(0, 64),
+        });
+        return failure({
+          reason: 'unsafe_path',
+          errorCode: TOOL_ERROR_CODES.EXECUTION_FAILED,
+          message: 'The requested file resolves outside the workspace and cannot be preview-tested.',
+          summary: 'Unsafe preview path',
+        });
       }
 
       let stat;
@@ -397,20 +320,47 @@ function createPreviewTestTool({
       const sessionId = `preview_test_${crypto.randomBytes(6).toString('hex')}`;
       const url = pathToFileURL(resolvedRealPath).toString();
       const sensitiveValues = [realWorkspaceRoot, resolvedRealPath, url];
+      const abortSignal = context.abortSignal || null;
+      const abortOption = abortSignal ? { abortSignal } : {};
+      const wantsScreenshot = input?.screenshot === true;
       let opened = false;
       try {
+        let openPromise = null;
         try {
-          await service.open({
+          openPromise = Promise.resolve(service.open({
             sessionId,
             streamId: sessionId,
             url,
             bounds: VIEWPORTS[viewport],
             allowedFileRoots: [realWorkspaceRoot],
             strictWorkspaceOnly: true,
-          });
+            ...abortOption,
+          }));
+          // A hung load must not outlive the call's cancellation.
+          await waitForAbortable(openPromise, abortSignal);
           opened = true;
         } catch (error) {
+          if (abortSignal?.aborted) {
+            // The load may still be in flight: close its window now instead of
+            // when the navigation timer fires.
+            openPromise?.catch(() => {});
+            await Promise.resolve().then(() => service.close(sessionId)).catch(() => {});
+            return failure({
+              reason: 'cancelled',
+              errorCode: TOOL_ERROR_CODES.EXECUTION_FAILED,
+              message: `Preview testing "${relPath}" was cancelled before the page loaded.`,
+              summary: 'Preview test cancelled',
+            });
+          }
           const reason = redactKnownPaths(error?.message || error, sensitiveValues);
+          if (!isNavigationFailure(error)) {
+            return failure({
+              reason: 'browser_unavailable',
+              errorCode: TOOL_ERROR_CODES.DISABLED,
+              message: `Preview testing "${relPath}" could not start a browser session: ${reason}`,
+              summary: 'Preview browser unavailable',
+            });
+          }
           return {
             content: `Preview-tested "${relPath}": the page failed to load (${reason}); viewport ${viewport}.`,
             summary: `Preview-tested ${relPath}: 0 console errors`,
@@ -433,16 +383,27 @@ function createPreviewTestTool({
         const eventResults = [];
         for (const event of events) {
           // click/hover/focus take a selector; press also carries its key.
-          let options = { selector: event.selector };
+          let options = { selector: event.selector, ...abortOption };
           if (event.action === 'type') options = { ...options, text: event.text, press_enter: event.press_enter };
-          if (event.action === 'press') options = { key: event.key, selector: event.selector };
-          const result = await service[event.action](sessionId, options);
-          eventResults.push({
+          if (event.action === 'press') options = { key: event.key, selector: event.selector, ...abortOption };
+          const entry = {
             action: event.action,
-            status: String(result?.status || ''),
             selector: boundedEventSelector(event.selector),
             ...(event.action === 'press' ? { key: event.key } : {}),
-          });
+          };
+          try {
+            const result = await service[event.action](sessionId, options);
+            eventResults.push({ ...entry, status: String(result?.status || '') });
+          } catch (error) {
+            // One failed interaction is that event's finding, not the probe's;
+            // cancellation still ends the whole probe.
+            if (abortSignal?.aborted) throw error;
+            eventResults.push({
+              ...entry,
+              status: 'error',
+              error: redactKnownPaths(error?.message || error, sensitiveValues).slice(0, 200),
+            });
+          }
         }
         if (events.length) {
           await settle(waitMs);
@@ -457,7 +418,13 @@ function createPreviewTestTool({
         let screenshotError = '';
         if (typeof service.screenshot === 'function') {
           try {
-            screenshotCapture = await service.screenshot(sessionId, { modelImage: input?.screenshot === true });
+            // Without a requested screenshot only the render-summary thumbnail is
+            // read, so the service may skip the full PNG encode.
+            screenshotCapture = await service.screenshot(sessionId, {
+              modelImage: wantsScreenshot,
+              thumbnailOnly: !wantsScreenshot,
+              ...abortOption,
+            });
             const thumbnail = screenshotCapture?.thumbnail;
             renderSummary = summarizeRenderBitmap({
               bitmap: thumbnail?.bitmap,
@@ -481,9 +448,9 @@ function createPreviewTestTool({
         const consoleErrorCount = consoleEntries.length + pageEntries.length;
         let generatedArtifacts;
         let screenshotLine = '';
-        const modelImage = input?.screenshot === true ? screenshotCapture?.model_image : null;
+        const modelImage = wantsScreenshot ? screenshotCapture?.model_image : null;
         let artifactError = '';
-        if (input?.screenshot === true) {
+        if (wantsScreenshot) {
           const chatSessionId = normalizeString(context.sessionId);
           if (
             !chatSessionId
@@ -521,7 +488,7 @@ function createPreviewTestTool({
         contentLines.push(...observationLines(observe, observed));
         if (externalResources) contentLines.push(externalResourcesLine(externalResources));
         if (screenshotLine) contentLines.push(screenshotLine);
-        if (input?.screenshot === true) {
+        if (wantsScreenshot) {
           contentLines.push(`Screenshot capture: ${screenshotCapture ? 'captured' : 'unavailable'}.`);
           if (artifactError) contentLines.push(`Screenshot save failed: ${artifactError}`);
           if (!modelImage) contentLines.push('Model image unavailable: bounded screenshot encoding failed.');
@@ -546,7 +513,7 @@ function createPreviewTestTool({
         if (externalResources) metadata.external_resources = externalResources;
         if (screenshotError) metadata.screenshot_error = screenshotError;
         if (artifactError) metadata.screenshot_error ||= artifactError;
-        if (input?.screenshot === true) {
+        if (wantsScreenshot) {
           metadata.capture_status = screenshotCapture ? 'captured' : 'unavailable';
           metadata.artifact_status = generatedArtifacts ? 'saved_temporary' : 'unavailable';
           metadata.model_delivery_status = modelImage ? 'pending' : 'unavailable';

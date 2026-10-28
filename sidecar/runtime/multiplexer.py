@@ -14,6 +14,7 @@ from sidecar.ai.error_codes import CMP_PROTO_VERSION_MISMATCH
 from sidecar.protocol import (
     CHAT_CANCEL_METHOD,
     ENGINE_ACTIVITY_METHOD,
+    SESSION_MAIL_ARRIVED_METHOD,
     SESSION_RUN_MODE_UPDATED_METHOD,
 )
 from sidecar.runtime import subagent_slots as _subagent_slots
@@ -32,6 +33,9 @@ from sidecar.runtime.turn_state import (
     CANCELLED_TERMINAL_SUBCODES,
     TURN_STATE_CANCELLED,
     LiveRunModeState,
+    PendingMailQueue,
+    admit_mail_arrived,
+    apply_run_mode_update,
 )
 
 SubAgentSlotAllocator = _subagent_slots.SubAgentSlotAllocator
@@ -52,6 +56,11 @@ _INVALID_PARAMS_CODE = -32602
 
 # Aux handles keep Electron's preemption reason; chat turns map it to sidecar_cancel.
 _AUXILIARY_CANCEL_REASONS = CANCELLED_TERMINAL_SUBCODES | {"preempted"}
+# Unversioned session-scoped notifications for the live turn (handlers in turn_state).
+_SESSION_TURN_NOTIFICATIONS = {
+    SESSION_RUN_MODE_UPDATED_METHOD: apply_run_mode_update,
+    SESSION_MAIL_ARRIVED_METHOD: admit_mail_arrived,
+}
 
 
 def _normalize_cancel_reason(
@@ -90,6 +99,7 @@ class TurnCancellationHandle:
     session_id: str | None = None
     generation: int | None = None
     live_run_mode: LiveRunModeState = field(default_factory=LiveRunModeState)
+    pending_mail: PendingMailQueue = field(default_factory=PendingMailQueue)
     reason: str = "chat_cancelled"
     cancel_reasons: frozenset[str] = CANCELLED_TERMINAL_SUBCODES
     _event: threading.Event = field(default_factory=threading.Event)
@@ -871,40 +881,18 @@ class StdioTransportMultiplexer:
             # shell-side, so no per-message logging here either).
             record_engine_activity()
             return None
-        if method == SESSION_RUN_MODE_UPDATED_METHOD:
-            self._handle_run_mode_updated(envelope.params)
+        session_handler = _SESSION_TURN_NOTIFICATIONS.get(method)
+        if session_handler is not None:
+            session_handler(envelope.params, self._session_turn, self._logger)
             return None
         if envelope.kind == "response":
             if self._route_approval_response(message):
                 return None
         return message
 
-    def _handle_run_mode_updated(self, params: dict[str, Any]) -> None:
-        session_id = str(params.get("session_id") or "").strip()
-        approval_mode = params.get("approval_mode")
-        read_only = params.get("read_only")
-        reason = params.get("reason")
-        if not isinstance(reason, str):
-            reason = None
-        if (
-            not session_id
-            or approval_mode not in {"prompt", "auto_run"}
-            or not isinstance(read_only, bool)
-        ):
-            self._logger.warning(
-                "Ignored malformed live run-mode update",
-                extra={"event": "sidecar.runtime.run_mode_update.invalid"},
-            )
-            return
+    def _session_turn(self, session_id: str) -> TurnCancellationHandle | None:
         with self._lock:
-            handle = self._active_turns_by_session.get(session_id)
-        if handle is None:
-            return
-        handle.live_run_mode.update(
-            approval_mode=approval_mode,
-            read_only=read_only,
-            paused_unattended=reason == "unattended_idle",
-        )
+            return self._active_turns_by_session.get(session_id)
 
     def _route_approval_response(self, message: dict[str, Any]) -> bool:
         raw_id = message.get("id")

@@ -5,8 +5,8 @@
  * a time; the persisted enum lives at ide.activeStageSurface
  * (renderer-ide-state.js STAGE_SURFACES) and THIS module is the only writer.
  *
- * Exploded state derives from the active file tab's viewMode. Bootstrap suppresses one
- * activation reset so a restored preview or file_map surface survives.
+ * Exploded state derives from the active file tab's viewMode. Restore opens run
+ * with activation resets suppressed so a restored preview or file_map surface survives.
  *
  * sync() is called from renderIde() and is the ONLY place the three overlay
  * hosts (#ideMapHost / #ideExplodedHost / #idePreviewHost) are shown/hidden;
@@ -45,7 +45,7 @@
 
     let bound = false;
     let disposed = false;
-    let suppressOnce = false;
+    let suppressDepth = 0;
 
     function coerce(value) {
       return typeof ideStateUtils.coerceStageSurface === 'function'
@@ -110,15 +110,9 @@
     }
 
     // Handoff §C.2: activating any editor document pulls the stage back to the
-    // editor cluster (which itself derives editor vs exploded per tab). The
-    // one-shot suppression covers the bootstrap's hydrate-time
-    // openFile(activeTabPath), which must not clobber a restored surface.
+    // editor cluster (which itself derives editor vs exploded per tab).
     function noteEditorActivation() {
-      if (disposed) {
-        return;
-      }
-      if (suppressOnce) {
-        suppressOnce = false;
+      if (disposed || suppressDepth > 0) {
         return;
       }
       const ide = getIde();
@@ -132,8 +126,18 @@
       }
     }
 
-    function suppressNextActivationReset() {
-      suppressOnce = true;
+    // A restore open (hydrate / late hydrate / root commit reopening the active
+    // tab) must not clobber a restored surface. One open signals twice (the
+    // lifecycle hook and ide:active-file-changed), so the suppression spans the
+    // whole open and always lifts when it settles: a failed open never swallows
+    // the next real activation.
+    async function suppressActivationResetDuring(open) {
+      suppressDepth += 1;
+      try {
+        return await open();
+      } finally {
+        suppressDepth -= 1;
+      }
     }
 
     // Belt-and-braces channel for document activations that do not flow
@@ -224,7 +228,7 @@
       dispose,
       getEffectiveSurface,
       noteEditorActivation,
-      suppressNextActivationReset,
+      suppressActivationResetDuring,
       sync,
       toggle,
     };

@@ -4,8 +4,9 @@
  * decoration map + folder roll-ups the tree reads, the branch/dirty-count the
  * statusbar reads, and the grouped file list the Source Control panel reads.
  *
- * Refresh is debounced (coalesces bursts from save/watch/activate) with an
- * immediate refreshNow() after mutations. A single in-flight fetch is tracked
+ * Refresh is debounced and throttled (coalesces bursts from save/watch/activate,
+ * at most one run per minIntervalMs) with an immediate refreshNow() after
+ * mutations. A failed read keeps the previous snapshot (bounded retry). A single in-flight fetch is tracked
  * so an overlapping request re-runs exactly once afterwards - a stale snapshot
  * never overwrites a fresher one. Subscribers are notified only when the
  * derived state actually changes, so the tree/statusbar/panel don't churn. */
@@ -135,6 +136,17 @@
     };
   }
 
+  // A getStatus that RAN but failed ({ ok:false } from the service's
+  // _execFailure / the client's callFailed, or a thrown bridge call) says
+  // nothing about the working tree. Publishing it would read as "working tree
+  // is clean" (and skip the branch switcher's dirty guard), so it is
+  // transient: the previous snapshot stays and a bounded retry follows.
+  function isTransientFailure(result) {
+    return result === undefined
+      || (Boolean(result) && result.ok === false && result.available === true && result.isRepo === true);
+  }
+  const MAX_TRANSIENT_RETRIES = 3;
+
   // Cheap change signature so notify only fires on a real state change.
   function signatureOf(snapshot) {
     const rows = snapshot.files
@@ -154,6 +166,11 @@
     const client = options.client || null;
     const appendClientLog = typeof options.appendClientLog === 'function' ? options.appendClientLog : noop;
     const debounceMs = Number.isFinite(options.debounceMs) ? Number(options.debounceMs) : 120;
+    // Watcher-driven refresh() runs at most once per minIntervalMs (leading +
+    // trailing): a build streams fs batches back-to-back, and a pure trailing
+    // debounce re-ran getStatus after every one of them.
+    const minIntervalMs = Number.isFinite(options.minIntervalMs) ? Number(options.minIntervalMs) : 1000;
+    const now = typeof options.now === 'function' ? options.now : () => Date.now();
     const setTimeoutFn = typeof options.setTimeoutFn === 'function'
       ? options.setTimeoutFn
       : (typeof setTimeout === 'function' ? setTimeout : null);
@@ -170,6 +187,14 @@
     let disposed = false;
     let refreshHoldCount = 0;
     let refreshBarrier = 0;
+    let lastRunAt = -Infinity;
+    let eagerSettledAt = -Infinity;
+    let transientRetries = 0;
+
+    function cancelTimer() {
+      if (timer && clearTimeoutFn) clearTimeoutFn(timer);
+      timer = null;
+    }
 
     function notify() {
       for (const fn of [...subscribers]) {
@@ -209,22 +234,29 @@
         do {
           dirtyAgain = false;
           const barrier = refreshBarrier;
+          lastRunAt = now();
+          let result;
           try {
-            const result = client ? await client.getStatus({}) : null;
-            if (!disposed && refreshHoldCount === 0 && barrier === refreshBarrier) {
-              applyResult(result);
-            } else if (!disposed) {
-              dirtyAgain = true;
-            }
+            result = client ? await client.getStatus({}) : null;
           } catch (error) {
+            result = undefined;
             appendClientLog('WARN', 'ide.git_status_failed', {
               message: String((error && error.message) || error || ''),
             });
-            if (!disposed && refreshHoldCount === 0 && barrier === refreshBarrier) {
-              applyResult(null);
-            } else if (!disposed) {
-              dirtyAgain = true;
-            }
+          }
+          if (disposed) break;
+          if (refreshHoldCount !== 0 || barrier !== refreshBarrier) {
+            dirtyAgain = true;
+          } else if (!isTransientFailure(result)) {
+            transientRetries = 0;
+            applyResult(result);
+          } else if (transientRetries < MAX_TRANSIENT_RETRIES) {
+            transientRetries += 1;
+            refresh();
+          } else {
+            // Budget spent: stop polling, but the next triggered refresh
+            // (watcher, mutation) gets its own bounded retries.
+            transientRetries = 0;
           }
         } while (dirtyAgain && !disposed && refreshHoldCount === 0);
       })().finally(() => {
@@ -233,8 +265,17 @@
       return pending;
     }
 
-    function refresh() {
+    // Debounced + throttled: a pending timer is never pushed back (so a
+    // continuous event stream cannot starve the refresh), and the next run
+    // waits out minIntervalMs since the last one. unlessRefreshedWithinMs
+    // skips the request when an eager refreshNow() (the app's own mutation)
+    // settled that recently - the git-meta echo of that same mutation.
+    function refresh(opts) {
       if (disposed || !setTimeoutFn) {
+        return;
+      }
+      const quietMs = Number(opts && opts.unlessRefreshedWithinMs) || 0;
+      if (quietMs > 0 && now() - eagerSettledAt < quietMs) {
         return;
       }
       if (refreshHoldCount > 0) {
@@ -242,15 +283,13 @@
         return;
       }
       if (timer) {
-        if (clearTimeoutFn) {
-          clearTimeoutFn(timer);
-        }
-        timer = null;
+        return;
       }
+      const delay = Math.max(debounceMs, lastRunAt + minIntervalMs - now());
       timer = setTimeoutFn(() => {
         timer = null;
         run();
-      }, debounceMs);
+      }, delay);
     }
 
     function refreshNow() {
@@ -258,11 +297,10 @@
         dirtyAgain = true;
         return pending || Promise.resolve();
       }
-      if (timer && clearTimeoutFn) {
-        clearTimeoutFn(timer);
-        timer = null;
-      }
-      return run();
+      cancelTimer();
+      return Promise.resolve(run()).then(() => {
+        eagerSettledAt = now();
+      });
     }
 
     async function runMutation(method, payload, { refreshAfter = true } = {}) {
@@ -284,11 +322,9 @@
         return Promise.resolve();
       }
       refreshBarrier += 1;
-      if (timer && clearTimeoutFn) {
-        clearTimeoutFn(timer);
-      }
-      timer = null;
+      cancelTimer();
       dirtyAgain = false;
+      transientRetries = 0;
       applyResult(null);
       return refreshNow();
     }
@@ -296,8 +332,7 @@
     function beginRefreshHold() {
       refreshHoldCount += 1;
       refreshBarrier += 1;
-      if (timer && clearTimeoutFn) clearTimeoutFn(timer);
-      timer = null;
+      cancelTimer();
       let released = false;
       return async () => {
         if (released) return undefined;
@@ -332,15 +367,11 @@
       unstage: (payload) => runMutation('unstage', payload),
       commit: (payload) => runMutation('commit', payload),
       discardFile: (payload, options2) => runMutation('discardFile', payload, options2),
-      getFileAtHead: (payload) => (client && typeof client.getFileAtHead === 'function'
-        ? client.getFileAtHead(payload)
-        : Promise.resolve({ ok: false, available: false, op: 'getFileAtHead', reason: 'bridge_unavailable' })),
+      resolveDelete: (payload) => runMutation('resolveDelete', payload),
+      getFileAtHead: (payload) => runMutation('getFileAtHead', payload, { refreshAfter: false }),
       dispose() {
         disposed = true;
-        if (timer && clearTimeoutFn) {
-          clearTimeoutFn(timer);
-        }
-        timer = null;
+        cancelTimer();
         subscribers.clear();
       },
     };
@@ -349,6 +380,8 @@
   return {
     createIdeGitStatusStore,
     buildSnapshot,
+    // The ancestor walk ('a/b/c.js' -> ['a', 'a/b']), shared with the tree badges.
+    parentDirsOf,
     STATE_RANK,
   };
 });

@@ -1,3 +1,4 @@
+const { isPlainObject } = require('./journaled-json-files');
 const {
   logNewerSchemaDetected,
   safeEmitLog,
@@ -19,6 +20,19 @@ function readsNewerSchema(self, raw) {
   }
   const observed = Number(raw.schema_version);
   return Number.isFinite(observed) && observed > self._schemaVersion;
+}
+
+// A chat file that parsed but is not a chat: not an object, or an envelope
+// whose `session` is not an object. Normalizing it would serve a blank chat and
+// the next write would replace the only copy of its bytes, so it is handled
+// like bytes that do not parse.
+function isSessionFileShape(raw) {
+  return isPlainObject(raw) && (!Object.hasOwn(raw, 'session') || isPlainObject(raw.session));
+}
+
+// The chat record inside a file that passed isSessionFileShape.
+function sessionRecordOf(raw) {
+  return Object.hasOwn(raw, 'session') ? raw.session : raw;
 }
 
 // Freeze the whole store read-only on a newer on-disk schema — consistent with
@@ -118,5 +132,7 @@ module.exports = {
   readsNewerSchema,
   enterNewerSchemaFreeze,
   freezeRecoveredIndex,
+  isSessionFileShape,
+  sessionRecordOf,
   skipsReadonlyModeWrite,
 };

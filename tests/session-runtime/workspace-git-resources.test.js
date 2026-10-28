@@ -127,7 +127,7 @@ test('WorkspaceGitService holds one lease across repo detection and the requeste
     containedProcessRunner: {
       async runGit({ args }) {
         observed.push({ args, capacity: admission.broker.snapshot().capacity.native_processes });
-        const stdout = args.includes('--is-inside-work-tree') ? 'true\n'
+        const stdout = args.includes('--is-inside-work-tree') ? `true\n${first}\n`
           : args.includes('--show-toplevel') ? `${first}\n` : '## main\0';
         return { status: 'passed', returnCode: 0, stdout, stderr: '', cleanupConfirmed: true };
       },
@@ -141,8 +141,8 @@ test('WorkspaceGitService holds one lease across repo detection and the requeste
   });
   const result = await service.getStatus();
   assert.equal(result.ok, true);
-  assert.equal(observed.length, 3);
-  assert.deepEqual(observed.map(item => item.capacity), [1, 1, 1]);
+  assert.equal(observed.length, 2);
+  assert.deepEqual(observed.map(item => item.capacity), [1, 1]);
   assert.equal(admission.broker.snapshot().lease_count, 0);
 });
 

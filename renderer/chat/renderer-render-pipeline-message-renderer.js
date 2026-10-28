@@ -199,6 +199,30 @@
     const updateTokenDisplay = asFn(callbacks.updateTokenDisplay, noop);
     const hideAssistantSprite = asFn(callbacks.hideAssistantSprite, noop);
 
+    // A running delegate's agent_status frames land on the next segment's
+    // empty shell, which then becomes derived.streamingMessage but projects no
+    // row: there is no article to birth, so the signature-hold full render
+    // repainted the whole timeline once per frame (80 full renders over one
+    // 49 s delegate turn, 2026-10-19). While the turn's article is on screen such a frame
+    // is a tool-gap write and belongs to the active_turn_root lane, whose
+    // post-render effects clean up predicted heights. A shell that does project
+    // a row is a real segment birth and keeps its one full render.
+    function isRowlessShellOfVisibleTurn(streamingMessageId, projectionContext) {
+      const turnId = projectionContext?.turnIdByMessageId?.get?.(streamingMessageId);
+      const rows = turnId ? projectionContext.rowsByTurnId?.get?.(turnId) : null;
+      if (!Array.isArray(rows) || !rows.length || rows.some((row) => (
+        row?.render_message_id === streamingMessageId
+        || row?.primary_message_id === streamingMessageId
+        || (Array.isArray(row?.source_message_ids) && row.source_message_ids.includes(streamingMessageId))
+      ))) {
+        return false;
+      }
+      // Every row of a turn resolves to the same article, so one lookup (DOM
+      // queries inside) decides; an off-screen turn keeps the old path.
+      const anchor = rows.find((row) => row?.primary_message_id);
+      return Boolean(anchor && resolveVisibleTurnArticleTarget(anchor.primary_message_id, projectionContext));
+    }
+
     function renderMessages(options = {}) {
       const paneSessionId = getPaneSessionId();
       const timeFormat = globalThis.jennyI18n?.timeOptions?.().hourCycle || '';
@@ -746,6 +770,7 @@
         return;
       }
 
+      const streamingMessageId = String(derived.streamingMessage?.id || '').trim();
       if (
         !forceFullRender
         && !projectionRevisionChanged
@@ -753,8 +778,8 @@
         && !threadExpansionChanged
         && !catchupActive
         && derived.streamingMessage
+        && !isRowlessShellOfVisibleTurn(streamingMessageId, projectionContext)
       ) {
-        const streamingMessageId = String(derived.streamingMessage.id || '').trim();
         const streamingArticleMessageId = resolveTurnArticleMessageId(
           streamingMessageId,
           projectionContext

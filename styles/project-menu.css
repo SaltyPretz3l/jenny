@@ -4,18 +4,19 @@
  * chrome; rows reuse the popover row tokens. The heading is the Chats
  * .group-label kicker type (no hairline: the popover edge already frames it);
  * only the project list scrolls, so the heading, the commands and the
- * footnote stay in view. Imported from composer-workspace-nudge.css. */
+ * footnote stay in view. Imported from composer-workspace-nudge.css.
+ * Row 63 (2026-10-19): the composer menus' row grammar - inset rounded rows,
+ * body-font detail lines, a muted footnote under a hairline. */
 
 .project-menu {
   z-index: 60;
   min-width: 260px;
   max-width: min(360px, calc(100vw - 24px));
-  padding-block: var(--space-2);
-  padding-inline: 0;
+  padding: var(--space-3);
 }
 
 .project-menu-heading {
-  padding: var(--space-2) var(--space-4) var(--space-1);
+  padding: var(--space-1) var(--space-3) var(--space-2);
   color: var(--text-muted);
   font-size: var(--font-size-caption);
   font-weight: 500;
@@ -30,9 +31,12 @@
 }
 
 .project-menu-footnote {
-  padding: var(--space-2) var(--space-4) var(--space-1);
+  margin: var(--space-2) var(--space-3) 0;
+  padding: var(--space-3) 0 var(--space-1);
+  border-top: 1px solid var(--border-subtle);
   color: var(--text-muted);
-  font-size: var(--font-size-footnote);
+  font-size: var(--font-size-caption);
+  line-height: 1.4;
 }
 
 .project-menu-row {
@@ -40,13 +44,14 @@
   align-items: center;
   gap: var(--space-3);
   width: 100%;
-  padding: var(--space-2) var(--space-4);
+  min-height: 34px;
+  padding: var(--space-2) var(--space-3);
   border: 0;
-  border-radius: 0;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-primary);
   font: inherit;
-  font-size: var(--font-size-body);
+  font-size: var(--font-size-footnote);
   text-align: start;
   cursor: pointer;
 }
@@ -97,7 +102,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--font-family-mono);
   font-size: var(--font-size-caption);
   color: var(--text-muted);
 }
@@ -117,6 +121,6 @@
 
 .project-menu-separator {
   height: 1px;
-  margin: var(--space-2) 0;
-  background: var(--line);
+  margin: var(--space-2) var(--space-3);
+  background: var(--border-subtle);
 }

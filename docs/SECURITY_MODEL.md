@@ -134,7 +134,7 @@ and a 16-char SHA-256 prefix.
 
 ## Python Runtime Threat Model
 
-Last reviewed: 2026-10-03
+Last reviewed: 2026-10-26
 
 This document is the ground-truth threat model for the
 `python_execute` tool (`sidecar/ai/tools/builtins/python_runtime/`).
@@ -146,10 +146,12 @@ as out of scope for this layer.
 
 Trust boundary: **the sandbox is a defence-in-depth layer**, not a
 primary security perimeter. The primary perimeter is model output
-classification plus the user-approval gate: every `python_execute`
-invocation passes through the ordinary tool-policy and approval flow. The default
-asks for approval; an explicitly saved allow policy can authorize later calls,
-and paranoid mode still requires per-call approval. The sandbox is the last line of
+classification plus the user-approval gate: every `python_execute` call, and every
+`run_temp_script` call with `language: "python"`, asks for approval. Neither a saved
+allow (AUTO) policy rule nor a one-send auto-run grant skips that prompt
+(`approval_if_needed` in `sidecar/ai/routing/tool_execution.py`); only a call the user
+already approved, resumed after that approval, runs without a new one. A policy deny
+still refuses the call. The sandbox is the last line of
 defence if the model slips past classification *and* the user
 approves a call whose payload turns out to be hostile.
 
@@ -195,11 +197,19 @@ approves a call whose payload turns out to be hostile.
 
 #### stdout/stderr/output filesystem posture
 
-- Work directory is an ephemeral `tempfile.mkdtemp(prefix="jenny-pyexec-")`.
-  Cleaned on every exit path (success, exception, timeout).
-- `env` is rebuilt from a minimal allowlist: `PATH` (venv + System32
-  on Windows), `SYSTEMROOT`, `TEMP`, `TMP`, `JENNY_OUTPUT_DIR`,
-  `MPLCONFIGDIR`, `VIRTUAL_ENV`. No inherited parent env.
+- Scratch directory is an ephemeral `tempfile.mkdtemp(prefix="jenny-pyexec-")`
+  holding the script, the result file and generated output. Cleaned on every
+  exit path (success, exception, timeout).
+- The child's `cwd` is the bound workspace root when one exists, and the
+  scratch directory otherwise (`execute_sandboxed` in `sandbox.py`).
+- `env` is rebuilt from scratch, with no inherited parent env (`_child_environment`):
+  `PATH` (the venv interpreter's directory, then `System32` and `SYSTEMROOT` on Windows
+  or `/usr/local/bin`, `/usr/bin`, `/bin` on POSIX), `TEMP`, `TMP` and `JENNY_OUTPUT_DIR`
+  (all the scratch directory), `MPLCONFIGDIR` (a runtime-owned `.mplconfig` in the venv,
+  else scratch), `VIRTUAL_ENV`, and `OPENBLAS_NUM_THREADS`, `OMP_NUM_THREADS`,
+  `MKL_NUM_THREADS`, `NUMEXPR_NUM_THREADS` = `1`. Windows adds `SYSTEMROOT`, `WINDIR`
+  and `COMSPEC`; POSIX adds `HOME` and `TMPDIR` (scratch) and `LANG`/`LC_ALL` = `C.UTF-8`.
+  `JENNY_WORKSPACE_ROOT` names the workspace when one is bound.
 - Wrapper stdout/stderr pipes are drained concurrently and retain at most
   512 KiB aggregate. Overflow terminates the owned process instead of buffering
   to completion; the versioned result JSON is stat/read/decode bounded to 4 MiB.
@@ -231,8 +241,8 @@ point.
 
 #### Filesystem read outside workspace
 
-- The subprocess runs with `cwd=work_dir`, but has no jail. It can
-  `open('/etc/passwd')` or `open(r'C:\Users\...')`.
+- The subprocess starts in the workspace (or scratch) directory, but has no
+  jail. It can `open('/etc/passwd')` or `open(r'C:\Users\...')`.
 - Impact: a hostile payload can exfiltrate files it can read as the
   Jenny user. Mitigation layer: output size cap in `output.py`
   limits what the model sees; tool approval gate limits when the
@@ -254,8 +264,8 @@ point.
   imported modules). Detection happens at the shell classifier for
   shell-facing decoders; equivalent payload forms inside
   `python_runtime` pass through.
-- Mitigation: the tool policy requires an approval or an explicit applicable
-  allow rule; paranoid mode requires a human decision on every invocation.
+- Mitigation: every Python execution asks for approval, whatever the tool policy
+  or auto-run state (see the trust boundary above).
 
 #### AST / bytecode restriction
 

@@ -224,6 +224,42 @@ class TestDrainSemantics:
         assert counters.tool_call_repair_count == 3
 
 
+    def test_a_large_drain_is_one_store_call_with_identical_totals(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        kernel, store, profile_id = _make_kernel_with_profile()
+        calls: list[dict[str, Any]] = []
+        original = store.record_tool_call_outcome
+
+        def _spy(**kwargs: Any) -> Any:
+            calls.append(kwargs)
+            return original(**kwargs)
+
+        monkeypatch.setattr(store, "record_tool_call_outcome", _spy)
+        for _ in range(2500):
+            record_repair(("trailing_comma",))
+        emit_tool_call_reliability_event(kernel=kernel, request_id="req_9", session_id=None)
+
+        assert calls == [{"profile_id": profile_id, "kind": "repair_used", "count": 2500}]
+        counters = store.get_reliability_counters(profile_id=profile_id)
+        assert counters is not None
+        assert counters.tool_call_repair_count == 2500
+
+    def test_store_rejects_an_unusable_count(self) -> None:
+        _kernel, store, profile_id = _make_kernel_with_profile()
+
+        for count in (0, -1, True, 1.5):
+            assert (
+                store.record_tool_call_outcome(
+                    profile_id=profile_id, kind="repair_used", count=count  # type: ignore[arg-type]
+                )
+                is None
+            )
+        counters = store.get_reliability_counters(profile_id=profile_id)
+        assert counters is not None
+        assert counters.tool_call_repair_count == 0
+
+
 class TestFlagOffAndDefensive:
     def test_flag_off_emits_nothing_and_increments_nothing(
         self, caplog: pytest.LogCaptureFixture

@@ -4,21 +4,21 @@
 
 Jenny is a desktop app. She can help you write code, edit files, run commands, and make charts and diagrams. You choose the model, the project folder, and the permissions for her tools. You can also change her name and personality.
 
-With a local model, Jenny processes your prompts locally; no cloud account is needed. You can use [Ollama](https://ollama.com/), managed llama-server, [vLLM](https://docs.vllm.ai/), or an existing OpenAI-compatible server on this computer or your private network. Ollama is optional. Optional ChatGPT sign-in and the Codex CLI route use cloud inference. Either way, conversations are saved on your computer.
+With a local model, Jenny processes your prompts locally; no cloud account is needed. You can use [Ollama](https://ollama.com/), managed llama-server, [vLLM](https://docs.vllm.ai/), or an existing OpenAI-compatible server on this computer or your private network. Ollama is optional. Optional ChatGPT sign-in, the Codex CLI route and your own API keys for cloud providers use cloud inference. Either way, conversations are saved on your computer.
 
 Jenny is built around smaller models, roughly 9B–35B parameters. How well she handles a task depends on the model you choose and the hardware you have. Expect mistakes, especially on complicated tasks, and review code and commands before relying on them.
 
-## Jenny 1.5.0
+## Jenny 1.6.0
 
-**[Jenny 1.5.0 is available](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.5.0)**.
-The headline is memory that carries across chats: Jenny remembers, corrects
-and forgets notes with a receipt and Undo for each change, can take notes on
-its own while the model is idle, and can search your past chats. Also new:
-linked chats that pick up work from a handoff and report back to their parent,
-messages between chats with explicit approval, inline Git and command
-proposals that run exactly what was proposed, a per-pane session rail with
-context use and live performance, MCP prompts as slash commands, and a managed
-NInfer engine for RTX 5090 systems on Windows.
+**[Jenny 1.6.0 is available](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.6.0)**.
+The headline is the Jenny chat: one always-there chat that starts, watches,
+messages and stops your other chats under permissions you grant, with Pause,
+Reset, Forget and an Activity log. Also new: your own API keys for the OpenAI
+API, OpenRouter, Groq, an Anthropic Console key or any compatible endpoint
+beside the local engines; push-to-talk dictation recognized on your CPU, with
+audio never written to disk; a Workspace IDE that follows VS Code from the
+keymap and palette to Source Control, hot exit and the Outline view; a File
+Map Components view; chats grouped by project; and Electron 45.
 It retains the Workspace PDF/DOCX editor, the optional PDF reading add-on, 19
 interface languages, Arabic RTL, and explicit update controls. See the
 [release notes](RELEASE_NOTES.md).
@@ -86,7 +86,7 @@ The setup tiles disappear when you're done. You can run setup again from **Setti
 
 ### macOS: experimental; installer untested
 
-The 1.5.0 release attaches `Jenny-arm64.dmg` and `Jenny-arm64.zip` for Apple Silicon. They are built by CI and have not been installed or launched on a real Mac; source setup remains the tested route. **Windows is the supported platform; macOS remains experimental and has not been tested by the maintainer on real hardware.**
+The 1.6.0 release attaches `Jenny-arm64.dmg` and `Jenny-arm64.zip` for Apple Silicon. They are built by CI and have not been installed or launched on a real Mac; source setup remains the tested route. **Windows is the supported platform; macOS remains experimental and has not been tested by the maintainer on real hardware.**
 
 - Future experimental installers may be unsigned; check the signing status in that release's notes and follow macOS's standard **Privacy & Security → Open Anyway** flow if you trust the download.
 - **Automatic updates are disabled on macOS** because they require a signed and notarized build. Download the new dmg from the [releases page](https://github.com/SaltyPretz3l/jenny/releases) to update.
@@ -94,9 +94,9 @@ The 1.5.0 release attaches `Jenny-arm64.dmg` and `Jenny-arm64.zip` for Apple Sil
 
 ### Linux (experimental)
 
-Jenny 1.5.0 includes experimental **`Jenny-x86_64.AppImage`** and
+Jenny 1.6.0 includes experimental **`Jenny-x86_64.AppImage`** and
 **`Jenny-amd64.deb`** packages on the
-[release page](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.5.0).
+[release page](https://github.com/SaltyPretz3l/jenny/releases/tag/v1.6.0).
 Native CI verified the glibc floor and packaged-app startup. Installed-format,
 upgrade and bare-metal qualification remain outstanding.
 These x64 packages target Ubuntu 22.04+, Debian 12+, and compatible
@@ -297,7 +297,7 @@ Development happens in a private repository. Accepted changes are copied there b
 
 Jenny is a hobby project maintained by one person. Bug reports are read, but replies, reviews, and releases happen as time allows. Security reports take priority through the [private advisory process](SECURITY.md).
 
-### Source version 1.5.0
+### Source version 1.6.0
 
 This source tree includes guided setup, local coding tools with live command output, and experimental platform and Docker workflows. Downloadable installers are listed separately on the [releases page](https://github.com/SaltyPretz3l/jenny/releases); a source version does not establish that its installers have been published. Crash reporting is optional and off by default.
 

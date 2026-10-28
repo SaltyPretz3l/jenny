@@ -21,6 +21,8 @@ const WORKSPACE_IDE_RAIL_WIDTH_MIN = 200;
 // layout.js computeViewportWidthLimits) on hydration/drag/resize/config load.
 const WORKSPACE_IDE_RAIL_WIDTH_MAX = 600;
 const WORKSPACE_IDE_MAX_OPEN_TABS = 64;
+const WORKSPACE_IDE_PDF_MAX_PAGE = 100000;
+const WORKSPACE_IDE_PDF_ZOOM_KEYWORDS = new Set(['page-width', 'page-fit', 'page-actual', 'auto']);
 const WORKSPACE_IDE_MAX_EXPANDED_DIRS = 200;
 // Editor preference bounds/whitelists (exposed via the Settings "Editor"
 // section + the statusbar chips).
@@ -30,6 +32,8 @@ const WORKSPACE_IDE_FONT_SIZE_DEFAULT = 0;
 const WORKSPACE_IDE_FONT_SIZE_LEGACY_DEFAULT = 13;
 const WORKSPACE_IDE_FONT_SIZE_MIN = 8;
 const WORKSPACE_IDE_FONT_SIZE_MAX = 40;
+// Default terminal shell profile id ('' = the platform default); main resolves the id
+// against the shells it detects, so only the id's shape is checked here.
 const WORKSPACE_IDE_TAB_SIZES = Object.freeze([2, 4, 8]);
 const WORKSPACE_IDE_TAB_SIZE_DEFAULT = 2;
 const WORKSPACE_IDE_LINE_NUMBERS = Object.freeze(['on', 'off']);
@@ -88,12 +92,71 @@ const WORKSPACE_IDE_RULERS_MAX_COLUMN = 500;
 const WORKSPACE_IDE_ROOT_LRU_MAX = 10;
 const WORKSPACE_IDE_REPLACE_JOURNAL_MAX_APPLIED = 200;
 const WORKSPACE_IDE_REPLACE_JOURNAL_QUERY_MAX = 500;
+const WORKSPACE_IDE_SEARCH_HISTORY_MAX = 20;
+const WORKSPACE_IDE_SEARCH_HISTORY_ENTRY_MAX = 256;
 // Layout tree (row 40 W3): the persisted `workbenchLayout` key is additive and
 // normalized on every read (the activeStageSurface precedent), so there is no
 // CONFIG_VERSION bump; the legacy layout keys are still dual-written beside it
 // for one release so a rollback build reads a valid layout. The payload cap is
 // checked on the raw JSON before normalizing, a bound on untrusted config.
 const WORKSPACE_IDE_LAYOUT_MAX_CHARS = 16384;
+// Row 82 editor/terminal/auto-save preferences: additive persisted keys (no
+// CONFIG_VERSION bump), table-driven and mirrored by renderer-ide-state.js
+// EDITOR_PREF_SPECS (same specs, same results; tests/renderer-ide-editor-prefs-parity
+// pins it). 'bool' defaulting true is false only on literal false; defaulting false is
+// true only on literal true. `legacy(src)` is the fallback for an invalid enum value.
+const WORKSPACE_IDE_AUTO_SAVE_MODES = Object.freeze(['off', 'afterDelay', 'onFocusChange', 'onWindowChange']);
+const WORKSPACE_IDE_FONT_FAMILY_MAX_CHARS = 200;
+// Shell profile id ('' = platform default): the ids workspace-pty-profiles.js emits.
+const WORKSPACE_IDE_TERMINAL_PROFILE_ID_RE = /^[a-z0-9-]{1,32}$/;
+// '' = use the app mono token; only plain family-list characters survive.
+function normalizeWorkspaceIdeFontFamily(value) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  return text.length > 0 && text.length <= WORKSPACE_IDE_FONT_FAMILY_MAX_CHARS && /^[A-Za-z0-9 _\-.,'"]+$/.test(text)
+    ? text
+    : '';
+}
+function clampWorkspaceIdeInt(value, min, max, fallback) {
+  const numeric = typeof value === 'number' || (typeof value === 'string' && value.trim() !== '')
+    ? Math.trunc(Number(value))
+    : NaN;
+  return Number.isFinite(numeric) ? Math.min(max, Math.max(min, numeric)) : fallback;
+}
+const WORKSPACE_IDE_EDITOR_PREF_SPECS = Object.freeze([
+  { key: 'fontFamily', kind: 'text', def: '', clean: normalizeWorkspaceIdeFontFamily },
+  { key: 'cursorStyle', kind: 'enum', def: 'line', values: ['line', 'block', 'underline'] },
+  { key: 'cursorBlinking', kind: 'enum', def: 'smooth', values: ['smooth', 'blink', 'phase', 'expand', 'solid'] },
+  { key: 'cursorSmoothCaretAnimation', kind: 'bool', def: true },
+  { key: 'fontLigatures', kind: 'bool', def: true },
+  { key: 'bracketPairColorization', kind: 'bool', def: true },
+  { key: 'indentGuides', kind: 'bool', def: true },
+  { key: 'stickyScroll', kind: 'bool', def: true },
+  { key: 'folding', kind: 'bool', def: true },
+  { key: 'insertSpaces', kind: 'bool', def: true },
+  { key: 'detectIndentation', kind: 'bool', def: true },
+  // A valid autoSaveMode wins; else the pre-row-82 boolean migrates (true -> afterDelay).
+  {
+    key: 'autoSaveMode', kind: 'enum', def: 'off', values: WORKSPACE_IDE_AUTO_SAVE_MODES,
+    legacy: (src) => (src.autoSaveEnabled === true ? 'afterDelay' : 'off'),
+  },
+  { key: 'autoSaveDelayMs', kind: 'int', def: 1000, min: 100, max: 60000 },
+  { key: 'scrollBeyondLastLine', kind: 'bool', def: false },
+  { key: 'mouseWheelZoom', kind: 'bool', def: true },
+  { key: 'inlineBlame', kind: 'bool', def: true },
+  // D1: 25,000 lines (about 1.5 MB per 1,000 lines per terminal); a larger stored value clamps on load.
+  { key: 'terminalScrollback', kind: 'int', def: 1000, min: 500, max: 25000 },
+  {
+    key: 'terminalDefaultProfile', kind: 'text', def: '',
+    clean: (value) => (typeof value === 'string' && WORKSPACE_IDE_TERMINAL_PROFILE_ID_RE.test(value) ? value : ''),
+  },
+]);
+function normalizeWorkspaceIdeEditorPref(spec, src) {
+  const raw = src[spec.key];
+  if (spec.kind === 'bool') return spec.def === true ? raw !== false : raw === true;
+  if (spec.kind === 'enum') return spec.values.includes(raw) ? raw : (spec.legacy ? spec.legacy(src) : spec.def);
+  if (spec.kind === 'int') return clampWorkspaceIdeInt(raw, spec.min, spec.max, spec.def);
+  return spec.clean(raw);
+}
 const WORKSPACE_IDE_ROOT_KEYS = Object.freeze([
   'openTabs',
   'activeTabPath',
@@ -101,6 +164,7 @@ const WORKSPACE_IDE_ROOT_KEYS = Object.freeze([
   'activeStageSurface',
   'previewPath',
   'replaceJournal',
+  'searchHistory',
 ]);
 const DEFAULT_WORKSPACE_IDE = Object.freeze({
   openTabs: Object.freeze([]),
@@ -112,6 +176,8 @@ const DEFAULT_WORKSPACE_IDE = Object.freeze({
   activeStageSurface: 'editor',
   previewPath: '',
   replaceJournal: null,
+  // Last Search queries, oldest first (additive key, no CONFIG_VERSION bump).
+  searchHistory: Object.freeze([]),
   workbenchLayout: null,
   // Fresh-profile layout splits the rail (the "Move View" model): Explorer +
   // Search dock in the primary rail on the LEFT; Source Control is homed in the
@@ -146,10 +212,11 @@ const DEFAULT_WORKSPACE_IDE = Object.freeze({
   lineNumbers: 'on',
   renderWhitespace: 'selection',
   eol: '',
-  // Debounced auto-save (CONFIG_VERSION 31). DEFAULT-OFF: this writes the user's
-  // files, so only the literal boolean true enables it (the inverse of the
-  // default-on minimap toggle). This preference is the sole auto-save gate.
+  // Auto-save (CONFIG_VERSION 31; row 82 added autoSaveMode). DEFAULT-OFF: this
+  // writes the user's files. autoSaveMode is the gate; autoSaveEnabled is only its
+  // derived mirror (kept one release so a rollback build still reads a boolean).
   autoSaveEnabled: false,
+  ...Object.fromEntries(WORKSPACE_IDE_EDITOR_PREF_SPECS.map((spec) => [spec.key, spec.def])),
   // Save-time hygiene (CONFIG_VERSION 34): all DEFAULT-OFF (only a literal true
   // enables, the autoSaveEnabled idiom) — format-on-save runs Monaco's formatter,
   // trim drops trailing whitespace, and insert-final-newline ensures a trailing
@@ -202,6 +269,22 @@ function normalizeWorkspaceIdeReplaceJournal(value) {
     applied: validPaths.slice(0, WORKSPACE_IDE_REPLACE_JOURNAL_MAX_APPLIED),
     truncated: value.truncated === true || validPaths.length > WORKSPACE_IDE_REPLACE_JOURNAL_MAX_APPLIED,
   };
+}
+
+// Search history: trimmed non-empty strings, de-duplicated keeping the newest
+// occurrence, newest last, at most WORKSPACE_IDE_SEARCH_HISTORY_MAX entries.
+function normalizeWorkspaceIdeSearchHistory(value) {
+  if (!Array.isArray(value)) return [];
+  const newestFirst = [];
+  const seen = new Set();
+  for (let index = value.length - 1; index >= 0; index -= 1) {
+    const entry = typeof value[index] === 'string' ? value[index].trim() : '';
+    if (!entry || entry.length > WORKSPACE_IDE_SEARCH_HISTORY_ENTRY_MAX || seen.has(entry)) continue;
+    seen.add(entry);
+    newestFirst.push(entry);
+    if (newestFirst.length >= WORKSPACE_IDE_SEARCH_HISTORY_MAX) break;
+  }
+  return newestFirst.reverse();
 }
 
 function workspaceIdePathKey(value, { platform = process.platform } = {}) {
@@ -260,6 +343,12 @@ function normalizeWorkspaceIdeLayout(value) {
   return normalizeLayout(value);
 }
 
+function normalizeWorkspaceIdePdfZoom(value) {
+  if (typeof value === 'string') return WORKSPACE_IDE_PDF_ZOOM_KEYWORDS.has(value) ? value : undefined;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0.25 || value > 8) return undefined;
+  return Math.round(value * 10000) / 10000;
+}
+
 function normalizeWorkspaceIde(value = {}, { platform = process.platform } = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const rawTabs = Array.isArray(source.openTabs) ? source.openTabs : [];
@@ -285,6 +374,13 @@ function normalizeWorkspaceIde(value = {}, { platform = process.platform } = {})
     for (const key of ['line', 'top']) {
       if (Number.isSafeInteger(entry?.[key]) && entry[key] >= 1) openTab[key] = entry[key];
     }
+    // PDF tabs remember their page and zoom the same sparse, additive way
+    // (no CONFIG_VERSION bump); invalid values are dropped silently.
+    if (Number.isSafeInteger(entry?.page) && entry.page >= 1 && entry.page <= WORKSPACE_IDE_PDF_MAX_PAGE) {
+      openTab.page = entry.page;
+    }
+    const pdfZoom = normalizeWorkspaceIdePdfZoom(entry?.zoom);
+    if (pdfZoom !== undefined) openTab.zoom = pdfZoom;
     // "Exploded View" per-file-tab mode (renderer/features/renderer-ide-state.js
     // getTabViewMode/setTabViewMode/toggleTabViewMode). Unlike `pinned`, this
     // key is sparse/tolerant rather than always-materialized: it is carried
@@ -333,6 +429,7 @@ function normalizeWorkspaceIde(value = {}, { platform = process.platform } = {})
     : '';
   const previewPath = previewPathCandidate.includes(':') ? '' : previewPathCandidate;
   const replaceJournal = normalizeWorkspaceIdeReplaceJournal(source.replaceJournal);
+  const searchHistory = normalizeWorkspaceIdeSearchHistory(source.searchHistory);
   // 'problems'/'terminal' left the rail at v26; a stale persisted value coerces
   // back to the default 'explorer' (the v26 migration relies on this).
   const railPanelCandidate = WORKSPACE_IDE_RAIL_PANELS.includes(source.railPanel)
@@ -409,9 +506,13 @@ function normalizeWorkspaceIde(value = {}, { platform = process.platform } = {})
     ? source.renderWhitespace
     : DEFAULT_WORKSPACE_IDE.renderWhitespace;
   const eol = WORKSPACE_IDE_EOL.includes(source.eol) ? source.eol : DEFAULT_WORKSPACE_IDE.eol;
-  // Auto-save: DEFAULT-OFF, so only the literal boolean true enables it (the
-  // inverse of minimap, which only literal false disables).
-  const autoSaveEnabled = source.autoSaveEnabled === true;
+  // Row 82 table-driven prefs (autoSaveMode resolves the legacy boolean migration).
+  const editorPrefs = {};
+  for (const spec of WORKSPACE_IDE_EDITOR_PREF_SPECS) {
+    editorPrefs[spec.key] = normalizeWorkspaceIdeEditorPref(spec, source);
+  }
+  // Derived mirror of the resolved mode (rollback safety); never trusted independently.
+  const autoSaveEnabled = editorPrefs.autoSaveMode !== 'off';
   const formatOnSave = source.formatOnSave === true;
   const trimTrailingWhitespace = source.trimTrailingWhitespace === true;
   const insertFinalNewline = source.insertFinalNewline === true;
@@ -427,6 +528,7 @@ function normalizeWorkspaceIde(value = {}, { platform = process.platform } = {})
     activeStageSurface,
     previewPath,
     replaceJournal,
+    searchHistory,
     railPanel,
     railSide,
     railWidth,
@@ -450,6 +552,7 @@ function normalizeWorkspaceIde(value = {}, { platform = process.platform } = {})
     renderWhitespace,
     eol,
     autoSaveEnabled,
+    ...editorPrefs,
     formatOnSave,
     trimTrailingWhitespace,
     insertFinalNewline,
@@ -670,6 +773,7 @@ module.exports = {
   WORKSPACE_IDE_REPLACE_JOURNAL_QUERY_MAX,
   normalizeRulers,
   normalizeWorkspaceIde,
+  normalizeWorkspaceIdePreferences,
   isWorkspaceIdeRecord,
   normalizeWorkspaceIdeRelativePath,
   normalizeWorkspaceIdeRootState,

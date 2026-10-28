@@ -12,6 +12,7 @@
     'tok-default', 'tok-comment', 'tok-string', 'tok-number', 'tok-keyword',
     'tok-type', 'tok-function', 'tok-delimiter', 'tok-invalid',
   ]);
+  const NO_ANNOTATIONS = Object.freeze([]);
   const CHEVRON_GLYPH = '<svg class="file-diff-chevron icon-mirror-rtl" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
   const EXTERNAL_LINK_GLYPH = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6h-6a2 2 0 0 0 -2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-6"/><path d="M11 13l9 -9"/><path d="M15 4h5v5"/></svg>';
 
@@ -63,6 +64,16 @@
     const hunks = Array.isArray(settings.hunks) ? settings.hunks : [];
     const totalLines = hunks.reduce((sum, hunk) => sum + (Array.isArray(hunk?.lines) ? hunk.lines.length : 0), 0);
     const allowHighlight = totalLines <= 400;
+    // Opt-in comments under new-side lines (row 64 review findings): trusted markup from the caller.
+    // One the hunks do not reach is listed before the first hunk in its `unplacedHtml` form.
+    const annotations = (Array.isArray(settings.annotations) ? settings.annotations : [])
+      .filter((item) => item && Number.isSafeInteger(item.line) && item.line > 0 && typeof item.html === 'string');
+    const annotationsByLine = new Map();
+    for (const item of annotations) {
+      if (!annotationsByLine.has(item.line)) annotationsByLine.set(item.line, []);
+      annotationsByLine.get(item.line).push(item);
+    }
+    const placed = new Set();
     const groups = [];
     hunks.forEach((hunk, hunkIndex) => {
       if (hunkIndex > 0) {
@@ -80,6 +91,7 @@
         let gutter;
         let markerText;
         let aria = '';
+        const newSideLine = marker === '+' || marker === ' ' ? newLine : 0;
         if (marker === '+') {
           lineClass = 'diff-line-add'; gutter = String(newLine++); markerText = '+';
           aria = ` aria-label="${escape(jt('chat.fileDiff.addedLine', 'Added line {line}: {content}', { line: gutter, content: content.slice(0, 240) }))}"`;
@@ -92,11 +104,21 @@
           rows.push(`<div class="diff-line ${lineClass}" role="listitem"><span class="diff-gutter"></span><span class="diff-marker"></span><span class="diff-content">${escape(text)}</span></div>`);
           continue;
         }
-        rows.push(`<div class="diff-line ${lineClass}" role="listitem"${aria}><span class="diff-gutter">${escape(gutter)}</span><span class="diff-marker">${markerText}</span><span class="diff-content" data-code-highlight-line data-language-id="${escape(languageId)}">${renderTokens(content, languageId, settings.highlight, escape, allowHighlight)}</span></div>`);
+        const atLine = annotationsByLine.get(newSideLine);
+        const lineAnnotations = atLine ? atLine.filter((item) => !placed.has(item)) : NO_ANNOTATIONS;
+        const severity = lineAnnotations.length && /^(high|medium|low)$/.test(lineAnnotations[0].severity) ? lineAnnotations[0].severity : 'medium';
+        const severityAttr = lineAnnotations.length ? ` data-review-severity="${severity}"` : '';
+        rows.push(`<div class="diff-line ${lineClass}" role="listitem"${aria}${severityAttr}><span class="diff-gutter">${escape(gutter)}</span><span class="diff-marker">${markerText}</span><span class="diff-content" data-code-highlight-line data-language-id="${escape(languageId)}">${renderTokens(content, languageId, settings.highlight, escape, allowHighlight)}</span></div>`);
+        for (const item of lineAnnotations) {
+          placed.add(item);
+          rows.push(`<div class="diff-annotation" role="listitem">${item.html}</div>`);
+        }
       }
       groups.push(`<div class="diff-hunk">${rows.join('')}</div>`);
     });
-    return groups.join('');
+    const unplaced = annotations.filter((item) => !placed.has(item))
+      .map((item) => `<div class="diff-annotation diff-annotation--unplaced" role="listitem">${typeof item.unplacedHtml === 'string' ? item.unplacedHtml : item.html}</div>`);
+    return unplaced.join('') + groups.join('');
   }
 
   function splitPath(path) {

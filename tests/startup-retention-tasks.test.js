@@ -32,7 +32,7 @@ function createFakePayloadStore() {
 
 // Drives the REAL scheduleStartupRetentionTasks entry point with only the
 // payload branch wired, then fires the staggered startup timer it arms.
-function runPayloadSweep(sessionStore, { fire = true } = {}) {
+async function runPayloadSweep(sessionStore, { fire = true } = {}) {
   const backend = createFakeBackend('ready');
   backend.sessionStore = sessionStore;
   // The store reaches the sweep the same way production delivers it: hung on the
@@ -49,7 +49,7 @@ function runPayloadSweep(sessionStore, { fire = true } = {}) {
     log: (level, event, payload) => { logs.push([level, event, payload]); },
   });
   if (fire) {
-    for (const timer of timers) timer.fn();
+    for (const timer of timers) await timer.fn();
   }
   return { ipcPayloadStore, timers, intervals, logs };
 }
@@ -151,7 +151,7 @@ test('collectReferencedAttachmentAssetPaths falls back to getSessionMessages wit
   assert.deepEqual(collectReferencedAttachmentAssetPaths(store), ['C:\\assets\\legacy.png']);
 });
 
-test('the scheduled sweep retains persisted tool-event media and re-reads after an event-only append', t => {
+test('the scheduled sweep retains persisted tool-event media and re-reads after an event-only append', async t => {
   const fs = require('node:fs');
   const path = require('node:path');
   const { createTrackedTempDir, cleanupTrackedResources } = require('./helpers/resource-cleanup');
@@ -198,7 +198,7 @@ test('the scheduled sweep retains persisted tool-event media and re-reads after 
     setIntervalRef: fn => { intervals.push(fn); return { unref() {} }; },
     log: (...entry) => logs.push(entry),
   });
-  timers.find(timer => timer.ms === 8000).fn();
+  await timers.find(timer => timer.ms === 8000).fn();
   assert.equal(fs.existsSync(orphan.assetPath), false, 'the aged orphan is removed');
   for (const asset of retained) {
     assert.equal(fs.existsSync(asset.assetPath), true, 'persisted tool-result media must survive the sweep');
@@ -215,7 +215,7 @@ test('the scheduled sweep retains persisted tool-event media and re-reads after 
   assert.equal(after.message_count, before.message_count);
   // No message append: the turn-event stamp alone moves the memo stamp, so
   // the next sweep re-reads this one session and collects the late event ref.
-  intervals[0]();
+  await intervals[0]();
   assert.deepEqual(reads, [sessionId], 'the event-only append re-reads exactly that session');
   assert.equal(fs.existsSync(lateAsset.assetPath), true, 'an event-only ref is collected at the next sweep');
   assert.equal(fs.existsSync(lateOrphan.assetPath), false);
@@ -323,7 +323,7 @@ test('sweep memo cache skips unchanged sessions, re-reads changed ones, and drop
   assert.equal(cache.has('s1'), false, 'stale cache entries must be pruned');
 });
 
-test('scheduleStartupRetentionTasks gates both retention passes behind backend-ready', () => {
+test('scheduleStartupRetentionTasks gates both retention passes behind backend-ready', async () => {
   const backend = createFakeBackend('starting');
   const immediate = [];
   const setTimeoutRef = (fn, ms) => { immediate.push({ fn, ms }); return { unref() {} }; };
@@ -349,7 +349,7 @@ test('scheduleStartupRetentionTasks gates both retention passes behind backend-r
   // After ready, the staggered timers were scheduled; fire them.
   const staggered = immediate.filter((t) => t.ms === 1000 || t.ms === 8000);
   assert.equal(staggered.length, 2);
-  for (const t of staggered) { t.fn(); }
+  for (const t of staggered) { await t.fn(); }
   assert.equal(pruned, 1);
   assert.equal(swept, 1);
 });
@@ -386,17 +386,17 @@ test('scheduleStartupRetentionTasks runs the WIDE-010 artifact retention sweep o
   assert.equal(sweeps, 2, 'the sweep interval re-invokes the retention pass');
 });
 
-test('the ipc-payload sweep counts references from every session, on tool_call AND tool_result', () => {
+test('the ipc-payload sweep counts references from every session, on tool_call AND tool_result', async () => {
   // external_payloads lives on BOTH carriers; a scan that walks only tool
   // results under-counts and would delete a file a live tool_use still needs.
-  const { ipcPayloadStore } = runPayloadSweep(createFakeSessionStore([
+  const { ipcPayloadStore } = await runPayloadSweep(createFakeSessionStore([
     { id: 's1', updated_at: 'T1', message_count: 1, messages: [payloadToolCallMessage('a.json')] },
     { id: 's2', updated_at: 'T1', message_count: 1, messages: [payloadToolResultMessage('b.json')] },
   ]));
   assert.deepEqual(ipcPayloadStore.calls, [['a.json', 'b.json']]);
 });
 
-test('a session that cannot be read aborts the ipc-payload sweep instead of pruning', () => {
+test('a session that cannot be read aborts the ipc-payload sweep instead of pruning', async () => {
   // peekSession returns null for an unreadable file, a quarantined corrupt one,
   // AND a future-schema freeze. Contributing [] for any of those would mark
   // every payload of that session an orphan, so the sweep must prune NOTHING.
@@ -408,7 +408,7 @@ test('a session that cannot be read aborts the ipc-payload sweep instead of prun
     { id: 's2', updated_at: 'T1', message_count: 1 },
   ];
 
-  const { ipcPayloadStore, logs } = runPayloadSweep(sessionStore);
+  const { ipcPayloadStore, logs } = await runPayloadSweep(sessionStore);
 
   assert.deepEqual(ipcPayloadStore.calls, []);
   const warnings = logs.filter(([level]) => level === 'WARN');
@@ -416,11 +416,11 @@ test('a session that cannot be read aborts the ipc-payload sweep instead of prun
   assert.equal(warnings[0][1], 'ipc_payloads.orphan_sweep_failed');
 });
 
-test('the ipc-payload sweep runs once at startup and arms no repeating interval', () => {
+test('the ipc-payload sweep runs once at startup and arms no repeating interval', async () => {
   // Crash orphans are a per-launch concern and session deletion collects the
   // referenced ones live, so a 30-minute interval would re-read every session
   // body to find nothing.
-  const { intervals, timers } = runPayloadSweep(createFakeSessionStore([
+  const { intervals, timers } = await runPayloadSweep(createFakeSessionStore([
     { id: 's1', updated_at: 'T1', message_count: 1, messages: [payloadToolCallMessage('a.json')] },
   ]), { fire: false });
   assert.deepEqual(intervals, []);
@@ -439,7 +439,7 @@ test('the ipc-payload sweep is inert without a payload store', () => {
   assert.deepEqual(timers, []);
 });
 
-test('a quarantined session that came back as an empty stub aborts the sweep', () => {
+test('a quarantined session that came back as an empty stub aborts the sweep', async () => {
   // THE case a null check misses. A corrupt session file is quarantined and
   // re-seeded as a stub with messages: [] -- peekSession returns that record
   // successfully, so a guard that only rejects null accepts a zero-reference
@@ -451,35 +451,35 @@ test('a quarantined session that came back as an empty stub aborts the sweep', (
     { id: 'quarantined', updated_at: 'T1', message_count: 4, messages: [] },
   ]);
 
-  const { ipcPayloadStore, logs } = runPayloadSweep(sessionStore);
+  const { ipcPayloadStore, logs } = await runPayloadSweep(sessionStore);
 
   assert.deepEqual(ipcPayloadStore.calls, []);
   assert.equal(logs.filter(([level]) => level === 'WARN').length, 1);
 });
 
-test('a genuinely empty session does not abort the sweep', () => {
+test('a genuinely empty session does not abort the sweep', async () => {
   // The stub guard keys on the index DISAGREEING with the body. A session the
   // index also reports as empty is a normal new session and must not wedge
   // retention forever.
-  const { ipcPayloadStore } = runPayloadSweep(createFakeSessionStore([
+  const { ipcPayloadStore } = await runPayloadSweep(createFakeSessionStore([
     { id: 's1', updated_at: 'T1', message_count: 1, messages: [payloadToolCallMessage('a.json')] },
     { id: 'fresh', updated_at: 'T1', message_count: 0, messages: [] },
   ]));
   assert.deepEqual(ipcPayloadStore.calls, [['a.json']]);
 });
 
-test('the startup sweep keeps the default grace window', () => {
+test('the startup sweep keeps the default grace window', async () => {
   // Opposite of the delete path, which passes graceMs: 0. Here a payload may
   // have been written moments ago by a turn still in flight, so the store's
   // default one-hour grace must reach it -- asserted because the fake would
   // otherwise swallow any options regression silently.
-  const { ipcPayloadStore } = runPayloadSweep(createFakeSessionStore([
+  const { ipcPayloadStore } = await runPayloadSweep(createFakeSessionStore([
     { id: 's1', updated_at: 'T1', message_count: 1, messages: [payloadToolCallMessage('a.json')] },
   ]));
   assert.deepEqual(ipcPayloadStore.options, [undefined]);
 });
 
-test('an unreadable session aborts the ATTACHMENT prune too, not just the payload one', () => {
+test('an unreadable session aborts the ATTACHMENT prune too, not just the payload one', async () => {
   // Same asymmetry, same data: deleting an attachment a live session still
   // references destroys user data exactly as deleting a payload does. The
   // reader used to return [] here, so the attachment sweep pruned against an
@@ -506,11 +506,11 @@ test('an unreadable session aborts the ATTACHMENT prune too, not just the payloa
     setTimeoutRef: (fn, ms) => { timers.push({ fn, ms }); return { unref() {} }; },
     setIntervalRef: () => ({ unref() {} }),
   });
-  for (const timer of timers) timer.fn();
+  for (const timer of timers) await timer.fn();
   assert.deepEqual(pruned, []);
 });
 
-test('both prunes ride one walk of the session bodies', () => {
+test('both prunes ride one walk of the session bodies', async () => {
   // They were two staggered tasks, each doing a full cache-neutral read of every
   // session. `reads` records one entry per peekSession call, so a second walk
   // shows up as a duplicated id.
@@ -528,7 +528,7 @@ test('both prunes ride one walk of the session bodies', () => {
     setTimeoutRef: (fn, ms) => { timers.push({ fn, ms }); return { unref() {} }; },
     setIntervalRef: () => ({ unref() {} }),
   });
-  for (const timer of timers) timer.fn();
+  for (const timer of timers) await timer.fn();
   assert.deepEqual(sessionStore.reads, ['s1', 's2']);
 });
 

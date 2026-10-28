@@ -419,6 +419,25 @@ test('applyWebSearchSecret resolves success with configRefreshed:false when the 
   assert.equal(status.configured.brave, true);
 });
 
+test('applyWebSearchSecret rejects an oversized secret without echoing it or touching the store', async () => {
+  const secureStore = createFakeSecureStore();
+  const value = `secret-${'x'.repeat(4096)}`;
+  await assert.rejects(
+    () => applyWebSearchSecret({
+      backendService: { secureStore, async refreshManagedConfig() {} },
+      payload: { keyId: 'brave', value },
+    }),
+    (error) => /too long/i.test(error.message) && !error.message.includes('secret-'),
+  );
+  assert.equal(secureStore.getWebSearchProviderKey('brave'), '');
+  const atLimit = 'y'.repeat(4096);
+  await applyWebSearchSecret({
+    backendService: { secureStore, async refreshManagedConfig() {} },
+    payload: { keyId: 'brave', value: atLimit },
+  });
+  assert.equal(secureStore.getWebSearchProviderKey('brave'), atLimit);
+});
+
 test('applyWebSearchSecret with an empty value clears the stored key', async () => {
   const secureStore = createFakeSecureStore({ serper: 'existing-secret' });
   const backendService = { secureStore, async refreshManagedConfig() {} };

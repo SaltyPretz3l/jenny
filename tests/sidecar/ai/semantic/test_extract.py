@@ -11,6 +11,7 @@ import pytest
 import sidecar.ai.semantic.extract as extract_module
 from sidecar.ai.semantic.extract import extract_document
 from sidecar.ai.tools.workspace import WorkspaceGuard
+from tests.sidecar._platform_skips import make_dir_link, requires_file_symlinks
 
 _DOCX_XML = (
     '<?xml version="1.0" encoding="UTF-8"?>'
@@ -61,36 +62,26 @@ def test_paths_outside_the_root_are_never_read(root: Path, tmp_path: Path) -> No
     guard = WorkspaceGuard(str(root))
 
     assert extract_document(outside / "secret.md", guard).reason == "outside_root"
-    links = []
-    try:
-        os.symlink(outside / "secret.md", root / "link.md")
-        links.append(root / "link.md")
-    except (OSError, NotImplementedError):
-        pass
-    if sys.platform == "win32":
-        import _winapi
+    make_dir_link(root / "junction", outside)
 
-        _winapi.CreateJunction(str(outside), str(root / "junction"))
-        links.append(root / "junction" / "secret.md")
-    if not links:
-        pytest.skip("the OS refused to create a symlink or junction")
-    for link in links:
-        result = extract_document(link, guard)
-        assert (result.status, result.reason) == ("skipped", "outside_root")
-        assert result.sections == []
+    result = extract_document(root / "junction" / "secret.md", guard)
+
+    assert (result.status, result.reason) == ("skipped", "outside_root")
+    assert result.sections == []
 
 
-def _link_directory(target: Path, link: Path) -> bool:
-    if sys.platform == "win32":
-        import _winapi
+@requires_file_symlinks()
+def test_file_links_outside_the_root_are_never_read(root: Path, tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text("secret", encoding="utf-8")
+    guard = WorkspaceGuard(str(root))
+    os.symlink(outside / "secret.md", root / "link.md")
 
-        _winapi.CreateJunction(str(target), str(link))
-        return True
-    try:
-        os.symlink(target, link, target_is_directory=True)
-    except (OSError, NotImplementedError):
-        return False
-    return True
+    result = extract_document(root / "link.md", guard)
+
+    assert (result.status, result.reason) == ("skipped", "outside_root")
+    assert result.sections == []
 
 
 class _SwapAfterValidation(WorkspaceGuard):
@@ -104,7 +95,8 @@ class _SwapAfterValidation(WorkspaceGuard):
         resolved = super().ensure_within_root(resolved_path)
         if not self.swapped:
             self._sub.rename(self._sub.with_name("sub-original"))
-            self.swapped = _link_directory(self._outside, self._sub)
+            make_dir_link(self._sub, self._outside)
+            self.swapped = True
         return resolved
 
 
@@ -125,8 +117,7 @@ def test_a_child_swapped_for_an_outside_link_after_validation_is_never_read(
 
     result = extract_document(root / "sub" / name, guard)
 
-    if not guard.swapped:
-        pytest.skip("the OS refused to create a directory link")
+    assert guard.swapped
     assert (result.status, result.reason) == ("skipped", "outside_root")
     assert result.sections == []
     assert result.sha256 is None
@@ -168,7 +159,8 @@ def test_pdf_without_the_addon_is_skipped(root: Path, monkeypatch: pytest.Monkey
 
 
 def test_pdf_pages_and_needs_ocr(root: Path) -> None:
-    fitz = pytest.importorskip("fitz")
+    import fitz
+
     text_pdf = fitz.open()
     text_pdf.new_page()
     page = text_pdf.new_page()

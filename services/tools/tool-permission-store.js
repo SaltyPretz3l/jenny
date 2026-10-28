@@ -12,6 +12,7 @@ const {
   MAX_RULE_COUNT,
   MAX_SCOPED_GRANT_COUNT,
   migratePermissionDocument,
+  NEVER_PERSIST_ALWAYS_ALLOW,
   normalizeAuthority,
   normalizeToolName,
   REVIEW_DECISIONS,
@@ -21,7 +22,7 @@ const {
   validatePermissionDocument,
 } = require('./tool-permission-migrations');
 
-const NEVER_PERSIST_ALWAYS_ALLOW = Object.freeze(new Set(['exit_plan_mode', 'propose_change']));
+const MAX_AUTHORITY_SNAPSHOTS = 32;
 const MAX_PERMISSION_DOCUMENT_BYTES = 4 * 1024 * 1024;
 const DEFAULT_POLICIES = Object.freeze({
   read_file: 'auto', glob_files: 'auto', grep_search: 'auto', write_file: 'ask',
@@ -106,6 +107,25 @@ function assertAuthority(authority) {
     );
   }
   return normalized;
+}
+
+// A persisted always-allow grant is refused for the one-off consent tools.
+function assertPersistableAlwaysAllow(toolName) {
+  if (toolName !== '*' && NEVER_PERSIST_ALWAYS_ALLOW.has(splitCompositeToolName(toolName).tool_id)) {
+    throw new ToolPermissionStoreError(
+      'permission_decision_invalid',
+      `Tool "${toolName}" cannot be always-allowed; its consent is per call.`
+    );
+  }
+}
+
+function grantCoversTool(grant, toolName) {
+  const grantName = String(grant?.tool_name || '');
+  return grantName === toolName || grantName.startsWith(`${toolName}:`);
+}
+
+function authoritySnapshotKey(authority) {
+  return JSON.stringify(Object.keys(authority).sort().map((key) => [key, authority[key]]));
 }
 
 function normalizedPathPrefix(input) {
@@ -196,6 +216,7 @@ function commitDocument(instance, document) {
   }
   instance._document = validatedDocument;
   instance._snapshotCache = null;
+  instance._authoritySnapshots.clear();
 }
 
 function markReadOnly(instance, reason, details = {}) {
@@ -227,6 +248,7 @@ class ToolPermissionStore {
     this._store = new FileJsonStore(filePath, { logger: this._logger });
     this._document = createEmptyPermissionDocument();
     this._snapshotCache = null;
+    this._authoritySnapshots = new Map();
     this._readOnlyReason = null;
     this._blanketRuleRetired = false;
     this._retiredInspectDenySeen = false;
@@ -294,12 +316,16 @@ class ToolPermissionStore {
     if (policy === 'auto') return this.grantAlwaysAllow(normalizedName, {}, authority);
     const next = cloneDocument(this._document);
     next.legacy_policies[normalizedName] = policy;
+    // A global ask/deny is the user's later word: the tool's scoped always-allow
+    // grants would otherwise keep winning on their path prefixes.
+    next.scoped_grants = next.scoped_grants.filter((grant) => !grantCoversTool(grant, normalizedName));
     commitDocument(this, next);
     return { decision: policy, toolName: normalizedName, scope: 'global' };
   }
 
   grantAlwaysAllow(toolName, input, authority) {
     const normalizedName = assertToolName(toolName);
+    assertPersistableAlwaysAllow(normalizedName);
     const normalizedAuthority = assertAuthority(authority);
     const pathPrefix = normalizedPathPrefix(input);
     const match = matchForToolGrant(normalizedName, pathPrefix);
@@ -377,6 +403,7 @@ class ToolPermissionStore {
     next.pending_review = next.pending_review.filter((item) => item.id !== pendingId);
     let scopedGrantId = null;
     if (decision === 'auto') {
+      assertPersistableAlwaysAllow(record.tool_name);
       const normalizedAuthority = assertAuthority(authority);
       const match = matchForReviewedGrant(record);
       const grant = buildScopedGrant(
@@ -456,13 +483,15 @@ class ToolPermissionStore {
     const hasAuthorityArgument = arguments.length > 0;
     const normalizedAuthority = hasAuthorityArgument ? normalizeAuthority(authority) : null;
     if (hasAuthorityArgument && !normalizedAuthority) return unavailableSnapshot();
-    if (!normalizedAuthority && this._snapshotCache) return this._snapshotCache;
-    const base = materializeLegacyDenyRules(this._document);
-    if (!normalizedAuthority) {
-      this._snapshotCache = base;
-      return base;
-    }
-    return normalizePolicySnapshot({
+    if (!this._snapshotCache) this._snapshotCache = materializeLegacyDenyRules(this._document);
+    const base = this._snapshotCache;
+    if (!normalizedAuthority) return base;
+    // Per-authority snapshots are memoised until the next commit: every tool
+    // call evaluates against one, and the document rarely changes.
+    const cacheKey = authoritySnapshotKey(normalizedAuthority);
+    const cached = this._authoritySnapshots.get(cacheKey);
+    if (cached) return cached;
+    const snapshot = normalizePolicySnapshot({
       version: base.version,
       legacy_policies: base.legacy_policies,
       rules: [
@@ -472,6 +501,11 @@ class ToolPermissionStore {
           .map(scopedGrantRule),
       ],
     });
+    if (this._authoritySnapshots.size >= MAX_AUTHORITY_SNAPSHOTS) {
+      this._authoritySnapshots.delete(this._authoritySnapshots.keys().next().value);
+    }
+    this._authoritySnapshots.set(cacheKey, snapshot);
+    return snapshot;
   }
 }
 

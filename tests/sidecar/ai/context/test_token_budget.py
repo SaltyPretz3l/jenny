@@ -542,7 +542,43 @@ class TestApplyBudgetCheck:
         assert thinking_budget.max_output_tokens == 32_768
         assert thinking_budget.output_reservation_tokens == 65_536
         assert instruct_budget.output_reservation_tokens is None
+        # An engine that does not fit max_tokens to the window keeps the whole
+        # answer + thinking allowance back (up to the quarter-window cap).
         assert thinking_budget.effective_context() < instruct_budget.effective_context()
+
+    def test_a_fitting_engine_holds_back_only_the_answer_floor(self) -> None:
+        messages = [{"role": "user", "content": "hello"}]
+        engine = _ReasoningReservationEngine()
+        engine.fits_output_to_window = True  # type: ignore[attr-defined]
+        _, thinking_budget, _ = apply_budget_check(
+            messages,
+            _Qwen38Config(),  # type: ignore[arg-type]
+            engine,  # type: ignore[arg-type]
+            reasoning_effort="medium",
+        )
+
+        assert thinking_budget is not None
+        assert thinking_budget.fitted_output is True
+        # The advertised 65,536 (32k answer + 32k thinking) shrinks to 20,480.
+        assert thinking_budget._output_reservation() == 20_480
+
+    def test_the_answer_floor_never_raises_a_small_reservation(self) -> None:
+        small_output = TokenBudget(
+            context_window=262_144, max_output_tokens=8_192, fitted_output=True
+        )
+        reasoning = TokenBudget(
+            context_window=262_144,
+            max_output_tokens=8_192,
+            output_reservation_tokens=65_536,
+            fitted_output=True,
+        )
+        unfitted = TokenBudget(
+            context_window=262_144, max_output_tokens=8_192, output_reservation_tokens=65_536
+        )
+
+        assert small_output._output_reservation() == 8_192
+        assert reasoning._output_reservation() == 20_480
+        assert unfitted._output_reservation() == 65_536
 
 
 # -- resolve_auto_compact_ratio (per-model override resolution) ---------------

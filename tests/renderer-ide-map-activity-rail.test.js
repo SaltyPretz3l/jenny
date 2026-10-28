@@ -16,10 +16,21 @@ const { createMapActivityBus } = require('../renderer/features/renderer-ide-map-
 
 const ROOT = 'C:\\dev\\jenny';
 
-function makeFakeTimers() {
+// rAF runs inline unless a test opts into deferred frames (coalescing).
+function makeFakeTimers(deferRaf) {
   let nextId = 1;
   const pending = new Map();
+  const frames = new Map();
   return {
+    requestAnimationFrame(fn) {
+      if (!deferRaf) { fn(0); return 0; }
+      const id = nextId; nextId += 1;
+      frames.set(id, fn);
+      return id;
+    },
+    cancelAnimationFrame(id) { frames.delete(id); },
+    flushFrames() { const fns = [...frames.values()]; frames.clear(); for (const fn of fns) fn(0); },
+    pendingFrames() { return frames.size; },
     setTimeout(fn, ms) {
       const id = nextId; nextId += 1;
       pending.set(id, { fn, ms });
@@ -55,12 +66,13 @@ function setup(t, opts) {
   const platform = opts && opts.platform;
   const bus = createMapActivityBus({ getRootPath: () => ROOT, now: () => 1000, platform });
   const view = makeStubView((opts && opts.ids) || ['renderer/App.js', 'services/x.js']);
-  const timers = makeFakeTimers();
+  const timers = makeFakeTimers(opts && opts.deferRaf);
   const revealed = [];
+  const session = { id: 'sess1' };
   const turnStates = [];
   const presenter = createMapActivityPresenter({
     bus,
-    getSessionId: () => 'sess1',
+    getSessionId: () => session.id,
     view,
     viewportEl,
     timers,
@@ -73,7 +85,7 @@ function setup(t, opts) {
     bus.dispose();
     globalThis.window = previousWindow;
   });
-  return { bus, view, presenter, viewportEl, timers, revealed, turnStates, dom };
+  return { bus, view, presenter, viewportEl, timers, revealed, turnStates, dom, session };
 }
 
 function use(bus, over) {
@@ -207,4 +219,34 @@ test('dispose removes the rail and stops reacting', (t) => {
   const paintCount = view.calls.length;
   use(bus, { callId: 'c2', input: { path: 'services/x.js' } });
   assert.equal(view.calls.length, paintCount, 'no paints after dispose');
+});
+
+test('a session switch re-evaluates the layout freeze on the next bus event from ANY session', (t) => {
+  const { bus, session, turnStates } = setup(t);
+  use(bus, { callId: 'c1', input: { path: 'renderer/App.js' } });
+  assert.deepEqual(turnStates, [true]);
+  session.id = 'sess2'; // the user switched chats mid-turn
+  bus.ingest({ type: 'tool_use', streamId: 'sZ', sessionId: 'sess3', callId: 'z1', toolName: 'read_file', input: { path: 'services/x.js' } });
+  assert.deepEqual(turnStates, [true, false], 'the freeze is released for the idle active session');
+});
+
+test('refresh() after a session switch repaints the new session and releases the freeze', (t) => {
+  const { bus, session, turnStates, view, presenter } = setup(t);
+  use(bus, { callId: 'c1', input: { path: 'renderer/App.js' } });
+  session.id = 'sess2';
+  presenter.refresh();
+  assert.deepEqual(turnStates, [true, false]);
+  assert.equal(view.calls.at(-1).heat.size, 0, 'the old session heat is gone');
+});
+
+test('a burst of bus events paints once per frame', (t) => {
+  const { bus, view, timers } = setup(t, { deferRaf: true });
+  use(bus, { callId: 'c1', input: { path: 'renderer/App.js' } });
+  use(bus, { callId: 'c2', input: { path: 'services/x.js' } });
+  use(bus, { callId: 'c3', toolName: 'edit_file', input: { path: 'services/x.js' } });
+  assert.equal(view.calls.length, 0, 'nothing painted before the frame');
+  assert.equal(timers.pendingFrames(), 1, 'one coalesced frame');
+  timers.flushFrames();
+  assert.equal(view.calls.length, 1);
+  assert.equal(view.calls[0].heat.size, 2);
 });

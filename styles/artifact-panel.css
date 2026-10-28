@@ -274,6 +274,12 @@
   outline-offset: 1px;
 }
 
+/* The span title is only where focus lands when the panel opens (tabindex -1, not
+   tabbable); the header clipped its ring to a stray bar after the title. */
+span.artifact-panel-title:focus-visible {
+  outline: none;
+}
+
 .artifact-panel-text-btn {
   padding: 2px 4px;
   border: none;

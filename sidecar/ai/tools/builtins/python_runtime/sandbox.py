@@ -14,6 +14,7 @@ threat model, accepted risks, and deferred hardening.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import signal
@@ -35,6 +36,8 @@ PYTHON_RESULT_SCHEMA_VERSION = 1
 MAX_RESULT_JSON_BYTES = 4 * 1024 * 1024
 MAX_WRAPPER_PIPE_BYTES = 512 * 1024
 _WRAPPER_PIPE_READ_CHUNK_BYTES = 64 * 1024
+
+logger = logging.getLogger(__name__)
 
 
 class SandboxExecutionCancelled(RuntimeError):
@@ -113,8 +116,9 @@ def _wait_for_wrapper_process(
                 raise SandboxExecutionCancelled(cleanup_confirmed=False) from error
             raise SandboxExecutionCancelled(cleanup_confirmed=True)
         if any(capture.exceeded for capture in captures):
-            _kill_sandbox_tree(proc)
-            proc.wait(timeout=1.0)
+            with suppress(OSError, subprocess.TimeoutExpired):
+                _kill_sandbox_tree(proc)
+                proc.wait(timeout=1.0)
             raise RuntimeError("python runtime wrapper output exceeded the byte limit")
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -318,6 +322,29 @@ def _minimal_path(venv_python: Path, *, posix: bool) -> str:
     return os.pathsep.join(segment for segment in segments if segment)
 
 
+def _matplotlib_config_dir(venv_python: Path) -> Path | None:
+    """A runtime-owned matplotlib config/cache dir that outlives one run.
+
+    Pointing ``MPLCONFIGDIR`` at the per-run scratch dir made matplotlib
+    rebuild its font cache on every call. The runtime venv dir is ours and
+    is replaced wholesale on a rebuild, which also drops a stale cache.
+    """
+    # ``<venv>/Scripts/python.exe`` or ``<venv>/bin/python``; the embeddable
+    # runtime keeps ``python.exe`` at the venv dir itself.
+    interpreter_dir = venv_python.parent
+    venv_dir = (
+        interpreter_dir.parent
+        if interpreter_dir.name.lower() in {"scripts", "bin"}
+        else interpreter_dir
+    )
+    config_dir = venv_dir / ".mplconfig"
+    try:
+        config_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    return config_dir
+
+
 def _child_environment(
     venv_python: Path,
     work_dir: Path,
@@ -325,12 +352,13 @@ def _child_environment(
     *,
     posix: bool,
 ) -> dict[str, str]:
+    mpl_config_dir = _matplotlib_config_dir(venv_python) or work_dir
     env = {
         "PATH": _minimal_path(venv_python, posix=posix),
         "TEMP": str(work_dir),
         "TMP": str(work_dir),
         "JENNY_OUTPUT_DIR": str(work_dir),
-        "MPLCONFIGDIR": str(work_dir),
+        "MPLCONFIGDIR": str(mpl_config_dir),
         "VIRTUAL_ENV": str(venv_python.parent.parent),
         # Bound native scientific worker pools within the sandbox memory budget.
         "OPENBLAS_NUM_THREADS": "1",
@@ -397,6 +425,7 @@ def execute_sandboxed(  # noqa: PLR0913 - keyword-only sandbox inputs.
     proc: subprocess.Popen[str] | None = None
     wrapper_stderr = ""
     ledger_ticket = None
+    ledger_confirmed = False
     from sidecar.runtime import owned_process_tracking
     try:
         with JobObject(memory_limit_mb=memory_limit_mb, max_processes=5) as job:
@@ -410,6 +439,9 @@ def execute_sandboxed(  # noqa: PLR0913 - keyword-only sandbox inputs.
                 ],
                 cwd=str(launch_directory),
                 env=env,
+                # The sidecar's own stdin is the JSON-RPC pipe; user code
+                # must never read from it.
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -426,6 +458,10 @@ def execute_sandboxed(  # noqa: PLR0913 - keyword-only sandbox inputs.
                 timeout_seconds=timeout_seconds,
                 abort_event=abort_event,
             )
+        # The root exited on its own (cancel, timeout and the byte limit all
+        # raise above); the ledger entry is settled only if nothing it
+        # started is still alive in its group.
+        ledger_confirmed = _sandbox_tree_exited(proc)
         if not result_path.exists():
             raise RuntimeError(
                 "python runtime wrapper did not produce a result file"
@@ -441,7 +477,23 @@ def execute_sandboxed(  # noqa: PLR0913 - keyword-only sandbox inputs.
         _cleanup_failed_execution(proc, work_dir, error)
         raise
     finally:
-        owned_process_tracking.settle(ledger_ticket, confirmed=False)
+        owned_process_tracking.settle(ledger_ticket, confirmed=ledger_confirmed)
+
+
+def _sandbox_tree_exited(proc: subprocess.Popen[str] | None) -> bool:
+    """True when the root exited and, on POSIX, its process group is empty."""
+    if proc is None or proc.poll() is None:
+        return False
+    killpg = getattr(os, "killpg", None)
+    if os.name == "nt" or killpg is None:
+        return True
+    try:
+        killpg(proc.pid, 0)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        return False
+    return False
 
 
 def _cleanup_failed_execution(
@@ -449,25 +501,29 @@ def _cleanup_failed_execution(
     work_dir: Path,
     error: Exception,
 ) -> None:
-    if proc is not None and proc.poll() is None:
-        if isinstance(error, SandboxExecutionCancelled):
+    """Kill, close and remove after a failure without replacing ``error``."""
+    try:
+        if proc is not None and proc.poll() is None:
             with suppress(OSError, subprocess.TimeoutExpired):
                 _kill_sandbox_tree(proc)
                 proc.wait(timeout=1.0)
-        else:
-            _kill_sandbox_tree(proc)
-            proc.wait(timeout=1.0)
-    if proc is not None:
-        for pipe in (getattr(proc, "stdout", None), getattr(proc, "stderr", None)):
-            if pipe is not None:
-                try:
-                    pipe.close()
-                except OSError:
-                    pass
-    if isinstance(error, SandboxExecutionCancelled):
+    finally:
+        if proc is not None:
+            for pipe in (getattr(proc, "stdout", None), getattr(proc, "stderr", None)):
+                if pipe is not None:
+                    with suppress(OSError):
+                        pipe.close()
         try:
             _remove_tree(work_dir)
-        except OSError:
-            error.cleanup_confirmed = False
-    else:
-        _remove_tree(work_dir)
+        except OSError as cleanup_error:
+            if isinstance(error, SandboxExecutionCancelled):
+                error.cleanup_confirmed = False
+            logger.warning(
+                "Python runtime scratch cleanup failed after a failed execution.",
+                extra={
+                    "component": "ai.tools.python_runtime",
+                    "event": "ai.tools.python_runtime.cleanup_degraded",
+                    "status": "degraded",
+                    "data": {"error_type": type(cleanup_error).__name__},
+                },
+            )

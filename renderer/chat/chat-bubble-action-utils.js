@@ -33,6 +33,17 @@
   const REGENERATE_TEXT_ATTACHMENTS_REASON =
     jt('shell.fallback.regenerateTextAttachmentsUnsupported', 'Regenerate cannot replay text file attachments yet.');
   const EDIT_DISABLED_REASON_DURING_EDIT = jt('chat.bubbleActions.finishCurrentEdit', 'Finish the current edit first.');
+  const HANDOFF_PREPARATION_RETRY_REASON =
+    jt('chat.bubbleActions.handoffPreparationRetry', 'Retry this from the New session card.');
+  const APPLICATION_TURN_RETRY_REASON = jt('chat.bubbleActions.applicationTurnRetry', 'Send a message to continue.');
+  // The anchor of an app-started turn is an app label (services/backend/session-handoff-context.js
+  // and application-turns.js), so Retry and Edit would replay it as an ordinary prompt: only the
+  // proposal card runs a preparation turn again, and a wake or auto-resume continues with a message.
+  const APPLICATION_TURNS = new Set(['handoff_preparation', 'wake', 'auto_resume']);
+  function applicationTurnOf(message) {
+    const kind = normalizeString(message?.application_turn);
+    return normalizeString(message?.role) === 'user' && APPLICATION_TURNS.has(kind) ? kind : '';
+  }
   const NON_REPLY_ASSISTANT_KINDS = new Set([
     'interactive_round_recap',
     'proactive_suggestion',
@@ -186,6 +197,15 @@
       };
     }
 
+    const sourceApplicationTurn = applicationTurnOf(sourceMessage);
+    if (sourceApplicationTurn) {
+      return {
+        ...blockedResult,
+        sourceMessageId: normalizeId(sourceMessage.id),
+        reason: sourceApplicationTurn === 'handoff_preparation' ? HANDOFF_PREPARATION_RETRY_REASON : APPLICATION_TURN_RETRY_REASON,
+      };
+    }
+
     if (isApprovedPlanState(latestPlanState)) {
       return {
         allowed: true,
@@ -292,7 +312,8 @@
     const branchVisible = !!messageId
       && (isUser || isAssistant)
       && !isStreamingAssistant
-      && !kind;
+      && !kind
+      && settings.branchUnavailable !== true;
     const branchEnabled = branchVisible && !followUpDisabledReason;
     let editReason = '';
     if (isUser) {
@@ -316,7 +337,7 @@
       },
       actions: {
         edit: {
-          visible: isUser,
+          visible: isUser && !applicationTurnOf(source),
           enabled: editEnabled,
           reason: editReason,
         },
@@ -362,6 +383,7 @@
     REGENERATE_MISSING_SOURCE_REASON,
     REGENERATE_TEXT_ATTACHMENTS_REASON,
     EDIT_DISABLED_REASON_DURING_EDIT,
+    applicationTurnOf,
     buildMessageActionModel,
     getLatestReplyAssistantMessageId,
     getElaboratePrompt,

@@ -18,6 +18,7 @@
     Object.freeze(['renderer/shell/renderer-settings-editor-section.js', 'rendererSettingsEditorSection']),
     Object.freeze(['renderer/shell/renderer-settings-home-section.js', 'rendererSettingsHomeSection']),
     Object.freeze(['renderer/shell/renderer-settings-notifications-section.js', 'rendererSettingsNotificationsSection']),
+    Object.freeze(['renderer/shell/renderer-settings-dictation-section.js', 'rendererSettingsDictationSection']),
     // Section bindings and runtime.
     Object.freeze(['renderer/shell/renderer-settings-advanced-section.js', 'rendererSettingsAdvancedSection']),
     Object.freeze(['renderer/shell/renderer-settings-session-runtime.js', 'rendererSettingsSessionRuntime']),
@@ -27,6 +28,9 @@
     Object.freeze(['renderer/shell/renderer-settings-command-sandbox.js', 'rendererSettingsCommandSandboxUtils']),
     Object.freeze(['renderer/shell/renderer-settings-conversation-transfer.js', 'rendererSettingsConversationTransfer']),
     Object.freeze(['renderer/shell/renderer-settings-cloud-models.js', 'rendererSettingsCloudModels']),
+    Object.freeze(['renderer/shell/renderer-settings-api-providers-view.js', 'rendererSettingsApiProvidersView']),
+    Object.freeze(['renderer/shell/renderer-settings-api-providers.js', 'rendererSettingsApiProviders']),
     Object.freeze(['renderer/shell/renderer-settings-pdf-addon.js', 'rendererSettingsPdfAddonUtils']),
+    Object.freeze(['renderer/shell/renderer-settings-cli-path.js', 'rendererSettingsCliPath']),
   ]);
 });

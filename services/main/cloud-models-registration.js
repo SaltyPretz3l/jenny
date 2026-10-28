@@ -24,6 +24,7 @@ const {
   chatgptChoiceFromRetiredPlugin,
 } = require('../backend/chatgpt-models-enabled');
 const { inferEngineTypeFromModel } = require('../backend/backend-service-utils');
+const { registerApiProviders } = require('./api-providers-registration');
 
 const CANCEL_SETTLE_TIMEOUT_MS = 2000;
 const LEGACY_CHOICE_TIMEOUT_MS = 2000;
@@ -250,6 +251,9 @@ function registerCloudModels(ipcMainLike, {
     return { ok: true, url: authService.getPendingAuthorizeUrl(), state: getState() };
   }
 
+  // The user API-key providers (row 78) share this Settings > Models owner.
+  const apiProviders = registerApiProviders(ipcMainLike, { backendService, shellConfigService, sendBridgeEvent, authorization, log });
+
   registerIpcInvokeHandlers(ipcMainLike, {
     'cloudModels.getState': () => getState(),
     'cloudModels.setChatgptEnabled': setChatgptEnabled,
@@ -265,6 +269,7 @@ function registerCloudModels(ipcMainLike, {
     if (disposed) return;
     disposed = true;
     unsubscribeAuth();
+    apiProviders.dispose();
     catalog.dispose();
     if (backendService.chatgptModelCatalogService === catalog) {
       delete backendService.chatgptModelCatalogService;

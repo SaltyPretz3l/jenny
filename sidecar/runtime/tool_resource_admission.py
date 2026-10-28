@@ -34,9 +34,18 @@ _ADMIT_TIMEOUT_SECONDS = 30.0
 _SETTLE_TIMEOUT_SECONDS = 5.0
 
 
-def _failure(reason: Any, *, waiting: bool = False) -> ToolExecutionFailure:
+class _UnansweredExchange(ToolExecutionFailure):
+    """The request was written but never answered: the host may still act on it."""
+
+
+def _failure(
+    reason: Any,
+    *,
+    waiting: bool = False,
+    cls: type[ToolExecutionFailure] = ToolExecutionFailure,
+) -> ToolExecutionFailure:
     normalized = _reason(reason, "tool_resource_rejected")
-    return ToolExecutionFailure(
+    return cls(
         code=CMP_RESOURCE_EXCEEDED if waiting else CMP_TOOL_EXECUTION_FAILED,
         message=(
             f"Tool resource capacity is busy: {normalized}"
@@ -156,14 +165,16 @@ def _exchange(  # noqa: C901, PLR0912, PLR0913
         deadline = time.monotonic() + bounded_timeout
         while True:
             if cancel_handle is not None and bool(getattr(cancel_handle, "cancelled", False)):
-                raise _failure("tool_resource_admission_cancelled")
+                raise _failure("tool_resource_admission_cancelled", cls=_UnansweredExchange)
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise _failure("tool_resource_authority_timeout")
+                raise _failure("tool_resource_authority_timeout", cls=_UnansweredExchange)
             try:
                 response = reader(remaining)
             except (TimeoutError, ApprovalResponseCancelledError) as error:
-                raise _failure("tool_resource_authority_incomplete") from error
+                raise _failure(
+                    "tool_resource_authority_incomplete", cls=_UnansweredExchange
+                ) from error
             except Exception as error:
                 raise _failure("tool_resource_response_read_failed") from error
             if not isinstance(response, Mapping) or response.get("id") != rpc_id:
@@ -259,6 +270,32 @@ class RuntimeToolResourceLease:
             self._outcome = (status, cleanup)
 
 
+def _settle_unanswered_admit(
+    base_params: dict[str, Any], operation_id: str, request: RuntimeToolResourceRequest
+) -> None:
+    """Best effort: release a grant the host may have issued after we stopped waiting.
+
+    Without this a late grant stays held until the request closes. The settle
+    ignores request cancellation, is capped at the settle timeout, and its own
+    failure never replaces the original admission failure.
+    """
+
+    try:
+        _exchange(
+            params={
+                **base_params, "phase": "settle", "status": "cancelled", "cleanup": "uncertain",
+            },
+            operation_id=operation_id,
+            expected_statuses=frozenset({"settled", "rejected"}),
+            write_message=request.write_message,
+            response_reader_factory=request.response_reader_factory,
+            cancel_handle=None,
+            timeout_seconds=_SETTLE_TIMEOUT_SECONDS,
+        )
+    except Exception:  # noqa: BLE001 - compensation is best effort by contract
+        pass
+
+
 def acquire_tool_resource(request: RuntimeToolResourceRequest) -> RuntimeToolResourceLease:
     """Acquire one application-selected resource bracket for a trusted builtin call."""
 
@@ -282,21 +319,25 @@ def acquire_tool_resource(request: RuntimeToolResourceRequest) -> RuntimeToolRes
         "authority_revision": authority_revision,
         "operation_id": operation_id,
     }
-    result = _exchange(
-        params={
-            **base_params,
-            "phase": "admit",
-            "tool_name": tool_name,
-            "arguments": dict(request.arguments),
-        },
-        operation_id=operation_id,
-        expected_statuses=frozenset({"granted", "waiting", "rejected"}),
-        write_message=request.write_message,
-        response_reader_factory=request.response_reader_factory,
-        cancel_handle=request.cancel_handle,
-        timeout_seconds=request.timeout_seconds,
-        continuation_enabled=request.continuation_enabled,
-    )
+    try:
+        result = _exchange(
+            params={
+                **base_params,
+                "phase": "admit",
+                "tool_name": tool_name,
+                "arguments": dict(request.arguments),
+            },
+            operation_id=operation_id,
+            expected_statuses=frozenset({"granted", "waiting", "rejected"}),
+            write_message=request.write_message,
+            response_reader_factory=request.response_reader_factory,
+            cancel_handle=request.cancel_handle,
+            timeout_seconds=request.timeout_seconds,
+            continuation_enabled=request.continuation_enabled,
+        )
+    except _UnansweredExchange:
+        _settle_unanswered_admit(base_params, operation_id, request)
+        raise
     if result["status"] == "waiting":
         if request.continuation_enabled and _WAIT_RESULT_FIELDS.issubset(result):
             try:

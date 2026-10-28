@@ -13,6 +13,7 @@ const {
 const { WorkspaceIdeService } = require('../services/workspace-ide-service');
 const { WORKSPACE_FS_ERROR_CODES } = require('../services/workspace-ide-errors');
 const { WorkspaceRootCoordinator } = require('../services/workspace-root-coordinator');
+const { fileSymlinkSkip, linkDirectory } = require('./helpers/platform-skips');
 
 function createStaticRootCoordinator(rootPath) {
   return new WorkspaceRootCoordinator({
@@ -245,7 +246,7 @@ test('workspace-ide-service rejects text bytes beyond the cap after stat under-r
   await assert.rejects(createService(root, { fs: fakeFs }).readFile({ path: 'growing.txt', maxBytes: 4 }), { code: WORKSPACE_FS_ERROR_CODES.TOO_LARGE });
 });
 
-test('workspace-ide-service rejects escaping paths lexically and via junctions', async (t) => {
+test('workspace-ide-service rejects escaping paths lexically and via junctions', async () => {
   const root = createTrackedTempDir('jenny-ide-');
   const outside = createTrackedTempDir('jenny-ide-outside-');
   fs.writeFileSync(path.join(outside, 'secret.txt'), 'secret', 'utf8');
@@ -273,28 +274,16 @@ test('workspace-ide-service rejects escaping paths lexically and via junctions',
 
   // A junction inside the root pointing outside must be rejected by the
   // realpath containment check even though the lexical path looks relative.
-  let junctionCreated = true;
-  try {
-    fs.symlinkSync(outside, path.join(root, 'escape'), 'junction');
-  } catch (error) {
-    // Junction creation needs privilege / Developer Mode on Windows; when it is
-    // unavailable the realpath-containment branch can't be exercised here.
-    // Emit a visible diagnostic so this reads as a reported skip, not a silent
-    // green that hides a coverage hole.
-    junctionCreated = false;
-    t.diagnostic(`junction-escape assertion skipped: ${error.code || error.message}`);
-  }
-  if (junctionCreated) {
-    await assert.rejects(service.readFile({ path: 'escape/secret.txt' }), (error) => {
-      const code = String(error.code || '');
-      assert.ok(
-        code === WORKSPACE_FS_ERROR_CODES.PATH_OUTSIDE_ROOT || /outside the working directory/.test(String(error.message)),
-        `unexpected junction escape error: ${error.message}`
-      );
-      return true;
-    });
-    await assert.rejects(service.writeFile({ path: 'escape/implant.txt', content: 'x' }));
-  }
+  linkDirectory(outside, path.join(root, 'escape'));
+  await assert.rejects(service.readFile({ path: 'escape/secret.txt' }), (error) => {
+    const code = String(error.code || '');
+    assert.ok(
+      code === WORKSPACE_FS_ERROR_CODES.PATH_OUTSIDE_ROOT || /outside the working directory/.test(String(error.message)),
+      `unexpected junction escape error: ${error.message}`
+    );
+    return true;
+  });
+  await assert.rejects(service.writeFile({ path: 'escape/implant.txt', content: 'x' }));
 });
 
 test('workspace-ide-service lists one level: dirs first, .git skipped, caps honored', async () => {
@@ -524,7 +513,7 @@ test('wide-042: getRootState reads the root directly without cloning the full sh
   });
 });
 
-test('workspace-ide-service rename moves entries and rejects conflicts and escapes', async (t) => {
+test('workspace-ide-service rename moves entries and rejects conflicts and escapes', async () => {
   const root = createTrackedTempDir('jenny-ide-');
   const outside = createTrackedTempDir('jenny-ide-outside-');
   fs.mkdirSync(path.join(root, 'src'));
@@ -562,41 +551,24 @@ test('workspace-ide-service rename moves entries and rejects conflicts and escap
   assert.equal(fs.readFileSync(path.join(root, 'src', 'b.js'), 'utf8'), 'bbb');
 
   // A junction target endpoint must fail realpath containment.
-  let junctionCreated = true;
-  try {
-    fs.symlinkSync(outside, path.join(root, 'escape'), 'junction');
-  } catch (error) {
-    // Junction creation needs privilege / Developer Mode on Windows; when it is
-    // unavailable the realpath-containment branch can't be exercised here.
-    // Emit a visible diagnostic so this reads as a reported skip, not a silent
-    // green that hides a coverage hole.
-    junctionCreated = false;
-    t.diagnostic(`junction-escape assertion skipped: ${error.code || error.message}`);
-  }
-  if (junctionCreated) {
-    await assert.rejects(service.rename({ from: 'src/b.js', to: 'escape/implant.js' }), (error) => {
-      const code = String(error.code || '');
-      assert.ok(
-        code === WORKSPACE_FS_ERROR_CODES.PATH_OUTSIDE_ROOT
-          || /outside the working directory/.test(String(error.message)),
-        `unexpected junction escape error: ${error.message}`
-      );
-      return true;
-    });
-    assert.equal(fs.existsSync(path.join(outside, 'implant.js')), false);
-    assert.equal(fs.readFileSync(path.join(root, 'src', 'b.js'), 'utf8'), 'bbb');
-  }
+  linkDirectory(outside, path.join(root, 'escape'));
+  await assert.rejects(service.rename({ from: 'src/b.js', to: 'escape/implant.js' }), (error) => {
+    const code = String(error.code || '');
+    assert.ok(
+      code === WORKSPACE_FS_ERROR_CODES.PATH_OUTSIDE_ROOT
+        || /outside the working directory/.test(String(error.message)),
+      `unexpected junction escape error: ${error.message}`
+    );
+    return true;
+  });
+  assert.equal(fs.existsSync(path.join(outside, 'implant.js')), false);
+  assert.equal(fs.readFileSync(path.join(root, 'src', 'b.js'), 'utf8'), 'bbb');
 });
 
-test('workspace-ide-service rename moves a safe leaf symlink itself, not its target', async (t) => {
+test('workspace-ide-service rename moves a safe leaf symlink itself, not its target', { skip: fileSymlinkSkip() }, async () => {
   const root = createTrackedTempDir('jenny-ide-');
   fs.writeFileSync(path.join(root, 'target.txt'), 'target', 'utf8');
-  try {
-    fs.symlinkSync(path.join(root, 'target.txt'), path.join(root, 'link.txt'), 'file');
-  } catch (error) {
-    t.diagnostic(`file-symlink rename assertion skipped: ${error.code || error.message}`);
-    return;
-  }
+  fs.symlinkSync(path.join(root, 'target.txt'), path.join(root, 'link.txt'), 'file');
   const service = createService(root);
 
   const renamed = await service.rename({ from: 'link.txt', to: 'renamed-link.txt' });
@@ -607,19 +579,14 @@ test('workspace-ide-service rename moves a safe leaf symlink itself, not its tar
   assert.equal(fs.readFileSync(path.join(root, 'target.txt'), 'utf8'), 'target', 'target content is untouched');
 });
 
-test('workspace-ide-service rename moves a safe leaf junction itself, not its target', async (t) => {
+test('workspace-ide-service rename moves a safe leaf junction itself, not its target', async () => {
   // Junctions create WITHOUT elevation on Windows and lstat as symbolic links, so
   // this exercises the _resolveMutableLeaf symlink-leaf branch on stock hosts where
   // the file-symlink test above EPERM-skips (keeps REV-004 coverage from going false-green).
   const root = createTrackedTempDir('jenny-ide-');
   fs.mkdirSync(path.join(root, 'target-dir'));
   fs.writeFileSync(path.join(root, 'target-dir', 'inner.txt'), 'inner', 'utf8');
-  try {
-    fs.symlinkSync(path.join(root, 'target-dir'), path.join(root, 'link-dir'), 'junction');
-  } catch (error) {
-    t.diagnostic(`junction-leaf rename assertion skipped: ${error.code || error.message}`);
-    return;
-  }
+  linkDirectory(path.join(root, 'target-dir'), path.join(root, 'link-dir'));
   const service = createService(root);
 
   const renamed = await service.rename({ from: 'link-dir', to: 'renamed-link' });
@@ -676,15 +643,10 @@ test('workspace-ide-service delete uses the injected recycle-bin impl, never a h
   assert.equal(fs.existsSync(path.join(root, 'junk.txt')), true);
 });
 
-test('workspace-ide-service delete trashes a safe leaf symlink itself, not its target', async (t) => {
+test('workspace-ide-service delete trashes a safe leaf symlink itself, not its target', { skip: fileSymlinkSkip() }, async () => {
   const root = createTrackedTempDir('jenny-ide-');
   fs.writeFileSync(path.join(root, 'target.txt'), 'target', 'utf8');
-  try {
-    fs.symlinkSync(path.join(root, 'target.txt'), path.join(root, 'link.txt'), 'file');
-  } catch (error) {
-    t.diagnostic(`file-symlink delete assertion skipped: ${error.code || error.message}`);
-    return;
-  }
+  fs.symlinkSync(path.join(root, 'target.txt'), path.join(root, 'link.txt'), 'file');
   const trashed = [];
   const service = createService(root, {
     trashItemImpl: async (target) => {
@@ -700,18 +662,13 @@ test('workspace-ide-service delete trashes a safe leaf symlink itself, not its t
   assert.equal(fs.readFileSync(path.join(root, 'target.txt'), 'utf8'), 'target', 'target content is untouched');
 });
 
-test('workspace-ide-service delete trashes a safe leaf junction itself, not its target', async (t) => {
+test('workspace-ide-service delete trashes a safe leaf junction itself, not its target', async () => {
   // Admin-free counterpart to the file-symlink delete test above (junctions need no
   // elevation), so the _resolveMutableLeaf leaf-vs-target branch is covered on stock CI.
   const root = createTrackedTempDir('jenny-ide-');
   fs.mkdirSync(path.join(root, 'target-dir'));
   fs.writeFileSync(path.join(root, 'target-dir', 'inner.txt'), 'inner', 'utf8');
-  try {
-    fs.symlinkSync(path.join(root, 'target-dir'), path.join(root, 'link-dir'), 'junction');
-  } catch (error) {
-    t.diagnostic(`junction-leaf delete assertion skipped: ${error.code || error.message}`);
-    return;
-  }
+  linkDirectory(path.join(root, 'target-dir'), path.join(root, 'link-dir'));
   const trashed = [];
   const service = createService(root, {
     trashItemImpl: async (target) => {
@@ -871,12 +828,7 @@ test('workspace-ide-service listAllFiles walks files, prunes heavy dirs, never f
   // Symlinked directory pointing outside the root must never be descended.
   const outside = createTrackedTempDir('jenny-ide-outside-');
   fs.writeFileSync(path.join(outside, 'secret.txt'), 's', 'utf8');
-  try {
-    fs.symlinkSync(outside, path.join(root, 'escape'), 'junction');
-  } catch (_error) {
-    /* symlink creation can fail without privileges; the prune assert below
-       still covers the dirent.isSymbolicLink() branch when it succeeded */
-  }
+  linkDirectory(outside, path.join(root, 'escape'));
   const service = createService(root);
 
   const result = await service.listAllFiles();

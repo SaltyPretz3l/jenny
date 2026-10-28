@@ -28,6 +28,7 @@ const {
 const { normalizeFailureRetryReasoningSnapshots } = require('./session-failure-retry-reasoning');
 const { normalizeSuggestedChanges } = require('./suggested-changes-records');
 const { normalizeCoordinationFields } = require('./session-coordination-records');
+const { normalizeSessionRole } = require('./primary-session');
 const {
   createOfficialImagePluginSession,
   enforcePluginOperationMetadataBudget,
@@ -59,7 +60,9 @@ const STALE_PENDING_APPROVAL_TERMINAL_STATE = 'cancelled';
 // v25 adds the six chat-workspace coordination fields (spawned_from,
 // coordination_revision, coordination_receipts, chat_proposals, session_mail,
 // workspace_view) with inert defaults; only workspace_view is written so far.
-const STORE_SCHEMA_VERSION = 25;
+// v26 adds `session_role` ('primary' on the profile's one Jenny chat, else null);
+// the bump keeps an older build from dropping the field and demoting the chat.
+const STORE_SCHEMA_VERSION = 26;
 // The highest schema version that lived in the legacy monolithic sessions.json
 // file. Anything <= this number triggers a monolithic -> split migration on
 // first read.
@@ -575,6 +578,7 @@ const SESSION_MIGRATION_STEPS = [
   [23, (session) => session],
   [24, repairSessionForV24],
   [25, repairSessionForV25],
+  [26, repairSessionForV26],
 ];
 
 // v16 introduces `compaction_snapshot` (JCA-003 manual-compaction ownership).
@@ -755,6 +759,12 @@ function repairSessionForV25(session = {}) {
   return { ...source, ...normalizeCoordinationFields(source) };
 }
 
+function repairSessionForV26(session = {}) {
+  const source = session && typeof session === 'object' && !Array.isArray(session)
+    ? session : {};
+  return { ...source, session_role: normalizeSessionRole(source.session_role) };
+}
+
 function migrateStorePayload(payload, { normalizeMessage } = {}) {
   const source = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
   const observedVersion = Number(source.schema_version);
@@ -836,6 +846,7 @@ module.exports = {
   repairSessionForV22,
   repairSessionForV24,
   repairSessionForV25,
+  repairSessionForV26,
   migrateLegacyImageOperationMessage,
   repairStalePendingApprovalToolUse,
   summarizeMessage,

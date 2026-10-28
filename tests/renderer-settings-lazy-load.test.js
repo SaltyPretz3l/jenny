@@ -233,3 +233,30 @@ test('persisted Settings launch renders before notifyBootViewReady', async (t) =
   assert.equal(ready, true);
   assert.equal(window.__rendererState.ui.activeView, 'settings');
 });
+
+test('off Settings a loaded page waits: renders rebuild the carriers and release the effect preview, and entry renders the page', async (t) => {
+  const h = fakeGroup();
+  t.after(() => h.chrome.dispose());
+  const calls = [];
+  h.page.renderSettings = () => calls.push('page.render');
+  h.page.dispose = () => calls.push('page.releasePreview');
+  h.state.ui.activeView = 'settings';
+  assert.equal(await h.chrome.ensureSettingsPage(), h.page);
+  h.chrome.renderSettings();
+  assert.deepEqual(calls, ['page.render']);
+  calls.length = 0;
+  // Leaving Settings (setActiveView's exit pass) and every later off-view caller.
+  h.state.ui.activeView = 'chat';
+  h.dom.composerModelSelect.innerHTML = '';
+  h.chrome.renderSettings();
+  h.chrome.renderSettings();
+  assert.deepEqual(calls, ['page.releasePreview', 'page.releasePreview'], 'no page pass off Settings');
+  assert.equal(h.dom.composerModelSelect.innerHTML, '<option>fake</option>', 'the carriers still rebuild');
+  calls.length = 0;
+  h.chrome.releasePreview();
+  assert.deepEqual(calls, ['page.releasePreview']);
+  calls.length = 0;
+  h.state.ui.activeView = 'settings';
+  h.chrome.renderSettings();
+  assert.deepEqual(calls, ['page.render'], 'entering Settings renders the page in full');
+});

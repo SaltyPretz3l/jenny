@@ -42,41 +42,56 @@ function localReflectionEngine(service) {
   }
 }
 
+// The children are reused while the store's write generation is unchanged.
+const lineageChildCache = new WeakMap();
 function lineageChildSessionIds(lineageStore) {
   if (!lineageStore) return [];
   // No root records means no children: skip the inventory read (it runs per send).
   // A read-only (unreadable) store falls through and throws.
   const state = lineageStore.snapshot?.();
   if (state && state.read_only !== true && state.root_record_count === 0) return [];
+  const generation = state?.read_only === false && Number.isSafeInteger(state.generation) ? state.generation : null;
+  const cached = lineageChildCache.get(lineageStore);
+  if (generation !== null && cached?.generation === generation) return cached.ids;
   const snapshot = lineageStore.exportPortableSnapshot();
-  return (snapshot?.records || []).flatMap(({ document }) => (document?.children || [])
-    .map(child => child?.session_id));
+  const ids = Object.freeze((snapshot?.records || []).flatMap(({ document }) => (document?.children || [])
+    .map(child => child?.session_id)));
+  if (generation !== null) lineageChildCache.set(lineageStore, { generation, ids });
+  return ids;
 }
 
 // Deleting a root retires its lineage record, so a child is also known from
 // its own runtime work record: kind child_chat, kept through terminal
 // compaction as original_kind, and never removed by session deletion. Only
 // records with the application-set child purpose are read; the set is reused
-// while the store revision is unchanged.
+// while the store revision is unchanged, and each record's classification
+// while its own revision is (every record write bumps it).
 const runtimeChildCache = new WeakMap();
+const isChildInput = input => input?.kind === 'child_chat' || input?.original_kind === 'child_chat';
 function runtimeChildSessionIds(store) {
   if (!store || typeof store.listSummaries !== 'function' || typeof store.get !== 'function') return new Set();
   const status = store.getStatus?.();
   if (status?.read_only === true) throw new Error('runtime_store_read_only');
   const cached = runtimeChildCache.get(store);
   if (cached && Number.isSafeInteger(status?.revision) && cached.revision === status.revision) return cached.ids;
+  const known = cached?.classified || new Map();
+  const classified = new Map(); // Only work ids still in the index carry over.
   const ids = new Set();
   let cursor = null;
   do {
     const page = store.listSummaries({ limit: 100, cursor });
     for (const summary of page.items) {
-      if (summary.purpose !== CHILD_WORK_PURPOSE || ids.has(summary.session_id)) continue;
-      const input = store.get(summary.work_id)?.input;
-      if (input?.kind === 'child_chat' || input?.original_kind === 'child_chat') ids.add(summary.session_id);
+      if (summary.purpose !== CHILD_WORK_PURPOSE) continue;
+      const prior = known.get(summary.work_id);
+      const fresh = prior && Number.isSafeInteger(summary.revision) && prior.revision === summary.revision;
+      if (!fresh && ids.has(summary.session_id)) continue;
+      const child = fresh ? prior.child : isChildInput(store.get(summary.work_id)?.input);
+      if (Number.isSafeInteger(summary.revision)) classified.set(summary.work_id, { revision: summary.revision, child });
+      if (child) ids.add(summary.session_id);
     }
     cursor = page.next_cursor;
   } while (cursor);
-  if (Number.isSafeInteger(status?.revision)) runtimeChildCache.set(store, { revision: status.revision, ids });
+  if (Number.isSafeInteger(status?.revision)) runtimeChildCache.set(store, { revision: status.revision, ids, classified });
   return ids;
 }
 

@@ -13,6 +13,7 @@ const { normalizeHomeResultMetadata } = require('./home-calendar-result-metadata
 const { normalizeMemoryResultMetadata } = require('./memory-result-metadata');
 const { normalizeProposalResultMetadata } = require('./proposal-result-metadata');
 const { normalizeSandboxResultMetadata } = require('./sandbox-result-metadata');
+const { boundedUntypedStorageMetadata } = require('./tool-result-metadata-bounds');
 const {
   normalizeScriptedChangeReview: normalizeScriptedChangeReviewRecord,
 } = require('./scripted-change-review-metadata');
@@ -567,18 +568,7 @@ function normalizeToolResultMetadataForStorage(metadata, options = {}, precomput
   const source = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
     ? metadata
     : {};
-  const result = { ...source };
-  delete result.execution;
-  delete result.calendar;
-  delete result.calendar_receipt;
-  delete result.diff;
-  delete result.diffs;
-  delete result.patch;
-  delete result.files;
-  delete result.subagent_report;
-  delete result.subagent_batch_report;
-  delete result.workspace_change_set;
-  delete result.scripted_change_review;
+  const result = boundedUntypedStorageMetadata(source);
   // Reuse a supplied normalized result to avoid a second hunk pass; undefined
   // means not supplied, while null explicitly means no structured metadata.
   const structured = precomputedStructured !== undefined

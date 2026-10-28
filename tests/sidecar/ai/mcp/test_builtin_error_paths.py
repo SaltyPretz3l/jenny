@@ -246,3 +246,20 @@ def test_a_bare_path_cut_at_a_space_never_vouches_for_its_tail() -> None:
     # An in-workspace path without a continuation is still kept.
     plain = r"cannot open D:\Work\bank_recon\data\ledger.csv now"
     assert redact_error_paths(plain, keep=keeper) == plain
+
+
+def test_stdio_transport_logs_a_model_argument_miss_at_info(caplog) -> None:
+    response = {
+        "error": {
+            "code": -32000,
+            "message": "none of the requested Markdown headings were found",
+            "data": {"code": "CMP-TOOL-0004"},
+        }
+    }
+    caplog.set_level(logging.INFO, logger=transport_stdio.__name__)
+    with pytest.raises(MCPError):
+        transport_stdio.StdioMCPTransport._raise_for_error(
+            SimpleNamespace(server_name="builtin"), response
+        )
+    levels = [record.levelno for record in caplog.records if "mcp call failed" in record.getMessage()]
+    assert levels == [logging.INFO]

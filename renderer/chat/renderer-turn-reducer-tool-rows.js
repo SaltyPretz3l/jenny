@@ -128,6 +128,14 @@
       payload.generated_artifacts = Array.isArray(body.generated_artifacts)
         ? body.generated_artifacts.map(normalizeGeneratedArtifact).filter(Boolean)
         : [];
+      // Stored tool-result images: the detail body draws them from these refs,
+      // exactly as on the hydrated row (buildToolResultRow).
+      const trustedAttachmentRefs = Array.isArray(body.trusted_attachment_refs)
+        ? body.trusted_attachment_refs.filter((ref) => ref && typeof ref === 'object' && ref.id).map((ref) => ({ ...ref }))
+        : [];
+      if (trustedAttachmentRefs.length) {
+        payload.trusted_attachment_refs = trustedAttachmentRefs;
+      }
       if (body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)) {
         payload.metadata = deepCloneJsonValue(body.metadata);
       }

@@ -1,0 +1,204 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "jenny-cli-commands-v1",
+  "title": "Jenny CLI command output, version 1",
+  "description": "Every --json line a read command, doctor or -V prints is one of these objects. Versioned with cli.v1; a field is added, never renamed.",
+  "oneOf": [
+    { "$ref": "#/definitions/version" },
+    { "$ref": "#/definitions/doctor" },
+    { "$ref": "#/definitions/config" },
+    { "$ref": "#/definitions/config_value" },
+    { "$ref": "#/definitions/config_set" },
+    { "$ref": "#/definitions/sessions" },
+    { "$ref": "#/definitions/session" },
+    { "$ref": "#/definitions/session_removed" },
+    { "$ref": "#/definitions/error" }
+  ],
+  "definitions": {
+    "v": { "const": 1 },
+    "id": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f]+$" },
+    "text": { "type": "string", "maxLength": 4096 },
+    "timestamp": { "type": "string", "maxLength": 64 },
+    "count": { "type": "integer", "minimum": 0 },
+    "origin": { "type": "string", "enum": ["flag", "env", "file", "default", "env+file", "flag+env", "flag+file", "flag+env+file"] },
+    "config_key": {
+      "type": "string",
+      "enum": ["model", "engine", "output_format", "permission_mode", "allowed_tools", "disallowed_tools", "timeout_seconds", "profile", "cwd"]
+    },
+    "setting_value": {
+      "oneOf": [
+        { "type": "string", "maxLength": 4096 },
+        { "type": "number", "minimum": 0 },
+        { "type": "array", "maxItems": 512, "items": { "type": "string", "maxLength": 128 } },
+        { "type": "null" }
+      ]
+    },
+    "config_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "value", "origin", "settable"],
+      "properties": {
+        "key": { "$ref": "#/definitions/config_key" },
+        "value": { "$ref": "#/definitions/setting_value" },
+        "origin": { "$ref": "#/definitions/origin" },
+        "settable": { "type": "boolean" }
+      }
+    },
+    "session_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "project_id", "title", "created_at", "updated_at", "message_count", "current_workspace"],
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "project_id": { "$ref": "#/definitions/id" },
+        "title": { "type": "string", "maxLength": 512 },
+        "created_at": { "$ref": "#/definitions/timestamp" },
+        "updated_at": { "$ref": "#/definitions/timestamp" },
+        "message_count": { "$ref": "#/definitions/count" },
+        "last_model_used": { "type": "string", "maxLength": 256 },
+        "current_workspace": { "type": "boolean" }
+      }
+    },
+    "message": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "role", "content", "created_at"],
+      "properties": {
+        "id": { "$ref": "#/definitions/id" },
+        "role": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "content": { "type": "string", "maxLength": 65536 },
+        "created_at": { "$ref": "#/definitions/timestamp" },
+        "truncated": { "const": true }
+      }
+    },
+    "version": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "kind", "versions"],
+      "properties": {
+        "v": { "$ref": "#/definitions/v" },
+        "kind": { "const": "version" },
+        "versions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["cli", "contract", "app", "sidecar_api"],
+          "properties": {
+            "cli": { "type": "string", "maxLength": 64 },
+            "contract": { "type": "string", "maxLength": 64 },
+            "app": { "type": "string", "maxLength": 64 },
+            "sidecar_api": { "type": "string", "maxLength": 64 }
+          }
+        }
+      }
+    },
+    "doctor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "kind", "ok", "checks"],
+      "properties": {
+        "v": { "$ref": "#/definitions/v" },
+        "kind": { "const": "doctor" },
+        "ok": { "type": "boolean" },
+        "checks": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "ok", "detail"],
+            "properties": {
+              "name": { "type": "string", "maxLength": 64 },
+              "ok": { "type": "boolean" },
+              "detail": { "$ref": "#/definitions/text" }
+            }
+          }
+        }
+      }
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "kind", "profile", "file", "entries"],
+      "properties": {
+        "v": { "$ref": "#/definitions/v" },
+        "kind": { "const": "config" },
+        "profile": { "$ref": "#/definitions/text" },
+        "file": { "$ref": "#/definitions/text" },
+        "entries": { "type": "array", "maxItems": 32, "items": { "$ref": "#/definitions/config_entry" } }
+      }
+    },
+    "config_value": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "kind", "key", "value", "origin"],
+      "properties": {
+        "v": { "$ref": "#/definitions/v" },
+        "kind": { "const": "config_value" },
+        "key": { "$ref": "#/definitions/config_key" },
+        "value": { "$ref": "#/definitions/setting_value" },
+        "origin": { "$ref": "#/definitions/origin" }
+      }
+    },
+    "config_set": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "kind", "key", "value", "file"],
+      "properties": {
+        "v": { "$ref": "#/definitions/v" },
+        "kind": { "const": "config_set" },
+        "key": { "$ref": "#/definitions/config_key" },
+        "value": { "$ref": "#/definitions/setting_value" },
+        "file": { "$ref": "#/definitions/text" }
+      }
+    },
+    "sessions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "kind", "project_id", "all", "total", "sessions"],
+      "properties": {
+        "v": { "$ref": "#/definitions/v" },
+        "kind": { "const": "sessions" },
+        "project_id": { "$ref": "#/definitions/id" },
+        "all": { "type": "boolean" },
+        "total": { "$ref": "#/definitions/count" },
+        "sessions": { "type": "array", "maxItems": 10000, "items": { "$ref": "#/definitions/session_summary" } }
+      }
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "kind", "session", "messages", "message_total", "truncated"],
+      "properties": {
+        "v": { "$ref": "#/definitions/v" },
+        "kind": { "const": "session" },
+        "session": { "$ref": "#/definitions/session_summary" },
+        "messages": { "type": "array", "maxItems": 10000, "items": { "$ref": "#/definitions/message" } },
+        "message_total": { "$ref": "#/definitions/count" },
+        "truncated": { "type": "boolean" }
+      }
+    },
+    "session_removed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "kind", "id", "deleted"],
+      "properties": {
+        "v": { "$ref": "#/definitions/v" },
+        "kind": { "const": "session_removed" },
+        "id": { "$ref": "#/definitions/id" },
+        "deleted": { "const": true }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "kind", "code", "message", "exit_code"],
+      "properties": {
+        "v": { "$ref": "#/definitions/v" },
+        "kind": { "const": "error" },
+        "code": { "type": "string", "pattern": "^CMP-[A-Z]+-[0-9]{4}$" },
+        "message": { "$ref": "#/definitions/text" },
+        "exit_code": { "type": "integer", "enum": [1, 2, 6, 75] }
+      }
+    }
+  }
+}

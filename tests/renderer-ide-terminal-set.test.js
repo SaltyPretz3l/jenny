@@ -10,19 +10,30 @@ const assert = require('node:assert/strict');
 const { createIdeTerminalSet } = require('../renderer/features/renderer-ide-terminal-set');
 const model = require('../renderer/shared/workbench-layout-model');
 
-function fakeApi() {
+function fakeApi(opts = {}) {
   const listeners = [];
-  return {
+  const api = {
     listeners,
     onData(cb) { listeners.push(cb); return () => { const i = listeners.indexOf(cb); if (i >= 0) listeners.splice(i, 1); }; },
     emit(payload) { for (const cb of listeners.slice()) cb(payload); },
   };
+  if (opts.profiles) {
+    api.listProfiles = async () => ({ ok: true, profiles: opts.profiles, defaultId: opts.defaultId || '' });
+  }
+  return api;
+}
+
+function fakeContextMenu() {
+  const shown = [];
+  return { shown, show(o) { shown.push(o); }, hide() {} };
 }
 
 function harness(opts = {}) {
   const views = opts.views ? opts.views.slice() : ['terminal'];
-  const api = fakeApi();
-  const calls = { added: [], removed: [], revealed: [], created: [], kills: [], commands: [] };
+  const api = fakeApi(opts);
+  const contextMenu = fakeContextMenu();
+  const ide = opts.ide || {};
+  const calls = { added: [], removed: [], revealed: [], created: [], kills: [], commands: [], starts: [], prefs: [], renders: 0 };
   const panels = new Map();
   const ptyTerminalPanelUtils = {
     createIdePtyTerminalPanel(deps) {
@@ -34,7 +45,8 @@ function harness(opts = {}) {
         getSessionId: () => state.sessionId,
         getSlot: () => slot,
         isRunning: () => Boolean(state.sessionId),
-        async startSession() {
+        async startSession(startOpts) {
+          calls.starts.push({ slot, opts: startOpts });
           if (opts.startFails) return false;
           state.sessionId = `sess-${slot}`;
           deps.onSessionChange(state.sessionId);
@@ -45,7 +57,7 @@ function harness(opts = {}) {
           calls.commands.push({ slot, command: typeof builder === 'function' ? builder('sh', '/w') : builder });
           return true;
         },
-        stopSession() { calls.kills.push({ slot, sessionId: state.sessionId }); state.sessionId = ''; state.stopped += 1; },
+        async stopSession() { calls.kills.push({ slot, sessionId: state.sessionId }); state.sessionId = ''; state.stopped += 1; return true; },
         dispose() { if (state.sessionId) calls.kills.push({ slot, sessionId: state.sessionId }); state.sessionId = ''; state.disposed = true; },
         focusTerminal() { state.focused += 1; return true; },
         renderTerminalPanel() { state.rendered += 1; },
@@ -58,17 +70,185 @@ function harness(opts = {}) {
   };
   const set = createIdeTerminalSet({
     ptyTerminalPanelUtils,
-    baseDeps: { getWorkspacePtyApi: () => api, marker: 'base' },
+    baseDeps: { getWorkspacePtyApi: () => api, marker: 'base', getIde: () => ide, getDom: () => ({ ideWorkbench: opts.workbenchEl || null }) },
     viewDeps: (viewId) => ({ getMountEl: () => null, isActivePanel: () => true, viewId }),
     listTerminalViews: () => views.slice(),
-    addTerminalView: (id) => { calls.added.push(id); views.push(id); },
+    addTerminalView: (id, near, fallback) => { calls.added.push(id); if (near || fallback) calls.near = { near, fallback }; views.push(id); },
     removeTerminalView: (id) => { calls.removed.push(id); views.splice(views.indexOf(id), 1); },
     revealView: (id, o) => calls.revealed.push({ id, focus: Boolean(o && o.focus) }),
     model,
     maxTerminals: opts.maxTerminals,
+    contextMenu,
+    actionIcons: { add: '<svg data-i="add"></svg>', trash: '<svg data-i="trash"></svg>', chevron: '<svg data-i="chevron"></svg>' },
+    commitPreference: async (key, value) => { calls.prefs.push({ key, value }); ide[key] = value; return { updated: true }; },
+    requestRender: () => { calls.renders += 1; },
   });
-  return { set, api, calls, panels, views };
+  return { set, api, calls, panels, views, contextMenu, ide };
 }
+
+const PROFILES = [
+  { id: 'pwsh', label: 'PowerShell' },
+  { id: 'powershell', label: 'Windows PowerShell' },
+  { id: 'git-bash', label: 'Git Bash' },
+];
+const flushAsync = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+test('the New Terminal menu lists one row per detected profile, the default marked, then Select Default Profile', async () => {
+  const h = harness({ profiles: PROFILES, defaultId: 'powershell' });
+  h.set.sync();
+  const anchor = { id: 'anchor' };
+  assert.equal(await h.set.openProfileMenu({ anchorEl: anchor, near: 'terminal' }), true);
+  assert.equal(h.contextMenu.shown.length, 1);
+  const menu = h.contextMenu.shown[0];
+  assert.equal(menu.anchorEl, anchor);
+  const rows = menu.items.filter((item) => !item.separator);
+  assert.deepEqual(rows.map((item) => item.label), ['PowerShell', 'Windows PowerShell', 'Git Bash', 'Select Default Profile...']);
+  assert.deepEqual(rows.slice(0, 3).map((item) => item.description || ''), ['', 'Default', ''], 'the platform default is marked');
+
+  rows[2].action();
+  await flushAsync();
+  assert.deepEqual(h.calls.added, ['terminal-2']);
+  assert.deepEqual(h.calls.starts, [{ slot: 2, opts: { cwd: '', profileId: 'git-bash' } }], 'the picked shell starts on the user\'s click');
+});
+
+test('a stored default is the marked row, and Select Default Profile writes the pref (Automatic clears it)', async () => {
+  const h = harness({ profiles: PROFILES, defaultId: 'powershell', ide: { terminalDefaultProfile: 'git-bash' } });
+  h.set.sync();
+  const anchor = { id: 'anchor' };
+  await h.set.openProfileMenu({ anchorEl: anchor });
+  const launch = h.contextMenu.shown[0].items;
+  assert.deepEqual(launch.filter((i) => !i.separator).slice(0, 3).map((i) => i.description || ''), ['', '', 'Default']);
+  assert.equal(h.calls.starts.length, 0, 'opening the menu starts nothing');
+
+  launch[launch.length - 1].action(); // Select Default Profile...
+  await flushAsync();
+  const picker = h.contextMenu.shown[1];
+  assert.equal(picker.focusChecked, true);
+  assert.deepEqual(picker.items.map((i) => [i.label, i.checked]), [
+    ['Automatic (Windows PowerShell)', false], ['PowerShell', false], ['Windows PowerShell', false], ['Git Bash', true],
+  ]);
+  picker.items[1].action();
+  picker.items[0].action();
+  await flushAsync();
+  assert.deepEqual(h.calls.prefs, [{ key: 'terminalDefaultProfile', value: 'pwsh' }, { key: 'terminalDefaultProfile', value: '' }]);
+  assert.equal(h.calls.starts.length, 0, 'choosing a default starts nothing');
+});
+
+test('listProfiles replies are validated: bad ids, duplicates and a failed call never reach the menu', async () => {
+  const h = harness({ profiles: [{ id: 'pwsh', label: 'PowerShell' }, { id: 'C:\\x.exe', label: 'evil' }, { id: 'pwsh', label: 'dup' }] });
+  h.set.sync();
+  await h.set.openProfileMenu({ anchorEl: {} });
+  assert.deepEqual(h.contextMenu.shown[0].items.filter((i) => !i.separator).map((i) => i.label), ['PowerShell', 'Select Default Profile...']);
+  h.api.listProfiles = async () => { throw new Error('bridge down'); };
+  await h.set.openProfileMenu({ anchorEl: {} });
+  const rows = h.contextMenu.shown[1].items;
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].disabled, true, 'a failed listing shows one disabled row');
+});
+
+test('header actions: + and the profile chevron while a slot is free, Kill always; no chevron without the bridge', () => {
+  const h = harness({ profiles: PROFILES, views: ['terminal'] });
+  h.set.sync();
+  assert.deepEqual(h.set.viewActions('terminal').map((a) => a.name), ['new-terminal', 'new-terminal-profile', 'kill-terminal']);
+  assert.deepEqual(h.set.viewActions('explorer'), [], 'a non-terminal view has none');
+  h.set.runViewAction('terminal', 'new-terminal');
+  assert.deepEqual(h.calls.near, { near: undefined, fallback: 'terminal' }, 'the + remembers its terminal as the neighbour');
+  h.set.newTerminal();
+  h.set.newTerminal();
+  assert.deepEqual(h.set.viewActions('terminal').map((a) => a.name), ['kill-terminal'], 'at the cap only Kill stays');
+
+  const hosted = harness({ views: ['terminal'] }); // no listProfiles: fail closed
+  hosted.set.sync();
+  assert.deepEqual(hosted.set.viewActions('terminal').map((a) => a.name), ['new-terminal', 'kill-terminal']);
+  assert.equal(hosted.set.profilesAvailable(), false);
+});
+
+test('without the listProfiles bridge the profile menus refuse', async () => {
+  const h = harness();
+  h.set.sync();
+  assert.equal(await h.set.openProfileMenu({ anchorEl: {} }), false);
+  assert.equal(await h.set.openDefaultProfileMenu({ anchorEl: {} }), false);
+  assert.equal(h.contextMenu.shown.length, 0);
+});
+
+test('setLabel names a terminal for the session; empty restores the default and the name goes with the view', () => {
+  const h = harness({ views: ['terminal'] });
+  h.set.sync();
+  const extra = h.set.newTerminal();
+  assert.equal(h.set.setLabel(extra, '  build   watch  '), true);
+  assert.equal(h.set.labelOf(extra), 'build watch');
+  assert.equal(h.calls.renders, 1, 'the chrome re-renders');
+  assert.equal(h.set.setLabel(extra, 'x'.repeat(100)), true);
+  assert.equal(h.set.labelOf(extra).length, 64, 'names are capped');
+  h.set.setLabel(extra, '   ');
+  assert.equal(h.set.labelOf(extra), '');
+  h.set.setLabel(extra, 'server');
+  h.set.closeTerminal(extra);
+  assert.equal(h.set.labelOf(extra), '', 'a closed terminal forgets its name');
+  assert.equal(h.set.setLabel('terminal-4', 'nope'), false, 'an unknown view is refused');
+  assert.deepEqual(h.set.menuItems('terminal').map((i) => i.label || 'sep'), ['sep', 'Rename Terminal...']);
+});
+
+test('renameTerminal edits the tab inline: Enter keeps the name, an emptied field restores the default, Escape cancels', () => {
+  const { JSDOM } = require('jsdom');
+  const dom = new JSDOM('<div id="wb"><section data-wb-stack="s1"><header><div class="wb-tabs"><button data-wb-tab="terminal"><span class="wb-tab-label">Terminal</span></button></div></header></section></div>');
+  try {
+    const workbenchEl = dom.window.document.getElementById('wb');
+    const h = harness({ views: ['terminal'], workbenchEl });
+    h.set.sync();
+    const key = (input, k) => input.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: k, bubbles: true }));
+    assert.equal(h.set.renameTerminal('terminal'), true);
+    let input = workbenchEl.querySelector('input');
+    assert.equal(input.value, 'Terminal');
+    input.value = 'api server';
+    key(input, 'Enter');
+    assert.equal(h.set.labelOf('terminal'), 'api server');
+    assert.equal(workbenchEl.querySelector('input'), null);
+
+    h.set.renameTerminal('terminal');
+    input = workbenchEl.querySelector('input');
+    input.value = 'ignored';
+    key(input, 'Escape');
+    assert.equal(h.set.labelOf('terminal'), 'api server', 'Escape keeps the old name');
+
+    h.set.renameTerminal('terminal');
+    input = workbenchEl.querySelector('input');
+    input.value = '';
+    key(input, 'Enter');
+    assert.equal(h.set.labelOf('terminal'), '', 'an emptied name restores the default');
+
+    h.set.bindEvents();
+    workbenchEl.querySelector('[data-wb-tab]').dispatchEvent(new dom.window.MouseEvent('dblclick', { bubbles: true }));
+    assert.ok(workbenchEl.querySelector('input'), 'double-click on the tab starts the rename');
+    h.set.dispose();
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('clicking or focusing a terminal tab makes it the active terminal (palette Kill/Find/Rename target)', () => {
+  const { JSDOM } = require('jsdom');
+  const dom = new JSDOM('<div id="wb"><button data-wb-tab="terminal">Terminal</button><button data-wb-tab="terminal-2">Terminal 2</button><button data-wb-tab="explorer">Files</button></div>');
+  try {
+    const workbenchEl = dom.window.document.getElementById('wb');
+    const h = harness({ views: ['terminal'], workbenchEl });
+    h.set.sync();
+    assert.equal(h.set.newTerminal(), 'terminal-2');
+    h.set.bindEvents();
+    assert.equal(h.set.activeViewId(), 'terminal-2');
+    const tab = (id) => workbenchEl.querySelector(`[data-wb-tab="${id}"]`);
+    tab('terminal').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    assert.equal(h.set.activeViewId(), 'terminal', 'a click on a not-started terminal\'s tab makes it active');
+    tab('terminal-2').dispatchEvent(new dom.window.FocusEvent('focusin', { bubbles: true }));
+    assert.equal(h.set.activeViewId(), 'terminal-2', 'arrow-key tab focus does too');
+    tab('explorer').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    assert.equal(h.set.activeViewId(), 'terminal-2', 'a non-terminal tab changes nothing');
+    h.set.dispose();
+    tab('terminal').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  } finally {
+    dom.window.close();
+  }
+});
 
 test('sync creates a slotted panel per listed view and disposes panels that left the layout', () => {
   const h = harness({ views: ['terminal', 'terminal-3'] });
@@ -125,6 +305,7 @@ test('closeTerminal: slot 1 stays and stops, slots 2+ leave the layout', async (
   assert.deepEqual(h.calls.removed, []);
 
   assert.equal(h.set.closeTerminal(extra), true);
+  await new Promise((resolve) => setTimeout(resolve, 0)); // removal waits for the confirmed stop
   assert.deepEqual(h.calls.removed, [extra]);
   assert.equal(h.set.panelFor(extra), null);
   assert.deepEqual(h.calls.kills.map((k) => k.sessionId), ['sess-1', 'sess-2']);
@@ -232,4 +413,52 @@ test('dispose kills every session by id and the set goes inert', async () => {
   assert.equal(h.set.panelFor('terminal'), null, 'sync after dispose creates nothing');
   assert.equal(h.set.newTerminal(), null);
   assert.equal(await h.set.openTaskTerminal(), null);
+});
+
+test('closeTerminal keeps a slot 2+ terminal in the layout when its stop is unconfirmed', async () => {
+  const h = harness();
+  h.set.sync();
+  const extra = h.set.newTerminal();
+  await h.set.panelFor(extra).startSession();
+  const panel = h.set.panelFor(extra);
+  panel.stopSession = async () => false; // main could not confirm the shell died
+  assert.equal(h.set.closeTerminal(extra), true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(h.calls.removed, [], 'the view stays so its "stop unconfirmed" state is visible');
+  assert.equal(h.set.panelFor(extra), panel);
+  panel.stopSession = async () => true;
+  h.set.closeTerminal(extra);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(h.calls.removed, [extra], 'a confirmed retry closes it');
+});
+
+test('T12: a workbench re-render mid-rename keeps the field and its text', () => {
+  const { JSDOM } = require('jsdom');
+  const markup = '<section data-wb-stack="s1"><header><div class="wb-tabs"><button data-wb-tab="terminal"><span class="wb-tab-label">Terminal</span></button></div></header></section>';
+  const dom = new JSDOM(`<div id="wb">${markup}</div>`);
+  try {
+    const workbenchEl = dom.window.document.getElementById('wb');
+    const h = harness({ views: ['terminal'], workbenchEl });
+    h.set.sync();
+    assert.equal(h.set.renameTerminal('terminal'), true);
+    const first = workbenchEl.querySelector('input');
+    first.value = 'api se';
+    first.setSelectionRange(3, 3);
+    workbenchEl.innerHTML = markup; // the header re-renders (a session change, a layout pass)
+    first.dispatchEvent(new dom.window.Event('blur')); // a detached field may still blur
+    assert.equal(h.set.labelOf('terminal'), '', 'a re-render is not a commit');
+    h.set.bindEvents(); // the controller rebinds after every workbench render
+    const input = workbenchEl.querySelector('input');
+    assert.ok(input && input !== first, 'the name field is back on the new tab');
+    assert.equal(input.value, 'api se');
+    assert.equal(input.selectionStart, 3);
+    assert.equal(dom.window.document.activeElement, input, 'and keeps focus');
+    input.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    assert.equal(h.set.labelOf('terminal'), 'api se');
+    h.set.bindEvents();
+    assert.equal(workbenchEl.querySelector('input'), null, 'a finished rename does not come back');
+    h.set.dispose();
+  } finally {
+    dom.window.close();
+  }
 });

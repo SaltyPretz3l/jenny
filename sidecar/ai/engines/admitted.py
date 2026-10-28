@@ -7,9 +7,9 @@ methods because those methods may call one another internally.
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 import logging
+import sys
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -17,6 +17,16 @@ from typing import Any, Literal, TypeVar, cast
 
 T = TypeVar("T")
 logger = logging.getLogger(__name__)
+
+
+def _asyncio_cancelled(*also: type[BaseException]) -> tuple[type[BaseException], ...]:
+    """``asyncio.CancelledError`` once asyncio is loaded; nothing can raise it before.
+
+    Except clauses evaluate this when an exception is being matched, so asyncio
+    (~40 ms) stays off the sidecar startup graph.
+    """
+    module = sys.modules.get("asyncio")
+    return (module.CancelledError, *also) if module is not None else also
 
 
 def bind_fallback_inference(admission: Any, provider: str) -> Any:
@@ -248,7 +258,7 @@ async def _guard_async_iterator(
             finally:
                 _ACTIVE_SETTLEMENT.reset(token)
             yield item
-    except (asyncio.CancelledError, GeneratorExit) as error:
+    except _asyncio_cancelled(GeneratorExit) as error:
         pending = error
         status = "cancelled"
         raise
@@ -271,7 +281,7 @@ async def _guard_awaitable(source: Awaitable[Any], settlement: _Settlement) -> A
     token = _ACTIVE_SETTLEMENT.set(settlement)
     try:
         result = await source
-    except asyncio.CancelledError as error:
+    except _asyncio_cancelled() as error:
         _finish_preserving(settlement, "cancelled", "uncertain", error)
         raise
     except BaseException as error:
@@ -307,7 +317,7 @@ def execute_admitted_provider_attempt(
     token = _ACTIVE_SETTLEMENT.set(settlement)
     try:
         result = operation()
-    except asyncio.CancelledError as error:
+    except _asyncio_cancelled() as error:
         _finish_preserving(settlement, "cancelled", "uncertain", error)
         raise
     except BaseException as error:

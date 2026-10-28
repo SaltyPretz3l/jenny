@@ -13,6 +13,7 @@ const {
   COORDINATION_CATEGORY, COORDINATION_LOGICAL_PATH, captureSessionCoordination,
 } = require('./session-coordination-archive');
 const { MAX_SQLITE_SNAPSHOT_BYTES, snapshotSqliteDatabase } = require('./sqlite-snapshot');
+const { runStepsInSlices } = require('../time-sliced-steps');
 
 const MAX_INVENTORY_FILES = 10_000;
 const MAX_INVENTORY_FILE_BYTES = 8 * 1024 * 1024 * 1024;
@@ -174,13 +175,24 @@ function collectCoordinationEntry(sessionStore, output, limits) {
 }
 
 function countSessionAttachments(sessionStore) {
-  if (!sessionStore || typeof sessionStore.listSessions !== 'function') return 0;
   let count = 0;
-  for (const summary of sessionStore.listSessions() || []) {
-    const session = sessionStore.getSession?.(summary?.id);
-    for (const message of session?.messages || []) count += Array.isArray(message?.attachments) ? message.attachments.length : 0;
-  }
+  for (const step of attachmentCountSteps(sessionStore, (n) => { count += n; })) step();
   return count;
+}
+
+// The Data settings overview loads at boot: count one chat per step, yielding between slices.
+async function countSessionAttachmentsAsync(sessionStore) {
+  let count = 0;
+  await runStepsInSlices(attachmentCountSteps(sessionStore, (n) => { count += n; }));
+  return count;
+}
+
+function attachmentCountSteps(sessionStore, add) {
+  if (!sessionStore || typeof sessionStore.listSessions !== 'function') return [];
+  return (sessionStore.listSessions() || []).map((summary) => () => {
+    const session = sessionStore.getSession?.(summary?.id);
+    for (const message of session?.messages || []) add(Array.isArray(message?.attachments) ? message.attachments.length : 0);
+  });
 }
 
 function collectWorkspaceEntries(workspaceRoot, entries, limits) {
@@ -312,4 +324,5 @@ module.exports = {
   collectDataInventory,
   collectWorkspaceInventory,
   countSessionAttachments,
+  countSessionAttachmentsAsync,
 };

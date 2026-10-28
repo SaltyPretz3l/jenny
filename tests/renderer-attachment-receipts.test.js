@@ -8,7 +8,7 @@ const { createAttachmentEventBindings } = require('../renderer/features/renderer
 test('image paste mints ownership before byte preprocessing and cancels it on dispose', async () => {
   const dom = new JSDOM(`
     <div id="tray"></div><div id="settings"></div><button id="settings-button"></button>
-    <div id="command"></div><button id="terminal"></button><button id="shortcut"></button>
+    <button id="shortcut"></button>
     <textarea id="input"></textarea><main id="chat"></main><button id="attach"></button><button id="capture"></button>
   `);
   const documentRef = dom.window.document;
@@ -28,15 +28,14 @@ test('image paste mints ownership before byte preprocessing and cancels it on di
       constants: { TOAST_SOURCE: { attachments: 'attachments' } },
       dom: {
         attachmentTray: documentRef.getElementById('tray'), composerAttachMenu: documentRef.getElementById('settings'),
-        composerCommandPopover: documentRef.getElementById('command'),
-        composerTerminalShortcut: documentRef.getElementById('terminal'), composerAttachShortcut: documentRef.getElementById('shortcut'),
+        composerAttachShortcut: documentRef.getElementById('shortcut'),
         chatInput: documentRef.getElementById('input'), chatView: documentRef.getElementById('chat'),
         attachFilesButton: documentRef.getElementById('attach'), captureScreenButton: documentRef.getElementById('capture'),
       },
       callbacks: {
         resetAttachmentQueue() {}, removeQueuedAttachment() {}, renderAttachmentTray() {},
         suppressFileDropNavigation() {}, setDropActive() {}, prepareDroppedAttachments: async () => {},
-        getDroppedFilePaths() { return []; }, renderComposerPopover() {}, renderCommandPopover() {},
+        getDroppedFilePaths() { return []; }, renderComposerPopover() {},
         handleAttachmentPicker: async () => {}, showToastMessage() {}, toErrorMessage(error, fallback) { return error?.message || fallback; },
         beginAttachmentToken() { tokenBegun = true; return token; },
         cancelAttachmentToken(value) { cancelled.push(value); }, queueInlineImageAttachment: async () => {},
@@ -68,7 +67,7 @@ test('image paste mints ownership before byte preprocessing and cancels it on di
 });
 
 test('image paste logs receipt, bytes, and save settlement in order', async () => {
-  const dom = new JSDOM('<div id="tray"></div><div id="settings"></div><button id="settings-button"></button><div id="command"></div><button id="terminal"></button><button id="shortcut"></button><textarea id="input"></textarea><main id="chat"></main><button id="attach"></button><button id="capture"></button>');
+  const dom = new JSDOM('<div id="tray"></div><div id="settings"></div><button id="settings-button"></button><button id="shortcut"></button><textarea id="input"></textarea><main id="chat"></main><button id="attach"></button><button id="capture"></button>');
   const previousWindow = global.window;
   const previousDocument = global.document;
   global.window = dom.window; global.document = dom.window.document;
@@ -76,7 +75,7 @@ test('image paste logs receipt, bytes, and save settlement in order', async () =
   const logs = [];
   let controller;
   try {
-    controller = createAttachmentEventBindings({ state: { ui: { composerPopoverOpen: false } }, constants: { TOAST_SOURCE: { attachments: 'attachments' } }, dom: { attachmentTray: documentRef.getElementById('tray'), composerAttachMenu: documentRef.getElementById('settings'), composerCommandPopover: documentRef.getElementById('command'), composerTerminalShortcut: documentRef.getElementById('terminal'), composerAttachShortcut: documentRef.getElementById('shortcut'), chatInput: documentRef.getElementById('input'), chatView: documentRef.getElementById('chat'), attachFilesButton: documentRef.getElementById('attach'), captureScreenButton: documentRef.getElementById('capture') }, callbacks: { resetAttachmentQueue() {}, removeQueuedAttachment() {}, renderAttachmentTray() {}, suppressFileDropNavigation() {}, setDropActive() {}, prepareDroppedAttachments: async () => {}, getDroppedFilePaths: () => [], renderComposerPopover() {}, renderCommandPopover() {}, updateComposerSafeOffset() {}, closeComposerPopover() {}, closeCommandPopover() {}, handleAttachmentPicker: async () => {}, showToastMessage() {}, toErrorMessage: (error, fallback) => error?.message || fallback, beginAttachmentToken: () => ({ operationId: 'paste-1' }), cancelAttachmentToken() {}, queueInlineImageAttachment: async () => ({ id: 'img_1', sizeBytes: 4 }), appendClientLog: (level, event, fields) => logs.push({ level, event, fields }) } });
+    controller = createAttachmentEventBindings({ state: { ui: { composerPopoverOpen: false } }, constants: { TOAST_SOURCE: { attachments: 'attachments' } }, dom: { attachmentTray: documentRef.getElementById('tray'), composerAttachMenu: documentRef.getElementById('settings'), composerAttachShortcut: documentRef.getElementById('shortcut'), chatInput: documentRef.getElementById('input'), chatView: documentRef.getElementById('chat'), attachFilesButton: documentRef.getElementById('attach'), captureScreenButton: documentRef.getElementById('capture') }, callbacks: { resetAttachmentQueue() {}, removeQueuedAttachment() {}, renderAttachmentTray() {}, suppressFileDropNavigation() {}, setDropActive() {}, prepareDroppedAttachments: async () => {}, getDroppedFilePaths: () => [], renderComposerPopover() {}, updateComposerSafeOffset() {}, closeComposerPopover() {}, handleAttachmentPicker: async () => {}, showToastMessage() {}, toErrorMessage: (error, fallback) => error?.message || fallback, beginAttachmentToken: () => ({ operationId: 'paste-1' }), cancelAttachmentToken() {}, queueInlineImageAttachment: async () => ({ id: 'img_1', sizeBytes: 4 }), appendClientLog: (level, event, fields) => logs.push({ level, event, fields }) } });
     controller.bind();
     const event = new dom.window.Event('paste', { bubbles: true, cancelable: true });
     Object.defineProperty(event, 'clipboardData', { value: { types: ['Files', 'image/png'], files: [], getData: () => '', items: [{ type: 'image/png', getAsFile: () => ({ name: 'a.png', type: 'image/png', arrayBuffer: async () => Uint8Array.from([1, 2, 3, 4]).buffer }) }] } });
@@ -93,7 +92,7 @@ test('image paste logs receipt, bytes, and save settlement in order', async () =
 });
 
 test('image paste on the document body reroutes into the composer queue', async () => {
-  const dom = new JSDOM('<div id="tray"></div><div id="settings"></div><button id="settings-button"></button><div id="command"></div><button id="terminal"></button><button id="shortcut"></button><textarea id="input"></textarea><main id="chat"></main><button id="attach"></button><button id="capture"></button>');
+  const dom = new JSDOM('<div id="tray"></div><div id="settings"></div><button id="settings-button"></button><button id="shortcut"></button><textarea id="input"></textarea><main id="chat"></main><button id="attach"></button><button id="capture"></button>');
   const previousWindow = global.window;
   const previousDocument = global.document;
   const previousElement = global.Element;
@@ -108,7 +107,7 @@ test('image paste on the document body reroutes into the composer queue', async 
   try {
     // jsdom does not calculate layout, so expose a rendered composer explicitly.
     chatInput.getClientRects = () => [{}];
-    controller = createAttachmentEventBindings({ state: { ui: { composerPopoverOpen: false } }, constants: { TOAST_SOURCE: { attachments: 'attachments' } }, dom: { attachmentTray: documentRef.getElementById('tray'), composerAttachMenu: documentRef.getElementById('settings'), composerCommandPopover: documentRef.getElementById('command'), composerTerminalShortcut: documentRef.getElementById('terminal'), composerAttachShortcut: documentRef.getElementById('shortcut'), chatInput, chatView: documentRef.getElementById('chat'), attachFilesButton: documentRef.getElementById('attach'), captureScreenButton: documentRef.getElementById('capture') }, callbacks: { resetAttachmentQueue() {}, removeQueuedAttachment() {}, renderAttachmentTray() {}, suppressFileDropNavigation() {}, setDropActive() {}, prepareDroppedAttachments: async () => {}, getDroppedFilePaths: () => [], renderComposerPopover() {}, renderCommandPopover() {}, updateComposerSafeOffset() {}, closeComposerPopover() {}, closeCommandPopover() {}, handleAttachmentPicker: async () => {}, showToastMessage() {}, toErrorMessage: (error, fallback) => error?.message || fallback, beginAttachmentToken: () => ({ operationId: 'paste-1' }), cancelAttachmentToken() {}, queueInlineImageAttachment: async (payload) => { queuedImages.push(payload); return { id: 'img_1', sizeBytes: 4 }; }, appendClientLog: (level, event, fields) => logs.push({ level, event, fields }) } });
+    controller = createAttachmentEventBindings({ state: { ui: { composerPopoverOpen: false } }, constants: { TOAST_SOURCE: { attachments: 'attachments' } }, dom: { attachmentTray: documentRef.getElementById('tray'), composerAttachMenu: documentRef.getElementById('settings'), composerAttachShortcut: documentRef.getElementById('shortcut'), chatInput, chatView: documentRef.getElementById('chat'), attachFilesButton: documentRef.getElementById('attach'), captureScreenButton: documentRef.getElementById('capture') }, callbacks: { resetAttachmentQueue() {}, removeQueuedAttachment() {}, renderAttachmentTray() {}, suppressFileDropNavigation() {}, setDropActive() {}, prepareDroppedAttachments: async () => {}, getDroppedFilePaths: () => [], renderComposerPopover() {}, updateComposerSafeOffset() {}, closeComposerPopover() {}, handleAttachmentPicker: async () => {}, showToastMessage() {}, toErrorMessage: (error, fallback) => error?.message || fallback, beginAttachmentToken: () => ({ operationId: 'paste-1' }), cancelAttachmentToken() {}, queueInlineImageAttachment: async (payload) => { queuedImages.push(payload); return { id: 'img_1', sizeBytes: 4 }; }, appendClientLog: (level, event, fields) => logs.push({ level, event, fields }) } });
     controller.bind();
     const event = new dom.window.Event('paste', { bubbles: true, cancelable: true });
     Object.defineProperty(event, 'clipboardData', { value: { getData: () => '', items: [{ type: 'image/png', getAsFile: () => ({ name: 'body.png', type: 'image/png', arrayBuffer: async () => Uint8Array.from([1, 2, 3, 4]).buffer }) }] } });
@@ -129,7 +128,7 @@ test('image paste on the document body reroutes into the composer queue', async 
 });
 
 test('image paste inside another editable control is left alone', () => {
-  const dom = new JSDOM('<div id="tray"></div><div id="settings"></div><button id="settings-button"></button><div id="command"></div><button id="terminal"></button><button id="shortcut"></button><textarea id="input"></textarea><main id="chat"></main><button id="attach"></button><button id="capture"></button>');
+  const dom = new JSDOM('<div id="tray"></div><div id="settings"></div><button id="settings-button"></button><button id="shortcut"></button><textarea id="input"></textarea><main id="chat"></main><button id="attach"></button><button id="capture"></button>');
   const previousWindow = global.window;
   const previousDocument = global.document;
   const previousElement = global.Element;
@@ -142,7 +141,7 @@ test('image paste inside another editable control is left alone', () => {
   let controller;
   try {
     chatInput.getClientRects = () => [{}];
-    controller = createAttachmentEventBindings({ state: { ui: { composerPopoverOpen: false } }, constants: { TOAST_SOURCE: { attachments: 'attachments' } }, dom: { attachmentTray: documentRef.getElementById('tray'), composerAttachMenu: documentRef.getElementById('settings'), composerCommandPopover: documentRef.getElementById('command'), composerTerminalShortcut: documentRef.getElementById('terminal'), composerAttachShortcut: documentRef.getElementById('shortcut'), chatInput, chatView: documentRef.getElementById('chat'), attachFilesButton: documentRef.getElementById('attach'), captureScreenButton: documentRef.getElementById('capture') }, callbacks: { resetAttachmentQueue() {}, removeQueuedAttachment() {}, renderAttachmentTray() {}, suppressFileDropNavigation() {}, setDropActive() {}, prepareDroppedAttachments: async () => {}, getDroppedFilePaths: () => [], renderComposerPopover() {}, renderCommandPopover() {}, updateComposerSafeOffset() {}, closeComposerPopover() {}, closeCommandPopover() {}, handleAttachmentPicker: async () => {}, showToastMessage() {}, toErrorMessage: (error, fallback) => error?.message || fallback, beginAttachmentToken: () => ({ operationId: 'paste-1' }), cancelAttachmentToken() {}, queueInlineImageAttachment: async (payload) => { queuedImages.push(payload); } } });
+    controller = createAttachmentEventBindings({ state: { ui: { composerPopoverOpen: false } }, constants: { TOAST_SOURCE: { attachments: 'attachments' } }, dom: { attachmentTray: documentRef.getElementById('tray'), composerAttachMenu: documentRef.getElementById('settings'), composerAttachShortcut: documentRef.getElementById('shortcut'), chatInput, chatView: documentRef.getElementById('chat'), attachFilesButton: documentRef.getElementById('attach'), captureScreenButton: documentRef.getElementById('capture') }, callbacks: { resetAttachmentQueue() {}, removeQueuedAttachment() {}, renderAttachmentTray() {}, suppressFileDropNavigation() {}, setDropActive() {}, prepareDroppedAttachments: async () => {}, getDroppedFilePaths: () => [], renderComposerPopover() {}, updateComposerSafeOffset() {}, closeComposerPopover() {}, handleAttachmentPicker: async () => {}, showToastMessage() {}, toErrorMessage: (error, fallback) => error?.message || fallback, beginAttachmentToken: () => ({ operationId: 'paste-1' }), cancelAttachmentToken() {}, queueInlineImageAttachment: async (payload) => { queuedImages.push(payload); } } });
     controller.bind();
     const editableInput = documentRef.createElement('input');
     documentRef.body.appendChild(editableInput);
@@ -161,7 +160,7 @@ test('image paste inside another editable control is left alone', () => {
 });
 
 test('text-only paste on the document body is left alone', () => {
-  const dom = new JSDOM('<div id="tray"></div><div id="settings"></div><button id="settings-button"></button><div id="command"></div><button id="terminal"></button><button id="shortcut"></button><textarea id="input"></textarea><main id="chat"></main><button id="attach"></button><button id="capture"></button>');
+  const dom = new JSDOM('<div id="tray"></div><div id="settings"></div><button id="settings-button"></button><button id="shortcut"></button><textarea id="input"></textarea><main id="chat"></main><button id="attach"></button><button id="capture"></button>');
   const previousWindow = global.window;
   const previousDocument = global.document;
   const previousElement = global.Element;
@@ -175,7 +174,7 @@ test('text-only paste on the document body is left alone', () => {
   let controller;
   try {
     chatInput.getClientRects = () => [{}];
-    controller = createAttachmentEventBindings({ state: { ui: { composerPopoverOpen: false } }, constants: { TOAST_SOURCE: { attachments: 'attachments' } }, dom: { attachmentTray: documentRef.getElementById('tray'), composerAttachMenu: documentRef.getElementById('settings'), composerCommandPopover: documentRef.getElementById('command'), composerTerminalShortcut: documentRef.getElementById('terminal'), composerAttachShortcut: documentRef.getElementById('shortcut'), chatInput, chatView: documentRef.getElementById('chat'), attachFilesButton: documentRef.getElementById('attach'), captureScreenButton: documentRef.getElementById('capture') }, callbacks: { resetAttachmentQueue() {}, removeQueuedAttachment() {}, renderAttachmentTray() {}, suppressFileDropNavigation() {}, setDropActive() {}, prepareDroppedAttachments: async () => {}, getDroppedFilePaths: () => [], renderComposerPopover() {}, renderCommandPopover() {}, updateComposerSafeOffset() {}, closeComposerPopover() {}, closeCommandPopover() {}, handleAttachmentPicker: async () => {}, showToastMessage() {}, toErrorMessage: (error, fallback) => error?.message || fallback, beginAttachmentToken: () => ({ operationId: 'paste-1' }), cancelAttachmentToken() {}, queueInlineImageAttachment: async (payload) => { queuedImages.push(payload); }, appendClientLog: (level, event, fields) => logs.push({ level, event, fields }) } });
+    controller = createAttachmentEventBindings({ state: { ui: { composerPopoverOpen: false } }, constants: { TOAST_SOURCE: { attachments: 'attachments' } }, dom: { attachmentTray: documentRef.getElementById('tray'), composerAttachMenu: documentRef.getElementById('settings'), composerAttachShortcut: documentRef.getElementById('shortcut'), chatInput, chatView: documentRef.getElementById('chat'), attachFilesButton: documentRef.getElementById('attach'), captureScreenButton: documentRef.getElementById('capture') }, callbacks: { resetAttachmentQueue() {}, removeQueuedAttachment() {}, renderAttachmentTray() {}, suppressFileDropNavigation() {}, setDropActive() {}, prepareDroppedAttachments: async () => {}, getDroppedFilePaths: () => [], renderComposerPopover() {}, updateComposerSafeOffset() {}, closeComposerPopover() {}, handleAttachmentPicker: async () => {}, showToastMessage() {}, toErrorMessage: (error, fallback) => error?.message || fallback, beginAttachmentToken: () => ({ operationId: 'paste-1' }), cancelAttachmentToken() {}, queueInlineImageAttachment: async (payload) => { queuedImages.push(payload); }, appendClientLog: (level, event, fields) => logs.push({ level, event, fields }) } });
     controller.bind();
     const event = new dom.window.Event('paste', { bubbles: true, cancelable: true });
     Object.defineProperty(event, 'clipboardData', { value: { getData: () => 'hello', items: [{ type: 'text/plain', kind: 'string' }] } });
@@ -193,7 +192,7 @@ test('text-only paste on the document body is left alone', () => {
 });
 
 test('image paste on the body with no rendered composer logs and does nothing', () => {
-  const dom = new JSDOM('<div id="tray"></div><div id="settings"></div><button id="settings-button"></button><div id="command"></div><button id="terminal"></button><button id="shortcut"></button><textarea id="input"></textarea><main id="chat"></main><button id="attach"></button><button id="capture"></button>');
+  const dom = new JSDOM('<div id="tray"></div><div id="settings"></div><button id="settings-button"></button><button id="shortcut"></button><textarea id="input"></textarea><main id="chat"></main><button id="attach"></button><button id="capture"></button>');
   const previousWindow = global.window;
   const previousDocument = global.document;
   const previousElement = global.Element;
@@ -207,7 +206,7 @@ test('image paste on the body with no rendered composer logs and does nothing', 
   let controller;
   try {
     chatInput.getClientRects = () => [];
-    controller = createAttachmentEventBindings({ state: { ui: { composerPopoverOpen: false } }, constants: { TOAST_SOURCE: { attachments: 'attachments' } }, dom: { attachmentTray: documentRef.getElementById('tray'), composerAttachMenu: documentRef.getElementById('settings'), composerCommandPopover: documentRef.getElementById('command'), composerTerminalShortcut: documentRef.getElementById('terminal'), composerAttachShortcut: documentRef.getElementById('shortcut'), chatInput, chatView: documentRef.getElementById('chat'), attachFilesButton: documentRef.getElementById('attach'), captureScreenButton: documentRef.getElementById('capture') }, callbacks: { resetAttachmentQueue() {}, removeQueuedAttachment() {}, renderAttachmentTray() {}, suppressFileDropNavigation() {}, setDropActive() {}, prepareDroppedAttachments: async () => {}, getDroppedFilePaths: () => [], renderComposerPopover() {}, renderCommandPopover() {}, updateComposerSafeOffset() {}, closeComposerPopover() {}, closeCommandPopover() {}, handleAttachmentPicker: async () => {}, showToastMessage() {}, toErrorMessage: (error, fallback) => error?.message || fallback, beginAttachmentToken: () => ({ operationId: 'paste-1' }), cancelAttachmentToken() {}, queueInlineImageAttachment: async (payload) => { queuedImages.push(payload); }, appendClientLog: (level, event, fields) => logs.push({ level, event, fields }) } });
+    controller = createAttachmentEventBindings({ state: { ui: { composerPopoverOpen: false } }, constants: { TOAST_SOURCE: { attachments: 'attachments' } }, dom: { attachmentTray: documentRef.getElementById('tray'), composerAttachMenu: documentRef.getElementById('settings'), composerAttachShortcut: documentRef.getElementById('shortcut'), chatInput, chatView: documentRef.getElementById('chat'), attachFilesButton: documentRef.getElementById('attach'), captureScreenButton: documentRef.getElementById('capture') }, callbacks: { resetAttachmentQueue() {}, removeQueuedAttachment() {}, renderAttachmentTray() {}, suppressFileDropNavigation() {}, setDropActive() {}, prepareDroppedAttachments: async () => {}, getDroppedFilePaths: () => [], renderComposerPopover() {}, updateComposerSafeOffset() {}, closeComposerPopover() {}, handleAttachmentPicker: async () => {}, showToastMessage() {}, toErrorMessage: (error, fallback) => error?.message || fallback, beginAttachmentToken: () => ({ operationId: 'paste-1' }), cancelAttachmentToken() {}, queueInlineImageAttachment: async (payload) => { queuedImages.push(payload); }, appendClientLog: (level, event, fields) => logs.push({ level, event, fields }) } });
     controller.bind();
     const event = new dom.window.Event('paste', { bubbles: true, cancelable: true });
     Object.defineProperty(event, 'clipboardData', { value: { getData: () => '', items: [{ type: 'image/png', getAsFile: () => ({ name: 'hidden.png', type: 'image/png', arrayBuffer: async () => Uint8Array.from([1]).buffer }) }] } });
@@ -225,7 +224,7 @@ test('image paste on the body with no rendered composer logs and does nothing', 
 });
 
 test('image paste on the body with a disabled composer logs and does nothing', () => {
-  const dom = new JSDOM('<div id="tray"></div><div id="settings"></div><button id="settings-button"></button><div id="command"></div><button id="terminal"></button><button id="shortcut"></button><textarea id="input"></textarea><main id="chat"></main><button id="attach"></button><button id="capture"></button>');
+  const dom = new JSDOM('<div id="tray"></div><div id="settings"></div><button id="settings-button"></button><button id="shortcut"></button><textarea id="input"></textarea><main id="chat"></main><button id="attach"></button><button id="capture"></button>');
   const previousWindow = global.window;
   const previousDocument = global.document;
   global.window = dom.window;
@@ -238,7 +237,7 @@ test('image paste on the body with a disabled composer logs and does nothing', (
   try {
     chatInput.disabled = true;
     chatInput.getClientRects = () => [{}];
-    controller = createAttachmentEventBindings({ state: { ui: { composerPopoverOpen: false } }, constants: { TOAST_SOURCE: { attachments: 'attachments' } }, dom: { attachmentTray: documentRef.getElementById('tray'), composerAttachMenu: documentRef.getElementById('settings'), composerCommandPopover: documentRef.getElementById('command'), composerTerminalShortcut: documentRef.getElementById('terminal'), composerAttachShortcut: documentRef.getElementById('shortcut'), chatInput, chatView: documentRef.getElementById('chat'), attachFilesButton: documentRef.getElementById('attach'), captureScreenButton: documentRef.getElementById('capture') }, callbacks: { resetAttachmentQueue() {}, removeQueuedAttachment() {}, renderAttachmentTray() {}, suppressFileDropNavigation() {}, setDropActive() {}, prepareDroppedAttachments: async () => {}, getDroppedFilePaths: () => [], renderComposerPopover() {}, renderCommandPopover() {}, updateComposerSafeOffset() {}, closeComposerPopover() {}, closeCommandPopover() {}, handleAttachmentPicker: async () => {}, showToastMessage() {}, toErrorMessage: (error, fallback) => error?.message || fallback, beginAttachmentToken: () => ({ operationId: 'paste-1' }), cancelAttachmentToken() {}, queueInlineImageAttachment: async (payload) => { queuedImages.push(payload); }, appendClientLog: (level, event, fields) => logs.push({ level, event, fields }) } });
+    controller = createAttachmentEventBindings({ state: { ui: { composerPopoverOpen: false } }, constants: { TOAST_SOURCE: { attachments: 'attachments' } }, dom: { attachmentTray: documentRef.getElementById('tray'), composerAttachMenu: documentRef.getElementById('settings'), composerAttachShortcut: documentRef.getElementById('shortcut'), chatInput, chatView: documentRef.getElementById('chat'), attachFilesButton: documentRef.getElementById('attach'), captureScreenButton: documentRef.getElementById('capture') }, callbacks: { resetAttachmentQueue() {}, removeQueuedAttachment() {}, renderAttachmentTray() {}, suppressFileDropNavigation() {}, setDropActive() {}, prepareDroppedAttachments: async () => {}, getDroppedFilePaths: () => [], renderComposerPopover() {}, updateComposerSafeOffset() {}, closeComposerPopover() {}, handleAttachmentPicker: async () => {}, showToastMessage() {}, toErrorMessage: (error, fallback) => error?.message || fallback, beginAttachmentToken: () => ({ operationId: 'paste-1' }), cancelAttachmentToken() {}, queueInlineImageAttachment: async (payload) => { queuedImages.push(payload); }, appendClientLog: (level, event, fields) => logs.push({ level, event, fields }) } });
     controller.bind();
     const event = new dom.window.Event('paste', { bubbles: true, cancelable: true });
     Object.defineProperty(event, 'clipboardData', { value: { getData: () => '', items: [{ type: 'image/png', getAsFile: () => ({ name: 'disabled.png', type: 'image/png', arrayBuffer: async () => Uint8Array.from([1]).buffer }) }] } });
@@ -255,7 +254,7 @@ test('image paste on the body with a disabled composer logs and does nothing', (
 });
 
 test('image paste on a focused checkbox reroutes into the composer queue', async () => {
-  const dom = new JSDOM('<div id="tray"></div><div id="settings"></div><button id="settings-button"></button><div id="command"></div><button id="terminal"></button><button id="shortcut"></button><textarea id="input"></textarea><main id="chat"></main><input id="checkbox" type="checkbox"><button id="attach"></button><button id="capture"></button>');
+  const dom = new JSDOM('<div id="tray"></div><div id="settings"></div><button id="settings-button"></button><button id="shortcut"></button><textarea id="input"></textarea><main id="chat"></main><input id="checkbox" type="checkbox"><button id="attach"></button><button id="capture"></button>');
   const previousWindow = global.window;
   const previousDocument = global.document;
   global.window = dom.window;
@@ -267,7 +266,7 @@ test('image paste on a focused checkbox reroutes into the composer queue', async
   let controller;
   try {
     chatInput.getClientRects = () => [{}];
-    controller = createAttachmentEventBindings({ state: { ui: { composerPopoverOpen: false } }, constants: { TOAST_SOURCE: { attachments: 'attachments' } }, dom: { attachmentTray: documentRef.getElementById('tray'), composerAttachMenu: documentRef.getElementById('settings'), composerCommandPopover: documentRef.getElementById('command'), composerTerminalShortcut: documentRef.getElementById('terminal'), composerAttachShortcut: documentRef.getElementById('shortcut'), chatInput, chatView: documentRef.getElementById('chat'), attachFilesButton: documentRef.getElementById('attach'), captureScreenButton: documentRef.getElementById('capture') }, callbacks: { resetAttachmentQueue() {}, removeQueuedAttachment() {}, renderAttachmentTray() {}, suppressFileDropNavigation() {}, setDropActive() {}, prepareDroppedAttachments: async () => {}, getDroppedFilePaths: () => [], renderComposerPopover() {}, renderCommandPopover() {}, updateComposerSafeOffset() {}, closeComposerPopover() {}, closeCommandPopover() {}, handleAttachmentPicker: async () => {}, showToastMessage() {}, toErrorMessage: (error, fallback) => error?.message || fallback, beginAttachmentToken: () => ({ operationId: 'paste-1' }), cancelAttachmentToken() {}, queueInlineImageAttachment: async (payload) => { queuedImages.push(payload); return { id: 'img_1', sizeBytes: 1 }; } } });
+    controller = createAttachmentEventBindings({ state: { ui: { composerPopoverOpen: false } }, constants: { TOAST_SOURCE: { attachments: 'attachments' } }, dom: { attachmentTray: documentRef.getElementById('tray'), composerAttachMenu: documentRef.getElementById('settings'), composerAttachShortcut: documentRef.getElementById('shortcut'), chatInput, chatView: documentRef.getElementById('chat'), attachFilesButton: documentRef.getElementById('attach'), captureScreenButton: documentRef.getElementById('capture') }, callbacks: { resetAttachmentQueue() {}, removeQueuedAttachment() {}, renderAttachmentTray() {}, suppressFileDropNavigation() {}, setDropActive() {}, prepareDroppedAttachments: async () => {}, getDroppedFilePaths: () => [], renderComposerPopover() {}, updateComposerSafeOffset() {}, closeComposerPopover() {}, handleAttachmentPicker: async () => {}, showToastMessage() {}, toErrorMessage: (error, fallback) => error?.message || fallback, beginAttachmentToken: () => ({ operationId: 'paste-1' }), cancelAttachmentToken() {}, queueInlineImageAttachment: async (payload) => { queuedImages.push(payload); return { id: 'img_1', sizeBytes: 1 }; } } });
     controller.bind();
     checkbox.focus();
     const event = new dom.window.Event('paste', { bubbles: true, cancelable: true });
@@ -286,7 +285,7 @@ test('image paste on a focused checkbox reroutes into the composer queue', async
 });
 
 test('image paste on the body skips reroute when the clipboard image has no file', () => {
-  const dom = new JSDOM('<div id="tray"></div><div id="settings"></div><button id="settings-button"></button><div id="command"></div><button id="terminal"></button><button id="shortcut"></button><textarea id="input"></textarea><main id="chat"></main><button id="attach"></button><button id="capture"></button>');
+  const dom = new JSDOM('<div id="tray"></div><div id="settings"></div><button id="settings-button"></button><button id="shortcut"></button><textarea id="input"></textarea><main id="chat"></main><button id="attach"></button><button id="capture"></button>');
   const previousWindow = global.window;
   const previousDocument = global.document;
   global.window = dom.window;
@@ -298,7 +297,7 @@ test('image paste on the body skips reroute when the clipboard image has no file
   let controller;
   try {
     chatInput.getClientRects = () => [{}];
-    controller = createAttachmentEventBindings({ state: { ui: { composerPopoverOpen: false } }, constants: { TOAST_SOURCE: { attachments: 'attachments' } }, dom: { attachmentTray: documentRef.getElementById('tray'), composerAttachMenu: documentRef.getElementById('settings'), composerCommandPopover: documentRef.getElementById('command'), composerTerminalShortcut: documentRef.getElementById('terminal'), composerAttachShortcut: documentRef.getElementById('shortcut'), chatInput, chatView: documentRef.getElementById('chat'), attachFilesButton: documentRef.getElementById('attach'), captureScreenButton: documentRef.getElementById('capture') }, callbacks: { resetAttachmentQueue() {}, removeQueuedAttachment() {}, renderAttachmentTray() {}, suppressFileDropNavigation() {}, setDropActive() {}, prepareDroppedAttachments: async () => {}, getDroppedFilePaths: () => [], renderComposerPopover() {}, renderCommandPopover() {}, updateComposerSafeOffset() {}, closeComposerPopover() {}, closeCommandPopover() {}, handleAttachmentPicker: async () => {}, showToastMessage() {}, toErrorMessage: (error, fallback) => error?.message || fallback, beginAttachmentToken: () => ({ operationId: 'paste-1' }), cancelAttachmentToken() {}, queueInlineImageAttachment: async (payload) => { queuedImages.push(payload); }, appendClientLog: (level, event, fields) => logs.push({ level, event, fields }) } });
+    controller = createAttachmentEventBindings({ state: { ui: { composerPopoverOpen: false } }, constants: { TOAST_SOURCE: { attachments: 'attachments' } }, dom: { attachmentTray: documentRef.getElementById('tray'), composerAttachMenu: documentRef.getElementById('settings'), composerAttachShortcut: documentRef.getElementById('shortcut'), chatInput, chatView: documentRef.getElementById('chat'), attachFilesButton: documentRef.getElementById('attach'), captureScreenButton: documentRef.getElementById('capture') }, callbacks: { resetAttachmentQueue() {}, removeQueuedAttachment() {}, renderAttachmentTray() {}, suppressFileDropNavigation() {}, setDropActive() {}, prepareDroppedAttachments: async () => {}, getDroppedFilePaths: () => [], renderComposerPopover() {}, updateComposerSafeOffset() {}, closeComposerPopover() {}, handleAttachmentPicker: async () => {}, showToastMessage() {}, toErrorMessage: (error, fallback) => error?.message || fallback, beginAttachmentToken: () => ({ operationId: 'paste-1' }), cancelAttachmentToken() {}, queueInlineImageAttachment: async (payload) => { queuedImages.push(payload); }, appendClientLog: (level, event, fields) => logs.push({ level, event, fields }) } });
     controller.bind();
     documentRef.body.focus();
     const event = new dom.window.Event('paste', { bubbles: true, cancelable: true });

@@ -41,6 +41,11 @@
 
   const textUtils = resolveModule('rendererIdeReplaceTextUtils', './renderer-ide-replace-text-utils');
   const journalUtils = resolveModule('rendererIdeReplaceJournal', './renderer-ide-replace-journal');
+  const searchFilters = resolveModule('rendererIdeSearchFilters', './renderer-ide-search-filters');
+  // Whole word folds into a regex query (the replacement text stays literal for a literal find).
+  const effectiveFind = (opts) => (typeof searchFilters.resolveEffectiveFind === 'function'
+    ? searchFilters.resolveEffectiveFind(opts)
+    : { query: String(opts.query ?? ''), replaceText: String(opts.replaceText ?? ''), useRegex: opts.useRegex === true });
   let regexClientModulePromise = null;
 
   async function loadRegexClientModule() {
@@ -80,6 +85,20 @@
 
   const byteLengthOf = (text) => (typeof textUtils.byteLengthUtf8 === 'function' ? textUtils.byteLengthUtf8(text) : String(text || '').length); // JCA-010: MAX_REGEX_BYTES is declared in encoded bytes; canonical counter in text-utils
 
+  function regexError(message, code) {
+    const error = new Error(message);
+    error.code = code;
+    return error;
+  }
+
+  const cancelledError = () => regexError(jt('ide.regexWorker.cancelled', 'Regex evaluation was cancelled.'), 'REGEX_CANCELLED');
+
+  function regexErrorText(reason) {
+    return reason === 'regex_timeout'
+      ? jt('ide.replace.regexTimedOut', 'Regular expression timed out.')
+      : jt('ide.replace.regexEvaluationUnavailable', 'Regex evaluation is unavailable.');
+  }
+
   function extensionOf(path) {
     const name = String(path || '');
     const dot = name.lastIndexOf('.');
@@ -115,27 +134,17 @@
     let regexReplaceEvaluator = deps?.regexReplaceEvaluator || null;
 
     async function getRegexEvaluator(kind) {
-      if (disposed) {
-        const error = new Error('Regex evaluation was cancelled.');
-        error.code = 'REGEX_CANCELLED';
-        throw error;
-      }
+      if (disposed) throw cancelledError();
       const current = kind === 'find' ? regexFindEvaluator : regexReplaceEvaluator;
       if (current && typeof current.evaluate === 'function') return current;
       const clientModule = await loadRegexClient();
-      if (disposed) {
-        const error = new Error('Regex evaluation was cancelled.');
-        error.code = 'REGEX_CANCELLED';
-        throw error;
-      }
+      if (disposed) throw cancelledError();
       const loadedWhileWaiting = kind === 'find' ? regexFindEvaluator : regexReplaceEvaluator;
       if (loadedWhileWaiting && typeof loadedWhileWaiting.evaluate === 'function') {
         return loadedWhileWaiting;
       }
       if (typeof clientModule.createRegexWorkerEvaluator !== 'function') {
-        const error = new Error('Regex worker is unavailable.');
-        error.code = 'REGEX_UNAVAILABLE';
-        throw error;
+        throw regexError('Regex worker is unavailable.', 'REGEX_UNAVAILABLE');
       }
       const created = clientModule.createRegexWorkerEvaluator();
       if (kind === 'find') regexFindEvaluator = created;
@@ -220,14 +229,20 @@
     }
 
     // Resolve the replace options from explicit opts, falling back to the slice
-    // for any field the caller did not supply.
+    // for any field the caller did not supply. query/replaceText/useRegex come back
+    // EFFECTIVE (whole word folded in); rawQuery is the user's text.
     function resolveOpts(opts) {
       const s = getReplaceState();
       const o = opts || {};
+      const rawQuery = o.query !== undefined ? String(o.query) : String(s.ranQuery ?? s.query ?? '');
       return {
-        query: o.query !== undefined ? String(o.query) : String(s.ranQuery ?? s.query ?? ''),
-        replaceText: o.replaceText !== undefined ? String(o.replaceText) : String(s.replaceText ?? ''),
-        useRegex: o.useRegex !== undefined ? !!o.useRegex : !!s.useRegex,
+        rawQuery,
+        ...effectiveFind({
+          query: rawQuery,
+          replaceText: o.replaceText !== undefined ? String(o.replaceText) : String(s.replaceText ?? ''),
+          useRegex: o.useRegex !== undefined ? !!o.useRegex : !!s.useRegex,
+          wholeWord: o.wholeWord !== undefined ? o.wholeWord === true : s.wholeWord === true,
+        }),
         caseSensitive: o.caseSensitive !== undefined ? !!o.caseSensitive : !!s.caseSensitive,
       };
     }
@@ -256,7 +271,7 @@
       }
     }
 
-    async function runRegexFind({ query, caseSensitive, scope } = {}) {
+    async function runRegexFind({ query, caseSensitive, scope, wholeWord, include, exclude } = {}) {
       const s = getReplaceState();
       const q = String(query || '');
       if (q === '') {
@@ -300,7 +315,14 @@
         // strips identically); the exact-or-prefix compare then needs no other
         // normalization. Empty scope = whole workspace.
         const scopeDir = String(scope || '').replace(/\/+$/, '');
-        const files = scopeDir ? allFiles.filter((f) => f === scopeDir || f.startsWith(`${scopeDir}/`)) : allFiles;
+        const scoped = scopeDir ? allFiles.filter((f) => f === scopeDir || f.startsWith(`${scopeDir}/`)) : allFiles;
+        // Include/exclude globs test the root-relative path (same rules as the main-side literal search).
+        const pathFilter = searchFilters.createSearchPathFilter?.({
+          include: searchFilters.sanitizeGlobList(include), exclude: searchFilters.sanitizeGlobList(exclude),
+        });
+        const files = pathFilter?.active ? scoped.filter((f) => pathFilter.acceptsFile(f)) : scoped;
+        // s.ranQuery stays the user's text (the panel compares it to the query); only the worker sees the wrapped source.
+        const findQuery = wholeWord === true && searchFilters.wholeWordSource ? searchFilters.wholeWordSource(q) : q;
         const results = [];
         const matched = new Set();
         let bytes = 0;
@@ -335,7 +357,7 @@
               op: 'find',
               path: file,
               text: content,
-              query: q,
+              query: findQuery,
               caseSensitive: caseSensitive === true,
               maxResults: MAX_REGEX_RESULTS - results.length,
             }, {
@@ -422,11 +444,12 @@
     // Compute the replacement text for a single match's preview window so the
     // panel can show a before/after diff. Literal mode returns replaceText
     // verbatim; regex mode honours native replacement patterns ($1, $&, ...).
-    function computeReplacementForMatch(match, { query, replaceText, useRegex, caseSensitive } = {}) {
-      if (!useRegex) return String(replaceText || '');
+    function computeReplacementForMatch(match, { query, replaceText, useRegex, caseSensitive, wholeWord } = {}) {
+      const effective = effectiveFind({ query, replaceText, useRegex, wholeWord });
+      if (!effective.useRegex) return String(replaceText || '');
       return textUtils.computeRegexPreviewReplacement(match, {
-        query,
-        replaceText,
+        query: effective.query,
+        replaceText: effective.replaceText,
         caseSensitive,
       });
     }
@@ -495,8 +518,10 @@
             return { ok: false, conflict: true };
           }
           const result = await operations.write(snapshot);
+          // The write landed, so it is applied (journal + undo) even when the
+          // tab closed meanwhile; `current: false` only skips the doc refresh.
           const accepted = operations.acceptWrite(snapshot, result);
-          return { ok: accepted.current, conflict: !accepted.current, mtimeMs: result.mtimeMs, result, snapshot, exactEdit: accepted.exactEdit };
+          return { ok: true, current: accepted.current, mtimeMs: result.mtimeMs, result, snapshot, exactEdit: accepted.exactEdit };
         }
         const result = await operations.writeMutation(fileState.snapshot, newRaw);
         return { ok: true, mtimeMs: result.mtimeMs, result, snapshot: fileState.snapshot, exactEdit: true };
@@ -511,24 +536,23 @@
 
     // After a successful write to an OPEN file, refresh the live editor buffer
     // so the in-memory document matches what was just written (mtime + eol).
+    // A write whose document is no longer current (tab closed) is not refreshed.
     async function refreshOpenDocument(path, newRaw, write, eol) {
-      if (editorHost?.openDocument) {
-        const operations = getFileOperations();
-        if (operations && !write.exactEdit) {
-          const ide = getIde(); ide.staleByPath = ide.staleByPath || {}; ide.staleByPath[path] = true;
-          renderTabs(); return false;
-        }
-        const applied = await editorHost.openDocument({
-          path, content: newRaw, mtimeMs: write.mtimeMs, eol,
-          shouldApply: operations ? () => operations.canApplyWrite(write.snapshot) : null,
-          onApplied: operations ? () => operations.noteDirty(path, false) : null,
-        });
-        if (operations && !applied) {
-          const ide = getIde(); ide.staleByPath = ide.staleByPath || {}; ide.staleByPath[path] = true;
-          renderTabs(); return false;
-        }
+      if (write.current === false || !editorHost?.openDocument) return write.current !== false;
+      const operations = getFileOperations();
+      const markStale = () => {
+        resolveModule('rendererIdeState', './renderer-ide-state').setTabStale?.(getIde(), path, true);
         renderTabs();
-      }
+        return false;
+      };
+      if (operations && !write.exactEdit) return markStale();
+      const applied = await editorHost.openDocument({
+        path, content: newRaw, mtimeMs: write.mtimeMs, eol,
+        shouldApply: operations ? () => operations.canApplyWrite(write.snapshot) : null,
+        onApplied: operations ? () => operations.noteDirty(path, false) : null,
+      });
+      if (operations && !applied) return markStale();
+      renderTabs();
       return true;
     }
 
@@ -595,9 +619,44 @@
       renderSearchPanel();
     }
 
-    /* ------------------------------------------------------------------ */
-    /* Apply entry points                                                   */
-    /* ------------------------------------------------------------------ */
+    // Shared apply prologue: refuses after teardown, during another apply or a
+    // save, and without a query. Returns { resolved } or { result } to return.
+    function guardApply(opts) {
+      if (disposed || isReplacing() || isSaving()) return { result: { skipped: true } };
+      const resolved = resolveOpts(opts);
+      if (resolved.rawQuery === '') {
+        const message = jt('ide.replace.enterSearchTerm', 'Enter a search term');
+        getReplaceState().replaceError = message;
+        return { result: { error: message } };
+      }
+      return { resolved };
+    }
+
+    // Regex work runs in the deadline-bounded worker, literal work inline.
+    // `position` ({ line, column, expectedPreview }) replaces one occurrence.
+    // Resolves { transformed } or { failure: 'cancelled' | 'regex_timeout' | 'regex_unavailable' }.
+    async function transformFile(f, resolved, position = null) {
+      const task = {
+        rawText: f.raw, query: resolved.query, replaceText: resolved.replaceText,
+        caseSensitive: resolved.caseSensitive, eol: f.eol, ...(position || {}),
+      };
+      if (!resolved.useRegex) {
+        const literal = { ...task, useRegex: false };
+        return { transformed: position ? textUtils.applyReplaceAtPosition(f.raw, literal) : textUtils.applyReplaceToText(f.raw, literal) };
+      }
+      try {
+        const evaluator = await getRegexEvaluator('replace');
+        return {
+          transformed: await evaluator.evaluate({ op: position ? 'replaceAt' : 'replaceAll', ...task }, {
+            signal: applyAbortController?.signal,
+            deadlineMs: REGEX_REPLACE_DEADLINE_MS,
+          }),
+        };
+      } catch (error) {
+        if (error?.code === 'REGEX_CANCELLED') return { failure: 'cancelled' };
+        return { failure: error?.code === 'REGEX_TIMEOUT' ? 'regex_timeout' : 'regex_unavailable' };
+      }
+    }
 
     // Read -> transform -> write -> refresh ONE whole file. Returns a
     // disposition the caller aggregates: 'replaced' (with record + count),
@@ -612,36 +671,8 @@
         return { outcome: 'read_failed', error };
       }
       if (disposed || epoch !== applyEpoch) return { outcome: 'cancelled' };
-      let transformed;
-      if (resolved.useRegex) {
-        try {
-          const evaluator = await getRegexEvaluator('replace');
-          transformed = await evaluator.evaluate({
-            op: 'replaceAll',
-            rawText: f.raw,
-            query: resolved.query,
-            replaceText: resolved.replaceText,
-            caseSensitive: resolved.caseSensitive,
-            eol: f.eol,
-          }, {
-            signal: applyAbortController?.signal,
-            deadlineMs: REGEX_REPLACE_DEADLINE_MS,
-          });
-        } catch (error) {
-          if (error?.code === 'REGEX_CANCELLED') return { outcome: 'cancelled' };
-          return {
-            outcome: error?.code === 'REGEX_TIMEOUT' ? 'regex_timeout' : 'regex_unavailable',
-          };
-        }
-      } else {
-        transformed = textUtils.applyReplaceToText(f.raw, {
-          query: resolved.query,
-          replaceText: resolved.replaceText,
-          useRegex: false,
-          caseSensitive: resolved.caseSensitive,
-          eol: f.eol,
-        });
-      }
+      const { transformed, failure } = await transformFile(f, resolved);
+      if (failure) return { outcome: failure };
       if (disposed || epoch !== applyEpoch) return { outcome: 'cancelled' };
       const { newRaw, count } = transformed || { newRaw: f.raw, count: 0 };
       if (count === 0 || newRaw === f.raw) {
@@ -668,15 +699,11 @@
       };
     }
 
+    // `opts.expectedPreview` (the result row's preview) pins the occurrence:
+    // search coordinates come from disk, the buffer may be dirty.
     async function replaceMatch(path, line, column, opts) {
-      if (disposed || isReplacing() || isSaving()) {
-        return { skipped: true };
-      }
-      const resolved = resolveOpts(opts);
-      if (resolved.query === '') {
-        getReplaceState().replaceError = jt('ide.replace.enterSearchTerm', 'Enter a search term');
-        return { error: jt('ide.replace.enterSearchTerm', 'Enter a search term') };
-      }
+      const { resolved, result } = guardApply(opts);
+      if (result) return result;
       const epoch = beginApply();
       try {
         const s = getReplaceState();
@@ -692,41 +719,12 @@
           return { error: 'read_failed' };
         }
         if (disposed || epoch !== applyEpoch) return { cancelled: true };
-        let transformed;
-        if (resolved.useRegex) {
-          try {
-            const evaluator = await getRegexEvaluator('replace');
-            transformed = await evaluator.evaluate({
-              op: 'replaceAt',
-              rawText: f.raw,
-              line,
-              column,
-              query: resolved.query,
-              replaceText: resolved.replaceText,
-              caseSensitive: resolved.caseSensitive,
-              eol: f.eol,
-            }, {
-              signal: applyAbortController?.signal,
-              deadlineMs: REGEX_REPLACE_DEADLINE_MS,
-            });
-          } catch (error) {
-            if (error?.code === 'REGEX_CANCELLED') return { cancelled: true };
-            const reason = error?.code === 'REGEX_TIMEOUT' ? 'regex_timeout' : 'regex_unavailable';
-            s.replaceError = reason === 'regex_timeout'
-              ? jt('ide.replace.regexTimedOut', 'Regular expression timed out.')
-              : jt('ide.replace.regexEvaluationUnavailable', 'Regex evaluation is unavailable.');
-            return { error: reason };
-          }
-        } else {
-          transformed = textUtils.applyReplaceAtPosition(f.raw, {
-            line,
-            column,
-            query: resolved.query,
-            replaceText: resolved.replaceText,
-            useRegex: false,
-            caseSensitive: resolved.caseSensitive,
-            eol: f.eol,
-          });
+        const expectedPreview = opts?.expectedPreview && typeof opts.expectedPreview === 'object' ? opts.expectedPreview : null;
+        const { transformed, failure } = await transformFile(f, resolved, { line, column, expectedPreview });
+        if (failure === 'cancelled') return { cancelled: true };
+        if (failure) {
+          s.replaceError = regexErrorText(failure);
+          return { error: failure };
         }
         if (disposed || epoch !== applyEpoch) return { cancelled: true };
         const { newRaw, ok } = transformed || { newRaw: f.raw, ok: false };
@@ -760,14 +758,8 @@
     }
 
     async function replaceInFile(path, opts) {
-      if (disposed || isReplacing() || isSaving()) {
-        return { skipped: true };
-      }
-      const resolved = resolveOpts(opts);
-      if (resolved.query === '') {
-        getReplaceState().replaceError = jt('ide.replace.enterSearchTerm', 'Enter a search term');
-        return { error: jt('ide.replace.enterSearchTerm', 'Enter a search term') };
-      }
+      const { resolved, result } = guardApply(opts);
+      if (result) return result;
       const epoch = beginApply();
       try {
         const s = getReplaceState();
@@ -782,9 +774,7 @@
           return { error: 'read_failed' };
         }
         if (res.outcome === 'regex_timeout' || res.outcome === 'regex_unavailable') {
-          s.replaceError = res.outcome === 'regex_timeout'
-            ? jt('ide.replace.regexTimedOut', 'Regular expression timed out.')
-            : jt('ide.replace.regexEvaluationUnavailable', 'Regex evaluation is unavailable.');
+          s.replaceError = regexErrorText(res.outcome);
           s.replaceSummary = jt('ide.replace.noFilesChanged', 'No files were changed.');
           appendClientLog('WARN', 'ide.replace_regex_evaluation_failed', { reason: res.outcome });
           return { error: res.outcome };
@@ -810,23 +800,14 @@
 
     async function replaceAll(opts) {
       // A torn-down panel/controller must not start a new replace loop.
-      if (disposed) {
-        return { skipped: true };
-      }
-      if (isReplacing() || isSaving()) {
-        return { skipped: true };
-      }
-      const resolved = resolveOpts(opts);
+      const { resolved, result } = guardApply(opts);
+      if (result) return result;
       const s = getReplaceState();
-      if (resolved.query === '') {
-        s.replaceError = jt('ide.replace.enterSearchTerm', 'Enter a search term');
-        return { error: jt('ide.replace.enterSearchTerm', 'Enter a search term') };
-      }
       const epoch = beginApply();
       let journalToken = null;
       try {
         const paths = unique(getReplaceState().results.map((r) => r.path));
-        journalToken = await replaceJournal.open({ query: resolved.query, total: paths.length });
+        journalToken = await replaceJournal.open({ query: resolved.rawQuery, total: paths.length });
         const records = [];
         let filesChanged = 0;
         let occurrences = 0;
@@ -878,9 +859,7 @@
           return { filesChanged, occurrences, conflicts, failures, cancelled: true };
         }
         if (regexFailure) {
-          s.replaceError = regexFailure === 'regex_timeout'
-            ? jt('ide.replace.regexTimedOut', 'Regular expression timed out.')
-            : jt('ide.replace.regexEvaluationUnavailable', 'Regex evaluation is unavailable.');
+          s.replaceError = regexErrorText(regexFailure);
           s.replaceSummary = records.length
             ? jtn('ide.replace.stoppedAfterFileCount', filesChanged, { count: filesChanged }, 'Replace stopped after {count} file; completed changes can be undone.', 'Replace stopped after {count} files; completed changes can be undone.')
             : jt('ide.replace.noFilesChanged', 'No files were changed.');
@@ -987,7 +966,6 @@
     }
 
     return {
-      getReplaceState,
       runRegexFind,
       computeReplacementForMatch,
       replaceMatch,

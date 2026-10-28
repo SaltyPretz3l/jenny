@@ -33,6 +33,18 @@ test('preview refresh polls only visible surfaces and tears down its timer', () 
   assert.equal(current.context.state, 'available');
 });
 
+test('a poll tick re-reads the pane session and lets syncSession fetch when it changed', () => {
+  let tick; let fetches = 0; let changed = false; let syncs = 0;
+  bindRefresh({ pane: { ownerDocument: { visibilityState: 'visible' } }, win: {
+    setInterval: (callback) => { tick = callback; return 1; }, clearInterval() {},
+  }, listen() {}, syncSession: () => { syncs += 1; return changed; }, scheduleFetch: () => { fetches += 1; },
+  paint() {}, visible: () => true, options: { refreshIntervalMs: 5000 } });
+  tick();
+  assert.deepEqual([syncs, fetches], [1, 1], 'same session: the tick polls it');
+  changed = true; tick();
+  assert.deepEqual([syncs, fetches], [2, 1], 'a switched session is fetched by syncSession, not polled twice');
+});
+
 test('one keystroke paints once: the bubbling input after composer-state-rendered is skipped', () => {
   const input = { value: '', matches: () => true };
   const handlers = {};

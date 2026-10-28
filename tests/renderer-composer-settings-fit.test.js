@@ -331,7 +331,7 @@ test('the Chat chip closes the left cluster, and the run-mode hint lives in the 
   const doc = app.window.document;
   const left = doc.querySelector('.composer-toolbar-left');
   assert.deepEqual([...left.children].map((child) => child.id), [
-    'composerAttachShortcut', 'composerTerminalShortcut', 'composerToolToggleSlot',
+    'composerAttachShortcut', 'composerToolToggleSlot',
   ]);
   assert.equal(doc.getElementById('composerToolToggleSlot').contains(doc.getElementById('composerChatChipHost')), true);
   assert.equal(doc.getElementById('composerSettingsGroup').contains(doc.getElementById('composerToolToggleSlot')), false);

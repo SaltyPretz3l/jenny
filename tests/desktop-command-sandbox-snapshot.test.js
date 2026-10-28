@@ -5,6 +5,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { createWorkspaceSnapshot, removeSnapshot } = require('../services/execution/desktop-workspace-snapshot');
+const { posixOnly } = require('./helpers/platform-skips');
 async function fixture(t) {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'jenny-sandbox-snapshot-'));
   t.after(() => fs.rm(base, { recursive: true, force: true }));
@@ -67,7 +68,7 @@ test('replacing the workspace root invalidates pending snapshot identity', async
  await assert.rejects(verifyWorkspaceSnapshot(snapshot), /snapshot_changed/);
 });
 
-test('desktop snapshot still rejects backslash and colon names by default', { skip: process.platform === 'win32' }, async () => {
+test('desktop snapshot still rejects backslash and colon names by default', { skip: posixOnly('colon and backslash filenames cannot be created on Windows') }, async () => {
   const fs = require('node:fs');
   const os = require('node:os');
   const path = require('node:path');

@@ -17,6 +17,13 @@
  * controller wire, no new IPC. Gated on the flag read once at boot; when the
  * flag is OFF nothing is attached and the chip never renders.
  *
+ * A PDF tab (row 65 W2) offers the page being read, or the reader's text
+ * selection, from the pane's reading context (getPdfReadingContext): page
+ * text is extracted only once the reader asks (armed), reported as pending
+ * until ready, and a page with no text layer (a scan) sends a pointer the
+ * model follows with read_file. The pane fires ide:pdf-reading-context-changed
+ * when the page, selection or extracted text changes.
+ *
  * Dedupe authority lives here: readActiveFileContextForTurn returns null when
  * the active file is already arriving via an @-mention or a composer
  * attachment, so a file is never sent twice.
@@ -63,6 +70,11 @@
     return Number.isFinite(n) ? Math.floor(n) : fallback;
   }
 
+  // "4" or "4–5" for a PDF page range.
+  function pageRangeLabel(pages) {
+    return pages.start === pages.end ? String(pages.start) : pages.start + '\u2013' + pages.end;
+  }
+
   // Approx token cost of a slice (~4 chars/token, matching the backend
   // estimate), formatted compactly for the chip ("1.2k" / "850").
   function approxTokenLabel(text) {
@@ -70,16 +82,77 @@
     return tokens >= 1000 ? (tokens / 1000).toFixed(1) + 'k' : String(tokens);
   }
 
+  var PDF_CONTEXT_EVENT = 'ide:pdf-reading-context-changed';
+
+  function isPdfTab(reader, path) {
+    return /\.pdf$/i.test(path) && typeof reader.getPdfReadingContext === 'function'
+      && typeof reader.getDocumentKind === 'function' && reader.getDocumentKind(path) === 'document';
+  }
+
+  // The page being read (or the selection) in a PDF tab. `want` asks the pane
+  // to extract that page's text; without it the call only peeks, so merely
+  // looking at a PDF never runs text extraction.
+  function computePdfSlice(reader, path, want) {
+    var view = reader.getPdfReadingContext(path, { want: want === true });
+    var total = clampInt(view && view.pageCount, 0);
+    var page = clampInt(view && view.page, 0);
+    if (!view || total < 1 || page < 1 || page > total) {
+      return null;
+    }
+    var selection = view.selection && String(view.selection.text || '').trim() ? view.selection : null;
+    var start = selection ? Math.max(1, Math.min(total, clampInt(selection.startPage, page))) : page;
+    var end = selection ? Math.max(start, Math.min(total, clampInt(selection.endPage, start))) : page;
+    var ready = Boolean(selection) || view.textState === 'ready';
+    var text = ready ? String(selection ? selection.text : view.text || '').slice(0, MAX_SLICE_CHARS) : '';
+    return {
+      path: path,
+      ...(typeof reader.getWorkspaceId === 'function' ? { workspace_id: String(reader.getWorkspaceId() || '') } : {}),
+      kind: 'pdf',
+      pages: { start: start, end: end, total: total },
+      selection: Boolean(selection),
+      // No text layer: the model reads it with read_file (OCR). Pending: sent
+      // before extraction finished, so it gets the same pointer.
+      scanned: !ready && view.textState === 'empty',
+      pending: !ready && view.textState !== 'empty',
+      slice: text,
+    };
+  }
+
+  // Lines `start` (0-based) to `end` (exclusive) of the document. With the
+  // reader's Monaco model only that window is read; otherwise the whole
+  // buffer is copied and split.
+  function lineSource(reader, path) {
+    var model = typeof reader.getModel === 'function' ? reader.getModel(path) : null;
+    if (model && typeof model.getLineCount === 'function' && typeof model.getLineContent === 'function') {
+      return {
+        total: model.getLineCount(),
+        range: function (start, end) {
+          var out = [];
+          for (var lineNumber = start + 1; lineNumber <= end; lineNumber += 1) {
+            out.push(model.getLineContent(lineNumber));
+          }
+          return out;
+        },
+      };
+    }
+    var lines = (typeof reader.getValue === 'function' ? String(reader.getValue(path) || '') : '').split('\n');
+    return { total: lines.length, range: function (start, end) { return lines.slice(start, end); } };
+  }
+
   // Compute a fresh cursor-region slice from the editor host's live accessor.
   // Returns the structured context object or null when there is no file-kind
-  // active document (image/preview/diff tabs, or no editor yet).
-  function computeActiveSlice(reader, radius) {
+  // active document (image/preview/diff tabs, or no editor yet). `options.want`
+  // lets a PDF tab extract its page text (see computePdfSlice).
+  function computeActiveSlice(reader, radius, options) {
     if (!reader || typeof reader.getActivePath !== 'function') {
       return null;
     }
     var path = normalizePath(reader.getActivePath());
     if (!path) {
       return null;
+    }
+    if (isPdfTab(reader, path)) {
+      return computePdfSlice(reader, path, options && options.want);
     }
     // Only real text files carry a cursor-region slice; image/preview/diff
     // documents report a non-'file' kind (and getCursorInfo() returns null).
@@ -96,19 +169,19 @@
     if (!cursor) {
       return null;
     }
-    var all = typeof reader.getValue === 'function' ? String(reader.getValue(path) || '') : '';
-    var lines = all.split('\n');
-    var totalLines = lines.length;
+    var source = lineSource(reader, path);
+    var totalLines = source.total;
     var cursorLine = Math.max(1, clampInt(cursor.lineNumber, 1));
     var cursorColumn = Math.max(1, clampInt(cursor.column, 1));
     var r = Number.isFinite(radius) ? radius : DEFAULT_SLICE_RADIUS;
     var startIndex = Math.max(0, cursorLine - 1 - r);
     var endIndex = Math.min(totalLines, cursorLine + r);
-    var slice = lines.slice(startIndex, endIndex).join('\n');
+    var lines = source.range(startIndex, endIndex); // lines[0] is line startIndex + 1
+    var slice = lines.join('\n');
     if (slice.length > MAX_SLICE_CHARS) {
-      var cursorIndex = Math.min(totalLines - 1, cursorLine - 1);
-      var beforeCursor = lines.slice(startIndex, cursorIndex).join('\n');
-      var cursorOffset = beforeCursor.length + (cursorIndex > startIndex ? 1 : 0)
+      var cursorIndex = Math.min(totalLines - 1, cursorLine - 1) - startIndex;
+      var beforeCursor = lines.slice(0, cursorIndex).join('\n');
+      var cursorOffset = beforeCursor.length + (cursorIndex > 0 ? 1 : 0)
         + Math.min(cursorColumn - 1, lines[cursorIndex].length);
       var windowStart = Math.max(0, Math.min(slice.length - MAX_SLICE_CHARS,
         cursorOffset - Math.floor(MAX_SLICE_CHARS / 2)));
@@ -164,11 +237,6 @@
     // only an accepted live/queued send consumes a successfully captured slice.
     var armedPath = null;
     var attached = false;
-    var onChangeBound = null;
-    var onChipClickBound = null;
-    var onActionClickBound = null;
-    var onComposerFocusBound = null;
-    var onRootCommittedBound = null;
 
     function currentActivePath() {
       var reader = getReader();
@@ -179,7 +247,7 @@
       if (!path) {
         return '';
       }
-      if (typeof reader.getDocumentKind === 'function' && reader.getDocumentKind(path) !== 'file') {
+      if (typeof reader.getDocumentKind === 'function' && reader.getDocumentKind(path) !== 'file' && !isPdfTab(reader, path)) {
         return '';
       }
       return path;
@@ -214,7 +282,7 @@
       budgetEl = chipEl.querySelector('.active-file-context-chip-budget');
       // Mount above the composer input, alongside the attachment/notice rows.
       wrap.insertBefore(chipEl, wrap.firstChild);
-      chipEl.addEventListener('click', onChipClickBound);
+      chipEl.addEventListener('click', handleChipClick);
       return chipEl;
     }
 
@@ -237,18 +305,26 @@
       }
       var name = basename(info.path);
       var armed = armedPath === info.path;
+      var pdfPage = info.kind === 'pdf' ? pageRangeLabel(info.pages) : '';
       var escape = typeof actionButton.escapeHtml === 'function'
         ? actionButton.escapeHtml
         : function fallbackEscape(value) { return String(value || ''); };
       var html = actionButton({
         plain: true,
-        className: 'composer-popover-action composer-active-file-action',
+        className: 'composer-menu-row composer-active-file-action',
         role: 'menuitem',
-        ariaLabel: armed ? jt('ide.activeFile.addedNextMessage', 'Active workspace file added to the next message') : jt('ide.activeFile.addNextMessage', 'Add active workspace file to the next message'),
+        ariaLabel: pdfPage
+          ? (armed ? jt('ide.activeFile.pageAddedNextMessage', 'Page {page} of {file} added to the next message', { page: pdfPage, file: name }) : jt('ide.activeFile.addPageNextMessage', 'Add page {page} of {file} to the next message', { page: pdfPage, file: name }))
+          : (armed ? jt('ide.activeFile.addedNextMessage', 'Active workspace file added to the next message') : jt('ide.activeFile.addNextMessage', 'Add active workspace file to the next message')),
         ariaPressed: armed,
         dataset: { 'active-file-arm': '1' },
-        trustedHtml: '<span>' + escape(armed ? jt('ide.activeFile.added', 'Active File Added') : jt('ide.activeFile.add', 'Add Active File')) + '</span>'
-          + '<span class="composer-active-file-name">' + escape(name) + '</span>',
+        // Row 63: a + menu row (glyph, label, the file name beneath it).
+        trustedHtml: '<span class="composer-menu-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/></svg></span>'
+          + '<span class="composer-menu-text"><span class="composer-menu-label">' + escape(pdfPage
+            ? (armed ? jt('ide.activeFile.pageAdded', 'Page {page} Added', { page: pdfPage }) : jt('ide.activeFile.addPage', 'Add Page {page}', { page: pdfPage }))
+            : (armed ? jt('ide.activeFile.added', 'Active File Added') : jt('ide.activeFile.add', 'Add Active File'))) + '</span>'
+          + '<span class="composer-menu-sub composer-active-file-name">' + escape(name) + '</span></span>'
+          + (armed ? '<span class="composer-menu-check" aria-hidden="true">✓</span>' : ''),
       });
       if (host.__jennyActiveFileActionMarkup !== html) {
         host.innerHTML = html;
@@ -276,7 +352,7 @@
       // slice (large files are excluded before getValue), and recomputing on
       // every refresh is what keeps the token-cost label fresh after an in-place
       // edit — which fires no activation event this module can hear.
-      var info = computeActiveSlice(getReader(), radius);
+      var info = computeActiveSlice(getReader(), radius, { want: armedPath === path });
       if (!info) {
         hideChip();
         hideAction();
@@ -291,13 +367,31 @@
         return;
       }
       if (labelEl) {
-        labelEl.textContent = jt('ide.activeFile.visibleLabel', 'Jenny can see {file}', { file: basename(path) });
+        labelEl.textContent = chipLabel(info);
       }
       if (budgetEl) {
-        budgetEl.textContent = jt('ide.activeFile.tokenCount', '~{count} tokens', { count: approxTokenLabel(info.slice) });
+        // A pointer (scanned or not extracted yet) carries no page text.
+        budgetEl.textContent = info.slice ? jt('ide.activeFile.tokenCount', '~{count} tokens', { count: approxTokenLabel(info.slice) }) : '';
       }
       chipEl.setAttribute('title', jt('ide.activeFile.sharingTitle', 'Jenny can see {path} (~{count} tokens) — click ✕ to stop sharing it this turn.', { path: path, count: approxTokenLabel(info.slice) }));
       chipEl.classList.remove('hidden');
+    }
+
+    function chipLabel(info) {
+      var file = basename(info.path);
+      if (info.kind !== 'pdf') {
+        return jt('ide.activeFile.visibleLabel', 'Jenny can see {file}', { file: file });
+      }
+      var page = pageRangeLabel(info.pages);
+      if (info.selection) return jt('ide.activeFile.pdfSelectionLabel', 'Jenny can see p. {page} (selection)', { page: page });
+      if (info.scanned) return jt('ide.activeFile.pdfScannedLabel', 'Jenny can see p. {page} (scanned, read with OCR)', { page: page });
+      return jt('ide.activeFile.pdfPageLabel', 'Jenny can see p. {page} of {file}', { page: page, file: file });
+    }
+
+    // The page, selection or extracted text of the visible PDF moved on.
+    function handlePdfContextChanged(event) {
+      var path = normalizePath(event && event.detail && event.detail.path);
+      if (path && path === currentActivePath()) refreshChip();
     }
 
     function handleActiveFileChanged(event) {
@@ -315,7 +409,7 @@
         return;
       }
       event.preventDefault();
-      var info = computeActiveSlice(getReader(), radius);
+      var info = computeActiveSlice(getReader(), radius, { want: true });
       if (!info) {
         armedPath = null;
         refreshChip();
@@ -326,6 +420,26 @@
         file_name: basename(info.path),
       });
       refreshChip();
+    }
+
+    // "Ask Jenny" on a PDF selection: arm this file and focus the composer.
+    function askAboutActiveFile() {
+      if (disposed || !isEnabled()) {
+        return false;
+      }
+      var info = computeActiveSlice(getReader(), radius, { want: true });
+      if (!info) {
+        return false;
+      }
+      if (armedPath !== info.path) {
+        armedPath = info.path;
+        appendClientLog('INFO', 'chat.active_file_context_armed', { file_name: basename(info.path) });
+      }
+      refreshChip();
+      var wrap = getComposerWrap();
+      var input = wrap && wrap.querySelector('textarea.composer-input');
+      if (input && typeof input.focus === 'function') input.focus({ preventScroll: true });
+      return true;
     }
 
     function handleChipClick(event) {
@@ -343,46 +457,34 @@
       refreshChip();
     }
 
-    // Re-validate when the composer regains focus. This covers two transitions
-    // the editor host does not announce via `ide:active-file-changed`:
-    //   1. closing the LAST tab (showEmpty fires no activation event), and
-    //   2. an IN-PLACE edit of the active file — the host fires no content-change
-    //      event this controller-free module can hear, so without a focus-time
-    //      recompute the token-cost label would stay stale. Focus is the
-    //      post-edit refresh point (the user moves to the composer to act on the
-    //      chip); refreshChip always recomputes a fresh slice (no cache).
-    function handleComposerFocus() {
-      refreshChip();
-    }
-
-    // Root switch (JCA-005): consent belongs to one file in one workspace
-    // root. Without this, arming README.md under root A survives a root
-    // transition and authorizes sending root B's same-relative-path README.md.
-    // Every committed root change (broadcast by the IDE controller on the
-    // window) clears the pending consent outright.
-    function handleRootCommitted() {
-      clearPending();
-    }
-
     function attach() {
       if (disposed || attached || !win) {
         return dispose;
       }
       attached = true;
-      onChangeBound = handleActiveFileChanged;
-      onChipClickBound = handleChipClick;
-      onActionClickBound = handleActionClick;
-      onComposerFocusBound = handleComposerFocus;
-      onRootCommittedBound = handleRootCommitted;
-      win.addEventListener('ide:active-file-changed', onChangeBound);
-      win.addEventListener('ide:workspace-root-committed', onRootCommittedBound);
+      win.addEventListener('ide:active-file-changed', handleActiveFileChanged);
+      win.addEventListener(PDF_CONTEXT_EVENT, handlePdfContextChanged);
+      // Root switch (JCA-005): consent belongs to one file in one workspace
+      // root. Without this, arming README.md under root A survives a root
+      // transition and authorizes sending root B's same-relative-path README.md.
+      // Every committed root change (broadcast by the IDE controller on the
+      // window) clears the pending consent outright.
+      win.addEventListener('ide:workspace-root-committed', clearPending);
       var actionHost = getActionHost();
       if (actionHost) {
-        actionHost.addEventListener('click', onActionClickBound);
+        actionHost.addEventListener('click', handleActionClick);
       }
+      // Re-validate when the composer regains focus. This covers two transitions
+      // the editor host does not announce via `ide:active-file-changed`:
+      //   1. closing the LAST tab (showEmpty fires no activation event), and
+      //   2. an IN-PLACE edit of the active file — the host fires no content-change
+      //      event this controller-free module can hear, so without a focus-time
+      //      recompute the token-cost label would stay stale. Focus is the
+      //      post-edit refresh point (the user moves to the composer to act on the
+      //      chip); refreshChip always recomputes a fresh slice (no cache).
       var wrap = getComposerWrap();
       if (wrap) {
-        wrap.addEventListener('focusin', onComposerFocusBound);
+        wrap.addEventListener('focusin', refreshChip);
       }
       refreshChip();
       return dispose;
@@ -396,11 +498,11 @@
       if (disposed || !isEnabled()) {
         return null;
       }
-      var info = computeActiveSlice(getReader(), radius);
-      if (!info) {
+      if (!armedPath) {
         return null;
       }
-      if (!armedPath || armedPath !== info.path) {
+      var info = computeActiveSlice(getReader(), radius, { want: true });
+      if (!info || armedPath !== info.path) {
         return null;
       }
       var params = args || {};
@@ -458,28 +560,25 @@
         return;
       }
       disposed = true;
-      if (win && onChangeBound) {
-        win.removeEventListener('ide:active-file-changed', onChangeBound);
-      }
-      if (win && onRootCommittedBound) {
-        win.removeEventListener('ide:workspace-root-committed', onRootCommittedBound);
-      }
-      var wrap = getComposerWrap();
-      if (wrap && onComposerFocusBound) {
-        wrap.removeEventListener('focusin', onComposerFocusBound);
+      if (attached) {
+        win.removeEventListener('ide:active-file-changed', handleActiveFileChanged);
+        win.removeEventListener('ide:workspace-root-committed', clearPending);
+        win.removeEventListener(PDF_CONTEXT_EVENT, handlePdfContextChanged);
+        var wrap = getComposerWrap();
+        if (wrap) {
+          wrap.removeEventListener('focusin', refreshChip);
+        }
+        var actionHost = getActionHost();
+        if (actionHost) {
+          actionHost.removeEventListener('click', handleActionClick);
+          actionHost.classList.add('hidden');
+        }
       }
       if (chipEl) {
-        if (onChipClickBound) {
-          chipEl.removeEventListener('click', onChipClickBound);
-        }
+        chipEl.removeEventListener('click', handleChipClick);
         if (chipEl.parentNode) {
           chipEl.parentNode.removeChild(chipEl);
         }
-      }
-      var actionHost = getActionHost();
-      if (actionHost && onActionClickBound) {
-        actionHost.removeEventListener('click', onActionClickBound);
-        actionHost.classList.add('hidden');
       }
       chipEl = null;
       labelEl = null;
@@ -492,6 +591,8 @@
       readActiveFileContextForTurn: readActiveFileContextForTurn,
       clearPending: clearPending,
       markTurnAccepted: markTurnAccepted,
+      askAboutActiveFile: askAboutActiveFile,
+      canAsk: function canAsk() { return !disposed && isEnabled(); },
       isArmed: function isArmed() { return Boolean(armedPath); },
     };
   }
@@ -620,6 +721,14 @@
     return installedController?.isArmed?.() === true;
   }
 
+  function askAboutActiveFile() {
+    return installedController?.askAboutActiveFile?.() === true;
+  }
+
+  function canAsk() {
+    return installedController?.canAsk?.() === true;
+  }
+
   return {
     createActiveFileContextController: createActiveFileContextController,
     computeActiveSlice: computeActiveSlice,
@@ -627,6 +736,8 @@
     forwardClientLog: forwardClientLog,
     readActiveFileContextForTurn: readActiveFileContextForTurn,
     clearPending: clearPending,
+    askAboutActiveFile: askAboutActiveFile,
+    canAsk: canAsk,
     isArmed: isArmed,
     markTurnAccepted: markTurnAccepted,
   };

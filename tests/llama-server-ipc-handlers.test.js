@@ -9,8 +9,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 const { getBridgeChannel } = require('../services/ipc-contract');
+const { createTrustedSenderAuthorizer, unauthorizedIpcResult } = require('../services/main/ipc-sender-authorization');
 const { registerLlamaServerIpcHandlers } = require('../services/main/llama-server-ipc-handlers');
 
 function createFakeIpcMain() {
@@ -405,5 +407,45 @@ describe('registerLlamaServerIpcHandlers', () => {
       ['INFO', 'llama.server.ipc_choose_gguf', { ok: true, picked: false }],
       ['INFO', 'llama.server.ipc_choose_gguf', { ok: true, picked: true }],
     ]);
+  });
+
+  test('every llamaServer channel refuses a foreign-frame sender before running', async () => {
+    const url = pathToFileURL(path.resolve(__dirname, '..', 'index.html')).href;
+    const mainFrame = { url };
+    const webContents = { id: 7, mainFrame, getURL: () => url };
+    const calls = [];
+    const record = (name, value) => (...args) => { calls.push(name); return value(...args); };
+    const manager = {
+      getStatus: record('getStatus', () => ({ state: 'stopped' })),
+      start: record('start', async () => ({ state: 'ready' })),
+      stop: record('stop', async () => ({ state: 'stopped' })),
+      restart: record('restart', async () => ({ state: 'ready' })),
+    };
+    const ipc = createFakeIpcMain();
+    registerLlamaServerIpcHandlers(ipc, {
+      getManager: record('getManager', () => manager),
+      getMainWindow: () => ({ webContents }),
+      dialogImpl: { showOpenDialog: record('showOpenDialog', async () => ({ canceled: true, filePaths: [] })) },
+      getPersistedModels: record('getPersistedModels', () => []),
+      getLibraryRoots: record('getLibraryRoots', () => []),
+      authorization: {
+        authorize: createTrustedSenderAuthorizer({ getMainWindow: () => ({ webContents }) }),
+        unauthorizedResult: unauthorizedIpcResult,
+      },
+    });
+    const foreignFrame = { sender: webContents, senderFrame: { url } };
+    for (const methodPath of [
+      'llamaServer.getStatus', 'llamaServer.start', 'llamaServer.stop', 'llamaServer.restart',
+      'llamaServer.listLocalGgufs', 'llamaServer.chooseGguf', 'llamaServer.chooseLibraryFolder',
+      'llamaServer.chooseRuntime',
+    ]) {
+      const result = await ipc.invoke.get(invokeChannel(methodPath))(foreignFrame, {});
+      assert.equal(result.code, 'ipc_sender_unauthorized', methodPath);
+      assert.deepEqual(result, unauthorizedIpcResult(), methodPath);
+    }
+    assert.deepEqual(calls, [], 'no manager, picker or scan ran for a refused sender');
+
+    const status = await ipc.invoke.get(invokeChannel('llamaServer.getStatus'))({ sender: webContents, senderFrame: mainFrame });
+    assert.equal(status.state, 'stopped', 'the trusted main frame still reaches the manager');
   });
 });

@@ -162,7 +162,6 @@ function createPipelineHarness(options = {}) {
       renderComposerStatusNotice() {},
       renderToastViewport() {},
       renderComposerPopover() {},
-      renderCommandPopover() {},
       clearActivity() {},
       failActivity() {},
       beginActivity() {},

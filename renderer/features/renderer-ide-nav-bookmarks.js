@@ -9,7 +9,6 @@
   root.rendererIdeNavBookmarks = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
-  function noop() {}
 
   function resolveModule(globalName, requirePath) {
     if (globalRef[globalName]) {
@@ -28,20 +27,9 @@
   function createIdeNavBookmarks(deps) {
     const options = deps || {};
     const editorHost = options.editorHost || null;
-    const getDom = typeof options.getDom === 'function' ? options.getDom : () => ({});
-    const windowRef = options.windowRef || globalRef.window || globalRef;
-    const escapeHtml = typeof options.escapeHtml === 'function'
-      ? options.escapeHtml
-      : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
-    const openFile = typeof options.openFile === 'function'
-      ? options.openFile
-      : () => Promise.resolve(false);
     // The nav-history reveal (open-then-position); the controller backs it with
     // the same handleSearchResultOpen path search results use.
     const reveal = typeof options.reveal === 'function' ? options.reveal : () => {};
-    const appendClientLog = typeof options.appendClientLog === 'function'
-      ? options.appendClientLog
-      : noop;
     // Injectable for unit tests; default to the resolved sibling modules - the
     // SAME factories the controller used to resolve + call inline.
     const navHistoryUtils = options.navHistoryUtils
@@ -56,9 +44,14 @@
     // Runtime line bookmarks: glyph toggle + next/prev (wrap) + "list all"
     // Quick-pick. Session-only, pruned on tab close like nav-history;
     // self-paints glyphs and self-subscribes to ide:active-file-changed.
+    // bookmarks applies its own defaults, so the options pass straight through.
     const bookmarks = bookmarksUtils.createIdeBookmarks?.({
-      editorHost, getDom, windowRef, escapeHtml, openFile,
-      appendClientLog: (...args) => appendClientLog(...args),
+      editorHost,
+      getDom: options.getDom,
+      windowRef: options.windowRef,
+      escapeHtml: options.escapeHtml,
+      openFile: options.openFile,
+      appendClientLog: options.appendClientLog,
     }) || null;
     // Cross-file Go Back / Go Forward. recordNavigation is fed from the cursor
     // choke point; pruneClosed runs on tab close (both via the facade below).

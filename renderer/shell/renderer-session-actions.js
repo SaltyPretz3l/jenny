@@ -2,7 +2,7 @@
  *
  * Session row actions for the chats panel (nav overhaul W7): the ⋯ /
  * right-click context menu (Pin / Rename / Move to project / Archive /
- * Delete), inline title
+ * Copy / Delete), inline title
  * rename via the inventory inline-title-editor, pin/archive toggles over the
  * sessions:set-meta IPC, and optimistic session delete with an undo toast —
  * the real delete IPC is deferred for the undo window via the shared
@@ -23,7 +23,7 @@
   'use strict';
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  var resolveDefaultTitle = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : {})).resolveDefaultTitle;
+  var { resolveDefaultTitle, isPrimarySession = () => false } = globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : {});
   var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   var SESSION_DELETE_UNDO_MS_DEFAULT = 6000;
 
@@ -46,7 +46,6 @@
       showSessionActionError,
       appendClientLog,
       registerCleanup,
-      toggleChatsScope,
       stopSessionStream,
       getProjectSwitcher,
       openLinkedSessions,
@@ -64,28 +63,31 @@
       dismissToast,
     });
 
-    // Load the sidebar-only helper without expanding the startup script list.
+    // Load the sidebar-only helpers (the bulk bar; the menus' Copy items, which the
+    // chats panel's project header menu reads too) without expanding the startup script list.
     let actionsDisposed = false;
     registerCleanup(() => { actionsDisposed = true; });
     if (windowRef.document?.getElementById('conversationGroups')) {
-      windowRef.scriptLoaderUtils.ensureScript({
-        src: 'renderer/shell/renderer-sidebar-bulk-actions.js',
-        isReady: () => Boolean(windowRef.rendererSidebarBulkActions),
-        log: appendClientLog,
-      }).then(() => {
-        if (!actionsDisposed) windowRef.rendererSidebarBulkActions?.createSidebarBulkActions({
-          state, windowRef, callbacks: deps.callbacks,
-          scheduler: deleteUndoScheduler, undoWindowMs,
-        });
-      }).catch((error) => {
-        if (!actionsDisposed) appendClientLog('WARN', 'sessions.bulk_controls_unavailable', { message: String(error?.message || error) });
-      });
+      const loadHelper = (src, global, failureEvent, onReady) => windowRef.scriptLoaderUtils.ensureScript({ src, isReady: () => Boolean(windowRef[global]), log: appendClientLog })
+        .then(() => { if (!actionsDisposed) onReady?.(); })
+        .catch((error) => { if (!actionsDisposed) appendClientLog('WARN', failureEvent, { message: String(error?.message || error) }); });
+      loadHelper('renderer/shell/renderer-sidebar-bulk-actions.js', 'rendererSidebarBulkActions', 'sessions.bulk_controls_unavailable', () => windowRef.rendererSidebarBulkActions?.createSidebarBulkActions({
+        state, windowRef, callbacks: deps.callbacks, scheduler: deleteUndoScheduler, undoWindowMs,
+      }));
+      loadHelper('renderer/shell/renderer-sidebar-copy-items.js', 'rendererSidebarCopyItems', 'sessions.copy_items_unavailable');
+    }
+    let copyItems = null; // the row menu's Copy group, once the helper has loaded
+    function rowCopyItems(summary) {
+      copyItems = copyItems || windowRef.rendererSidebarCopyItems?.createSidebarCopyItems({ windowRef, getSwitcher: getProjectSwitcher, showToastMessage, appendClientLog, toastSource: TOAST_SOURCE.sessionAction });
+      return copyItems ? copyItems.chatItems(summary) : [];
     }
 
     function getSummary(sessionId) {
       return (Array.isArray(state.sessions) ? state.sessions : [])
         .find((session) => session?.id === sessionId) || null;
     }
+    // The primary "Jenny" chat (row 69): never archived, deleted, moved or linked from here.
+    const isPrimary = isPrimarySession;
 
     const metaPending = new Set();
     state.ui.sidebarMetaPending = metaPending;
@@ -174,7 +176,7 @@
 
     function requestDeleteSession(sessionId) {
       const summary = getSummary(sessionId);
-      if (!summary || state.ui.sidebarBulkBusy || metaPending.has(sessionId) || isSessionPendingDelete(sessionId)) {
+      if (!summary || isPrimary(summary) || state.ui.sidebarBulkBusy || metaPending.has(sessionId) || isSessionPendingDelete(sessionId)) {
         return false;
       }
       const title = clipTitle(summary.title);
@@ -271,7 +273,7 @@
 
     async function toggleArchiveSession(sessionId) {
       const summary = getSummary(sessionId);
-      if (!summary || state.ui.sidebarBulkBusy || metaPending.has(sessionId)) return;
+      if (!summary || isPrimary(summary) || state.ui.sidebarBulkBusy || metaPending.has(sessionId)) return;
       const nextArchivedAt = summary.archived_at ? null : new Date().toISOString();
       let updated;
       try {
@@ -405,10 +407,9 @@
 
     function openSessionRowMenu({ sessionId, anchorX, anchorY, trigger }) {
       const summary = getSummary(sessionId);
-      if (!summary || state.ui.sidebarBulkBusy || metaPending.has(sessionId) || isSessionPendingDelete(sessionId)) {
-        return false;
-      }
+      if (!summary || state.ui.sidebarBulkBusy || metaPending.has(sessionId) || isSessionPendingDelete(sessionId)) return false;
       const pinned = summary.pinned === true;
+      const primary = isPrimary(summary);
       const archived = Boolean(summary.archived_at);
       const lockdown = summary.lockdown === true;
       // Offer the OPPOSITE of the current default so the user can override it
@@ -416,22 +417,19 @@
       // in This Tab". Only shown when the open path + preference are both wired.
       const defaultNewTab = globalThis.sessionOpenPrefUtils?.getOpenSessionsInNewTab?.() === true;
       const overrideItems = typeof activateWorkspaceSession === 'function'
-        ? [
-          {
+        ? [{
             label: defaultNewTab ? jt('sidebar.sessionActions.openInThisTab', 'Open in This Tab') : jt('sidebar.sessionActions.openInNewTab', 'Open in New Tab'),
             action: () => openSessionWithMode(sessionId, defaultNewTab ? 'replace' : 'new-tab'),
-          },
-          { separator: true },
-        ]
+          }, { separator: true }]
         : [];
       // Plugin sessions belong to their provider, not to a project.
-      const moveItems = typeof getProjectSwitcher === 'function' && summary.session_type !== 'plugin'
+      const moveItems = typeof getProjectSwitcher === 'function' && summary.session_type !== 'plugin' && !primary
         ? [{ label: jt('sidebar.sessionActions.moveToProject', 'Move to project ›'), action: () => openMoveToProject(sessionId, trigger) }]
         : [];
       // Linking is reachable from here even with one open chat (the rail's
       // tab menu needs two tabs to exist). Same labels as the tab menu.
       const linkedCount = (summary.linked_session_ids || []).filter(Boolean).length;
-      const linkItems = typeof openLinkedSessions === 'function' && summary.session_type !== 'plugin'
+      const linkItems = typeof openLinkedSessions === 'function' && summary.session_type !== 'plugin' && !primary
         ? [{
             label: linkedCount > 0
               ? jt('shell.workspaceChrome.linkSessionsLinkedCount', 'Link sessions… · {count} linked', { count: linkedCount })
@@ -446,6 +444,8 @@
         && summary.messaging_addressable !== false
         ? [{ label: jt('sidebar.sessionActions.sendToChat', 'Send to chat…'), action: () => openSendToChat(sessionId, trigger || rowMenuButton(sessionId)) }]
         : [];
+      const primaryMenu = primary && globalThis.rendererPrimarySessionMenu;
+      const primaryItems = primaryMenu ? primaryMenu.buildPrimaryMenuItems({ sessionId, summary, store: deps.callbacks.getPrimaryChatStore?.(), flags: state.features?.featureFlags || {}, callbacks: deps.callbacks, jt, trigger: trigger || rowMenuButton(sessionId) }) : [];
       const linkedChild = Boolean(summary.spawned_from) && summary.session_type !== 'plugin' && getMessagesStore();
       const reportItems = linkedChild
         ? [{
@@ -464,7 +464,7 @@
         onActionError: (error) => showSessionActionError(error, jt('sidebar.sessionActions.actionFailed', 'Session Action Failed')),
         items: [
           ...overrideItems,
-          { label: pinned ? jt('sidebar.sessionActions.unpin', 'Unpin') : jt('sidebar.sessionActions.pin', 'Pin'), action: () => togglePinSession(sessionId) },
+          ...(primary ? [] : [{ label: pinned ? jt('sidebar.sessionActions.unpin', 'Unpin') : jt('sidebar.sessionActions.pin', 'Pin'), action: () => togglePinSession(sessionId) }]),
           ...(isOfflineLockdownEnabled()
             ? [{
                 label: jt('sidebar.sessionActions.offlineLockdown', 'Offline lockdown'),
@@ -475,25 +475,18 @@
           { label: jt('common.rename', 'Rename'), action: () => beginInlineRename(sessionId) },
           ...linkItems,
           ...sendItems,
+          ...primaryItems,
           ...reportItems,
           ...moveItems,
-          { label: archived ? jt('sidebar.sessionActions.unarchive', 'Unarchive') : jt('sidebar.sessionActions.archive', 'Archive'), action: () => toggleArchiveSession(sessionId) },
-          { separator: true },
-          { label: jt('common.delete', 'Delete'), action: () => requestDeleteSession(sessionId) },
+          ...(primary ? [] : [{ label: archived ? jt('sidebar.sessionActions.unarchive', 'Unarchive') : jt('sidebar.sessionActions.archive', 'Archive'), action: () => toggleArchiveSession(sessionId) }]),
+          ...rowCopyItems(summary),
+          ...(primary ? [] : [
+            { separator: true },
+            { label: jt('common.delete', 'Delete'), action: () => requestDeleteSession(sessionId) },
+          ]),
         ],
       });
       return true;
-    }
-
-    function toggleArchivedView() {
-      if (typeof toggleChatsScope === 'function') {
-        return toggleChatsScope();
-      }
-      state.ui.sidebarArchivedView = !(state.ui.sidebarArchivedView === true);
-      renderSessions();
-      appendClientLog('INFO', 'sessions.archived_view_toggled', {
-        visible: state.ui.sidebarArchivedView === true,
-      });
     }
 
     /* Sweep is two-step: a dry run sizes the batch, then a toast action
@@ -588,7 +581,6 @@
       togglePinSession,
       toggleOfflineLockdown,
       toggleArchiveSession,
-      toggleArchivedView,
       requestDeleteSession,
       sweepEmptyChats,
       isSessionPendingDelete,

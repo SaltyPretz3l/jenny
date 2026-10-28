@@ -2,9 +2,12 @@
  * file dots or compact tiles, selection rays show dependencies, and the
  * activity layer pulses in the warm --warning family. Dot/tile color encodes
  * language, rings encode health/findings, and warm color encodes activity.
- * All rules are scoped under .ide-map-host and loaded from styles.css. */
+ * All rules are scoped under .ide-map-host and loaded from styles.css. The
+ * stage host / pannable viewport / content-plane rules are shared with the
+ * Exploded View (styles/ide-explode-view.css, loaded after this file). */
 
-.ide-map-host {
+.ide-map-host,
+.ide-exploded-host {
   position: absolute;
   inset: 0;
   z-index: 2;
@@ -12,16 +15,20 @@
   background: var(--bg-base);
 }
 
-.ide-map-host.hidden {
+.ide-map-host.hidden,
+.ide-exploded-host.hidden {
   display: none;
 }
 
-/* Stage switch (editor ↔ map) crossfade-in. */
-.ide-map-host:not(.hidden) {
+/* Stage switch (editor ↔ map / code ↔ exploded) crossfade-in. */
+.ide-map-host:not(.hidden),
+.ide-exploded-host:not(.hidden) {
   animation: scrim-in var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
-.ide-map-viewport {
+/* Pannable/zoomable viewport; the shared transform controller drives it. */
+.ide-map-viewport,
+.ide-explode-viewport {
   position: absolute;
   inset: 0;
   overflow: hidden;
@@ -29,11 +36,10 @@
   cursor: grab;
 }
 
-.ide-map-viewport.is-panning {
-  cursor: grabbing;
-}
-
-.ide-map-content {
+/* The transformed content plane: translate/scale applied by the transform
+ * controller; everything inside is positioned in content coordinates. */
+.ide-map-content,
+.ide-explode-content {
   position: absolute;
   left: 0; /* rtl:physical */
   top: 0;
@@ -111,7 +117,6 @@
 .ide-atlas-district-name {
   color: var(--text-secondary);
   font-family: var(--font-family-mono, ui-monospace, monospace);
-  font-size: 1em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -124,13 +129,11 @@
 
 .ide-atlas-district-flat {
   color: var(--text-muted);
-  font-size: 1em;
 }
 
 .ide-atlas-district-count {
   flex: none;
   color: var(--text-muted);
-  font-size: 1em;
   line-height: 1.6;
 }
 
@@ -145,15 +148,22 @@
   opacity: 0.85;
 }
 
-.ide-atlas-langseg { height: 100%; }
-.ide-atlas-langseg--js { background: var(--accent); }
-.ide-atlas-langseg--ts { background: color-mix(in srgb, var(--accent) 65%, var(--accent-cyan)); }
-.ide-atlas-langseg--py { background: var(--accent-cyan); }
-.ide-atlas-langseg--css { background: var(--state-success); }
-.ide-atlas-langseg--html { background: var(--state-warning); }
-.ide-atlas-langseg--md { background: var(--text-muted); }
-.ide-atlas-langseg--data { background: var(--text-secondary); }
-.ide-atlas-langseg--other { background: var(--text-muted); }
+.ide-atlas-langseg {
+  height: 100%;
+  background: var(--atlas-lang, var(--text-muted));
+}
+
+/* Language tint, one --atlas-lang per language for segments, dots, tiles and
+ * the footer key. The --atlas-lang-* tokens (foundation.css, light palettes)
+ * never reuse --state-* colours, which belong to Health and git. */
+.ide-atlas-langseg--js, .ide-atlas-dot--lang-js, .ide-atlas-tile--lang-js, .ide-map-key--js { --atlas-lang: var(--atlas-lang-js); }
+.ide-atlas-langseg--ts, .ide-atlas-dot--lang-ts, .ide-atlas-tile--lang-ts, .ide-map-key--ts { --atlas-lang: var(--atlas-lang-ts); }
+.ide-atlas-langseg--py, .ide-atlas-dot--lang-py, .ide-atlas-tile--lang-py, .ide-map-key--py { --atlas-lang: var(--atlas-lang-py); }
+.ide-atlas-langseg--css, .ide-atlas-dot--lang-css, .ide-atlas-tile--lang-css, .ide-map-key--css { --atlas-lang: var(--atlas-lang-css); }
+.ide-atlas-langseg--html, .ide-atlas-dot--lang-html, .ide-atlas-tile--lang-html, .ide-map-key--html { --atlas-lang: var(--atlas-lang-html); }
+.ide-atlas-langseg--md, .ide-atlas-dot--lang-md, .ide-atlas-tile--lang-md, .ide-map-key--md { --atlas-lang: var(--atlas-lang-md); }
+.ide-atlas-langseg--data, .ide-atlas-dot--lang-data, .ide-atlas-tile--lang-data, .ide-map-key--data { --atlas-lang: var(--atlas-lang-data); }
+.ide-atlas-langseg--other, .ide-atlas-dot--lang-other, .ide-atlas-tile--lang-other, .ide-map-key--other { --atlas-lang: var(--atlas-lang-other); }
 
 /* Health tick: shown only while the Health layer is on. */
 .ide-atlas-health {
@@ -179,22 +189,19 @@
   pointer-events: none;
 }
 
+/* No opacity transition: thousands of dots restyle on every hover/spotlight
+ * change, and a per-dot transition turns that into a long animation pass. */
 .ide-atlas-dot {
   fill: var(--atlas-lang, var(--text-muted));
   opacity: 0.8;
-  transition: opacity var(--transition-fast);
 }
 
-.ide-atlas-dot--lang-js { --atlas-lang: var(--accent); }
-.ide-atlas-dot--lang-ts { --atlas-lang: color-mix(in srgb, var(--accent) 65%, var(--accent-cyan)); }
-.ide-atlas-dot--lang-py { --atlas-lang: var(--accent-cyan); }
-.ide-atlas-dot--lang-css { --atlas-lang: var(--state-success); }
-.ide-atlas-dot--lang-html { --atlas-lang: var(--state-warning); }
-.ide-atlas-dot--lang-md { --atlas-lang: var(--text-muted); }
-.ide-atlas-dot--lang-data { --atlas-lang: var(--text-secondary); }
-.ide-atlas-dot--lang-other { --atlas-lang: var(--text-muted); }
-
-.ide-atlas-dot--test { opacity: 0.4; }
+/* Tests read as a hollow ring (the footer key says "Test"), not a faded dot. */
+.ide-atlas-dot--test {
+  fill: transparent;
+  stroke: var(--atlas-lang, var(--text-muted));
+  stroke-width: 1.5;
+}
 
 .ide-atlas-dot--git-modified { stroke: var(--state-warning); stroke-width: 2; }
 .ide-atlas-dot--git-added { stroke: var(--state-success); stroke-width: 2; }
@@ -243,16 +250,6 @@
   z-index: 2;
 }
 
-.ide-atlas-tile--lang-js { --atlas-lang: var(--accent); }
-.ide-atlas-tile--lang-ts { --atlas-lang: color-mix(in srgb, var(--accent) 65%, var(--accent-cyan)); }
-.ide-atlas-tile--lang-py { --atlas-lang: var(--accent-cyan); }
-.ide-atlas-tile--lang-css { --atlas-lang: var(--state-success); }
-.ide-atlas-tile--lang-html { --atlas-lang: var(--state-warning); }
-.ide-atlas-tile--lang-md { --atlas-lang: var(--text-muted); }
-.ide-atlas-tile--lang-data { --atlas-lang: var(--text-secondary); }
-.ide-atlas-tile--lang-other { --atlas-lang: var(--text-muted); }
-
-.ide-atlas-tile--test { opacity: 0.55; }
 
 .ide-atlas-tile-dot {
   flex: none;
@@ -571,7 +568,7 @@
 
 .ide-map-controls-spacer { flex: 1; }
 
-/* The "Hide tests" switch and its hidden/total readout read as one control. */
+/* The "Hide tests" switch and its test-count readout read as one control. */
 .ide-map-hide-tests {
   display: inline-flex;
   align-items: center;
@@ -742,7 +739,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .ide-atlas-tile,
-  .ide-atlas-dot,
   .ide-atlas-district,
   .ide-atlas-trail-step {
     transition: none;

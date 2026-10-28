@@ -15,6 +15,7 @@ from sidecar.ai.config import (
     resolve_memory_db_path,
 )
 from sidecar.ai.container_lifecycle import StackGenerationOwner
+from sidecar.ai.container_mcp_connect import MCPConnectPlan, MCPConnectTask
 from sidecar.ai.container_mcp_servers import (  # noqa: F401 - _argv_safe_url is a stable test re-export.
     _argv_safe_url,
     _default_mcp_servers,
@@ -206,6 +207,58 @@ def _resolve_workspace_root(config: RuntimeConfig) -> Path | None:
     if raw_workspace is None:
         return None
     return Path(raw_workspace).expanduser()
+
+
+def _mcp_connect_plan(config: RuntimeConfig, workspace_root: Path | None) -> MCPConnectPlan:
+    return MCPConnectPlan(
+        servers=_default_mcp_servers(config, workspace_root),
+        # Must follow the loop profile: an MCP call that outlives this
+        # deadline is killed by the client regardless of the loop budget.
+        request_timeout_seconds=effective_tools_execution_timeout_seconds(config),
+        sse_enabled=config.mcp_sse_enabled,
+        resources_enabled=config.tools_mcp_resources_enabled,
+        allow_private_addresses=config.tools_web_allow_private_addresses,
+    )
+
+
+def _start_mcp_connect(
+    plan: MCPConnectPlan, staged: ExitStack, reuse_from: MCPClient | None,
+) -> MCPConnectTask:
+    mcp_client = MCPClient(request_timeout_seconds=plan.request_timeout_seconds)
+    staged.callback(_close_stack_resource, "mcp_client", mcp_client.close)
+    # Servers whose reuse key is unchanged keep the published generation's
+    # live process. Unwinding runs this first, so a failed candidate hands
+    # those back before it closes what it owns.
+    from sidecar.ai.mcp.client_reuse import return_adopted
+
+    staged.callback(_close_stack_resource, "mcp_client", lambda: return_adopted(mcp_client))
+    task = MCPConnectTask(mcp_client, plan, reuse_from=reuse_from)
+    # Registered last, so unwinding joins the worker before either callback above runs.
+    staged.callback(task.settle)
+    return task
+
+
+def _replan_mcp_connect(
+    task: MCPConnectTask,
+    plan: MCPConnectPlan,
+    staged: ExitStack,
+    reuse_from: MCPClient | None,
+) -> MCPConnectTask:
+    """Keep the early connect when the effective config planned the same one."""
+    if plan == task.plan:
+        return task
+    task.settle()
+    _close_stack_resource("mcp_client", task.client.close)
+    log_event(
+        logger,
+        logging.INFO,
+        component="ai.container",
+        event="ai.container.mcp_connect_replanned",
+        message="The effective config changed the MCP connect plan; reconnecting.",
+        status="success",
+        data={"servers": len(plan.servers)},
+    )
+    return _start_mcp_connect(plan, staged, reuse_from)
 
 
 def _sub_agent_slot_allocator_for_config(config: RuntimeConfig) -> SubAgentSlotAllocator:
@@ -495,6 +548,14 @@ class BrainContainer:
         # legitimately inlined a token into. That path must keep working -- the
         # token is lifted, merged back for parsing, and kept out of raw_config.
         config, scrubbed, effective_secrets = _parse_candidate_config(raw_config, secrets)
+        # The builtin MCP spawn and handshake run beside the engine probe, memory
+        # open and context build; the plan is re-checked once the effective
+        # config is known (container_mcp_connect).
+        previous_stack = self._stack
+        reuse_from = previous_stack.mcp_client if previous_stack is not None else None
+        mcp_connect = _start_mcp_connect(
+            _mcp_connect_plan(config, _resolve_workspace_root(config)), staged, reuse_from,
+        )
         # Built BEFORE create_engine and threaded in: create_engine runs
         # `load_model`, which is the SOLE writer of capability profiles. When
         # this store was constructed afterwards and attached to an
@@ -590,6 +651,10 @@ class BrainContainer:
             system_prompt=system_prompt,
         )
         _sync_engine_with_effective_config(engine_selection.engine, effective_config)
+        workspace_root = _resolve_workspace_root(effective_config)
+        mcp_connect = _replan_mcp_connect(
+            mcp_connect, _mcp_connect_plan(effective_config, workspace_root), staged, reuse_from,
+        )
         memory_store, memory_service = _open_memory_service(
             effective_config,
             staged,
@@ -600,7 +665,6 @@ class BrainContainer:
         staged.callback(_close_stack_resource, "monitor_manager", monitor_manager.close)
         monitor_manager.recover_stale_monitors()
         sub_agent_slot_allocator = _sub_agent_slot_allocator_for_config(effective_config)
-        workspace_root = _resolve_workspace_root(effective_config)
         # Hosted tools may still use their explicitly configured filesystem
         # root, but that root must never become prompt/bootstrap context.
         context_builder = ContextBuilder(
@@ -613,30 +677,10 @@ class BrainContainer:
             ),
         )
 
-        mcp_client = MCPClient(
-            # Must follow the loop profile: an MCP call that outlives this
-            # deadline is killed by the client regardless of the loop budget.
-            request_timeout_seconds=effective_tools_execution_timeout_seconds(effective_config),
-        )
-        staged.callback(_close_stack_resource, "mcp_client", mcp_client.close)
-        # Servers whose reuse key is unchanged keep the published generation's
-        # live process. Unwinding runs this first, so a failed candidate hands
-        # those back before it closes what it owns.
-        from sidecar.ai.mcp.client_reuse import return_adopted
-
-        staged.callback(_close_stack_resource, "mcp_client", lambda: return_adopted(mcp_client))
-        previous_stack = self._stack
-        mcp_servers = _default_mcp_servers(effective_config, workspace_root)
-        mcp_client.configure(
-            mcp_servers,
-            sse_enabled=effective_config.mcp_sse_enabled,
-            resources_enabled=effective_config.tools_mcp_resources_enabled,
-            allow_private_addresses=effective_config.tools_web_allow_private_addresses,
-            reuse_from=previous_stack.mcp_client if previous_stack is not None else None,
-        )
+        mcp_client = mcp_connect.result()
         effective_config = replace(
             effective_config,
-            mcp_servers=mcp_servers,
+            mcp_servers=mcp_connect.plan.servers,
             agent_workspace_root=str(workspace_root) if workspace_root is not None else None,
         )
 

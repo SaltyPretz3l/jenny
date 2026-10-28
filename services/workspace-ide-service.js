@@ -24,7 +24,7 @@ const {
   walkWorkspaceFiles,
 } = require('./workspace-ide-enumerator');
 const { resolveWalkIgnorePolicy } = require('./workspace-ide-ignore-policy');
-const { searchWorkspaceFiles } = require('./workspace-ide-search');
+const { searchInFilesForService } = require('./workspace-ide-service-search');
 const { readCappedFile } = require('./workspace-ide-file-reads');
 const { IMAGE_READ_MAX_BYTES, imageMimeTypeForExtension } = require('./workspace-ide-image-reads');
 const {
@@ -33,6 +33,7 @@ const {
 } = require('./workspace-ide-generated-directories');
 const { WorkspaceRootOperationManager, sameFileIdentity } = require('./workspace-root-operation');
 const { createWorkspaceIdeRecoveryIo, replaceLeafAtomically } = require('./workspace-ide-recovery-io');
+const { EXTERNAL_OPEN_REFUSED_CODE, isExternalOpenAllowed } = require('./shared/external-open-policy');
 
 const READ_MAX_BYTES_DEFAULT = 5 * 1024 * 1024;
 const BINARY_SCAN_LENGTH = 8192;
@@ -836,23 +837,22 @@ class WorkspaceIdeService {
     return { path: relPath, revealed: true };
   }
 
-  // Opens the item with the OS default application (shell.openPath).
-  // openPath resolves to '' on success or a human-readable error string.
+  // Opens the item with the OS default application (shell.openPath), only for
+  // the shared external-open allowlist: the requested AND the real (symlink-
+  // resolved) path must both be a passive document/media type, else typed
+  // CMP-ARTIFACT-0013. openPath resolves to '' or a human-readable error string.
   async openInDefaultApp(payload = {}) {
     const { relPath, realPath } = await this._resolveInsideRoot(payload.path);
+    const hint = buildPathLogHint(relPath);
+    if (!isExternalOpenAllowed(relPath) || !isExternalOpenAllowed(realPath)) {
+      this._log('WARN', 'workspace_fs.open_in_default_app_refused', hint);
+      throw workspaceFsError(EXTERNAL_OPEN_REFUSED_CODE, 'File type is unsafe and cannot be opened externally.', hint);
+    }
     if (!(await this._statIfExists(realPath))) {
-      throw workspaceFsError(
-        WORKSPACE_FS_ERROR_CODES.NOT_FOUND,
-        'File or folder not found in the workspace.',
-        buildPathLogHint(relPath)
-      );
+      throw workspaceFsError(WORKSPACE_FS_ERROR_CODES.NOT_FOUND, 'File or folder not found in the workspace.', hint);
     }
     if (!this._openPathImpl) {
-      throw workspaceFsError(
-        WORKSPACE_FS_ERROR_CODES.OPEN_UNAVAILABLE,
-        'Open in Default App is unavailable in this shell mode.',
-        buildPathLogHint(relPath)
-      );
+      throw workspaceFsError(WORKSPACE_FS_ERROR_CODES.OPEN_UNAVAILABLE, 'Open in Default App is unavailable in this shell mode.', hint);
     }
     const failure = String((await this._openPathImpl(realPath)) || '');
     if (failure) {
@@ -889,87 +889,10 @@ class WorkspaceIdeService {
     return { path: relPath, found: true, content: String(result.content ?? '') };
   }
 
-  // Streamed find-in-files over the pinned workspace root; enumeration, byte,
-  // result, and deadline budgets live in workspace-ide-search.js.
+  // Streamed find-in-files over the pinned workspace root; see
+  // workspace-ide-service-search.js and workspace-ide-search.js.
   async searchInFiles(payload = {}, existingOperation = null) {
-    this._activeSearchController?.abort();
-    const searchController = new AbortController();
-    this._activeSearchController = searchController;
-    const query = String(payload.query ?? '');
-    try {
-      return await this._withRootOperation('read', payload, existingOperation, async (operation) => {
-        let scope = '';
-        let scopeInvalid = false;
-        if (typeof payload.scope === 'string' && payload.scope.trim()) {
-          try {
-            scope = this._normalizeRelPath(payload.scope.trim());
-          } catch (_error) {
-            scopeInvalid = true;
-          }
-        }
-        const root = operation.root;
-        const ignorePolicy = await resolveWalkIgnorePolicy({
-          gitService: this._gitServiceProvider?.(), signal: operation.signal,
-          platform: this._platform, extraSkipNames: ['node_modules'],
-        });
-        const result = await searchWorkspaceFiles({
-          root: scopeInvalid ? '' : root.realPath,
-          query,
-          caseSensitive: payload.caseSensitive === true,
-          maxResults: payload.maxResults,
-          maxFileBytes: payload.maxFileBytes,
-          maxTotalBytes: payload.maxTotalBytes,
-          maxFiles: payload.maxFiles,
-          maxDirectories: payload.maxDirectories,
-          maxEntries: payload.maxEntries,
-          maxDurationMs: payload.maxDurationMs,
-          scope,
-          fs: this._fs,
-          path: this._path,
-          ignorePolicy,
-          resolveDirectory: async (relPath) => {
-            await this._rootOperations.revalidateRoot(root, operation);
-            if (!relPath) return root.realPath;
-            const directory = await this._rootOperations.resolveLeaf(root, relPath, operation);
-            return directory.stats?.isDirectory?.() ? directory.realPath : null;
-          },
-          resolveFile: async (relPath) => {
-            const file = await this._rootOperations.resolveLeaf(root, relPath, operation);
-            if (!file.stats?.isFile?.()) return null;
-            return { filePath: file.operationPath, stats: file.stats, token: file };
-          },
-          revalidateFile: async (target) => {
-            await this._rootOperations.revalidateLeaf(root, target.token, operation);
-            return true;
-          },
-          signal: searchController.signal,
-          assertCurrent: () => this._rootOperations.assertCurrent(operation),
-          now: this._now,
-          onWarning: (reason) => this._log('WARN', 'workspace_fs.search_cleanup_degraded', {
-            reason,
-          }),
-        });
-        this._log(result.truncated ? 'WARN' : 'INFO', 'workspace_fs.search', {
-          query_length: query.length,
-          scoped: Boolean(scope),
-          result_count: result.results.length,
-          files_scanned: result.filesScanned,
-          directories_scanned: result.directoriesScanned,
-          entries_scanned: result.entriesScanned,
-          limit_hit: result.limitHit,
-          ...(result.truncationReason ? { truncation_reason: result.truncationReason } : {}),
-        });
-        return {
-          ...result,
-          rootId: operation.context.rootId,
-          generation: operation.context.generation,
-        };
-      });
-    } finally {
-      if (this._activeSearchController === searchController) {
-        this._activeSearchController = null;
-      }
-    }
+    return searchInFilesForService(this, payload, existingOperation);
   }
 
   // WIDE-028 (c): suppression records are short-lived one-shot tokens - full

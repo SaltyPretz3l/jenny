@@ -88,7 +88,7 @@
     renderIde: noop, layoutIdeEditor: noop, reconcileChatDockHost: function () { return false; },
     renderHomePanel: noop, shouldRenderHomePanel: function () { return false; },
     renderAttachmentTray: noop, renderComposerStatusNotice: noop, renderToastViewport: noop,
-    renderComposerPopover: noop, renderCommandPopover: noop, renderComposerEnhancements: noop,
+    renderComposerPopover: noop, renderComposerEnhancements: noop,
     renderComposerInteractivePanel: noop, closeComposerPopover: noop,
     setComposerHoloState: noop, updateTokenDisplay: noop,
   };

@@ -41,11 +41,11 @@
     var getBridge = typeof options.getBridge === 'function' ? options.getBridge : function () {
       return null;
     };
-    var onStatus = typeof options.onStatus === 'function' ? options.onStatus : function () {};
 
     var statusOverride = null;
     var builtHost = null;
-    var lastState = { values: {}, fields: [], groups: [], pending: false, activeStream: false };
+    var lastState = { values: {}, fields: [], pending: false, activeStream: false };
+    var lastPayload = ''; // the engine state last shown, serialized: an unchanged re-read skips the row syncs
     var armedReset = '';
     var armTimer = null;
     var streamRecheckTimer = null;
@@ -193,7 +193,6 @@
           ? (statusRow ? statusRow({ tone: status.tone, message: status.text }) : escapeHtml(status.text)) : '');
         target.advancedTuningStatus.hidden = !status.text;
       }
-      onStatus(status);
     }
 
     // forceKey: the engine line whose edit just settled or was refused. Its field takes the
@@ -213,19 +212,25 @@
           var descriptor = fieldDescriptors.getSettingDescriptor(FIELD_ID_PREFIX + field.key);
           if (!descriptor) return;
           var value = isModified(field) ? lastState.values[field.key] : field.default;
-          fieldBinding.syncSettingRow(host, descriptor, value, { liveDefault: field.default, inventory: inventory, force: field.key === forceKey });
+          // The line holds the field's control, quick picks and Revert slot.
+          var line = host.querySelector('[data-limits-line="' + descriptor.id + '"]') || host;
+          fieldBinding.syncSettingRow(line, descriptor, value, { liveDefault: field.default, inventory: inventory, force: field.key === forceKey });
         });
         setControlsDisabled(target, engineLocked());
       }
       renderPageState(target);
     }
 
+    function serialize(value) {
+      try { return JSON.stringify(value) || ''; } catch (_error) { return ''; }
+    }
+
     function setState(nextState, dom, forceKey) {
       var source = nextState && typeof nextState === 'object' ? nextState : {};
+      lastPayload = serialize(nextState);
       lastState = {
         values: source.values && typeof source.values === 'object' ? source.values : {},
         fields: Array.isArray(source.fields) ? source.fields : lastState.fields,
-        groups: Array.isArray(source.groups) ? source.groups : lastState.groups,
         pending: Boolean(source.pending),
         activeStream: Boolean(source.activeStream),
       };
@@ -269,7 +274,9 @@
     }
 
     async function refresh(dom, forceKey) {
-      render(dom);
+      var host = dom && dom.advancedTuningFields;
+      // Before the read, only a host without its rows (or before any state) needs a paint.
+      if (!lastState.fields.length || builtHost !== host) render(dom);
       var bridge = getBridge();
       if (!bridge || typeof bridge.getState !== 'function') {
         // Nothing can load the engine lines: they stay locked, and the page says why.
@@ -283,6 +290,13 @@
       try {
         var payload = await bridge.getState();
         if (!lifecycleGate.isCurrent(refreshToken)) return;
+        // A re-read that changed nothing (a section show, the reply-lock poll) leaves the rows
+        // as they are; the page state still follows the engine type and the status.
+        if (!forceKey && !inFlight && builtHost === host && lastPayload && serialize(payload) === lastPayload) {
+          renderPageState(dom || {});
+          scheduleStreamRecheck(dom);
+          return;
+        }
         setState(payload, dom, forceKey);
       } catch (_error) {
         if (!lifecycleGate.isCurrent(refreshToken)) return;
@@ -315,13 +329,11 @@
      * surfacing, and the re-render cannot drift apart between handlers.
      * While one change is applying (a sidecar refresh - seconds, not ms) every
      * other control is disabled, so a second edit cannot be typed into a row
-     * that the post-apply re-render would silently revert; if one slips through
-     * anyway (keyboard, programmatic), say so instead of dropping it. */
+     * that the post-apply re-render would silently revert; one that slips through
+     * anyway (keyboard, programmatic) is not sent, and the page status already
+     * says another change is still applying. */
     async function submit(dom, invoke, fieldKey) {
-      if (inFlight) {
-        onStatus({ tone: 'warning', text: describeFailure({ reason: 'update_in_progress' }) });
-        return;
-      }
+      if (inFlight) return;
       inFlight = true;
       statusOverride = null;
       var host = dom.advancedTuningFields;

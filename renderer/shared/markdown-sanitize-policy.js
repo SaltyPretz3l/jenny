@@ -48,6 +48,35 @@
 
   const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 
+  // Rendered Markdown lives in the app's file:// page, so a protocol-relative
+  // (`//host/x.png`) or UNC-style (`\\host\share`) image source resolves to
+  // `file://host/...`, which Chromium on Windows fetches over SMB and so leaks
+  // the user's NTLM hash. Drop any image source that could reach a file host;
+  // data:, relative and http(s) sources are unaffected. The main process also
+  // cancels host-bearing file:// requests (services/main/default-session-wiring.js).
+  const FILE_RESOLUTION_BASE = 'file:///jenny/index.html';
+  const LEADING_SEPARATORS_RE = /^(?:[\\/]|%5c|%2f)+/i;
+  const SEPARATOR_RE = /[\\/]|%5c|%2f/gi;
+
+  function reachesFileHost(rawValue) {
+    // Mirror the URL parser: tabs/newlines vanish anywhere, C0/space trims at the start.
+    let value = String(rawValue || '').replace(/[\t\n\r]/g, '');
+    let start = 0;
+    while (start < value.length && value.charCodeAt(start) <= 0x20) start += 1;
+    value = value.slice(start);
+    const lead = (LEADING_SEPARATORS_RE.exec(value) || [''])[0];
+    if ((lead.match(SEPARATOR_RE) || []).length >= 2 || /\\|%5c/i.test(lead)) return true;
+    let parsed;
+    try {
+      parsed = new URL(value, FILE_RESOLUTION_BASE);
+    } catch (_error) {
+      return true;
+    }
+    if (parsed.protocol !== 'file:') return false;
+    const host = parsed.hostname.toLowerCase();
+    return (host !== '' && host !== 'localhost') || /^\/(?:[\\/]|%5c|%2f)/i.test(parsed.pathname);
+  }
+
   function hardenAttributes(node) {
     if (!node || typeof node.getAttribute !== 'function') return;
     // Installed as an afterSanitizeAttributes hook on the SHARED DOMPurify
@@ -85,6 +114,7 @@
     }
 
     if (tagName === 'img') {
+      if (node.hasAttribute('src') && reachesFileHost(node.getAttribute('src'))) node.removeAttribute('src');
       node.setAttribute('loading', 'lazy');
       node.setAttribute('decoding', 'async');
     }
@@ -103,5 +133,5 @@
     return 'Code';
   }
 
-  return { config, hardenAttributes, getLanguageLabel };
+  return { config, hardenAttributes, getLanguageLabel, reachesFileHost };
 });

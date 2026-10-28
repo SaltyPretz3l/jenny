@@ -13,10 +13,6 @@
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   const MAX_MEDIA_BYTES = 32 * 1024 * 1024;
   const MAX_INSERT_IMAGE_BYTES = 10 * 1024 * 1024;
-  const CONTENT_TYPES_NS = 'http://schemas.openxmlformats.org/package/2006/content-types';
-  const RELATIONSHIPS_NS = 'http://schemas.openxmlformats.org/package/2006/relationships';
-  const NUMBERING_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml';
-  const NUMBERING_RELATIONSHIP = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering';
 
   function resolveModule(globalName, requirePath) {
     if (globalRef[globalName]) return globalRef[globalName];
@@ -30,73 +26,18 @@
     return {};
   }
 
-  function decodeBase64(base64, windowRef) {
-    const binary = windowRef.atob(String(base64 || ''));
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index += 1) {
-      bytes[index] = binary.charCodeAt(index);
-    }
-    return bytes;
-  }
+  const packageUtils = resolveModule('rendererIdeDocxPackage', './renderer-ide-docx-package');
 
-  function encodeBase64(bytes, windowRef) {
-    const chunks = [];
-    for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-      chunks.push(String.fromCharCode(...bytes.subarray(offset, offset + 0x8000)));
-    }
-    return windowRef.btoa(chunks.join(''));
-  }
+  // Native Uint8Array base64 where the engine has it (shared with the PDF pane).
+  const { decodeBase64, encodeBase64 } = resolveModule('rendererBytesBase64', '../shared/bytes-base64');
 
-  function mediaMime(name) {
-    const extension = String(name || '').split('.').pop().toLowerCase();
-    return {
-      png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
-      bmp: 'image/bmp', webp: 'image/webp',
-    }[extension] || '';
-  }
-
-  function xmlDeclaration(xml) {
-    return String(xml || '').match(/^<\?xml[^\r\n]*\?>(?:\r\n|\n|\r)?/)?.[0] || '';
-  }
-
-  function parseXml(Parser, xml) {
-    const documentRef = new Parser().parseFromString(String(xml || ''), 'application/xml');
-    if (!documentRef.documentElement || documentRef.documentElement.localName === 'parsererror'
-      || documentRef.getElementsByTagName('parsererror').length) {
-      const error = new Error('Invalid DOCX package XML');
-      error.code = 'docx_invalid';
-      throw error;
-    }
-    return documentRef;
-  }
-
-  function findBlock(blocks, id) {
-    for (const block of blocks || []) {
-      if (block.id === id) return block;
-      if (block.type === 'table') {
-        for (const row of block.rows || []) {
-          for (const cell of row.cells || []) {
-            const match = findBlock(cell.blocks, id);
-            if (match) return match;
-          }
-        }
-      }
-    }
-    return null;
-  }
-
-  function findBlockGroup(blocks, id) {
-    if ((blocks || []).some((block) => block.id === id)) return blocks;
-    for (const block of blocks || []) {
-      if (block.type !== 'table') continue;
-      for (const row of block.rows || []) {
-        for (const cell of row.cells || []) {
-          const match = findBlockGroup(cell.blocks, id);
-          if (match) return match;
-        }
-      }
-    }
-    return null;
+  // UTF-16 length of the code point that ends (backward) or starts at `offset`,
+  // so Backspace/Delete never strands half of a surrogate pair.
+  function codePointLength(text, offset, backward) {
+    const index = backward ? offset - 2 : offset;
+    const high = text.charCodeAt(index);
+    const low = text.charCodeAt(index + 1);
+    return high >= 0xd800 && high <= 0xdbff && low >= 0xdc00 && low <= 0xdfff ? 2 : 1;
   }
 
   function createIdeDocxPane(deps) {
@@ -109,6 +50,11 @@
     const modelUtils = deps?.modelUtils || resolveModule('rendererIdeDocxModel', './renderer-ide-docx-model');
     const richUtils = deps?.richUtils || resolveModule('rendererIdeDocxRich', './renderer-ide-docx-rich');
     const renderUtils = deps?.renderUtils || resolveModule('rendererIdeDocxRender', './renderer-ide-docx-render');
+    const imageTypes = resolveModule('rendererIdeDocxImageModel', './renderer-ide-docx-image-model').IMAGE_TYPES || {};
+    const mimeByExtension = Object.fromEntries(Object.entries(imageTypes).map(([mime, extension]) => [extension, mime]));
+    mimeByExtension.jpeg = 'image/jpeg';
+    const imageInvalidMessage = () => jt('ide.docx.imageInvalid', 'Choose a valid PNG, JPEG, GIF, WebP, or BMP image.');
+    const imageTooLargeMessage = () => jt('ide.docx.imageTooLarge', 'Choose an image smaller than 10 MiB.');
     const actionButton = resolveModule('inventoryActionButton', '../inventory/action-button');
     const fileInput = resolveModule('inventoryFileInput', '../inventory/file-input');
     const documents = new Map();
@@ -118,6 +64,7 @@
     let paneEl = null;
     let documentsEl = null;
     let notesEl = null;
+    let reviewEl = null;
     let currentPath = null;
     let disposed = false;
     let typing = null;
@@ -125,7 +72,6 @@
     let selectedImage = null;
 
     function toolbarButton(action, label, title) {
-      if (typeof actionButton !== 'function') return '';
       return actionButton({
         plain: true,
         className: 'ide-docx-action',
@@ -164,16 +110,24 @@
       paneEl.className = 'ide-docx-pane hidden';
       paneEl.innerHTML = buildToolbarMarkup()
         + '<div class="ide-docx-notes hidden" role="status"></div>'
+        + '<div class="ide-docx-notes ide-docx-review-lock hidden" role="status"><span class="ide-docx-review-lock-text"></span>'
+        + actionButton({
+          plain: true, className: 'ide-docx-action ide-docx-review-unlock', label: jt('ide.docx.reviewEditAnyway', 'Edit anyway'),
+          dataset: { 'ide-docx-action': 'editAnyway' },
+        }) + '</div>'
         + '<div class="ide-docx-documents"></div>';
-      if (typeof fileInput === 'function') paneEl.prepend(fileInput(documentRef, {
-        className: 'ide-docx-image-input', accept: 'image/png,image/jpeg,image/gif,image/webp,image/bmp', hidden: true,
+      paneEl.prepend(fileInput(documentRef, {
+        className: 'ide-docx-image-input', accept: Object.keys(imageTypes).join(','), hidden: true,
       }));
       notesEl = paneEl.querySelector('.ide-docx-notes');
+      reviewEl = paneEl.querySelector('.ide-docx-review-lock');
+      reviewEl.querySelector('.ide-docx-review-lock-text').textContent = jt('ide.docx.reviewLocked',
+        'This document tracks changes. Edits made here are not recorded as revisions, so reviewers will not see them as changes.');
       documentsEl = paneEl.querySelector('.ide-docx-documents');
       paneEl.addEventListener('click', handleToolbarClick);
       paneEl.addEventListener('mousedown', handleToolbarMouseDown);
       paneEl.querySelector('.ide-docx-image-input')?.addEventListener('change', handleImageInput);
-      documentRef.addEventListener('selectionchange', handleSelectionChange);
+      documentRef.addEventListener('selectionchange', refreshToolbar);
       host.appendChild(paneEl);
       return paneEl;
     }
@@ -188,27 +142,25 @@
     }
 
     function classifyError(error) {
-      if (error?.code === 'zip_too_large') return makeFailure('document_too_large');
-      if (error?.code === 'zip_unsupported') return makeFailure('document_unsupported');
-      return makeFailure('document_corrupt');
+      return makeFailure({ zip_too_large: 'document_too_large', zip_unsupported: 'document_unsupported' }[error?.code] || 'document_corrupt');
     }
 
     async function readOptionalText(zip, name) {
       return zip.entries.has(name) ? zipUtils.readEntryText(zip, name) : null;
     }
 
-    async function readMedia(zip, windowRef) {
+    async function readMedia(zip) {
       const media = new Map();
       let total = 0;
       for (const name of zip.order) {
         if (!name.startsWith('word/media/')) continue;
-        const mime = mediaMime(name);
+        const mime = mimeByExtension[name.split('.').pop().toLowerCase()] || '';
         const entry = zip.entries.get(name);
         if (!mime || !entry) continue;
         if (total + entry.uncompressedSize > MAX_MEDIA_BYTES) break;
         const bytes = await zipUtils.readEntryBytes(zip, name);
         total += bytes.length;
-        media.set(name, { mime, base64: encodeBase64(bytes, windowRef) });
+        media.set(name, { mime, base64: encodeBase64(bytes) });
       }
       return media;
     }
@@ -219,37 +171,29 @@
       container.setAttribute('contenteditable', 'true');
       container.setAttribute('spellcheck', 'true');
       container.dataset.path = path;
-      const beforeInput = (event) => handleBeforeInput(path, event);
-      const keydown = (event) => handleKeydown(path, event);
-      const compositionStart = () => handleCompositionStart(path);
-      const compositionEnd = (event) => handleCompositionEnd(path, event);
-      const click = (event) => handleDocumentClick(path, event);
-      container.addEventListener('beforeinput', beforeInput);
-      container.addEventListener('keydown', keydown);
-      container.addEventListener('compositionstart', compositionStart);
-      container.addEventListener('compositionend', compositionEnd);
-      container.addEventListener('click', click);
+      const listeners = {
+        beforeinput: (event) => handleBeforeInput(path, event),
+        keydown: (event) => handleKeydown(path, event),
+        compositionstart: () => handleCompositionStart(path),
+        compositionend: (event) => handleCompositionEnd(path, event),
+        click: (event) => handleDocumentClick(path, event),
+      };
+      for (const [type, listener] of Object.entries(listeners)) container.addEventListener(type, listener);
       documentsEl.appendChild(container);
-      return { container, beforeInput, keydown, compositionStart, compositionEnd, click };
+      return { container, listeners };
     }
 
     function removeRecord(record) {
       if (!record) return;
-      record.container.removeEventListener('beforeinput', record.beforeInput);
-      record.container.removeEventListener('keydown', record.keydown);
-      record.container.removeEventListener('compositionstart', record.compositionStart);
-      record.container.removeEventListener('compositionend', record.compositionEnd);
-      record.container.removeEventListener('click', record.click);
+      for (const [type, listener] of Object.entries(record.listeners)) record.container.removeEventListener(type, listener);
       record.container.remove();
+      record.mediaUrls.revoke();
     }
 
     async function load(path, source) {
       const normalizedPath = String(path || '');
       const root = ensurePane();
-      if (!normalizedPath || !root || typeof zipUtils.readZip !== 'function'
-        || typeof modelUtils.createDocxModel !== 'function' || typeof renderUtils.renderBlocks !== 'function') {
-        return makeFailure('document_unsupported');
-      }
+      if (!normalizedPath || !root) return makeFailure('document_unsupported');
       const documentRef = root.ownerDocument;
       const windowRef = documentRef.defaultView;
       const Parser = windowRef?.DOMParser;
@@ -257,10 +201,12 @@
       const generation = ++generationCounter;
       loadGenerations.set(normalizedPath, generation);
       const isCurrent = () => !disposed && loadGenerations.get(normalizedPath) === generation;
+      const mediaUrls = packageUtils.createMediaUrls(windowRef, decodeBase64);
       let zip;
       let model;
+      let reviewed;
       try {
-        const bytes = decodeBase64(source?.base64, windowRef);
+        const bytes = decodeBase64(source?.base64);
         zip = await zipUtils.readZip(bytes);
         if (!zip.entries.has('word/document.xml')) {
           return makeFailure('document_unsupported', jt('ide.docx.notWordDocument', 'not a Word document'));
@@ -268,9 +214,10 @@
         const documentXml = await zipUtils.readEntryText(zip, 'word/document.xml');
         const numberingXml = await readOptionalText(zip, 'word/numbering.xml');
         const relsXml = await readOptionalText(zip, 'word/_rels/document.xml.rels');
-        const media = await readMedia(zip, windowRef);
+        const settingsXml = await readOptionalText(zip, 'word/settings.xml');
+        const media = await readMedia(zip);
         const relatedParts = [];
-        const discovered = richUtils.discoverRelatedParts?.({ documentXml, relsXml, DOMParser: Parser }) || [];
+        const discovered = richUtils.discoverRelatedParts({ documentXml, relsXml, DOMParser: Parser });
         for (const descriptor of discovered) {
           if (!zip.entries.has(descriptor.path)) continue;
           relatedParts.push({
@@ -279,11 +226,13 @@
             relsXml: await readOptionalText(zip, descriptor.relsPath),
           });
         }
-        const modelOptions = { documentXml, numberingXml, relsXml, media, relatedParts, occupiedNames: new Set(zip.entries.keys()), DOMParser: Parser, XMLSerializer: Serializer };
-        model = richUtils.createCompositeDocxModel
-          ? richUtils.createCompositeDocxModel({ ...modelOptions, createDocxModel: modelUtils.createDocxModel })
-          : modelUtils.createDocxModel(modelOptions);
+        model = richUtils.createCompositeDocxModel({
+          documentXml, numberingXml, relsXml, media, mediaUrl: mediaUrls.get, relatedParts, occupiedNames: new Set(zip.entries.keys()),
+          DOMParser: Parser, XMLSerializer: Serializer, createDocxModel: modelUtils.createDocxModel,
+        });
+        reviewed = packageUtils.tracksRevisions(settingsXml, Parser) || model.getUnsupportedNotes().includes('trackedChanges');
       } catch (error) {
+        mediaUrls.revoke();
         log('WARN', 'ide.docx_load_failed', { path: normalizedPath, code: error?.code || 'unknown' });
         return classifyError(error);
       }
@@ -292,6 +241,7 @@
       // record untouched.
       if (!isCurrent() || (typeof source?.shouldCommit === 'function' && source.shouldCommit() !== true)) {
         if (isCurrent() && !documents.has(normalizedPath)) loadGenerations.delete(normalizedPath);
+        mediaUrls.revoke();
         return makeFailure('document_stale', jt('ide.docx.staleReload', 'The document changed before the reload could be applied.'));
       }
       endTyping();
@@ -300,7 +250,14 @@
       if (existing?.dirty) onDirtyChange(normalizedPath, false);
       removeRecord(existing);
       const handlers = createContainer(normalizedPath, documentRef);
-      const record = { path: normalizedPath, zip, model, dirty: false, ...handlers };
+      // A document under review opens read-only until the user opts in; the
+      // opt-in lasts for this open document, across reloads, and is never stored.
+      const reviewOptIn = existing?.reviewOptIn === true;
+      const record = {
+        path: normalizedPath, zip, model, mediaUrls, dirty: false, stateVersion: model.getStateVersion(),
+        locked: reviewed && !reviewOptIn, reviewOptIn, ...handlers,
+      };
+      record.container.setAttribute('contenteditable', String(!record.locked));
       documents.set(normalizedPath, record);
       renderAll(record);
       if (wasVisible) show(normalizedPath);
@@ -308,51 +265,28 @@
     }
 
     function renderAll(record) {
-      const documentRef = record.container.ownerDocument;
-      const regions = record.model.getRegions?.() || [{ key: 'body', type: 'body', variant: 'default', blocks: record.model.getBlocks() }];
-      const fragment = documentRef.createDocumentFragment();
-      for (const region of regions) {
-        const section = documentRef.createElement('section');
-        section.className = `ide-docx-region ide-docx-region-${region.type}`;
-        section.dataset.region = region.key;
-        if (region.type !== 'body') {
-          const label = documentRef.createElement('div');
-          label.className = 'ide-docx-region-label';
-          label.setAttribute('contenteditable', 'false');
-          const key = region.variant === 'first' ? `firstPage${region.type[0].toUpperCase()}${region.type.slice(1)}`
-            : region.variant === 'even' ? `evenPage${region.type[0].toUpperCase()}${region.type.slice(1)}` : region.type;
-          const labels = {
-            header: jt('ide.docx.header', 'Header'), footer: jt('ide.docx.footer', 'Footer'),
-            firstPageHeader: jt('ide.docx.firstPageHeader', 'First page header'),
-            firstPageFooter: jt('ide.docx.firstPageFooter', 'First page footer'),
-            evenPageHeader: jt('ide.docx.evenPageHeader', 'Even page header'),
-            evenPageFooter: jt('ide.docx.evenPageFooter', 'Even page footer'),
-          };
-          label.textContent = labels[key];
-          section.appendChild(label);
-        }
-        section.appendChild(renderUtils.renderBlocks(documentRef, region.blocks, { listCounters: { lastNumberId: '', number: 0 } }));
-        fragment.appendChild(section);
-      }
-      record.container.replaceChildren(fragment);
+      record.container.replaceChildren(renderUtils.renderRegions(record.container.ownerDocument, record.model.getRegions()));
       restoreSelectedImage(record);
     }
 
     function paragraphElement(record, blockId) {
-      return Array.from(record.container.querySelectorAll('.ide-docx-p'))
-        .find((element) => element.dataset.block === blockId) || null;
+      const id = String(blockId ?? '').replace(/["\\]/g, '\\$&');
+      return record.container.querySelector(`.ide-docx-p[data-block="${id}"]`);
     }
 
+    // A list paragraph whose list identity is unchanged keeps its label, which
+    // depends only on earlier paragraphs; a list change re-renders everything.
     function renderParagraph(record, blockId) {
       const oldParagraph = paragraphElement(record, blockId);
-      const block = findBlock(record.model.getBlocks(), blockId);
-      if (!oldParagraph || !block || block.type !== 'paragraph' || block.list) {
+      const block = record.model.getBlock(blockId);
+      if (!oldParagraph || !block || (oldParagraph.dataset.listKey || '') !== renderUtils.listKey(block.list)) {
         renderAll(record);
         return;
       }
-      const fragment = renderUtils.renderBlocks(record.container.ownerDocument, [block]);
-      oldParagraph.replaceWith(fragment.firstChild);
-      restoreSelectedImage(record);
+      const paragraph = renderUtils.renderBlocks(record.container.ownerDocument, [block]).firstChild;
+      if (block.list) paragraph.dataset.listLabel = oldParagraph.dataset.listLabel;
+      oldParagraph.replaceWith(paragraph);
+      if (selectedImage?.blockId === blockId) restoreSelectedImage(record);
     }
 
     function restoreCaret(record, point) {
@@ -361,19 +295,33 @@
       refreshToolbar();
     }
 
-    function setDirty(record) {
+    function syncDirty(record) {
       const next = record.model.isDirty();
-      if (next) onEdit(record.path);
       if (record.dirty === next) return;
       record.dirty = next;
       onDirtyChange(record.path, next);
     }
 
+    // Every real model change is an edit (the save path fences on it), even
+    // one that undoes back to the saved state. While a typing burst keeps an
+    // already-dirty document dirty, the full dirty comparison waits for the
+    // burst to end (endTyping) instead of serializing on every keystroke.
+    function setDirty(record) {
+      const version = record.model.getStateVersion();
+      if (version === record.stateVersion) return;
+      record.stateVersion = version;
+      onEdit(record.path);
+      if (record.dirty && typing?.record === record) return;
+      syncDirty(record);
+    }
+
     function endTyping() {
       if (!typing) return;
+      const { record } = typing;
       clearTimeout(typing.timer);
-      typing.record.model.endTransaction();
       typing = null;
+      record.model.endTransaction();
+      if (documents.get(record.path) === record) syncDirty(record);
     }
 
     function useTypingTransaction(record, blockId) {
@@ -412,11 +360,10 @@
         const end = Math.max(resolved.anchor.offset, resolved.focus.offset);
         return { start: { blockId: resolved.anchor.blockId, offset: start }, end: { blockId: resolved.anchor.blockId, offset: end } };
       }
-      const paragraphs = Array.from(record.container.querySelectorAll('.ide-docx-p'));
-      const anchorIndex = paragraphs.findIndex((item) => item.dataset.block === resolved.anchor.blockId);
-      const focusIndex = paragraphs.findIndex((item) => item.dataset.block === resolved.focus.blockId);
-      if (anchorIndex < 0 || focusIndex < 0) return null;
-      return anchorIndex < focusIndex
+      const anchor = paragraphElement(record, resolved.anchor.blockId);
+      const focus = paragraphElement(record, resolved.focus.blockId);
+      if (!anchor || !focus) return null;
+      return anchor.compareDocumentPosition(focus) & 4 /* DOCUMENT_POSITION_FOLLOWING */
         ? { start: resolved.anchor, end: resolved.focus }
         : { start: resolved.focus, end: resolved.anchor };
     }
@@ -439,28 +386,36 @@
       const mergeCount = endIndex - startIndex;
       const firstText = record.model.getParagraphText(range.start.blockId);
       if (range.start.offset < firstText.length) record.model.deleteRange(range.start.blockId, range.start.offset, firstText.length);
+      // Block ids are positional among siblings: after each merge the next
+      // paragraph takes over the id the first follower had.
+      const nextId = siblings[startIndex + 1].dataset.block;
       for (let index = 0; index < mergeCount; index += 1) {
-        const blocks = record.model.getBlocks();
-        const group = findBlockGroup(blocks, range.start.blockId);
-        const first = group?.findIndex((block) => block.id === range.start.blockId) ?? -1;
-        const next = first >= 0 ? group[first + 1] : null;
-        if (!next || next.type !== 'paragraph') break;
-        const keep = index === mergeCount - 1 ? range.end.offset : record.model.getParagraphText(next.id).length;
-        if (keep > 0) record.model.deleteRange(next.id, 0, keep);
-        record.model.mergeWithPrevious(next.id);
+        const keep = index === mergeCount - 1 ? range.end.offset : record.model.getParagraphText(nextId).length;
+        if (keep > 0) record.model.deleteRange(nextId, 0, keep);
+        if (!record.model.mergeWithPrevious(nextId)) break;
       }
       return { point: range.start, structural: true };
     }
 
+    // The selected image is tracked by (block, offset): a text edit in its
+    // paragraph shifts that offset and a cross-paragraph edit renumbers blocks,
+    // so either one drops the selection instead of retargeting a neighbour.
+    function dropImageSelection(record, resolved) {
+      if (selectedImage?.path !== record.path) return;
+      if (!resolved.sameBlock || selectedImage.blockId === resolved.anchor.blockId) clearSelectedImage();
+    }
+
     function applyInsert(record, resolved, text, coalesce) {
       if (!resolved) return;
+      dropImageSelection(record, resolved);
       let result;
       const operation = () => {
         const deletion = resolved.collapsed ? null : deleteSelection(record, resolved);
         const point = deletion?.point || resolved.anchor;
         if (!point || (!resolved.sameBlock && !deletion)) return null;
-        record.model.insertText(point.blockId, point.offset, text);
-        return { point: { blockId: point.blockId, offset: point.offset + text.length }, structural: deletion?.structural === true };
+        // The model drops characters XML cannot carry: the caret follows what it inserted.
+        const inserted = record.model.insertText(point.blockId, point.offset, text) || 0;
+        return { point: { blockId: point.blockId, offset: point.offset + inserted }, structural: deletion?.structural === true };
       };
       if (resolved.collapsed && coalesce) {
         useTypingTransaction(record, resolved.anchor.blockId);
@@ -485,6 +440,7 @@
     function applyDelete(record, resolved, backward) {
       if (!resolved) return;
       if (!resolved.collapsed) {
+        dropImageSelection(record, resolved);
         const result = atomic(record, () => deleteSelection(record, resolved));
         if (!result) return;
         if (result.structural) renderAll(record);
@@ -495,29 +451,35 @@
       }
       const point = resolved.anchor;
       const text = record.model.getParagraphText(point.blockId);
+      const inBlock = backward ? point.offset > 0 : point.offset < text.length;
+      if (inBlock) dropImageSelection(record, resolved);
       if (backward && point.offset > 0) {
+        const step = codePointLength(text, point.offset, true);
         useTypingTransaction(record, point.blockId);
-        record.model.deleteRange(point.blockId, point.offset - 1, point.offset);
+        record.model.deleteRange(point.blockId, point.offset - step, point.offset);
         renderParagraph(record, point.blockId);
-        restoreCaret(record, { blockId: point.blockId, offset: point.offset - 1 });
+        restoreCaret(record, { blockId: point.blockId, offset: point.offset - step });
       } else if (!backward && point.offset < text.length) {
         useTypingTransaction(record, point.blockId);
-        record.model.deleteRange(point.blockId, point.offset, point.offset + 1);
+        record.model.deleteRange(point.blockId, point.offset, point.offset + codePointLength(text, point.offset, false));
         renderParagraph(record, point.blockId);
         restoreCaret(record, point);
       } else if (backward && point.offset === 0) {
         endTyping();
         const previous = neighboringParagraph(record, point.blockId, 'previousElementSibling');
+        const element = paragraphElement(record, point.blockId);
         const merged = previous ? record.model.mergeWithPrevious(point.blockId) : null;
         if (merged) {
-          renderAll(record);
+          patchOrRenderAll(record, renderUtils.patchMerge(element, merged), merged);
           restoreCaret(record, { blockId: merged, offset: previous.length });
         }
       } else if (!backward && point.offset === text.length) {
         endTyping();
         const next = neighboringParagraph(record, point.blockId, 'nextElementSibling');
-        if (next && record.model.mergeWithPrevious(next.id)) {
-          renderAll(record);
+        const element = next && paragraphElement(record, next.id);
+        const merged = next ? record.model.mergeWithPrevious(next.id) : null;
+        if (merged) {
+          patchOrRenderAll(record, renderUtils.patchMerge(element, merged), merged);
           restoreCaret(record, point);
         }
       }
@@ -531,12 +493,31 @@
         const point = deletion?.point || resolved.anchor;
         if (!point || (!resolved.sameBlock && !deletion)) return null;
         const newId = record.model.splitParagraph(point.blockId, point.offset);
-        return newId ? { blockId: newId, offset: 0 } : null;
+        return newId ? { blockId: newId, offset: 0, from: point.blockId, structural: deletion?.structural === true } : null;
       });
       if (!result) return;
-      renderAll(record);
+      const halves = [record.model.getBlock(result.from), record.model.getBlock(result.blockId)];
+      patchOrRenderAll(record, !result.structural
+        && renderUtils.patchSplit(record.container.ownerDocument, paragraphElement(record, result.from), halves));
       restoreCaret(record, result);
       setDirty(record);
+    }
+
+    // Enter and paragraph merges patch the DOM in place where the renderer
+    // can (plain paragraphs); anything else re-renders the whole document.
+    // Images outside the patched paragraphs keep their elements, so the
+    // selected one is followed to its renumbered paragraph.
+    function patchOrRenderAll(record, patched, mergedId) {
+      if (!patched) {
+        renderAll(record);
+        return;
+      }
+      if (selectedImage?.path === record.path) {
+        const image = record.container.querySelector('.ide-docx-img.is-selected');
+        if (image) selectedImage.blockId = image.closest('.ide-docx-p')?.dataset.block;
+        else selectedImage = null;
+      }
+      if (mergedId) renderParagraph(record, mergedId);
     }
 
     function applyFormat(record, property) {
@@ -544,8 +525,7 @@
       const resolved = currentSelection(record);
       if (!resolved || resolved.collapsed || !resolved.sameBlock) return;
       const range = orderedRange(record, resolved);
-      if (record.model.toggleRunProperty(range.start.blockId, range.start.offset, range.end.offset, property) === false
-        && property !== 'bold' && property !== 'italic' && property !== 'underline') return;
+      record.model.toggleRunProperty(range.start.blockId, range.start.offset, range.end.offset, property);
       renderParagraph(record, range.start.blockId);
       const paragraph = paragraphElement(record, range.start.blockId);
       renderUtils.setCaret(record.container.ownerDocument, paragraph, range.end.offset);
@@ -591,8 +571,9 @@
         return;
       }
       image.classList.add('is-selected');
-      selectedImage.width = image.width || Number(image.getAttribute('width')) || selectedImage.width;
-      selectedImage.height = image.height || Number(image.getAttribute('height')) || selectedImage.height;
+      // Attribute reads: image.width right after a re-render forces a layout.
+      selectedImage.width = Number(image.getAttribute('width')) || selectedImage.width;
+      selectedImage.height = Number(image.getAttribute('height')) || selectedImage.height;
     }
 
     function handleDocumentClick(path, event) {
@@ -632,39 +613,38 @@
       imageInsertion = null;
       if (event.target) event.target.value = '';
       if (!file || !insertion) return;
-      const allowed = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp']);
-      if (!allowed.has(file.type)) {
-        showImageError(jt('ide.docx.imageInvalid', 'Choose a valid PNG, JPEG, GIF, WebP, or BMP image.'));
+      if (!Object.hasOwn(imageTypes, file.type)) {
+        showImageError(imageInvalidMessage());
         return;
       }
       if (!Number.isFinite(file.size) || file.size <= 0 || file.size > MAX_INSERT_IMAGE_BYTES) {
-        showImageError(jt('ide.docx.imageTooLarge', 'Choose an image smaller than 10 MiB.'));
+        showImageError(imageTooLargeMessage());
         return;
       }
       const record = documents.get(insertion.path);
       if (!record) return;
+      const stale = () => documents.get(insertion.path) !== record || disposed;
       try {
         const bytes = new Uint8Array(await file.arrayBuffer());
-        if (documents.get(insertion.path) !== record || disposed) return;
+        if (stale()) return;
         if (!bytes.length || bytes.length > MAX_INSERT_IMAGE_BYTES) {
-          showImageError(jt('ide.docx.imageTooLarge', 'Choose an image smaller than 10 MiB.'));
+          showImageError(imageTooLargeMessage());
           return;
         }
         const size = await imageSize(record.container.ownerDocument.defaultView, bytes, file.type);
-        if (documents.get(insertion.path) !== record || disposed) return;
+        if (stale()) return;
         const added = atomic(record, () => record.model.insertImage(insertion.point.blockId, insertion.point.offset, {
-          mime: file.type, base64: encodeBase64(bytes, record.container.ownerDocument.defaultView),
+          mime: file.type, base64: encodeBase64(bytes),
           widthPx: size.width, heightPx: size.height, name: file.name,
         }));
         if (!added) throw new Error('image rejected');
         selectedImage = { path: record.path, blockId: insertion.point.blockId, offset: insertion.point.offset, ...size };
         renderParagraph(record, insertion.point.blockId);
-        restoreSelectedImage(record);
         restoreCaret(record, { blockId: insertion.point.blockId, offset: insertion.point.offset + 1 });
         setDirty(record);
       } catch (_error) {
-        if (documents.get(insertion.path) !== record || disposed) return;
-        showImageError(jt('ide.docx.imageInvalid', 'Choose a valid PNG, JPEG, GIF, WebP, or BMP image.'));
+        if (stale()) return;
+        showImageError(imageInvalidMessage());
       }
     }
 
@@ -676,7 +656,6 @@
       selectedImage.width = Math.max(24, Math.min(1200, width));
       selectedImage.height = Math.max(24, Math.min(1200, height));
       renderParagraph(record, selectedImage.blockId);
-      restoreSelectedImage(record);
       setDirty(record);
       refreshToolbar();
     }
@@ -688,7 +667,7 @@
     // and inserts the committed text at the pinned point.
     function handleCompositionStart(path) {
       const record = documents.get(path);
-      if (!record) return;
+      if (!record || record.locked) return;
       endTyping();
       const resolved = currentSelection(record);
       if (resolved && !resolved.collapsed) applyDelete(record, resolved, true);
@@ -698,7 +677,7 @@
 
     function handleCompositionEnd(path, event) {
       const record = documents.get(path);
-      if (!record) return;
+      if (!record || record.locked) return;
       const point = record.composition?.point || null;
       record.composition = null;
       if (!point) return;
@@ -708,17 +687,58 @@
       else restoreCaret(record, point);
     }
 
+    // The range the browser says an input acts on (a spellcheck replacement,
+    // a word or line delete, a drop), mapped to model points; the live
+    // selection when the event carries none.
+    function targetSelection(record, event) {
+      const range = event.getTargetRanges?.()[0];
+      if (!range) return currentSelection(record);
+      const anchor = renderUtils.resolvePoint(range.startContainer, range.startOffset);
+      const focus = renderUtils.resolvePoint(range.endContainer, range.endOffset);
+      if (!anchor || !focus || !record.container.contains(range.startContainer)
+        || !record.container.contains(range.endContainer)) return null;
+      return { anchor, focus, collapsed: range.collapsed, sameBlock: anchor.blockId === focus.blockId };
+    }
+
     function handleBeforeInput(path, event) {
       const record = documents.get(path);
       if (!record) return;
+      if (record.locked) {
+        event.preventDefault();
+        return;
+      }
       if (event.inputType === 'insertCompositionText' || event.inputType === 'deleteCompositionText') return;
       event.preventDefault();
       const resolved = currentSelection(record);
       switch (event.inputType) {
         case 'insertText':
-        case 'insertReplacementText':
-          if (event.data) applyInsert(record, resolved, event.data, event.inputType === 'insertText');
+          if (event.data) applyInsert(record, resolved, event.data, true);
           break;
+        case 'insertReplacementText': {
+          // Spellcheck corrections carry their text in dataTransfer and their
+          // range in the target ranges, not in data and the caret.
+          const text = event.data || event.dataTransfer?.getData?.('text/plain') || '';
+          if (text) applyInsert(record, targetSelection(record, event), text, false);
+          break;
+        }
+        case 'deleteWordBackward':
+        case 'deleteWordForward':
+        case 'deleteSoftLineBackward':
+        case 'deleteSoftLineForward':
+        case 'deleteHardLineBackward':
+        case 'deleteHardLineForward':
+        case 'deleteByDrag': {
+          const target = targetSelection(record, event);
+          if (target && !target.collapsed) applyDelete(record, target, true);
+          else applyDelete(record, resolved, !event.inputType.endsWith('Forward'));
+          break;
+        }
+        case 'insertFromDrop': {
+          endTyping();
+          const text = event.dataTransfer?.getData?.('text/plain') || '';
+          if (text) applyInsert(record, targetSelection(record, event), text.replace(/\r\n?/g, '\n'), false);
+          break;
+        }
         case 'insertParagraph': applySplit(record, resolved); break;
         case 'insertLineBreak': applyInsert(record, resolved, '\n', false); break;
         case 'deleteContentBackward': applyDelete(record, resolved, true); break;
@@ -752,6 +772,8 @@
         event.stopPropagation();
         endTyping();
         onSaveRequest();
+      } else if (record.locked) {
+        // Under the review lock only Save passes through.
       } else if (modifier && ['b', 'i', 'u'].includes(key)) {
         event.preventDefault();
         applyFormat(record, { b: 'bold', i: 'italic', u: 'underline' }[key]);
@@ -767,6 +789,15 @@
       }
     }
 
+    function unlockForEditing(record) {
+      record.locked = false;
+      record.reviewOptIn = true;
+      record.container.setAttribute('contenteditable', 'true');
+      refreshNotes(record);
+      refreshToolbar();
+      record.container.focus?.();
+    }
+
     function handleToolbarMouseDown(event) {
       if (event.target?.closest?.('[data-ide-docx-action]')) event.preventDefault();
     }
@@ -776,7 +807,9 @@
       const record = currentPath ? documents.get(currentPath) : null;
       if (!button || !record) return;
       const action = button.dataset.ideDocxAction;
-      if (['bold', 'italic', 'underline'].includes(action)) applyFormat(record, action);
+      if (action === 'editAnyway') unlockForEditing(record);
+      else if (record.locked) return;
+      else if (['bold', 'italic', 'underline'].includes(action)) applyFormat(record, action);
       else if (action === 'bullets') applyList(record, 'bullet');
       else if (action === 'numbering') applyList(record, 'number');
       else if (action === 'insertImage') {
@@ -791,10 +824,8 @@
       else if (action === 'redo') applyHistory(record, true);
     }
 
-    function selectionProperty(record, resolved, property) {
-      if (!resolved?.sameBlock) return false;
-      const block = findBlock(record.model.getBlocks(), resolved.anchor.blockId);
-      if (!block?.runs) return false;
+    function selectionProperty(record, resolved, block, property) {
+      if (!resolved?.sameBlock || !block?.runs) return false;
       if (resolved.collapsed) {
         let offset = 0;
         const run = block.runs.find((item) => {
@@ -815,32 +846,31 @@
       return selected.length > 0 && selected.every((run) => run[property] === true);
     }
 
+    // Also the document-wide selectionchange listener: it fires for every
+    // selection in the app, so it returns early unless this pane is showing.
     function refreshToolbar() {
-      if (!paneEl) return;
+      if (!paneEl || paneEl.classList.contains('hidden')) return;
       const record = currentPath ? documents.get(currentPath) : null;
       const resolved = record ? currentSelection(record) : null;
+      const block = resolved?.sameBlock ? record.model.getBlock(resolved.anchor.blockId) : null;
+      const listKind = resolved ? record.model.getListInfo(resolved.anchor.blockId)?.kind : null;
       const values = {
-        bold: record ? selectionProperty(record, resolved, 'bold') : false,
-        italic: record ? selectionProperty(record, resolved, 'italic') : false,
-        underline: record ? selectionProperty(record, resolved, 'underline') : false,
-        bullets: record && resolved ? record.model.getListInfo(resolved.anchor.blockId)?.kind === 'bullet' : false,
-        numbering: record && resolved ? record.model.getListInfo(resolved.anchor.blockId)?.kind === 'number' : false,
+        bold: selectionProperty(record, resolved, block, 'bold'),
+        italic: selectionProperty(record, resolved, block, 'italic'),
+        underline: selectionProperty(record, resolved, block, 'underline'),
+        bullets: listKind === 'bullet',
+        numbering: listKind === 'number',
       };
-      for (const button of paneEl.querySelectorAll('[data-ide-docx-action]')) {
-        if (Object.hasOwn(values, button.dataset.ideDocxAction)) {
-          button.setAttribute('aria-pressed', String(values[button.dataset.ideDocxAction]));
+      for (const button of paneEl.querySelectorAll('.ide-docx-toolbar [data-ide-docx-action]')) {
+        const action = button.dataset.ideDocxAction;
+        if (Object.hasOwn(values, action)) button.setAttribute('aria-pressed', String(values[action]));
+        let disabled = record?.locked === true;
+        if (['imageSmaller', 'imageLarger'].includes(action)) disabled ||= !selectedImage || selectedImage.path !== currentPath;
+        if (['bullets', 'numbering'].includes(action)) {
+          disabled ||= !record || !resolved || record.model.canSetList?.(resolved.anchor.blockId) === false;
         }
-        if (['imageSmaller', 'imageLarger'].includes(button.dataset.ideDocxAction)) {
-          button.disabled = !selectedImage || selectedImage.path !== currentPath;
-        }
-        if (['bullets', 'numbering'].includes(button.dataset.ideDocxAction)) {
-          button.disabled = !record || !resolved || record.model.canSetList?.(resolved.anchor.blockId) === false;
-        }
+        button.disabled = disabled;
       }
-    }
-
-    function handleSelectionChange() {
-      refreshToolbar();
     }
 
     function refreshNotes(record) {
@@ -855,6 +885,7 @@
         nestedTables: jt('ide.docx.note.nestedTables', 'nested tables'),
       };
       const notes = record.model.getUnsupportedNotes();
+      reviewEl.classList.toggle('hidden', !record.locked);
       notesEl.classList.toggle('hidden', notes.length === 0);
       notesEl.textContent = notes.length ? jt(
         'ide.docx.preservedNotice',
@@ -909,67 +940,24 @@
       if (!record) return;
       if (typing?.record === record) endTyping();
       record.model.markSaved();
-      setDirty(record);
-    }
-
-    async function patchPackageParts(record, replacements, Parser, Serializer, numbering, media) {
-      const contentName = '[Content_Types].xml';
-      const relsName = 'word/_rels/document.xml.rels';
-      const contentXml = record.zip.entries.has(contentName)
-        ? await zipUtils.readEntryText(record.zip, contentName)
-        : `<?xml version="1.0" encoding="UTF-8"?><Types xmlns="${CONTENT_TYPES_NS}"/>`;
-      const relsXml = replacements.has(relsName) ? replacements.get(relsName) : record.zip.entries.has(relsName)
-        ? await zipUtils.readEntryText(record.zip, relsName)
-        : `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="${RELATIONSHIPS_NS}"/>`;
-      const contentDoc = parseXml(Parser, contentXml);
-      const relsDoc = parseXml(Parser, relsXml);
-      const hasOverride = Array.from(contentDoc.getElementsByTagNameNS('*', 'Override'))
-        .some((item) => item.getAttribute('PartName') === '/word/numbering.xml');
-      if (numbering && !hasOverride) {
-        const override = contentDoc.createElementNS(CONTENT_TYPES_NS, 'Override');
-        override.setAttribute('PartName', '/word/numbering.xml');
-        override.setAttribute('ContentType', NUMBERING_CONTENT_TYPE);
-        contentDoc.documentElement.appendChild(override);
-      }
-      const relationships = Array.from(relsDoc.getElementsByTagNameNS('*', 'Relationship'));
-      const hasNumbering = relationships.some((item) => item.getAttribute('Type') === NUMBERING_RELATIONSHIP);
-      if (numbering && !hasNumbering) {
-        const used = new Set(relationships.map((item) => item.getAttribute('Id')));
-        let ordinal = 1;
-        while (used.has('rId' + ordinal)) ordinal += 1;
-        const relationship = relsDoc.createElementNS(RELATIONSHIPS_NS, 'Relationship');
-        relationship.setAttribute('Id', 'rId' + ordinal);
-        relationship.setAttribute('Type', NUMBERING_RELATIONSHIP);
-        relationship.setAttribute('Target', 'numbering.xml');
-        relsDoc.documentElement.appendChild(relationship);
-      }
-      const defaults = Array.from(contentDoc.getElementsByTagNameNS('*', 'Default'));
-      for (const [name, item] of media) {
-        const extension = name.split('.').at(-1).toLowerCase();
-        if (defaults.some((entry) => entry.getAttribute('Extension').toLowerCase() === extension)) continue;
-        const entry = contentDoc.createElementNS(CONTENT_TYPES_NS, 'Default');
-        entry.setAttribute('Extension', extension); entry.setAttribute('ContentType', item.mime);
-        contentDoc.documentElement.appendChild(entry); defaults.push(entry);
-      }
-      replacements.set(contentName, xmlDeclaration(contentXml) + new Serializer().serializeToString(contentDoc).replace(/^<\?xml[^>]*\?>/, ''));
-      if (numbering) replacements.set(relsName, xmlDeclaration(relsXml) + new Serializer().serializeToString(relsDoc).replace(/^<\?xml[^>]*\?>/, ''));
+      syncDirty(record);
     }
 
     async function exportBytes(path) {
       const record = documents.get(String(path || ''));
       if (!record) return null;
       if (typing?.record === record) endTyping();
-      const serialized = record.model.serialize();
-      const replacements = serialized.replacements || new Map([['word/document.xml', serialized['word/document.xml']]]);
-      const media = serialized.media || new Map();
-      if (serialized['word/numbering.xml']) replacements.set('word/numbering.xml', serialized['word/numbering.xml']);
-      for (const [name, item] of media) replacements.set(name, decodeBase64(item.base64, record.container.ownerDocument.defaultView));
-      if (serialized.newNumberingPart || media.size) {
-        const windowRef = record.container.ownerDocument.defaultView;
-        await patchPackageParts(record, replacements, windowRef.DOMParser, windowRef.XMLSerializer, serialized.newNumberingPart, media);
+      const windowRef = record.container.ownerDocument.defaultView;
+      const { replacements, media, newNumberingPart } = record.model.serialize();
+      for (const [name, item] of media) replacements.set(name, decodeBase64(item.base64));
+      if (newNumberingPart || media.size) {
+        await packageUtils.patchPackageParts({
+          zip: record.zip, zipUtils, replacements, Parser: windowRef.DOMParser, Serializer: windowRef.XMLSerializer,
+          numbering: newNumberingPart, media,
+        });
       }
       const bytes = await zipUtils.writeZip(record.zip, replacements);
-      return encodeBase64(bytes, record.container.ownerDocument.defaultView);
+      return encodeBase64(bytes);
     }
 
     function dispose() {
@@ -981,11 +969,12 @@
       loadGenerations.clear();
       paneEl?.removeEventListener('click', handleToolbarClick);
       paneEl?.removeEventListener('mousedown', handleToolbarMouseDown);
-      documentRef?.removeEventListener('selectionchange', handleSelectionChange);
+      documentRef?.removeEventListener('selectionchange', refreshToolbar);
       paneEl?.remove();
       paneEl = null;
       documentsEl = null;
       notesEl = null;
+      reviewEl = null;
       currentPath = null;
     }
 

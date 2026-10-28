@@ -9,14 +9,10 @@ aggregate capture budget, while still counting all drained bytes.
 from __future__ import annotations
 
 import atexit
-import errno
 import logging
 import os
-import select
-import shutil
 import signal
 import subprocess
-import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -25,13 +21,16 @@ from typing import IO, Any, Callable, Mapping, Sequence
 
 from sidecar._owned_process_supervisor import (
     LINEAGE_CONTAINMENT,
-    PROOF_BYTE,
     READY_FD_ENVIRONMENT_VARIABLE,
-    SAMPLED_PROOF_BYTE,
-    SUBREAPER_CONTAINMENT,
     SUPERVISOR_TEARDOWN_MARGIN_SECONDS,
     supervisor_command,
     supervisor_containment,
+)
+from sidecar.ai.tools.builtins.owned_process_capture import (
+    CapturedProcessOutput,
+    StreamCapture,
+    captured_output_with_diagnostics,
+    start_output_reader,
 )
 from sidecar.ai.tools.builtins.owned_process_drain import close_process_pipes
 from sidecar.ai.tools.builtins.owned_process_observation import (
@@ -52,17 +51,37 @@ from sidecar.ai.tools.builtins.owned_process_windows import (
 from sidecar.runtime.diagnostics import log_event
 from sidecar.runtime.external_child_env import external_child_environment
 
+# The POSIX supervisor helpers load on first use so the module stays off the
+# sidecar startup import path (the import budget counts modules, and Windows
+# never calls them).
+
+
+def preflight_posix_target(argv: Any, cwd: Any, env: Any) -> None:
+    from sidecar.ai.tools.builtins import owned_process_posix as _posix
+
+    _posix.preflight_posix_target(argv, cwd, env)
+
+
+def await_supervisor_ready(owned: Any, timeout_seconds: float) -> None:
+    from sidecar.ai.tools.builtins import owned_process_posix as _posix
+
+    _posix.await_supervisor_ready(owned, timeout_seconds)
+
+
+def supervisor_proved_cleanup(owned: Any) -> bool:
+    from sidecar.ai.tools.builtins import owned_process_posix as _posix
+
+    return _posix.supervisor_proved_cleanup(owned)
+
 DEFAULT_MAX_ACTIVE_PROCESSES = 4
 DEFAULT_MAX_QUEUED_PROCESSES = 8
 DEFAULT_QUEUE_WAIT_SECONDS = 5.0
 DEFAULT_MAX_CAPTURE_BYTES = 4 * 1024 * 1024
 DEFAULT_TERMINATION_GRACE_SECONDS = 0.5
 SUPERVISOR_READY_WAIT_SECONDS = 5.0
-_MAX_SUPERVISOR_REPORT_BYTES = 64
 # Carried on a confirmed verdict whose sweep was sampled, not kernel-proven.
 SAMPLED_LINEAGE_REASON = "sampled_lineage_best_effort"
 MIN_CAPTURE_BYTES = 2
-PIPE_READ_CHUNK_BYTES = 64 * 1024
 PIPE_DRAIN_GRACE_SECONDS = 1.0
 
 logger = logging.getLogger(__name__)
@@ -80,6 +99,10 @@ class OwnedProcessShutdownError(OwnedProcessError):
     """Raised when a process start races service shutdown."""
 
 
+class OwnedProcessAbortedBeforeStart(OwnedProcessError):
+    """Raised when the caller's abort event fires before any child exists."""
+
+
 @dataclass(frozen=True)
 class ProcessCapacitySnapshot:
     active: int
@@ -87,40 +110,6 @@ class ProcessCapacitySnapshot:
     max_active: int
     max_queued: int
     shutting_down: bool
-
-
-@dataclass(frozen=True)
-class CapturedProcessOutput:
-    stdout: str
-    stderr: str
-    stdout_bytes: int
-    stderr_bytes: int
-    stdout_captured_bytes: int
-    stderr_captured_bytes: int
-
-    @property
-    def captured_bytes(self) -> int:
-        return self.stdout_captured_bytes + self.stderr_captured_bytes
-
-    @property
-    def total_bytes(self) -> int:
-        return self.stdout_bytes + self.stderr_bytes
-
-    @property
-    def discarded_bytes(self) -> int:
-        return max(0, self.total_bytes - self.captured_bytes)
-
-    @property
-    def truncated(self) -> bool:
-        return self.discarded_bytes > 0
-
-    def counters(self) -> dict[str, int]:
-        return {
-            "stdout_bytes": self.stdout_bytes,
-            "stderr_bytes": self.stderr_bytes,
-            "captured_bytes": self.captured_bytes,
-            "discarded_bytes": self.discarded_bytes,
-        }
 
 
 @dataclass(frozen=True)
@@ -150,45 +139,6 @@ class OwnedProcessResult:
     @property
     def stderr(self) -> str:
         return self.output.stderr
-
-
-@dataclass
-class _StreamCapture:
-    limit_bytes: int
-    data: bytearray = field(default_factory=bytearray)
-    total_bytes: int = 0
-    read_error: str = ""
-
-    def append(self, chunk: bytes) -> None:
-        self.total_bytes += len(chunk)
-        remaining = max(0, self.limit_bytes - len(self.data))
-        if remaining:
-            self.data.extend(chunk[:remaining])
-
-
-def _captured_output_with_diagnostics(
-    *,
-    already_incomplete: bool,
-    stdout_capture: _StreamCapture,
-    stderr_capture: _StreamCapture,
-) -> tuple[CapturedProcessOutput, bool, dict[str, str]]:
-    read_error_types = {
-        stream_name: capture.read_error
-        for stream_name, capture in (
-            ("stdout", stdout_capture),
-            ("stderr", stderr_capture),
-        )
-        if capture.read_error
-    }
-    output = CapturedProcessOutput(
-        stdout=bytes(stdout_capture.data).decode("utf-8", errors="replace"),
-        stderr=bytes(stderr_capture.data).decode("utf-8", errors="replace"),
-        stdout_bytes=stdout_capture.total_bytes,
-        stderr_bytes=stderr_capture.total_bytes,
-        stdout_captured_bytes=len(stdout_capture.data),
-        stderr_captured_bytes=len(stderr_capture.data),
-    )
-    return output, already_incomplete or bool(read_error_types), read_error_types
 
 
 class _CapacityLease:
@@ -266,6 +216,7 @@ class OwnedProcessService:
         on_cleanup: CleanupObserver | None = None,
         input_data: bytes | None = None,
         process_kind: str = "owned_process",
+        abort_event: threading.Event | None = None,
     ) -> OwnedProcess:
         if not argv:
             raise ValueError("argv cannot be empty")
@@ -287,6 +238,7 @@ class OwnedProcessService:
         lease = self._acquire_capacity(
             allow_queue=allow_queue,
             timeout_seconds=max(0.0, float(queue_timeout_seconds)),
+            abort_event=abort_event,
         )
         cleanup_observation = CleanupObservation(
             create_process_cleanup_observer(on_cleanup)
@@ -294,6 +246,7 @@ class OwnedProcessService:
         job_object: WindowsJobObject | None = None
         process_group_id: int | None = None
         owned: OwnedProcess | None = None
+        process: subprocess.Popen[bytes] | None = None
         ready_fd: int | None = None
         try:
             containment = supervisor_containment()
@@ -314,9 +267,11 @@ class OwnedProcessService:
                 _lease=lease,
                 _cleanup_observation=cleanup_observation,
                 _supervisor_ready_fd=ready_fd,
-                _ledger_ticket=owned_process_tracking.record(process.pid, process_kind),
             )
             ready_fd = None
+            # Recorded only once ``owned`` exists: a ledger failure must reach
+            # the cancel path below, never orphan the live bootstrap child.
+            owned._ledger_ticket = owned_process_tracking.record(process.pid, process_kind)
             with self._condition:
                 self._active[id(owned)] = owned
                 if self._shutting_down:
@@ -331,6 +286,14 @@ class OwnedProcessService:
             else:
                 if ready_fd is not None:
                     os.close(ready_fd)
+                # A transport that started but never became ``owned`` has not
+                # received its target payload yet, so it has no descendants:
+                # reaping the root is the whole tree.
+                reason: str | None = "no_child_started"
+                transport_reaped = True
+                if process is not None:
+                    transport_reaped = self._kill_unowned_transport(process)
+                    reason = None if transport_reaped else "process_tree_termination_unconfirmed"
                 if job_object is not None:
                     try:
                         job_object.close()
@@ -338,14 +301,33 @@ class OwnedProcessService:
                         logger.warning("empty owned Job handle cleanup degraded", exc_info=True)
                 cleanup_observation.publish(
                     OwnedProcessCleanupVerdict(
-                        cleanup="confirmed",
-                        process_tree_terminated=True,
+                        cleanup="confirmed" if transport_reaped else "uncertain",
+                        process_tree_terminated=transport_reaped,
                         output_readers_terminated=True,
-                        reason="no_child_started",
+                        reason=reason,
                     )
                 )
                 lease.release()
             raise
+
+    @staticmethod
+    def _kill_unowned_transport(process: subprocess.Popen[bytes]) -> bool:
+        """Kill and reap a bootstrap transport that never became owned."""
+        try:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=DEFAULT_TERMINATION_GRACE_SECONDS)
+        except (OSError, subprocess.SubprocessError):
+            logger.warning("unowned bootstrap transport cleanup degraded", exc_info=True)
+            return False
+        finally:
+            for pipe in (process.stdin, process.stdout, process.stderr):
+                if pipe is not None:
+                    try:
+                        pipe.close()
+                    except OSError:
+                        pass
+        return True
 
     @staticmethod
     def _start_transport(
@@ -414,17 +396,39 @@ class OwnedProcessService:
         on_cleanup: CleanupObserver | None = None,
         input_data: bytes | None = None,
     ) -> OwnedProcessResult:
-        owned = self.spawn(
-            argv,
-            cwd=cwd,
-            env=env,
-            allow_queue=True,
-            queue_timeout_seconds=min(
-                max(0.0, float(timeout_seconds)), DEFAULT_QUEUE_WAIT_SECONDS
-            ),
-            on_cleanup=on_cleanup,
-            input_data=input_data,
-        )
+        try:
+            # A call cancelled before or while it queues for capacity must not
+            # spawn a child only to kill it.
+            if abort_event is not None and abort_event.is_set():
+                raise OwnedProcessAbortedBeforeStart("owned process start was aborted")
+            owned = self.spawn(
+                argv,
+                cwd=cwd,
+                env=env,
+                allow_queue=True,
+                queue_timeout_seconds=min(
+                    max(0.0, float(timeout_seconds)), DEFAULT_QUEUE_WAIT_SECONDS
+                ),
+                on_cleanup=on_cleanup,
+                input_data=input_data,
+                abort_event=abort_event,
+            )
+        except OwnedProcessAbortedBeforeStart:
+            return OwnedProcessResult(
+                args=tuple(str(argument) for argument in argv),
+                returncode=-1,
+                output=CapturedProcessOutput("", "", 0, 0, 0, 0),
+                pid=0,
+                containment="not_started",
+                duration_seconds=0.0,
+                aborted=True,
+                cleanup_verdict=OwnedProcessCleanupVerdict(
+                    cleanup="confirmed",
+                    process_tree_terminated=True,
+                    output_readers_terminated=True,
+                    reason="no_child_started",
+                ),
+            )
         return self.wait(
             owned,
             timeout_seconds=timeout_seconds,
@@ -446,8 +450,8 @@ class OwnedProcessService:
             raise OwnedProcessError("owned process pipes are unavailable")
 
         per_stream_limit = self._max_capture_bytes // 2
-        stdout_capture = _StreamCapture(per_stream_limit)
-        stderr_capture = _StreamCapture(self._max_capture_bytes - per_stream_limit)
+        stdout_capture = StreamCapture(per_stream_limit)
+        stderr_capture = StreamCapture(self._max_capture_bytes - per_stream_limit)
         readers: list[threading.Thread] = []
         started_at = time.monotonic()
         timed_out = False
@@ -494,7 +498,7 @@ class OwnedProcessService:
                 for io_thread in io_threads:
                     io_thread.join(timeout=0.2)
 
-            output, drain_incomplete, read_error_types = _captured_output_with_diagnostics(
+            output, drain_incomplete, read_error_types = captured_output_with_diagnostics(
                 already_incomplete=drain_incomplete,
                 stdout_capture=stdout_capture,
                 stderr_capture=stderr_capture,
@@ -551,8 +555,14 @@ class OwnedProcessService:
                 terminate_tree = getattr(owned.job_object, "terminate_tree", None)
                 if not callable(terminate_tree) or not terminate_tree():
                     self._kill_windows_process_tree(int(process.pid))
-            elif os.name != "nt" and owned.process_group_id is not None:
-                self._await_supervisor_ready(owned, SUPERVISOR_READY_WAIT_SECONDS)
+            elif (
+                os.name != "nt"
+                and owned.process_group_id is not None
+                # A reaped root leaves only the exited-group sweep, which
+                # checks the group is still populated before it signals.
+                and process.poll() is None
+            ):
+                await_supervisor_ready(owned, SUPERVISOR_READY_WAIT_SECONDS)
                 self._terminate_posix_group(
                     owned.process_group_id,
                     process,
@@ -591,7 +601,13 @@ class OwnedProcessService:
     ) -> OwnedProcessCleanupVerdict:
         """Terminate one owned tree and release capacity only after proof."""
         self.terminate(owned, timeout_seconds=timeout_seconds)
-        return self.retry_cleanup(owned, timeout_seconds=timeout_seconds)
+        # A second terminate repeats the tree kill (on Windows another taskkill
+        # of up to 5 s) for nothing once the root is observed gone.
+        return self._settle_cleanup(
+            owned,
+            timeout_seconds=timeout_seconds,
+            terminate=not self._root_exited(owned),
+        )
 
     def release(self, owned: OwnedProcess) -> OwnedProcessCleanupVerdict:
         """Release an owned process whose root the caller already reaped.
@@ -600,9 +616,10 @@ class OwnedProcessService:
         :meth:`wait` (the monitor manager reads the pipes and reaps the root
         directly). Closes containment — the Job Object's KILL_ON_JOB_CLOSE /
         exited-group sweep still collects surviving descendants — and releases
-        the capacity lease. Never signals the reaped root PID, so a recycled
-        PID cannot be killed by mistake; a still-running tree belongs in
-        :meth:`cancel`.
+        the capacity lease. Never signals the reaped root PID itself. On POSIX
+        the exited-group sweep signals the root's process group only while the
+        kernel still reports a member in it (a live member keeps the PGID from
+        being reused); a still-running tree belongs in :meth:`cancel`.
         """
         return self._finalize(owned)
 
@@ -614,7 +631,24 @@ class OwnedProcessService:
     ) -> OwnedProcessCleanupVerdict:
         """Retry owner cleanup and release a quarantined slot only on proof."""
 
-        self.terminate(owned, timeout_seconds=timeout_seconds)
+        return self._settle_cleanup(owned, timeout_seconds=timeout_seconds, terminate=True)
+
+    @staticmethod
+    def _root_exited(owned: OwnedProcess) -> bool:
+        try:
+            return owned.process.poll() is not None
+        except Exception:  # noqa: BLE001 - unknown state means terminate again.
+            return False
+
+    def _settle_cleanup(
+        self,
+        owned: OwnedProcess,
+        *,
+        timeout_seconds: float,
+        terminate: bool,
+    ) -> OwnedProcessCleanupVerdict:
+        if terminate:
+            self.terminate(owned, timeout_seconds=timeout_seconds)
         self._close_pipes(owned)
         deadline = time.monotonic() + max(0.1, float(timeout_seconds))
         for io_thread in self._io_threads(owned):
@@ -655,6 +689,7 @@ class OwnedProcessService:
         *,
         allow_queue: bool,
         timeout_seconds: float,
+        abort_event: threading.Event | None = None,
     ) -> _CapacityLease:
         with self._condition:
             if self._shutting_down:
@@ -674,13 +709,20 @@ class OwnedProcessService:
                         raise OwnedProcessShutdownError(
                             "owned process service is shutting down"
                         )
+                    if abort_event is not None and abort_event.is_set():
+                        raise OwnedProcessAbortedBeforeStart(
+                            "owned process start was aborted while queued"
+                        )
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         self._log_capacity_refusal()
                         raise OwnedProcessCapacityError(
                             "owned process queue wait timed out"
                         )
-                    self._condition.wait(timeout=remaining)
+                    # Nothing notifies the condition on abort, so wake often
+                    # enough to notice a cancelled call while it queues.
+                    wait_slice = remaining if abort_event is None else min(remaining, 0.05)
+                    self._condition.wait(timeout=wait_slice)
                 self._active_count += 1
                 return _CapacityLease(self)
             finally:
@@ -766,78 +808,10 @@ class OwnedProcessService:
             # boundary: a child can call setsid() and outlive the group. The
             # proof is the byte the supervisor writes only after it has seen
             # no descendant alive; its exit status alone proves nothing.
-            return process.poll() is not None and self._supervisor_proved_cleanup(owned)
+            return process.poll() is not None and supervisor_proved_cleanup(owned)
         return process.poll() is not None
 
-    @staticmethod
-    def _preflight_posix_target(
-        argv: Sequence[str], cwd: Path, env: Mapping[str, str] | None,
-    ) -> None:
-        """Raise the launch errors Popen raised before the supervisor existed.
-
-        The supervisor reports a failed launch only as an exit status, and
-        callers turn a missing program or directory into their own message.
-        """
-        if not Path(cwd).is_dir():
-            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(cwd))
-        program = argv[0]
-        if os.sep in program and not os.path.isabs(program):
-            program = str(Path(cwd) / program)
-        search_path = external_child_environment(env).get("PATH", os.defpath)
-        if shutil.which(program, path=search_path) is None:
-            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), argv[0])
-
-    @staticmethod
-    def _read_supervisor_report(owned: OwnedProcess, timeout_seconds: float) -> None:
-        """Collect what the supervisor has written; caller holds the lock."""
-        ready_fd = owned._supervisor_ready_fd
-        if ready_fd is None or sys.platform == "win32":
-            return
-        try:
-            if timeout_seconds > 0:
-                # poll, not select: a descriptor above 1023 breaks select.
-                poller = select.poll()
-                poller.register(ready_fd, select.POLLIN)
-                poller.poll(timeout_seconds * 1000)
-            os.set_blocking(ready_fd, False)
-            while len(owned._supervisor_report) < _MAX_SUPERVISOR_REPORT_BYTES:
-                chunk = os.read(ready_fd, 16)
-                if not chunk:
-                    os.close(ready_fd)
-                    owned._supervisor_ready_fd = None
-                    return
-                owned._supervisor_report += chunk
-        except BlockingIOError:
-            return
-        except (OSError, ValueError):
-            try:
-                os.close(ready_fd)
-            except OSError:
-                pass
-            owned._supervisor_ready_fd = None
-
-    @classmethod
-    def _await_supervisor_ready(cls, owned: OwnedProcess, timeout_seconds: float) -> None:
-        """Hold the first signal until the supervisor can turn it into a sweep."""
-        with owned._supervisor_ready_lock:
-            if not owned._supervisor_report:
-                cls._read_supervisor_report(owned, timeout_seconds)
-
-    @classmethod
-    def _supervisor_proved_cleanup(cls, owned: OwnedProcess) -> bool:
-        """True once the exited supervisor's report carries its proof byte."""
-        with owned._supervisor_ready_lock:
-            cls._read_supervisor_report(owned, 0.0)
-            report = owned._supervisor_report
-        # Name the mechanism the supervisor actually used: a sampled sweep
-        # releases the slot but is never presented as the kernel-backed proof.
-        if PROOF_BYTE in report:
-            owned.containment = SUBREAPER_CONTAINMENT
-            return True
-        if SAMPLED_PROOF_BYTE in report:
-            owned.containment = LINEAGE_CONTAINMENT
-            return True
-        return False
+    _preflight_posix_target = staticmethod(preflight_posix_target)
 
     @staticmethod
     def _posix_process_group_is_alive(process_group_id: int) -> bool:
@@ -882,7 +856,17 @@ class OwnedProcessService:
 
     @staticmethod
     def _terminate_exited_process_group(process_group_id: int) -> None:
+        """Sweep survivors of an exited root, only while its group is populated.
+
+        A live member keeps the PGID reserved, so the signal reaches the
+        root's own leftovers. An empty group means the PGID may be reused, and
+        EPERM means it already belongs to another user: signal neither.
+        """
         if not hasattr(os, "killpg"):
+            return
+        try:
+            os.killpg(process_group_id, 0)
+        except (OSError, ValueError):
             return
         try:
             os.killpg(process_group_id, signal.SIGTERM)
@@ -901,46 +885,7 @@ class OwnedProcessService:
     def _io_threads(owned: OwnedProcess) -> tuple[threading.Thread, ...]:
         return owned._output_readers
 
-    @staticmethod
-    def _start_reader(
-        pipe: IO[bytes],
-        capture: _StreamCapture,
-        stream_name: str,
-        *,
-        on_chunk: Callable[[str, bytes], None] | None = None,
-    ) -> threading.Thread:
-        def _read() -> None:
-            try:
-                while True:
-                    chunk = pipe.read(PIPE_READ_CHUNK_BYTES)
-                    if not chunk:
-                        return
-                    capture.append(chunk)
-                    if on_chunk is not None:
-                        # Live-output tap (W2-1). The callback owns batching,
-                        # throttling, and drops — it must never block or raise;
-                        # a broken tap must not stall or kill the drain.
-                        try:
-                            on_chunk(stream_name, chunk)
-                        except Exception:  # noqa: BLE001
-                            logger.debug(
-                                "owned process output tap failed",
-                                extra={"stream": stream_name},
-                            )
-            except (OSError, ValueError) as error:
-                capture.read_error = type(error).__name__
-                logger.debug(
-                    "owned process pipe drain ended after pipe closure",
-                    extra={"stream": stream_name, "error_type": type(error).__name__},
-                )
-
-        thread = threading.Thread(
-            target=_read,
-            daemon=True,
-            name=f"owned-process-{stream_name}",
-        )
-        thread.start()
-        return thread
+    _start_reader = staticmethod(start_output_reader)
 
     def _close_pipes(self, owned: OwnedProcess) -> None:
         process = owned.process
@@ -996,6 +941,7 @@ __all__ = [
     "DEFAULT_MAX_CAPTURE_BYTES",
     "DEFAULT_MAX_QUEUED_PROCESSES",
     "OwnedProcess",
+    "OwnedProcessAbortedBeforeStart",
     "OwnedProcessCapacityError",
     "OwnedProcessCleanupVerdict",
     "OwnedProcessError",

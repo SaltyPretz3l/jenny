@@ -47,6 +47,8 @@
     urlApi = null,
     BlobCtor = null,
     atobFn = null,
+    // Native one-shot decode (Uint8Array.fromBase64) where the runtime has it.
+    fromBase64Fn = typeof Uint8Array.fromBase64 === 'function' ? (value) => Uint8Array.fromBase64(value) : null,
     getWindow = null,
     budgetBytes = DEFAULT_BUDGET_BYTES,
   } = {}) {
@@ -65,11 +67,16 @@
     }
 
     function decodeToBlob(base64, mime, apis) {
-      if (!apis.BlobCtor || !apis.urlApi || !apis.atobFn || !base64) return null;
+      if (!apis.BlobCtor || !apis.urlApi || !(fromBase64Fn || apis.atobFn) || !base64) return null;
       try {
-        const binary = apis.atobFn(base64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+        let bytes;
+        if (fromBase64Fn) {
+          bytes = fromBase64Fn(base64);
+        } else {
+          const binary = apis.atobFn(base64);
+          bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+        }
         return new apis.BlobCtor([bytes], { type: mime || 'application/octet-stream' });
       } catch (_error) {
         return null;

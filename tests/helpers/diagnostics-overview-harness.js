@@ -16,7 +16,8 @@ const INDEX_HTML = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 const MB = 1024 * 1024;
 const GB = 1024 * MB;
 const NOW = Date.now();
-const LAUNCH_START = new Date(NOW - 3 * 3600 * 1000).toISOString();
+// Three hours back, but never before today's midnight: the copy prints a date for a launch on another day.
+const LAUNCH_START = new Date(Math.max(NOW - 3 * 3600 * 1000, new Date(NOW).setHours(0, 0, 0, 0))).toISOString();
 const OBSERVED = (count, lastSeen, extra) => ({ state: 'observed', capture_state: 'capturing', count, last_seen: lastSeen || new Date(NOW - 60000).toISOString(), ...extra });
 
 function readyBackend(extra) {

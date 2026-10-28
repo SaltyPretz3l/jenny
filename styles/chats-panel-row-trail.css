@@ -1,0 +1,109 @@
+/* Sidebar row trail (owner-approved polish 2026-10-20): every Chats row has one fixed trailing
+ * layout. Titles start at the row text inset; the time sits in a slot at the row end and swaps with
+ * the chevron and menu on hover or focus; one 6 px dot (needs you > working > failed > unread) sits
+ * in a fixed column --session-row-dot-col-end from the end, at the same x on every row type. A
+ * collapsed parent's count chip rides just left of the dot column. All trailing marks are absolutely
+ * placed with logical insets, so right-to-left mirrors for free. Imported after chats-panel-tree.css
+ * and before chats-panel-selection.css so bulk selection still wins. */
+
+.session-row,
+.project-header {
+  /* The time slot fits the widest label measured across the shipped locales ("30 de set.", "25. 10. 20."
+   * are about 4.4 caption widths) and scales with the text size; the dot column sits just past it. */
+  --session-row-time-slot: calc(var(--font-size-caption) * 4.6);
+  --session-row-dot-col-end: calc(var(--space-5) + var(--session-row-time-slot) + var(--space-3));
+  /* What a row's text reserves at its end: the dot column, the dot and a gap (project headers too). */
+  --session-row-end-reserve: calc(var(--session-row-dot-col-end) + var(--session-row-dot-size) + var(--space-5));
+}
+
+/* The open button reserves the dot column, a gap and the time slot; a collapsed parent also
+ * reserves room for its count chip. */
+.session-row__open {
+  padding-inline-end: var(--session-row-end-reserve);
+}
+
+.session-row[data-tree-expanded="false"] .session-row__open {
+  padding-inline-end: calc(var(--session-row-end-reserve) + 44px);
+}
+
+.session-row__dot,
+.session-row__unread-dot,
+.session-row__time,
+.session-row__chevron,
+.session-row__children-chip,
+.session-row__menu {
+  position: absolute;
+  inset-block-start: 50%;
+  transform: translateY(-50%);
+}
+
+.session-row__branch { display: contents; }
+
+.session-row__dot,
+.session-row__unread-dot { inset-inline-end: var(--session-row-dot-col-end); }
+
+.session-row__time {
+  inset-inline-end: var(--space-5);
+  /* A longer label is clipped rather than run under the dot column. */
+  max-inline-size: var(--session-row-time-slot);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.session-row__menu { inset-inline-end: var(--space-2); }
+.session-row__chevron { inset-inline-end: calc(var(--space-2) + 32px); }
+.session-row__children-chip {
+  inset-inline-end: calc(var(--session-row-dot-col-end) + var(--session-row-dot-size) + var(--space-4));
+}
+
+/* The unread dot yields to a status dot (needs you, working, failed). */
+.session-row:is([data-session-dominant-state="streaming"], [data-session-dominant-state="approval"], [data-session-dominant-state="plan_review"], [data-session-dominant-state="input_needed"], [data-session-last-outcome="failed"]) .session-row__unread-dot {
+  display: none;
+}
+
+/* One slot, two occupants: the time at rest, the chevron and menu on hover or focus. Opacity only,
+ * so nothing moves. Bulk selection hides the controls, so the time stays. */
+.session-row__chevron,
+.session-row__menu { opacity: 0; }
+
+.session-row__time {
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.session-row:is(:hover, :focus-within) :is(.session-row__chevron, .session-row__menu) { opacity: 1; }
+.session-row:is(:hover, :focus-within):not(.sidebar-bulk-selecting) .session-row__time { opacity: 0; }
+
+/* Narrow panel: the time is hidden, so the dot column moves to the end margin. */
+@container viewpanel (max-width: 279px) {
+  .session-row,
+  .project-header { --session-row-dot-col-end: var(--space-5); }
+
+  /* With the time hidden, the end padding still clears the hover controls (menu, plus the chevron on
+   * parents, plus the count chip at rest on collapsed parents), so titles never run under them. */
+  .session-row__open { padding-inline-end: calc(var(--space-2) + 32px + var(--space-2)); }
+  .session-row[data-tree-has-children="true"] .session-row__open { padding-inline-end: calc(var(--space-2) + 52px + var(--space-2)); }
+  .session-row[data-tree-expanded="false"] .session-row__open { padding-inline-end: calc(var(--space-2) + 52px + var(--space-2) + var(--space-4)); }
+
+  /* The chevron and menu take the end margin on hover, so the dot and the chip step aside there. */
+  /* visibility, not opacity: the working dot's pulse animates opacity and would win. */
+  .session-row:is(:hover, :focus-within):not(.sidebar-bulk-selecting) :is(.session-row__dot, .session-row__unread-dot, .session-row__children-chip) { visibility: hidden; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-row__time { transition: none; }
+}
+
+@media (forced-colors: active) {
+  .session-row[data-session-dominant-state="streaming"] .session-row__dot,
+  .session-row:is([data-session-dominant-state="approval"], [data-session-dominant-state="plan_review"], [data-session-dominant-state="input_needed"]) .session-row__dot,
+  .session-row:is([data-session-dominant-state="idle"], [data-session-dominant-state="open"])[data-session-last-outcome="failed"] .session-row__dot {
+    background: CanvasText;
+  }
+
+  .session-row__unread-dot { background: Highlight; }
+
+  /* On the selected (Highlight) row the dots flip to HighlightText; a transparent dot stays transparent. */
+  .session-row.active[data-session-dominant-state="streaming"] .session-row__dot,
+  .session-row.active:is([data-session-dominant-state="approval"], [data-session-dominant-state="plan_review"], [data-session-dominant-state="input_needed"]) .session-row__dot,
+  .session-row.active:is([data-session-dominant-state="idle"], [data-session-dominant-state="open"])[data-session-last-outcome="failed"] .session-row__dot,
+  .session-row.active .session-row__unread-dot { background: HighlightText; }
+}

@@ -6,7 +6,7 @@ const { createSendOutbox } = require('../renderer/chat/renderer-send-outbox');
 const { createQueuedSendDispatcher } = require('../renderer/chat/renderer-send-outbox-dispatch');
 const { createComposerSessionState } = require('../renderer/chat/renderer-composer-session-state');
 
-function makeHarness({ sendResults, maxAutoRetries } = {}) {
+function makeHarness({ sendResults, maxAutoRetries, isBackendStarting } = {}) {
   const state = {};
   const outbox = createSendOutbox(state);
   const scheduled = [];
@@ -35,6 +35,7 @@ function makeHarness({ sendResults, maxAutoRetries } = {}) {
     },
     clearTimeoutImpl: (timer) => cleared.push(timer),
     ...(maxAutoRetries !== undefined ? { maxAutoRetries } : {}),
+    ...(isBackendStarting ? { isBackendStarting } : {}),
   });
   return { outbox, dispatch, scheduled, cleared, logs, sendCalls, sendOptions };
 }
@@ -307,4 +308,21 @@ test('dispose clears retry timers and prevents post-await outbox mutation', asyn
   await pending;
   assert.equal(outbox.peek('s1').status, 'sending');
   assert.deepEqual(cleared, []);
+});
+
+test('while the engine starts a queued entry waits without failing, then sends once the backend is usable', async () => {
+  let starting = true;
+  const { outbox, dispatch, sendCalls, scheduled } = makeHarness({ isBackendStarting: () => starting });
+  const entry = outbox.enqueue('s1', { prompt: 'Sent during startup' });
+  await outbox.settleContextCapture(entry, Promise.resolve({}));
+  assert.equal(await dispatch('s1'), null);
+  assert.deepEqual(sendCalls, [], 'nothing reaches the send path while the engine starts');
+  assert.equal(outbox.peek('s1').status, 'waiting_for_turn');
+  assert.equal(scheduled.length, 0, 'no auto-retry is armed');
+  starting = false;
+  assert.equal(await dispatch('s1'), true);
+  assert.deepEqual(sendCalls, ['Sent during startup']);
+  assert.equal(outbox.peek('s1'), null);
+  outbox.dispose();
+  dispatch.dispose();
 });

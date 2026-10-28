@@ -120,6 +120,18 @@ test('Ctrl+N starts a new chat', async (t) => {
   assert.ok(shell.__state.sessionCounter > counterBefore, 'a session create reached the backend fake');
 });
 
+test('a held Ctrl+N (auto-repeat keydown) creates one chat, not one per repeat', async (t) => {
+  const { window, shell } = await loadRendererTestApp(t);
+  await waitForUi(window, 60);
+
+  const counterBefore = shell.__state.sessionCounter;
+  const repeat = pressCtrl(window, 'n', { repeat: true });
+  await waitForUi(window, 60);
+
+  assert.equal(repeat.defaultPrevented, true, 'the repeat is still consumed');
+  assert.equal(shell.__state.sessionCounter, counterBefore, 'a repeat keydown never fires the chord');
+});
+
 test('Ctrl+B toggles the active panel and is a no-op on panel-less views', async (t) => {
   const { window } = await loadRendererTestApp(t);
   const doc = window.document;

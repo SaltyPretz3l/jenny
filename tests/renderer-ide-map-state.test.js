@@ -137,20 +137,6 @@ test('clear() empties the host and resets currentState', (t) => {
   assert.ok(!hostEl.classList.contains('hidden'), 'render() must un-hide the cover');
 });
 
-test('hide()/show() toggle the hidden class without clearing content', (t) => {
-  const { hostEl, teardown } = setupDom();
-  const states = createMapStates({ hostEl });
-  t.after(() => { states.dispose(); teardown(); });
-
-  states.render('idle');
-  states.hide();
-  assert.ok(hostEl.classList.contains('hidden'));
-  assert.notEqual(hostEl.innerHTML, '', 'hide() should not clear rendered markup');
-
-  states.show();
-  assert.ok(!hostEl.classList.contains('hidden'));
-});
-
 test('dispose() is idempotent and stops delegated actions from firing', (t) => {
   const { dom, hostEl, teardown } = setupDom();
   let generated = 0;

@@ -39,6 +39,7 @@ function makeDocument() {
     numPages: 1,
     annotationStorage: { onSetModified: null, onResetModified: null, size: 0, resetModified() {} },
     destroyCalls: 0,
+    async getPage() { return {}; },
     destroy() { this.destroyCalls += 1; },
   };
 }

@@ -24,6 +24,7 @@
   <link rel="stylesheet" href="styles/settings-model-library-folders.css">
   <link rel="stylesheet" href="styles/settings-model-library-image-engine.css">
   <link rel="stylesheet" href="styles/settings-mcp-servers.css">
+  <link rel="stylesheet" href="styles/settings-api-providers.css">
   <link rel="stylesheet" href="styles/settings-runs.css">
   <link rel="stylesheet" href="styles/markdown.css">
   <link rel="stylesheet" href="styles/composer-workspace-nudge.css">
@@ -400,15 +401,9 @@
                 </div>
                 <div class="composer-toolbar">
                   <div class="composer-toolbar-left">
-                    <button class="composer-icon-button" id="composerAttachShortcut" data-chat-node="composerAttachShortcut" type="button"
-                            aria-label="Attach" data-i18n-aria-label="composer.attach" title="Attach" data-i18n-title="composer.attach" aria-haspopup="menu" aria-expanded="false" aria-controls="composerAttachMenu">
-                      <svg viewBox="0 0 16 16" aria-hidden="true">
-                        <path d="M14 8.5l-5.5 5.5a3.5 3.5 0 01-5-5L9 3.5a2.5 2.5 0 013.5 3.5L7 12.5a1.5 1.5 0 01-2-2L10.5 5"/>
-                      </svg>
-                    </button>
-                    <button class="composer-icon-button composer-text-button" id="composerTerminalShortcut" data-chat-node="composerTerminalShortcut" type="button"
-                            aria-label="Commands" data-i18n-aria-label="composer.commands" title="Commands · /" data-i18n-title="composer.commandsTitle" aria-haspopup="menu" aria-expanded="false" aria-controls="composerCommandPopover">
-                      <span class="composer-button-glyph" aria-hidden="true">/</span><span class="composer-button-text" data-i18n="composer.commands">Commands</span>
+                    <button class="composer-icon-button composer-add-button" id="composerAttachShortcut" data-chat-node="composerAttachShortcut" type="button"
+                            aria-label="Add files, commands and skills" data-i18n-aria-label="composer.addMenu.label" title="Add files, commands and skills" data-i18n-title="composer.addMenu.label" aria-haspopup="menu" aria-expanded="false" aria-controls="composerAttachMenu">
+                      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
                     </button>
                     <div class="composer-toggle-slot" id="composerToolToggleSlot" data-rail-config>
                       <span id="composerChatChipHost"></span>
@@ -731,6 +726,7 @@
                   <h4 class="settings-group-heading" id="cloudModelsHeading" data-i18n="settings.cloudModels.heading">Cloud models</h4>
                   <p class="settings-group-copy" data-i18n="settings.cloudModels.description">Optional models that run on a provider's servers. Local models work without them, and Force local inference blocks them all.</p>
                   <div class="settings-toggle-list" id="cloudModelsHost" aria-live="polite"></div>
+                  <div class="settings-toggle-list" id="apiProvidersHost"></div>
                   <div class="settings-toggle-list" id="conversationTransferHost" aria-label="Conversation transfer" data-i18n-aria-label="settings.transfer.title"></div>
                 </div>
               </section>
@@ -909,6 +905,22 @@
                   <h4 class="settings-group-heading" id="notificationsContentHeading" data-i18n="settings.notifications.content.heading">Content</h4>
                   <div class="settings-toggle-list" id="notificationsContentList"></div>
                   <p class="settings-group-copy" data-i18n="settings.notifications.content.note">Your system keeps its own copy of each notification in its notification center, and can silence Jenny system-wide in its notification settings.</p>
+                </div>
+              </section>
+
+              <section class="settings-card" data-settings-section="dictation" id="dictationSettingsSection">
+                <div class="settings-card-header">
+                  <h3 data-i18n="settings.dictation.heading">Dictation</h3>
+                </div>
+                <p class="settings-copy" data-i18n="settings.dictation.description">Talk instead of typing in the message box. Speech is turned into text on this PC; audio never leaves it and is not saved.</p>
+                <div class="settings-group settings-group--flush" role="group" aria-labelledby="dictationGeneralHeading">
+                  <h4 class="settings-group-heading" id="dictationGeneralHeading" data-i18n="settings.dictation.general.heading">General</h4>
+                  <div class="settings-toggle-list" id="dictationGeneralList"></div>
+                </div>
+                <div class="settings-group settings-group--flush" role="group" aria-labelledby="dictationModelHeading">
+                  <h4 class="settings-group-heading" id="dictationModelHeading" data-i18n="settings.dictation.model.heading">Speech model</h4>
+                  <div class="settings-toggle-list" id="dictationModelList"></div>
+                  <p class="settings-group-copy" data-i18n="settings.dictation.credit">Model by NVIDIA, CC BY 4.0. Dictation design inspired by Handy (MIT).</p>
                 </div>
               </section>
 
@@ -1107,19 +1119,14 @@
 
   <div class="scratchpad-pin-layer" id="pinnedNoteLayer" aria-label="Pinned notes" data-i18n-aria-label="home.pinnedNotesLabel" hidden></div>
 
+  <!-- Row 63: the composer's one + menu (files, then commands and skills; typing / still works). -->
   <div class="composer-popover composer-attach-menu hidden" id="composerAttachMenu" role="menu" aria-labelledby="composerAttachShortcut">
-    <button class="composer-popover-action" id="attachFilesButton" role="menuitem" type="button" title="Attach files to this message" data-i18n-title="composer.attachMenu.filesTitle" data-i18n="composer.attachMenu.files">Attach files</button>
-    <button class="composer-popover-action" id="captureScreenButton" role="menuitem" type="button" title="Capture a screenshot to attach" data-i18n-title="composer.attachMenu.screenTitle" data-i18n="composer.attachMenu.screen">Capture screen</button>
+    <button class="composer-menu-row" id="attachFilesButton" role="menuitem" type="button" title="Attach files to this message" data-i18n-title="composer.attachMenu.filesTitle"><span class="composer-menu-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M13 7.5 8.2 12.3a3 3 0 0 1-4.3-4.2l5-5a2 2 0 0 1 2.9 2.8L6.9 10.8a1 1 0 0 1-1.4-1.4L10 5"/></svg></span><span class="composer-menu-text"><span class="composer-menu-label" data-i18n="composer.attachMenu.files">Attach files</span></span></button>
+    <button class="composer-menu-row" id="captureScreenButton" role="menuitem" type="button" title="Capture a screenshot to attach" data-i18n-title="composer.attachMenu.screenTitle"><span class="composer-menu-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="8" rx="1.5"/><path d="M6 14h4M8 11v3"/></svg></span><span class="composer-menu-text"><span class="composer-menu-label" data-i18n="composer.attachMenu.screen">Capture screen</span></span></button>
     <div class="composer-active-file-action-host hidden" id="composerActiveFileActionHost"></div>
-  </div>
-  <div class="composer-popover hidden" id="composerCommandPopover" role="menu" aria-labelledby="composerCommandPopoverTitle">
-    <div class="composer-popover-header" role="presentation">
-      <div class="composer-popover-title" id="composerCommandPopoverTitle" data-i18n="composer.commands">Commands</div>
-      <div class="composer-popover-copy" data-i18n="composer.completeCommandThenSend">Complete a command, then press Send to run it.</div>
-    </div>
-    <div class="composer-popover-section composer-popover-command-section">
-      <div id="composerCommandPopoverList" class="composer-popover-list" role="presentation"></div>
-    </div>
+    <div class="composer-menu-separator" role="separator"></div>
+    <button class="composer-menu-row" id="composerMenuCommandsButton" role="menuitem" type="button" data-composer-menu-action="commands" aria-keyshortcuts="/"><span class="composer-menu-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M10 2 6 14"/></svg></span><span class="composer-menu-text"><span class="composer-menu-label" data-i18n="composer.commands">Commands</span><span class="composer-menu-sub" data-i18n="composer.addMenu.commandsSub">Compact, notes, handoff and more</span></span><kbd class="composer-menu-kbd" aria-hidden="true">/</kbd></button>
+    <button class="composer-menu-row" id="composerMenuSkillsButton" role="menuitem" type="button" data-composer-menu-action="skills"><span class="composer-menu-icon" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M8 2v3M8 11v3M2 8h3M11 8h3M4 4l1.5 1.5M10.5 10.5 12 12M12 4l-1.5 1.5M5.5 10.5 4 12"/></svg></span><span class="composer-menu-text"><span class="composer-menu-label" data-i18n="composer.slash.skills">Skills</span><span class="composer-menu-sub" data-i18n="composer.addMenu.skillsSub">Run a saved skill</span></span></button>
   </div>
   <div class="command-palette-overlay hidden" id="commandPaletteOverlay" role="dialog" aria-modal="true" aria-labelledby="commandPaletteLabel">
     <div class="command-palette-scrim" aria-hidden="true"></div>
@@ -1316,16 +1323,24 @@
   <script defer src="renderer/chat/renderer-chat-messages-dialog.js"></script>
   <script defer src="renderer/chat/renderer-chat-send-modal.js"></script>
   <script defer src="renderer/chat/renderer-chat-messages-review.js"></script>
+  <script defer src="renderer/chat/renderer-primary-chat-store.js"></script>
+  <script defer src="renderer/chat/renderer-primary-activity.js"></script>
+  <script defer src="renderer/chat/renderer-primary-reset-dialog.js"></script>
+  <script defer src="renderer/chat/renderer-slash-activity-command.js"></script>
+  <script defer src="renderer/shell/renderer-primary-session-menu.js"></script>
+  <script defer src="renderer/chat/renderer-primary-paused-notice.js"></script>
   <script defer src="renderer/chat/renderer-composer-message-strip.js"></script>
   <!-- Chat calendar block (home tool results); must precede renderer-transcript-tool-calls.js and renderer-turn-row-tool-render-utils.js, which resolve it. -->
   <script defer src="renderer/chat/renderer-calendar-chat-block.js"></script>
   <script defer src="renderer/chat/renderer-calendar-chat-bindings.js"></script>
+  <script defer src="renderer/chat/renderer-review-findings.js"></script>
   <script defer src="renderer/chat/renderer-tool-shell-utils.js"></script>
   <script defer src="renderer/chat/renderer-monitor-tool-utils.js"></script>
   <script defer src="renderer/chat/renderer-tool-detail-body.js"></script>
   <script defer src="renderer/chat/renderer-transcript-attachments.js"></script>
   <script defer src="renderer/chat/renderer-agent-step-utils.js"></script>
   <script defer src="renderer/chat/renderer-subagent-monitor-model.js"></script>
+  <script defer src="renderer/chat/renderer-subagent-monitor-activity.js"></script>
   <script defer src="renderer/chat/renderer-subagent-monitor-view.js"></script>
   <script defer src="renderer/chat/reasoning-row-v2-utils.js"></script>
   <script defer src="renderer/chat/renderer-transcript-view-utils.js"></script>
@@ -1364,6 +1379,7 @@
 <script defer src="renderer/chat/renderer-stream-handler-runtime.js"></script>
 <script defer src="renderer/chat/renderer-stream-tool-patch-utils.js"></script>
 <script defer src="renderer/chat/renderer-stream-tool-live-tail.js"></script>
+<script defer src="renderer/chat/renderer-stream-image-render-progress.js"></script>
 <script defer src="renderer/chat/renderer-stream-waiting-line.js"></script>
 <script defer src="renderer/chat/renderer-stream-activity-typed.js"></script>
 <script defer src="renderer/chat/renderer-stream-activity-row.js"></script>
@@ -1431,7 +1447,6 @@
   <script defer src="renderer/features/renderer-dashboard-loops.js"></script>
   <script defer src="renderer/features/renderer-dashboard-widget-away-digest.js"></script>
   <script defer src="renderer/features/renderer-dashboard-daybook.js"></script>
-  <script defer src="renderer/features/renderer-dashboard-ask-config.js"></script>
   <script defer src="renderer/features/renderer-dashboard-page-menu.js"></script>
   <script defer src="renderer/features/renderer-dashboard-manager.js"></script>
   <script defer src="renderer/services/renderer-setup-service.js"></script>
@@ -1497,6 +1512,11 @@
 <script defer src="renderer/shell/model-library/model-library-image-engine.js"></script>
 <script defer src="renderer/shell/model-library/model-library-ninfer.js"></script>
 <script defer src="renderer/shell/model-library/model-library-engine-blocks.js"></script>
+<script defer src="renderer/shell/model-library/model-library-section-merge.js"></script>
+<script defer src="renderer/shell/model-library/model-library-section-render.js"></script>
+<script defer src="renderer/shell/model-library/model-library-section-menu.js"></script>
+<script defer src="renderer/shell/model-library/model-library-section-delete.js"></script>
+<script defer src="renderer/shell/model-library/model-library-section-live-sync.js"></script>
 <script defer src="renderer/shell/renderer-settings-model-library-section.js"></script>
 <script defer src="renderer/shell/renderer-plugin-session-controller.js"></script>
 <script defer src="renderer/inventory/drawer.js"></script>
@@ -1524,6 +1544,9 @@
   <script defer src="renderer/features/renderer-display-media-picker.js"></script>
   <script defer src="renderer/shell/renderer-session-unread.js"></script>
   <script defer src="renderer/shell/renderer-chats-panel-tree.js"></script>
+  <script defer src="renderer/shell/renderer-chats-panel-scroll.js"></script>
+  <script defer src="renderer/shell/renderer-chats-panel-model.js"></script>
+  <script defer src="renderer/shell/renderer-chats-panel-projects.js"></script>
   <script defer src="renderer/shell/renderer-chats-panel.js"></script>
   <script defer src="renderer/shell/renderer-sidebar-utils.js"></script>
   <script defer src="renderer/shell/renderer-view-panel-registry.js"></script>
@@ -1535,6 +1558,7 @@
   <script defer src="renderer/shell/renderer-away-digest-model.js"></script>
   <script defer src="renderer/shell/renderer-top-nav-shell.js"></script>
   <script defer src="renderer/shell/renderer-global-shortcuts.js"></script>
+  <script defer src="renderer/features/renderer-dictation-controller.js"></script>
   <script defer src="renderer/shell/renderer-session-actions.js"></script>
   <script defer src="renderer/shell/renderer-session-autotitle.js"></script>
   <script defer src="renderer/shell/renderer-activity-prefs-utils.js"></script>
@@ -1576,6 +1600,7 @@
   <script defer src="renderer/chat/renderer-turn-tree-projector.js"></script>
   <script defer src="renderer/chat/renderer-row-identity-utils.js"></script>
   <script defer src="renderer/chat/renderer-turn-row-projector-utils.js"></script>
+  <script defer src="renderer/chat/renderer-row-order-invariant.js"></script>
   <script defer src="renderer/chat/renderer-turn-row-projector-tools.js"></script>
   <script defer src="renderer/chat/renderer-turn-view-model-sections.js"></script>
   <script defer src="renderer/chat/renderer-turn-view-model.js"></script>
@@ -1623,12 +1648,14 @@
   <script defer src="renderer/chat/renderer-sprite-morph.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-thinking.js"></script>
   <script defer src="renderer/chat/renderer-composer-vision-gate.js"></script>
+  <script defer src="renderer/chat/renderer-api-provider-notice.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-chrome.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-thread-state.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-surface-state.js"></script>
   <script defer src="renderer/chat/renderer-surface-activity-resolver.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-projection-cache.js"></script>
   <script defer src="renderer/chat/renderer-render-message-index-utils.js"></script>
+  <script defer src="renderer/chat/renderer-manual-compaction-divider.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-hydration.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-projection-context.js"></script>
   <script defer src="renderer/chat/renderer-render-pipeline-fallback-markup.js"></script>
@@ -1780,6 +1807,7 @@
   <script defer src="renderer/shell/renderer-slash-command-context.js"></script>
   <script defer src="renderer/chat/renderer-slash-note-command.js"></script>
   <script defer src="renderer/chat/renderer-slash-linked-command.js"></script>
+  <script defer src="renderer/chat/renderer-slash-handoff-command.js"></script>
   <script defer src="renderer/chat/renderer-slash-memory-commands.js"></script>
   <script defer src="renderer/chat/renderer-subagent-monitor-controller.js"></script>
   <script defer src="renderer/chat/renderer-resume-turn-interaction.js"></script>

@@ -40,16 +40,21 @@ function memoryIdOf(value) {
   return Number.isSafeInteger(value) && value > 0 ? value : 0;
 }
 
-// One Settings RPC. A thrown request becomes `{ ok: false, reason }` with a
-// token reason; only the method and that token are logged.
+// A thrown request becomes `{ ok: false, reason }` with a token reason; only
+// the method and that token are logged.
+function requestFailure(service, method, error) {
+  const raw = String(error?.reason || '');
+  const reason = REASON_PATTERN.test(raw) ? raw : 'request_failed';
+  service._emitServiceLog?.('WARN', 'memory.settings_request_failed', { method, reason });
+  return { ok: false, reason };
+}
+
+// One Settings RPC.
 async function settingsRpc(service, method, params) {
   try {
     return { payload: await requestMemoryRpc(service, method, params) };
   } catch (error) {
-    const raw = String(error?.reason || '');
-    const reason = REASON_PATTERN.test(raw) ? raw : 'request_failed';
-    service._emitServiceLog?.('WARN', 'memory.settings_request_failed', { method, reason });
-    return { failure: { ok: false, reason } };
+    return { failure: requestFailure(service, method, error) };
   }
 }
 
@@ -121,10 +126,7 @@ async function clearForgottenMemories(service, { projectId } = {}) {
   try {
     return { ok: true, ...(await clearMemorySuppressions(service, project)) };
   } catch (error) {
-    const raw = String(error?.reason || '');
-    const reason = REASON_PATTERN.test(raw) ? raw : 'request_failed';
-    service._emitServiceLog?.('WARN', 'memory.settings_request_failed', { method: 'memory.clear_suppressions', reason });
-    return { ok: false, reason };
+    return requestFailure(service, 'memory.clear_suppressions', error);
   }
 }
 
@@ -277,7 +279,6 @@ async function exportMemoriesMarkdown(service, { projectId } = {}, { now = () =>
 }
 
 module.exports = {
-  buildMemoriesMarkdown,
   clearForgottenMemories,
   eraseMemory,
   exportMemoriesMarkdown,

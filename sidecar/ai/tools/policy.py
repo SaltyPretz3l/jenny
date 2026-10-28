@@ -69,6 +69,10 @@ _DEFAULT_TOOL_DEFAULTS = {
     # Plan Plus: records a suggestion for review and writes nothing, so it never
     # prompts; applying a suggestion is its own consented path.
     "propose_change": POLICY_DECISION_AUTO,
+    # Home writes touch only Jenny's own Home surfaces, are attributed and
+    # one-click undoable, and deletes self-gate behind a confirm round-trip;
+    # without this entry the non-read-only descriptor falls through to ask.
+    "home": POLICY_DECISION_AUTO,
     "run_command": POLICY_DECISION_ASK,
     "run_temp_script": POLICY_DECISION_ASK,
     "monitor": POLICY_DECISION_ASK,
@@ -99,6 +103,14 @@ _DEFAULT_TOOL_DEFAULTS = {
     # undoable; consent rides the per-request memory policy, not a prompt.
     "memory": POLICY_DECISION_AUTO,
     "conversations_recent": POLICY_DECISION_AUTO,
+    # Session directory (row 69): reads auto; stopping another chat cancels
+    # user-started work, so it asks.
+    "sessions_list": POLICY_DECISION_AUTO,
+    "session_status": POLICY_DECISION_AUTO,
+    "session_transcript": POLICY_DECISION_AUTO,
+    "session_stop": POLICY_DECISION_ASK,
+    # Row 69 W4b: reads the bundled app guide only.
+    "jenny_help": POLICY_DECISION_AUTO,
     "conversation_open": POLICY_DECISION_AUTO,
     "conversations_search": POLICY_DECISION_AUTO,
 }
@@ -132,10 +144,7 @@ def approval_presentation_for_call(
         scope = "Local command execution"
         consequence = "May run a local command and change local state."
     else:
-        workspace_names = {
-            "read_file", "write_file", "edit_file", "propose_change", "glob_files",
-        }
-        if family in _APPROVAL_WORKSPACE_FAMILIES or name in workspace_names:
+        if family in _APPROVAL_WORKSPACE_FAMILIES:
             scope = "Workspace files"
         elif family in _APPROVAL_WEB_FAMILIES:
             scope = "Web and browser session"
@@ -159,10 +168,6 @@ def approval_presentation_for_call(
         policy_scope=scope[:MAX_APPROVAL_POLICY_TEXT_CHARS],
         policy_consequence=consequence[:MAX_APPROVAL_POLICY_TEXT_CHARS],
     )
-
-
-def approval_presentation_for_descriptor(descriptor: Any) -> ApprovalPresentation:
-    return approval_presentation_for_call(descriptor, {})
 
 
 @dataclass(frozen=True)
@@ -368,6 +373,11 @@ def _normalize_policy_path_for_match(value: str, *, windows_like: bool) -> str:
         return ""
     normalizer = ntpath.normpath if windows_like else posixpath.normpath
     normalized = normalizer(raw).replace("\\", "/")
+    if not windows_like and normalized.startswith("//"):
+        # posixpath.normpath keeps exactly two leading slashes (POSIX leaves
+        # "//" implementation-defined); the JS evaluator collapses them, so
+        # "//etc" must match a "/etc" rule here as well (tool review C1 #7).
+        normalized = normalized[1:]
     if windows_like:
         normalized = normalized.casefold()
         if re.match(r"^[a-z]:\.?$", normalized, re.IGNORECASE):

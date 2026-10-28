@@ -266,3 +266,122 @@ test('Find in Folder scopes the search to a directory, then the chip clears it',
     .map((el) => el.dataset.ideSearchFile).sort();
   assert.deepEqual(allFiles, ['lib/util.js', 'src/app.js', 'src/inner/deep.js']);
 });
+
+// ---- row 82 slice X2: whole word, include/exclude details, history ----
+
+function toolbarAction(harness, action) {
+  return harness.viewHost('search').querySelector(`[data-ide-replace-action="${action}"]`);
+}
+
+test('ide search whole-word toggle sends wholeWord and the plain payload stays { query }', async (t) => {
+  const harness = createSearchHarness(t, { 'a.txt': 'test testing\n' });
+  await harness.controller.activateIde();
+  await settle();
+
+  dispatchInput(harness, queryInput(harness), 'test');
+  pressKey(harness, queryInput(harness), 'Enter');
+  await settle(30);
+  assert.deepEqual(harness.bridge.calls.searchInFiles, [{ query: 'test' }]);
+
+  const chip = toolbarAction(harness, 'toggle-word');
+  assert.ok(chip, 'the whole-word chip renders');
+  assert.equal(chip.getAttribute('aria-pressed'), 'false');
+  assert.equal(chip.getAttribute('title'), 'Match whole word');
+  chip.click();
+  await settle(40);
+  assert.deepEqual(harness.bridge.calls.searchInFiles.at(-1), { query: 'test', wholeWord: true });
+  assert.equal(toolbarAction(harness, 'toggle-word').getAttribute('aria-pressed'), 'true');
+  assert.equal(toolbarAction(harness, 'toggle-word'), chip, 'the chip keeps its element');
+
+  toolbarAction(harness, 'toggle-word').click();
+  await settle(40);
+  assert.deepEqual(harness.bridge.calls.searchInFiles.at(-1), { query: 'test' });
+});
+
+test('ide search details toggle reveals include/exclude fields whose text reaches the payload', async (t) => {
+  const harness = createSearchHarness(t, { 'src/a.js': 'needle\n', 'docs/b.md': 'needle\n' });
+  await harness.controller.activateIde();
+  await settle();
+  const panel = harness.viewHost('search');
+  assert.equal(panel.querySelector('.ide-search-details'), null);
+
+  const chip = toolbarAction(harness, 'toggle-details');
+  assert.equal(chip.getAttribute('aria-expanded'), 'false');
+  chip.click();
+  await settle(20);
+  const details = panel.querySelector('.ide-search-details');
+  assert.ok(details, 'details region renders');
+  assert.equal(details.previousElementSibling, panel.querySelector('.ide-search-toolbar'), 'directly after the toolbar');
+  assert.equal(toolbarAction(harness, 'toggle-details').getAttribute('aria-expanded'), 'true');
+  const include = details.querySelector('[data-ide-search-include]');
+  const exclude = details.querySelector('[data-ide-search-exclude]');
+  assert.ok(include && exclude);
+  assert.equal(include.getAttribute('placeholder'), 'files to include');
+  assert.equal(include.getAttribute('maxlength'), '1024');
+
+  dispatchInput(harness, queryInput(harness), 'needle');
+  dispatchInput(harness, include, 'src, ./lib');
+  dispatchInput(harness, exclude, '*.test.js');
+  await settle(400);
+  assert.deepEqual(harness.bridge.calls.searchInFiles.at(-1), {
+    query: 'needle', include: ['src', '/lib'], exclude: ['*.test.js'],
+  });
+
+  // Typing in a filter reruns through the debounce.
+  const before = harness.bridge.calls.searchInFiles.length;
+  dispatchInput(harness, include, 'docs');
+  assert.equal(harness.bridge.calls.searchInFiles.length, before, 'debounced');
+  await settle(400);
+  assert.deepEqual(harness.bridge.calls.searchInFiles.at(-1).include, ['docs']);
+
+  // Hiding the region drops the fields; the filters stay applied.
+  toolbarAction(harness, 'toggle-details').click();
+  await settle(20);
+  assert.equal(panel.querySelector('.ide-search-details'), null);
+  assert.equal(harness.state.ui.ide.search.includeText, 'docs');
+});
+
+test('ide search ArrowUp/ArrowDown step through the query history and Enter records it', async (t) => {
+  const harness = createSearchHarness(t, { 'a.txt': 'alpha beta gamma\n' });
+  await harness.controller.activateIde();
+  await settle();
+
+  for (const word of ['alpha', 'beta']) {
+    dispatchInput(harness, queryInput(harness), word);
+    pressKey(harness, queryInput(harness), 'Enter');
+    await settle(30);
+  }
+  assert.deepEqual(harness.state.ui.ide.searchHistory, ['alpha', 'beta']);
+
+  dispatchInput(harness, queryInput(harness), 'gam');
+  pressKey(harness, queryInput(harness), 'ArrowUp');
+  await settle(30);
+  assert.equal(queryInput(harness).value, 'beta');
+  assert.equal(harness.bridge.calls.searchInFiles.at(-1).query, 'beta', 'stepping runs the search');
+  pressKey(harness, queryInput(harness), 'ArrowUp');
+  await settle(30);
+  assert.equal(queryInput(harness).value, 'alpha');
+  pressKey(harness, queryInput(harness), 'ArrowDown');
+  await settle(30);
+  assert.equal(queryInput(harness).value, 'beta');
+  pressKey(harness, queryInput(harness), 'ArrowDown');
+  await settle(30);
+  assert.equal(queryInput(harness).value, 'gam', 'past the newest returns to the typed draft');
+  assert.deepEqual(harness.state.ui.ide.searchHistory, ['alpha', 'beta'], 'browsing never edits the history');
+});
+
+test('ide search records history when a result is opened and de-duplicates a repeat', async (t) => {
+  const harness = createSearchHarness(t, { 'src/app.js': 'const alpha = 1;\n' });
+  await harness.controller.activateIde();
+  await settle();
+
+  dispatchInput(harness, queryInput(harness), 'alpha');
+  await settle(400);
+  assert.deepEqual(harness.state.ui.ide.searchHistory || [], [], 'typing alone does not record');
+  harness.viewHost('search').querySelector('[data-ide-search-path="src/app.js"]').click();
+  await settle();
+  assert.deepEqual(harness.state.ui.ide.searchHistory, ['alpha']);
+  pressKey(harness, queryInput(harness), 'Enter');
+  await settle(30);
+  assert.deepEqual(harness.state.ui.ide.searchHistory, ['alpha']);
+});

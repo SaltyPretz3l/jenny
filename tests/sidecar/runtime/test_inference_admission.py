@@ -368,3 +368,237 @@ def test_failed_settlement_exchange_leaves_the_lease_settleable(tmp_path: Path) 
     settled_count = len(sent)
     lease.settle(outcome)
     assert len(sent) == settled_count
+
+
+class _FakeClock:
+    """Deterministic stand-in for the module's sleep/monotonic pair."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.sleeps: list[float] = []
+        self.on_sleep: Any = None
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.now += seconds
+        if self.on_sleep is not None:
+            self.on_sleep()
+
+
+class _Cancel:
+    cancelled = False
+
+
+def _waiting_bridge(answers: list[tuple[str, str | None]]) -> tuple[list[dict[str, Any]], Any]:
+    sent: list[dict[str, Any]] = []
+    reads: list[int] = []
+
+    def factory(rpc_id: int, **_kwargs: Any) -> _Reader:
+        status, reason = answers[min(len(reads), len(answers) - 1)]
+        reads.append(rpc_id)
+
+        class _AnswerReader(_Reader):
+            def __call__(self, _timeout: float) -> dict[str, Any]:
+                result: dict[str, Any] = {
+                    "schema_version": 1,
+                    "operation_id": sent[-1]["params"]["operation_id"],
+                    "status": status,
+                }
+                if reason is not None:
+                    result["reason"] = reason
+                return {"id": rpc_id, "result": result}
+
+        return _AnswerReader({})
+
+    return sent, factory
+
+
+def _waiting_callback(
+    tmp_path: Path,
+    answers: list[tuple[str, str | None]],
+    *,
+    auxiliary: bool = False,
+    cancel_handle: Any = None,
+):
+    from sidecar.runtime.inference_admission import (
+        AuxiliaryInferenceContext,
+        build_auxiliary_inference_admission_callback,
+    )
+
+    sent, factory = _waiting_bridge(answers)
+    if auxiliary:
+        callback = build_auxiliary_inference_admission_callback(
+            context=AuxiliaryInferenceContext(
+                schema_version=1,
+                request_id="request_1",
+                session_id="session_1",
+                authority_revision="authority_7",
+                engine_type="ollama",
+            ),
+            write_message=sent.append,
+            response_reader_factory=factory,
+            cancel_handle=cancel_handle,
+        )
+    else:
+        callback = build_inference_admission_callback(
+            request_id="request_1",
+            session_id="session_1",
+            execution_context=_execution_context(tmp_path.resolve()),
+            engine_type="ollama",
+            write_message=sent.append,
+            response_reader_factory=factory,
+            cancel_handle=cancel_handle,
+        )
+    assert callback is not None
+    return callback, sent
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> _FakeClock:
+    from sidecar.runtime import inference_admission
+
+    fake = _FakeClock()
+    monkeypatch.setattr(inference_admission, "_sleep", fake.sleep)
+    monkeypatch.setattr(inference_admission, "_monotonic", fake.monotonic)
+    return fake
+
+
+def test_chat_turn_admission_waits_out_lane_capacity(tmp_path: Path, clock: _FakeClock) -> None:
+    callback, sent = _waiting_callback(
+        tmp_path,
+        [("waiting", "lane_capacity"), ("waiting", "lane_capacity"), ("granted", None)],
+    )
+
+    lease = callback(_attempt())
+
+    assert lease is not None
+    assert len(sent) == 3
+    assert all(message["params"]["phase"] == "admit" for message in sent)
+    # Electron discards a waiting operation, so each retry is a fresh operation.
+    operation_ids = [message["params"]["operation_id"] for message in sent]
+    assert len(set(operation_ids)) == 3
+    # Backoff grows from 0.1 s and never exceeds 1.0 s.
+    assert clock.sleeps
+    assert clock.sleeps[0] == pytest.approx(0.1)
+    assert all(0 < slept <= 1.0 for slept in clock.sleeps)
+
+
+def test_chat_turn_admission_waits_for_downstream_capacity(
+    tmp_path: Path, clock: _FakeClock
+) -> None:
+    callback, sent = _waiting_callback(
+        tmp_path, [("waiting", "downstream_capacity"), ("granted", None)]
+    )
+
+    assert callback(_attempt()) is not None
+    assert len(sent) == 2
+
+
+def test_chat_turn_backoff_doubles_then_holds_at_one_second(tmp_path: Path, clock: _FakeClock) -> None:
+    callback, sent = _waiting_callback(
+        tmp_path, [("waiting", "lane_capacity")] * 12 + [("granted", None)]
+    )
+
+    assert callback(_attempt()) is not None
+    assert len(sent) == 13
+    # Waits double from 0.1 s (0.1, 0.2, 0.4, 0.8) then stay at 1.0 s.
+    assert sum(clock.sleeps) == pytest.approx(0.1 + 0.2 + 0.4 + 0.8 + 8 * 1.0)
+
+
+def test_auxiliary_admission_still_defers_on_first_waiting(
+    tmp_path: Path, clock: _FakeClock
+) -> None:
+    callback, sent = _waiting_callback(
+        tmp_path,
+        [("waiting", "lane_capacity"), ("waiting", "lane_capacity"), ("granted", None)],
+        auxiliary=True,
+    )
+
+    with pytest.raises(InferenceAdmissionDeferred, match="lane_capacity"):
+        callback(_attempt())
+    assert len(sent) == 1
+    assert clock.sleeps == []
+
+
+def test_chat_turn_unrelated_waiting_reason_defers_immediately(
+    tmp_path: Path, clock: _FakeClock
+) -> None:
+    callback, sent = _waiting_callback(
+        tmp_path, [("waiting", "capacity_busy"), ("granted", None)]
+    )
+
+    with pytest.raises(InferenceAdmissionDeferred, match="capacity_busy"):
+        callback(_attempt())
+    assert len(sent) == 1
+    assert clock.sleeps == []
+
+
+def test_chat_turn_wait_ends_on_rejection(tmp_path: Path, clock: _FakeClock) -> None:
+    callback, sent = _waiting_callback(
+        tmp_path, [("waiting", "lane_capacity"), ("rejected", "route_closed")]
+    )
+
+    with pytest.raises(InferenceAdmissionRefused, match="route_closed"):
+        callback(_attempt())
+    assert len(sent) == 2
+
+
+def test_cancel_during_wait_refuses_without_further_admits(
+    tmp_path: Path, clock: _FakeClock
+) -> None:
+    cancel = _Cancel()
+    callback, sent = _waiting_callback(
+        tmp_path, [("waiting", "lane_capacity")], cancel_handle=cancel
+    )
+
+    def cancel_after_first_slice() -> None:
+        cancel.cancelled = True
+
+    clock.on_sleep = cancel_after_first_slice
+
+    with pytest.raises(InferenceAdmissionRefused, match="inference_admission_cancelled"):
+        callback(_attempt())
+    assert len(sent) == 1
+
+
+def test_wait_cap_raises_the_deferral(
+    tmp_path: Path, clock: _FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sidecar.runtime import inference_admission
+
+    monkeypatch.setattr(inference_admission, "_MAX_CAPACITY_WAIT_SECONDS", 5.0)
+    callback, sent = _waiting_callback(tmp_path, [("waiting", "lane_capacity")])
+
+    with pytest.raises(InferenceAdmissionDeferred, match="lane_capacity"):
+        callback(_attempt())
+    assert len(sent) > 1
+    assert clock.now >= 5.0
+    assert clock.now < 5.0 + 1.0 + 1e-9
+
+
+def test_wait_uses_the_cancel_handle_event(tmp_path: Path, clock: _FakeClock) -> None:
+    class _EventCancel:
+        cancelled = False
+
+        def __init__(self) -> None:
+            self.waits: list[float] = []
+
+        def wait(self, seconds: float) -> bool:
+            # chat.cancel lands during the first wait and wakes it at once.
+            self.waits.append(seconds)
+            self.cancelled = True
+            return True
+
+    cancel = _EventCancel()
+    callback, sent = _waiting_callback(
+        tmp_path, [("waiting", "lane_capacity")], cancel_handle=cancel
+    )
+
+    with pytest.raises(InferenceAdmissionRefused, match="inference_admission_cancelled"):
+        callback(_attempt())
+    assert cancel.waits == [pytest.approx(0.1)]
+    assert clock.sleeps == []
+    assert len(sent) == 1

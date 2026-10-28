@@ -95,6 +95,8 @@ const NON_FEATURE_STATE_REASONS = new Set([
   'command_sandbox_updated',
   'session_runtime_updated',
   'performance_telemetry_updated',
+  'primary_chat_updated',
+  'api_providers_updated',
 ]);
 
 function shouldBroadcastFeatureState(reason, reasons) {

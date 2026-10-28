@@ -23,7 +23,7 @@ function child(id, parentId, updatedAgo, createdAgo, extra = {}) {
 }
 
 function layout(sessions, options = {}) {
-  const sorted = sessions.slice().sort(tree.compareSessions);
+  const sorted = tree.sortSessions(sessions);
   const built = tree.buildSessionTree({ sessions: sorted, allSessions: options.allSessions || sessions, pendingDeletes: options.pendingDeletes || new Set(), scope: options.scope, projectId: options.projectId, query: options.query, isActive: options.isActive });
   const laid = tree.layoutGroups(built, options.scope || 'recent', NOW);
   return { built, laid, ids: laid.rendered.map((session) => session.id) };
@@ -47,12 +47,12 @@ test('children nest oldest-first under their parent, are never roots, and grandc
   assert.equal(nodes.get('c-old').depth, 1);
   assert.equal(nodes.get('grand').depth, 2);
   assert.equal(nodes.get('grand').parentId, 'c-old');
-  // Thread: c-old has a later sibling (straight line + tick); the last child draws the elbow.
+  // Thread: c-old has a later sibling (straight line through its row); the last child draws its own segment.
   assert.equal(nodes.get('c-old').last, false);
   assert.deepEqual(nodes.get('c-old').through, [1]);
   assert.equal(nodes.get('c-new').last, true);
   assert.deepEqual(nodes.get('c-new').through, []);
-  // The grandchild carries its grandparent's line (level 1) and elbows at level 2.
+  // The grandchild carries its grandparent's line (level 1) and draws its own level-2 segment.
   assert.deepEqual(nodes.get('grand').through, [1]);
   assert.equal(nodes.get('grand').last, true);
 });
@@ -459,4 +459,33 @@ test('review fix: a collapsed parent row describes its hidden children on the fo
   assert.match(text, /2 linked chats hidden/);
   assert.match(text, /unread/);
   h.controller.dispose();
+});
+
+test('sameProjectOnly nests a child only under a shown parent of its own project', () => {
+  const sessions = [
+    chat('parent', 1, { project_id: 'p_a' }),
+    child('same', 'parent', 2, 10, { project_id: 'p_a' }),
+    child('cross', 'parent', 3, 9, { project_id: 'p_b' }),
+    child('general', 'parent', 4, 8),
+  ];
+  const sorted = tree.sortSessions(sessions);
+  const build = (extra) => tree.buildSessionTree({ sessions: sorted, allSessions: sessions, pendingDeletes: new Set(), scope: 'recent', ...extra });
+  const scoped = build({ sameProjectOnly: true });
+  assert.deepEqual(scoped.roots.map((s) => s.id).sort(), ['cross', 'general', 'parent']);
+  assert.equal(scoped.nodes.get('same').parentId, 'parent');
+  assert.equal(scoped.nodes.get('cross').depth, 0);
+  assert.equal(scoped.nodes.get('cross').origin.kind, 'project');
+  assert.equal(scoped.nodes.get('general').origin.kind, 'project');
+  assert.equal(scoped.nodes.get('parent').childCount, 1);
+  const unscoped = build({});
+  assert.deepEqual(unscoped.roots.map((s) => s.id), ['parent']);
+  assert.equal(unscoped.nodes.get('cross').parentId, 'parent');
+  assert.equal(unscoped.nodes.get('cross').origin, null);
+});
+
+test('sameProjectOnly keeps the archived origin for a same-project parent that is not shown', () => {
+  const parent = chat('parent', 1, { project_id: 'p_a', archived_at: iso(1) });
+  const kid = child('kid', 'parent', 2, 10, { project_id: 'p_a' });
+  const built = tree.buildSessionTree({ sessions: [kid], allSessions: [parent, kid], pendingDeletes: new Set(), scope: 'recent', sameProjectOnly: true });
+  assert.equal(built.nodes.get('kid').origin.kind, 'archived');
 });

@@ -16,6 +16,7 @@
 // genuine per-root file on disk.
 
 const { test } = require('node:test');
+const { windowsOnly } = require('./helpers/platform-skips');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
@@ -130,6 +131,31 @@ test('scoped runs use captured config/root and share the UI run limit across roo
  current = false;
  assert.throws(() => scoped.listConfigs(), /stale/);
  assert.throws(() => scoped.run({ configId: 'alpha-test' }), /stale/);
+ await wiring.dispose();
+});
+
+test('a scoped listing with state builds its scope once', async t => {
+ const { userDataDir, makeRoot } = sandbox(t);
+ const root = makeRoot('alpha');
+ writeConfigs(userDataDir, root, [{ id: 'unit', label: 'Unit', command: 'echo unit' }]);
+ const wiring = createWorkspaceTestRunnerWiring({ userDataDir, runner: passingRunner(),
+  shellConfigService: { getToolsWorkspaceRoot: () => root }, featureFlagProvider: flag(true) });
+ let checks = 0;
+ const scoped = wiring.forProjectAuthority({ project_id: 'project_alpha', root_path: root, root_revision: 1 },
+  { requireCurrent() { checks += 1; } });
+ checks = 0;
+ scoped.listConfigs();
+ const listOnly = checks;
+ checks = 0;
+ scoped.getState();
+ const stateOnly = checks;
+ checks = 0;
+ const listed = scoped.listConfigs({ includeState: true });
+ // One scope build: a second would repeat listOnly's authority checks.
+ assert.equal(checks, stateOnly);
+ assert.ok(checks < listOnly + stateOnly);
+ assert.deepEqual(listed.configs.map(config => config.id), ['unit']);
+ assert.deepEqual(listed.state.history.byConfig, scoped.getState().history.byConfig);
  await wiring.dispose();
 });
 
@@ -534,7 +560,7 @@ test('wave-a: a non-canonical alias of the same root resolves to one store', asy
 //     fallback preserves case; the win32 lowercase keying must coalesce it).
 // ---------------------------------------------------------------------------
 
-test('wave-a: a non-existent root keys case-insensitively on win32', { skip: process.platform !== 'win32' }, async (t) => {
+test('wave-a: a non-existent root keys case-insensitively on win32', { skip: windowsOnly('case-insensitive root keying') }, async (t) => {
   const { base, userDataDir } = sandbox(t);
   // Two casings of the SAME directory that does NOT exist on disk.
   const upper = path.join(base, 'GhostRoot', 'Proj');

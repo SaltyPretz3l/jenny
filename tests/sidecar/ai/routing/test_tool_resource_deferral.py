@@ -182,12 +182,10 @@ def _eligibility(**overrides: Any) -> bool:
         "preview_count": 0,
         "has_images": False,
         "mutation_started": False,
-        "approval_resume": False,
         "auto_checkpoint_pending": False,
         "contains_delegate": False,
         "ordered_call_ids": ("call_1", "call_2"),
         "pending_call_id": "call_1",
-        "pending_tool_id": "run_command",
     }
     values.update(overrides)
     return first_batch_deferral_eligible(**values)
@@ -206,7 +204,6 @@ def _eligibility(**overrides: Any) -> bool:
         ("preview_count", 1),
         ("has_images", True),
         ("mutation_started", True),
-        ("approval_resume", True),
         ("auto_checkpoint_pending", True),
         ("contains_delegate", True),
         ("pending_call_id", "call_2"),

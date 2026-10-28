@@ -145,6 +145,12 @@
         `data-row-id="${escapeHtml(rowId)}"`,
         `data-row-kind="${escapeHtml(String(row && row.kind || ''))}"`,
       ];
+      // The event the projector sorted this row by (renderer-row-order-invariant.js
+      // checks the painted order against it).
+      const firstSourceEventId = normalizeId(Array.isArray(row && row.source_events) ? row.source_events[0] : '');
+      if (firstSourceEventId) {
+        attrs.push(`data-source-event-id="${escapeHtml(firstSourceEventId)}"`);
+      }
       const sourceMessageId = normalizeId(row && row.primary_message_id);
       if (sourceMessageId) {
         attrs.push(`data-source-message-id="${escapeHtml(sourceMessageId)}"`);
@@ -238,6 +244,22 @@
         }
       }
       return { pairedResultRowByCallRow, consumedResultRows };
+    }
+
+    // F3c (2026-10-27): the New session card in the same chat is the receipt for its handoff, so the
+    // preparation turn's complete_session_handoff row is not drawn while it runs or once it succeeded.
+    // A failed or refused handoff keeps its ordinary row: a failure is never hidden.
+    const HIDDEN_HANDOFF_TOOL = 'complete_session_handoff';
+    const FAILED_TOOL_STATES = new Set(['error', 'failed', 'denied', 'cancelled']);
+    function isHiddenHandoffRow(row, resultRow) {
+      const kind = normalizeId(row && row.kind);
+      const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
+      if ((kind !== 'tool_call' && kind !== 'tool_step') || normalizeId(payload.tool_name) !== HIDDEN_HANDOFF_TOOL) return false;
+      const result = resultRow && resultRow.payload && typeof resultRow.payload === 'object' ? resultRow.payload : null;
+      if (FAILED_TOOL_STATES.has(normalizeId(payload.state)) || (result && FAILED_TOOL_STATES.has(normalizeId(result.state)))) return false;
+      const metadata = (result && result.metadata) || payload.metadata || null;
+      if (metadata && typeof metadata === 'object') return metadata.result_kind === 'session_handoff';
+      return !result; // still running: the card shows "Preparing the new chat…"
     }
 
     // Answers tool runs (NEXT_STEPS row 21). Rows stay flat siblings: members
@@ -416,7 +438,7 @@
 
       const entries = [];
       sourceRows.forEach(function renderRow(row, rowIndex) {
-        if (consumedResultRows.has(row)) {
+        if (consumedResultRows.has(row) || isHiddenHandoffRow(row, pairedResultRowByCallRow.get(row) || null)) {
           return;
         }
         const markup = buildRowWrapperMarkup(row, messages, {

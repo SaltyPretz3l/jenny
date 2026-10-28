@@ -22,6 +22,7 @@ from sidecar.ai.tools.builtins.git_ops import (
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
+from tests.sidecar._platform_skips import requires_file_symlinks
 
 
 def _guard(tmp_path: Path) -> WorkspaceGuard:
@@ -38,7 +39,7 @@ def _legacy_unit_process_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
         cwd: Path,
         timeout_seconds: float,
         env: dict[str, str],
-        trusted_repo_root: Path | None = None,
+        **_trust_and_cache_keys: object,
     ) -> object:
         return subprocess.run(
             arguments,
@@ -58,6 +59,11 @@ def _legacy_unit_process_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
 def _init_minimal_repo(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
     (path / ".git").mkdir()
+
+
+def _git_prefix(repo: Path) -> list[str]:
+    """The fixed top-level options, including the validated checkout as work tree."""
+    return ["git", "--no-pager", "--no-optional-locks", f"--work-tree={repo.resolve()}"]
 
 
 def _init_real_repo(path: Path) -> None:
@@ -132,12 +138,11 @@ def test_git_diff_builds_staged_command(monkeypatch: pytest.MonkeyPatch, tmp_pat
 
     assert output == "diff output"
     assert captured["command"] == [
-        "git",
-        "--no-pager",
-        "--no-optional-locks",
+        *_git_prefix(repo),
         "diff",
         "--no-ext-diff",
         "--no-textconv",
+        "--ignore-submodules=dirty",
         "--cached",
     ]
     assert captured["cwd"] == str(repo)
@@ -161,9 +166,7 @@ def test_git_log_disables_signature_display(
 
     assert output == "log output"
     assert captured["command"] == [
-        "git",
-        "--no-pager",
-        "--no-optional-locks",
+        *_git_prefix(repo),
         "log",
         "--no-show-signature",
         "--max-count=3",
@@ -193,16 +196,50 @@ def test_git_diff_builds_ref_and_path_command(
 
     assert output == "diff output"
     assert captured["command"] == [
-        "git",
-        "--no-pager",
-        "--no-optional-locks",
+        *_git_prefix(repo),
         "diff",
         "--no-ext-diff",
         "--no-textconv",
+        "--ignore-submodules=dirty",
         "HEAD~2",
         "--",
-        "../deleted.txt",
+        ":(literal)../deleted.txt",
     ]
+
+
+def test_git_diff_ref_without_path_is_terminated_as_a_revision(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo = tmp_path / "repo"
+    _init_minimal_repo(repo)
+    captured: dict[str, object] = {}
+
+    def fake_run(command, **_kwargs):
+        captured["command"] = command
+        return SimpleNamespace(returncode=0, stdout="diff output", stderr="")
+
+    monkeypatch.setattr("sidecar.ai.tools.builtins.git_ops.subprocess.run", fake_run)
+
+    git_diff_tool({"cwd": "repo", "ref": "HEAD~1"}, _guard(tmp_path))
+
+    assert captured["command"][-2:] == ["HEAD~1", "--"]
+
+
+def test_git_diff_path_filter_is_literal_not_a_glob(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_real_repo(repo)
+    (repo / "a1.txt").write_text("one\n", encoding="utf-8", newline="")
+    (repo / "a2.txt").write_text("two\n", encoding="utf-8", newline="")
+    _commit_all(repo, "files")
+    (repo / "a1.txt").write_text("one changed\n", encoding="utf-8", newline="")
+    (repo / "a2.txt").write_text("two changed\n", encoding="utf-8", newline="")
+
+    globbed = git_diff_tool({"cwd": "repo", "path": "a*.txt"}, _guard(tmp_path))
+    exact = git_diff_tool({"cwd": "repo", "path": "a1.txt"}, _guard(tmp_path))
+
+    assert globbed == "(no changes found)"
+    assert "a1.txt" in exact
+    assert "a2.txt" not in exact
 
 
 def test_git_diff_returns_empty_state_for_blank_output(
@@ -236,15 +273,14 @@ def test_git_show_defaults_to_head(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
 
     assert output == "commit output"
     assert captured["command"] == [
-        "git",
-        "--no-pager",
-        "--no-optional-locks",
+        *_git_prefix(repo),
         "show",
         "--no-show-signature",
         "--no-ext-diff",
         "--no-textconv",
         "--stat",
         "--patch",
+        "--end-of-options",
         "HEAD",
     ]
 
@@ -345,6 +381,7 @@ def test_linked_worktree_metadata_rejects_an_unrelated_backlink(tmp_path: Path) 
     assert exc_info.value.code == CMP_TOOL_INVALID_PATH
 
 
+@requires_file_symlinks()
 def test_git_metadata_read_rejects_a_symlink_and_leaves_the_target_untouched(
     tmp_path: Path,
 ) -> None:
@@ -353,10 +390,7 @@ def test_git_metadata_read_rejects_a_symlink_and_leaves_the_target_untouched(
     sentinel = tmp_path / "sentinel_outside"
     sentinel.write_text("gitdir: /etc/attacker", encoding="utf-8")
     link = tmp_path / "gitfile_link"
-    try:
-        link.symlink_to(sentinel)
-    except (OSError, NotImplementedError):
-        pytest.skip("symlink creation is not permitted on this host")
+    link.symlink_to(sentinel)
 
     with pytest.raises(ToolExecutionFailure) as exc_info:
         _read_git_metadata_file(link, label=".git file")
@@ -423,12 +457,13 @@ def test_git_diff_returns_summary_for_oversized_change_set(
     def fake_run(command, **kwargs):
         calls.append(command)
         if "--shortstat" in command:
+            assert kwargs["env"]["LC_ALL"] == "C"
             return SimpleNamespace(
                 returncode=0,
                 stdout=" 250 files changed, 12000 insertions(+), 10 deletions(-)\n",
                 stderr="",
             )
-        pytest.fail("full git diff should not run for oversized diffs")
+        return SimpleNamespace(returncode=0, stdout="+x\n" * MAX_OUTPUT_CHARS, stderr="")
 
     monkeypatch.setattr("sidecar.ai.tools.builtins.git_ops.subprocess.run", fake_run)
 
@@ -436,7 +471,64 @@ def test_git_diff_returns_summary_for_oversized_change_set(
 
     assert "250 files changed" in output
     assert "Patch omitted because the diff is too large" in output
+    assert "+x" not in output
+    # The patch runs once; only its truncation pays for the shortstat.
+    assert len(calls) == 2
+    assert "--shortstat" not in calls[0]
+
+
+def test_git_diff_runs_once_when_the_patch_fits(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    _init_minimal_repo(repo)
+    calls: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout="diff --git a/x b/x\n+y\n", stderr="")
+
+    monkeypatch.setattr("sidecar.ai.tools.builtins.git_ops.subprocess.run", fake_run)
+
+    output = git_diff_tool({"cwd": "repo"}, _guard(tmp_path))
+
+    assert output == "diff --git a/x b/x\n+y"
     assert len(calls) == 1
+
+
+def test_git_diff_truncated_but_not_oversized_returns_the_head_with_guidance(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    _init_minimal_repo(repo)
+
+    def fake_run(command, **_kwargs):
+        if "--shortstat" in command:
+            return SimpleNamespace(
+                returncode=0, stdout=" 3 files changed, 900 insertions(+)\n", stderr=""
+            )
+        return SimpleNamespace(returncode=0, stdout="+" * (MAX_OUTPUT_CHARS + 50), stderr="")
+
+    monkeypatch.setattr("sidecar.ai.tools.builtins.git_ops.subprocess.run", fake_run)
+
+    output = git_diff_tool({"cwd": "repo"}, _guard(tmp_path))
+
+    assert output.startswith("+" * 100)
+    assert "...[truncated]" in output
+    assert "Patch truncated" in output
+    assert "3 files changed, 900 insertions(+)" in output
+
+
+def test_parse_shortstat_sums_every_commit_in_a_range() -> None:
+    stats = git_ops_module._parse_shortstat(
+        " 150 files changed, 10 insertions(+)\n\n 100 files changed, 5 deletions(-)\n"
+    )
+
+    assert stats is not None
+    assert (stats.files_changed, stats.lines_added, stats.lines_removed) == (250, 10, 5)
+    assert git_ops_module._diff_is_oversized(stats)
 
 
 def test_git_show_returns_summary_for_oversized_commit(
@@ -462,7 +554,7 @@ def test_git_show_returns_summary_for_oversized_commit(
                 stdout="commit deadbeef\nAuthor: Test\n\nHuge commit\n",
                 stderr="",
             )
-        pytest.fail("full git show should not run for oversized commits")
+        return SimpleNamespace(returncode=0, stdout="+x\n" * MAX_OUTPUT_CHARS, stderr="")
 
     monkeypatch.setattr("sidecar.ai.tools.builtins.git_ops.subprocess.run", fake_run)
 
@@ -471,7 +563,9 @@ def test_git_show_returns_summary_for_oversized_commit(
     assert "commit deadbeef" in output
     assert "250 files changed" in output
     assert "Patch omitted because the commit diff is too large" in output
-    assert len(calls) == 2
+    assert "+x" not in output
+    assert len(calls) == 3
+    assert all(command[-2:] == ["--end-of-options", "HEAD"] for command in calls)
 
 
 def test_run_git_truncates_long_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -490,6 +584,29 @@ def test_run_git_truncates_long_output(monkeypatch: pytest.MonkeyPatch, tmp_path
 
     assert output.endswith("\n...[truncated]")
     assert len(output) > MAX_OUTPUT_CHARS
+
+
+def test_run_git_notes_output_cut_by_the_capture_limit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setattr(
+        "sidecar.ai.tools.builtins.git_ops.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout="partial",
+            stderr="",
+            drain_incomplete=False,
+            output=SimpleNamespace(truncated=True),
+        ),
+    )
+
+    assert _run_git(["status"], cwd=repo) == (
+        "partial\n...[output incomplete: git output exceeded the capture limit]"
+    )
+    # Machine-parsed output is returned untouched.
+    assert git_ops_module._run_git_raw(["status"], cwd=repo) == "partial"
 
 
 def test_git_environment_uses_minimal_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:

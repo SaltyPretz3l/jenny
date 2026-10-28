@@ -194,6 +194,7 @@ test('a plain openai-compatible row (no NInfer hint) keeps the llama-server Engi
 
 test('the section module stands alone: labels, dirty tracking and a missing bridge', async () => {
   assert.equal(contextLabel(153600), '150k');
+  assert.equal(contextLabel(196608), '192k');
   assert.equal(contextLabel(512), '512');
   const section = createNinferTuningSection({ windowRef: { jennyShell: {} }, escapeHtml: (s) => s });
   assert.equal(await section.open(HINT), false, 'no bridge: nothing read');

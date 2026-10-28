@@ -270,22 +270,18 @@
       const ownNotice = !isNoticeOwnedByOtherPane();
       const owner = ownNotice ? String(state.ui.composerStatusNoticeOwner || '').trim() : '';
       const scope = owner.startsWith('activity:') ? owner.slice('activity:'.length) : '';
-      const compactionActivity = globalThis.rendererCompactionCoordinator?.getCompactionActivity?.(state, paneSessionIdOf(0)) || null;
-      const snapshot = compactionActivity || (scope ? getActivitySnapshot(scope) : null);
-      const message = String(compactionActivity?.message || (ownNotice ? state.ui.composerStatusNotice : '') || '').trim();
+      // Compaction progress is not told here: it is the inline activity row.
+      const snapshot = scope ? getActivitySnapshot(scope) : null;
+      const message = String((ownNotice ? state.ui.composerStatusNotice : '') || '').trim();
       composerStatusNotice.classList.toggle('hidden', !message);
       if (!message) {
         composerStatusNotice.innerHTML = '';
       } else {
         const statusRow = getStatusRowRenderer();
         const fromActivity = Boolean(snapshot);
-        const tone = compactionActivity
-          ? String(compactionActivity.tone || 'default')
-          : fromActivity ? resolveActivityTone(snapshot)
+        const tone = fromActivity ? resolveActivityTone(snapshot)
           : String(state.ui.composerStatusNoticeTone || 'default');
-        const badgeText = compactionActivity
-          ? (compactionActivity.pending ? 'Compacting' : 'Context')
-          : fromActivity ? resolveActivityBadge(snapshot)
+        const badgeText = fromActivity ? resolveActivityBadge(snapshot)
           : String(state.ui.composerStatusNoticeBadgeText || '');
         const spinner = fromActivity
           ? snapshot?.state === 'pending'
@@ -293,7 +289,7 @@
         composerStatusNotice.innerHTML = statusRow
           ? statusRow({
             tone,
-            label: compactionActivity ? jt('shell.activity.context', 'Context') : (fromActivity ? jt('shell.activity.composer', 'Composer') : ''),
+            label: fromActivity ? jt('shell.activity.composer', 'Composer') : '',
             message,
             badgeText,
             spinner,
@@ -305,11 +301,7 @@
           applyActivityAttributes(row, snapshot, { setAriaBusy: true });
         }
       }
-      applyActivityAttributes(
-        composerStatusNotice,
-        (compactionActivity || owner.startsWith('activity:')) ? snapshot : null,
-        { setAriaBusy: true }
-      );
+      applyActivityAttributes(composerStatusNotice, owner.startsWith('activity:') ? snapshot : null, { setAriaBusy: true });
     }
 
     const paneNoticeSignatures = new WeakMap();
@@ -317,31 +309,22 @@
       const wanted = normalizeSessionId(sessionId);
       const ownSession = Boolean(wanted) && wanted !== paneSessionIdOf(0);
       const keyed = ownSession && normalizeSessionId(state.ui.composerStatusNoticeSessionId) === wanted;
-      // Gate §D follow-up: this pane's session's compaction progress wins over
-      // the slot, exactly as pane 0 renders its own (the coordinator's render
-      // routes a composer sync to the pane showing the compacting session).
-      const compaction = (ownSession && globalThis.rendererCompactionCoordinator?.getCompactionActivity?.(state, wanted)) || null;
-      const message = String(compaction?.message || (keyed ? state.ui.composerStatusNotice : '') || '').trim();
-      const tone = compaction ? String(compaction.tone || 'default') : String(state.ui.composerStatusNoticeTone || 'default');
-      const badgeText = compaction
-        ? (compaction.pending ? 'Compacting' : 'Context')
-        : String(state.ui.composerStatusNoticeBadgeText || '');
-      const spinner = compaction ? compaction.state === 'pending' : state.ui.composerStatusNoticeSpinner === true;
-      const label = compaction ? jt('shell.activity.context', 'Context') : '';
-      const signature = message ? [message, tone, badgeText, spinner, label, compaction?.state || ''].join('\u0000') : '';
+      const message = String((keyed ? state.ui.composerStatusNotice : '') || '').trim();
+      const tone = String(state.ui.composerStatusNoticeTone || 'default');
+      const badgeText = String(state.ui.composerStatusNoticeBadgeText || '');
+      const spinner = state.ui.composerStatusNoticeSpinner === true;
+      const signature = message ? [message, tone, badgeText, spinner].join('\u0000') : '';
       if (paneNoticeSignatures.get(node) === signature) return;
       paneNoticeSignatures.set(node, signature);
       node.classList.toggle('hidden', !message);
-      applyActivityAttributes(node, message ? compaction : null, { setAriaBusy: true });
+      applyActivityAttributes(node, null, { setAriaBusy: true });
       if (!message) {
         node.innerHTML = '';
         return;
       }
       const statusRow = getStatusRowRenderer();
-      if (statusRow) node.innerHTML = statusRow({ tone, label, message, badgeText, spinner, compact: true });
+      if (statusRow) node.innerHTML = statusRow({ tone, label: '', message, badgeText, spinner, compact: true });
       else node.textContent = message;
-      const row = node.querySelector('.inv-status-row');
-      if (row && compaction) applyActivityAttributes(row, compaction, { setAriaBusy: true });
     }
 
     function syncComposerActivityNotice() {

@@ -1,7 +1,10 @@
 /* renderer/features/renderer-ide-pty-terminal-panel.js — flag-gated,
  * explicit-start ConPTY/xterm terminal for the Workspace IDE bottom panel.
  * Terminal and fit-addon constructors are injectable for tests. Disposal kills
- * the main-process session so late spawn completion cannot orphan it. */
+ * the main-process session so late spawn completion cannot orphan it. The xterm
+ * host lives in renderer-ide-pty-terminal-xterm.js and the bridge streams in
+ * renderer-ide-pty-terminal-io.js; this file owns the session lifecycle, the
+ * status line and the toolbar. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory();
@@ -16,37 +19,6 @@
   function noop() {}
 
   const PANEL_MARKUP_SENTINEL = '__jenny-ide-pty-terminal__';
-  const INTERRUPT_BYTE = String.fromCharCode(3); // Ctrl+C
-  const RESIZE_DEBOUNCE_MS = 50;
-  // UIUX-011: main can emit output/exit the instant a session is wired (spawn()
-  // wires listeners synchronously before its IPC reply is sent), so events that
-  // land before the renderer knows its own session id are held here and replayed
-  // in order the moment spawn resolves. Bounded per AGENTS.md section 9 (resource
-  // bounds + retention): oldest-entry eviction with a visible dropped counter.
-  const PRE_READY_BUFFER_MAX_EVENTS = 64;
-  const PRE_READY_BUFFER_MAX_BYTES = 64 * 1024; // mirrors workspace-pty-service.js MAX_CHUNK_BYTES
-  // UIUX-035: every PTY output event used to cross IPC and land as its own
-  // `term.write()` call — a chatty producer (a build, a verbose test run)
-  // means one xterm reflow/paint per IPC message with no aggregate backpressure.
-  // Queue incoming bytes and flush them in one coalesced `term.write()` per
-  // animation frame (~16ms), same rAF-coalescing shape as the legacy line
-  // panel's paint scheduler. Bounded per AGENTS.md section 9: a hard byte cap
-  // with oldest-entry eviction and a visible dropped-output counter — this
-  // queue never grows unbounded even under a runaway producer.
-  const WRITE_QUEUE_MAX_BYTES = 256 * 1024;
-  // Main truncates one write() at this many UTF-8 bytes (MAX_WRITE_BYTES in
-  // services/workspace-pty-service.js). A longer command would reach the shell
-  // cut off and without its newline, so it is refused before anything is typed.
-  const SEND_COMMAND_MAX_BYTES = 16 * 1024;
-  // Code role size: follows Text size (or the explicit editor font size) via
-  // the shared Monaco-utils resolver, like every other code surface.
-  const TERMINAL_FALLBACK_FONT_SIZE = 13;
-  const CODE_FONT_SIZE_EVENT = 'jenny:code-font-size';
-  // WCAG AA text contrast; xterm lifts any ANSI foreground below it.
-  const TERMINAL_MIN_CONTRAST_RATIO = 4.5;
-  // Root attributes whose change can swap the terminal's colour/font tokens;
-  // observed the same way renderer-ide-theme-bridge.js re-themes Monaco.
-  const APPEARANCE_ATTRIBUTES = ['data-palette', 'data-typography', 'data-font-scale'];
   const ROOT_COMMITTED_EVENT = 'ide:workspace-root-committed';
 
   function resolveModule(globalName, requirePath) {
@@ -61,24 +33,22 @@
     return {};
   }
 
+  const ptyIo = resolveModule('rendererIdePtyTerminalIo', './renderer-ide-pty-terminal-io');
+  const ptyXterm = resolveModule('rendererIdePtyTerminalXterm', './renderer-ide-pty-terminal-xterm');
+
   function createIdePtyTerminalPanel(deps) {
     // Workspace terminal slot 1..4 (the main process keys sessions by slot);
     // sent in every spawn so a second terminal never attaches to the first.
     const slotDep = Math.floor(Number(deps?.slot));
     const slot = slotDep >= 1 && slotDep <= 4 ? slotDep : 1;
     const onSessionChange = typeof deps?.onSessionChange === 'function' ? deps.onSessionChange : null;
-    const getDom = typeof deps?.getDom === 'function' ? deps.getDom : () => ({});
     const getIde = typeof deps?.getIde === 'function' ? deps.getIde : () => ({});
     const escapeHtml = typeof deps?.escapeHtml === 'function' ? deps.escapeHtml : (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
-    const getMountEl = typeof deps?.getMountEl === 'function'
-      ? deps.getMountEl
-      : () => null;
+    const getMountEl = typeof deps?.getMountEl === 'function' ? deps.getMountEl : () => null;
     const isActivePanel = typeof deps?.isActivePanel === 'function'
       ? deps.isActivePanel
       : () => getIde().bottomPanelActiveView === 'terminal';
-    const getApi = typeof deps?.getWorkspacePtyApi === 'function'
-      ? deps.getWorkspacePtyApi
-      : () => null;
+    const getApi = typeof deps?.getWorkspacePtyApi === 'function' ? deps.getWorkspacePtyApi : () => null;
     const showError = typeof deps?.showError === 'function' ? deps.showError : noop;
     const toErrorMessage = typeof deps?.toErrorMessage === 'function'
       ? deps.toErrorMessage
@@ -88,84 +58,22 @@
     function logIgnoredError(site, error) {
       appendClientLog('DEBUG', 'ide.pty_ignored_error', { site, error: String(error?.message || error || '') });
     }
-    // xterm + fit-addon come from the vendored UMD globals in the real app; tests
-    // inject fakes (jsdom cannot host xterm). The fit-addon UMD global is
-    // `FitAddon` carrying a `FitAddon` class property — guard both shapes.
-    const usesInjectedTerminalFactory = typeof deps?.createTerminal === 'function';
-    const createTerminal = usesInjectedTerminalFactory
-      ? deps.createTerminal
-      : (opts) => new globalRef.Terminal(opts);
-    const createFitAddon = typeof deps?.createFitAddon === 'function'
-      ? deps.createFitAddon
-      : () => new (globalRef.FitAddon?.FitAddon || globalRef.FitAddon)();
     const windowRef = deps?.windowRef || globalRef.window || globalRef;
     const actionButton = resolveModule('inventoryActionButton', '../inventory/action-button');
-    // UIUX-035: frame scheduler for the coalesced write queue. Tests inject
-    // deterministic fakes (mirroring the legacy line panel's paint scheduler);
-    // production falls back to the real rAF on windowRef, and — when no rAF
-    // exists at all (very old/headless hosts) — a synchronous callback so
-    // output is never silently held back forever.
-    const requestFrame = typeof deps?.requestAnimationFrameImpl === 'function'
-      ? deps.requestAnimationFrameImpl
-      : (typeof windowRef?.requestAnimationFrame === 'function'
-          ? windowRef.requestAnimationFrame.bind(windowRef)
-          : (callback) => { callback(0); return null; });
-    const cancelFrame = typeof deps?.cancelAnimationFrameImpl === 'function'
-      ? deps.cancelAnimationFrameImpl
-      : (typeof windowRef?.cancelAnimationFrame === 'function'
-          ? windowRef.cancelAnimationFrame.bind(windowRef)
-          : noop);
     // UIUX-024: xterm.js/addon-fit.js are no longer eager <script> tags — they
     // load on first real Start (never in tests, which inject createTerminal/
-    // createFitAddon fakes above and so never touch the vendor loader).
+    // createFitAddon fakes and so never touch the vendor loader).
     const xtermLoader = resolveModule('rendererIdeXtermLoader', './renderer-ide-xterm-loader');
     const terminalStreamUtils = resolveModule('rendererTerminalStreamUtils', '../shared/terminal-stream-utils');
+    // UIUX-035: frame scheduler for the coalesced write queue: injected fakes in
+    // tests, the real rAF on windowRef, else a synchronous callback so output is
+    // never silently held back forever.
+    const { requestFrame, cancelFrame } = terminalStreamUtils.resolveFrameScheduler(deps, windowRef);
     const markStartupAudit = typeof deps?.markStartupAudit === 'function'
       ? deps.markStartupAudit
       : (name, details) => { try { globalRef.__jennyStartupAudit?.mark?.(name, details); } catch (error) { logIgnoredError('startup_audit_mark', error); } };
-    let xtermFirstActivationMarked = false;
-    // Synchronous fast-path check: true only when startSession() actually needs
-    // to `await` a vendor-runtime load. Tests inject createTerminal/createFitAddon
-    // fakes (usesInjectedTerminalFactory) and the second-and-later real Start in
-    // a session both stay synchronous-until-spawn (no added microtask tick) —
-    // matching the pre-existing "startSession runs synchronously up to its first
-    // real await" contract several tests (wide-033, UIUX-011 pre-ready buffer
-    // suite) rely on to capture the fake bridge's spawn resolve/reject inline.
-    function needsXtermRuntimeLoad() {
-      if (usesInjectedTerminalFactory) {
-        return false;
-      }
-      if (xtermLoader && typeof xtermLoader.isXtermRuntimeReady === 'function') {
-        return xtermLoader.isXtermRuntimeReady() !== true;
-      }
-      return false;
-    }
-    function ensureXtermReady() {
-      if (!xtermFirstActivationMarked) {
-        xtermFirstActivationMarked = true;
-        markStartupAudit('ide-terminal-xterm-runtime-requested', {});
-      }
-      if (!xtermLoader || typeof xtermLoader.ensureXtermRuntime !== 'function') {
-        // No loader module resolved (should not happen in production, where
-        // renderer-ide-xterm-loader.js always precedes this file); fall
-        // through so createTerminal()'s own `new globalRef.Terminal` throws
-        // a clear error rather than silently hanging the Start action.
-        return Promise.resolve(true);
-      }
-      return Promise.resolve(xtermLoader.ensureXtermRuntime()).then((ok) => {
-        markStartupAudit('ide-terminal-xterm-runtime-ready', { ok: ok === true });
-        return ok;
-      });
-    }
 
     let boundPanel = null;
-    let term = null;
-    let fitAddon = null;
-    let mountedEl = null;
-    let resizeObserver = null;
-    let resizeTimer = null;
-    let unsubscribeData = null;
-    let unsubscribeExit = null;
     let sessionId = '';
     let sessionShell = '';
     let sessionCwd = '';
@@ -174,26 +82,47 @@
     let statusMessage = '';
     let disposed = false;
     let lifecycleEpoch = 0;
-    // Pre-ready buffering (UIUX-011) — see PRE_READY_BUFFER_MAX_* above.
-    const preReadyEvents = terminalStreamUtils.createPreReadyEventBuffer({
-      maxEvents: PRE_READY_BUFFER_MAX_EVENTS,
-      maxBytes: PRE_READY_BUFFER_MAX_BYTES,
-      sizeOf: (kind, payload) => (kind === 'data' ? String(payload?.data || '').length : 0),
-      onDrop: (stats) => appendClientLog('WARN', 'ide.pty_prereadybuffer_dropped', stats),
+    // Set when main could not confirm a Stop/Restart killed the shell (or the
+    // kill request was rejected): its own status, never collapsed into
+    // 'stopped'. Cleared by a new session or that session's late exit event.
+    let unconfirmedSessionId = '';
+
+    const getSessionId = () => sessionId;
+    const io = ptyIo.createPtyTerminalIo({
+      slot,
+      getApi,
+      getSessionId,
+      getSessionShell: () => sessionShell,
+      getSessionCwd: () => sessionCwd,
+      isBuffering,
+      ensureStarted: () => startSession(),
+      onData: applyDataEvent,
+      onExit: applyExitEvent,
+      terminalStreamUtils,
+      appendClientLog,
+      logIgnoredError,
     });
-    // Coalesced write-queue state (UIUX-035) — see WRITE_QUEUE_MAX_BYTES above.
-    let writeQueue = [];
-    let writeQueueBytes = 0;
-    let writeFrame = null;
-    let writeDroppedEvents = 0;
-    let writeDroppedBytes = 0;
-    // Size tracking so a render only re-fits when the host actually changed and
-    // a PTY resize IPC goes out only when cols/rows actually changed.
-    let lastHostSize = '';
-    let lastSentCols = 0;
-    let lastSentRows = 0;
-    let appearanceObserver = null;
-    let lastAppearanceSignature = '';
+    const xterm = ptyXterm.createPtyTerminalXterm({
+      deps: deps || {},
+      windowRef,
+      getMount,
+      getFindHost: () => getPanelEl()?.querySelector?.('[data-ide-terminal-find]') || null,
+      getApi,
+      getSessionId,
+      // Links resolve against the workspace root; a sub-folder session prints paths
+      // relative to its cwd (the root itself until T2's folder starts, or without a root).
+      getRootPath: () => String(deps?.getWorkspaceRootPath?.() || sessionCwd),
+      getCwdPath: () => sessionCwd,
+      onUserInput: (data) => io.writeKeystrokes(data),
+      onClear: () => clearTerminal(),
+      onWriteDropped: () => syncStatus(),
+      markStartupAudit,
+      appendClientLog,
+      logIgnoredError,
+      requestFrame,
+      cancelFrame,
+      xtermLoader,
+    });
 
     function isRunning() {
       return Boolean(sessionId);
@@ -210,13 +139,6 @@
       try { onSessionChange(sessionId); } catch (error) { logIgnoredError('session_change', error); }
     }
 
-    // With four panels sharing one bridge, an event naming ANOTHER slot is never
-    // ours, even while our own session id is still unknown (pre-ready buffering).
-    function isOtherSlot(payload) {
-      const eventSlot = Number(payload?.slot);
-      return Number.isFinite(eventSlot) && eventSlot >= 1 && eventSlot !== slot;
-    }
-
     function getPanelEl() {
       const panel = getMountEl();
       if (!panel || !isActivePanel()) {
@@ -229,15 +151,20 @@
       const panel = getPanelEl();
       const status = panel?.querySelector?.('[data-ide-terminal-status]') || null;
       if (status) {
-        const base = statusMessage || (isRunning() ? 'running' : 'stopped');
+        const unconfirmed = !isRunning() && Boolean(unconfirmedSessionId);
+        const base = statusMessage || (isRunning()
+          ? 'running'
+          : (unconfirmed ? jt('ide.runScripts.statusStopUnconfirmed', 'stop unconfirmed') : 'stopped'));
         // UIUX-035: a counted, visible indicator once the write queue has had
         // to drop anything — never silent data loss (AGENTS.md section 9).
-        status.textContent = writeDroppedEvents > 0
-          ? jt('ide.ptyTerminal.outputDropped', '{status} · output dropped ({bytes}B)', { status: base, bytes: writeDroppedBytes })
+        const dropped = xterm.getDropStats();
+        status.textContent = dropped.events > 0
+          ? jt('ide.ptyTerminal.outputDropped', '{status} · output dropped ({bytes}B)', { status: base, bytes: dropped.bytes })
           : base;
         status.classList.toggle('ide-terminal-status--running', isRunning());
-        status.dataset.ptyWriteDroppedEvents = String(writeDroppedEvents);
-        status.dataset.ptyWriteDroppedBytes = String(writeDroppedBytes);
+        status.classList.toggle('ide-terminal-status--warn', unconfirmed);
+        status.dataset.ptyWriteDroppedEvents = String(dropped.events);
+        status.dataset.ptyWriteDroppedBytes = String(dropped.bytes);
       }
     }
 
@@ -270,6 +197,7 @@
         + buildToolbarButton('restart', 'Restart', jt('ide.ptyTerminal.restartSession', 'Restart the terminal session'))
         + '</span>'
         + '</div>'
+        + '<div class="ide-terminal-find" data-ide-terminal-find hidden></div>'
         + '<div class="ide-terminal-xterm" data-ide-pty-mount></div>'
         + '</div>';
     }
@@ -284,381 +212,68 @@
       if (!panel || !isActivePanel()) {
         return;
       }
-      // UIUX-011: assert the mount actually exists, not just that the sentinel
-      // says it was built. On a shared/mutated host a sibling view's innerHTML
-      // replacement wipes the xterm host child WITHOUT clearing this JS-property
-      // sentinel (it lives on the node object, not the markup), so the sentinel
-      // alone is not proof the host is intact — re-check the live child too.
+      // UIUX-011: a sibling's innerHTML swap can wipe the xterm host without
+      // clearing this node-property sentinel, so re-check the live child too.
       const markupIntact = panel.__jennyIdePtyMarkup === PANEL_MARKUP_SENTINEL
         && Boolean(panel.querySelector?.('[data-ide-pty-mount]'));
       if (!markupIntact) {
         panel.innerHTML = buildPanelMarkup();
         panel.__jennyIdePtyMarkup = PANEL_MARKUP_SENTINEL;
-        mountedEl = null; // markup was (re)built; the xterm host must be re-attached
+        xterm.forgetMount(); // markup was (re)built; the xterm host must be re-attached
       }
-      // Re-attach the live xterm to the (possibly new) host and re-measure on
-      // re-activation. term.open is idempotent-guarded via mountedEl.
-      const mount = getMount();
-      if (term && mount) {
-        if (mountedEl !== mount) {
-          try { term.open(mount); } catch (error) { logIgnoredError('term_open', error); }
-          mountedEl = mount;
-          lastHostSize = '';
-          observeResize(mount);
-        }
-        // Renders run on every IDE pass; only a real host size change re-fits.
-        const hostSize = measureHost(mount);
-        if (hostSize !== lastHostSize) {
-          lastHostSize = hostSize;
-          applyFitAndResize();
-        }
-      }
+      xterm.renderHost(getMount());
       syncStatus();
     }
 
-    function measureHost(mount) {
-      return (Number(mount?.clientWidth) || 0) + 'x' + (Number(mount?.clientHeight) || 0);
-    }
-
-    // Read the existing terminal CSS custom properties (bg/fg/cursor ONLY — v1
-    // maps no palette) so the xterm matches the panel chrome. Returns null when
-    // the tokens are unavailable so xterm keeps its own defaults.
-    function buildTheme() {
-      const host = mountedEl || getMount();
-      if (!windowRef || typeof windowRef.getComputedStyle !== 'function' || !host) {
-        return null;
-      }
-      let styles;
-      try { styles = windowRef.getComputedStyle(host); } catch (_error) { return null; }
-      const read = (name) => String(styles.getPropertyValue(name) || '').trim();
-      const theme = {};
-      const bg = read('--bg-base'); if (bg) { theme.background = bg; }
-      const fg = read('--text-secondary'); if (fg) { theme.foreground = fg; }
-      const cur = read('--accent'); if (cur) { theme.cursor = cur; }
-      return Object.keys(theme).length ? theme : null;
-    }
-
-    function readMonoFontFamily() {
-      const host = mountedEl || getMount();
-      if (!windowRef || typeof windowRef.getComputedStyle !== 'function' || !host) {
-        return '';
-      }
-      try {
-        return String(windowRef.getComputedStyle(host).getPropertyValue('--font-family-mono') || '').trim();
-      } catch (_error) {
-        return '';
-      }
-    }
-
-    // Colours + app mono font onto the live xterm. Runs at Start and again on
-    // every palette/typography switch; a same-token pass is a no-op. A font
-    // change alters the cell size, so it re-fits (the resize IPC is deduped).
-    function applyAppearance() {
-      if (!term || !term.options || typeof term.options !== 'object') {
-        return;
-      }
-      const theme = buildTheme();
-      const fontFamily = readMonoFontFamily();
-      const monacoUtils = globalRef.rendererMonacoEditorUtils;
-      const fontSize = typeof monacoUtils?.resolveCodeFontPx === 'function'
-        ? monacoUtils.resolveCodeFontPx(getMount()?.ownerDocument)
-        : TERMINAL_FALLBACK_FONT_SIZE;
-      const signature = JSON.stringify({ theme, fontFamily, fontSize });
-      if (signature === lastAppearanceSignature) {
-        return;
-      }
-      const refit = Boolean(lastAppearanceSignature);
-      lastAppearanceSignature = signature;
-      try {
-        if (theme) { term.options.theme = theme; }
-        if (fontFamily) { term.options.fontFamily = fontFamily; }
-        term.options.fontSize = fontSize;
-      } catch (error) { logIgnoredError('theme', error); } // readonly options
-      if (!refit) return;
-      // A palette change while the Workspace is hidden measures a 0x0 host and
-      // would fit xterm to two columns; the next visible render re-fits instead.
-      const host = mountedEl || getMount();
-      if (!host || measureHost(host) === '0x0') {
-        lastHostSize = '';
-        return;
-      }
-      applyFitAndResize();
-    }
-
-    function startAppearanceObserver() {
-      const rootEl = windowRef?.document?.documentElement || null;
-      if (appearanceObserver || !rootEl) {
-        return;
-      }
-      const ObserverCtor = deps?.mutationObserverCtor || windowRef.MutationObserver || globalRef.MutationObserver || null;
-      if (typeof ObserverCtor !== 'function') {
-        return;
-      }
-      try {
-        appearanceObserver = new ObserverCtor(() => applyAppearance());
-        appearanceObserver.observe(rootEl, { attributes: true, attributeFilter: APPEARANCE_ATTRIBUTES });
-        // The editor font-size preference is not a root attribute; it arrives
-        // as an event from renderer-monaco-editor-utils.
-        windowRef.document.addEventListener?.(CODE_FONT_SIZE_EVENT, applyAppearance);
-      } catch (error) {
-        appearanceObserver = null;
-        logIgnoredError('appearance_observer', error);
-      }
-    }
-
-    function applyFit() {
-      if (fitAddon && typeof fitAddon.fit === 'function') {
-        try { fitAddon.fit(); } catch (error) { logIgnoredError('fit', error); } // host not measurable yet
-      }
-    }
-
-    function applyFitAndResize() {
-      applyFit();
-      const api = getApi();
-      if (isRunning() && api && typeof api.resize === 'function' && term) {
-        if (term.cols === lastSentCols && term.rows === lastSentRows) {
-          return; // the PTY already has this size
-        }
-        lastSentCols = term.cols;
-        lastSentRows = term.rows;
-        // A refused/failed resize leaves the PTY at its old size: forget the
-        // cached size so the next resize notification retries it.
-        const sentFor = sessionId;
-        const forgetSentSize = () => {
-          if (sessionId === sentFor) { lastSentCols = 0; lastSentRows = 0; }
-        };
-        try {
-          Promise.resolve(api.resize({ sessionId, cols: term.cols, rows: term.rows }))
-            .then((result) => { if (result && result.ok === false) forgetSentSize(); }, forgetSentSize);
-        } catch (error) { forgetSentSize(); logIgnoredError('resize', error); } // a resize call must never derail render
-      }
-    }
-
-    function scheduleResize() {
-      if (resizeTimer) {
-        return;
-      }
-      const set = (windowRef && windowRef.setTimeout) || setTimeout;
-      resizeTimer = set(() => {
-        resizeTimer = null;
-        lastHostSize = measureHost(mountedEl);
-        applyFitAndResize();
-      }, RESIZE_DEBOUNCE_MS);
-    }
-
-    // UIUX-011: always follow the LIVE mount. The prior guard (`|| resizeObserver`)
-    // created the observer once and never re-observed on reparent, so a rebuilt
-    // host left the observer watching a detached (disconnected) element forever.
-    // Disconnect any previous observation before observing the current mount so
-    // there is always exactly one live target and no leaked entries.
-    function observeResize(mount) {
-      const RO = windowRef && windowRef.ResizeObserver;
-      if (typeof RO !== 'function' || !mount) {
-        return;
-      }
-      if (resizeObserver) {
-        resizeObserver.disconnect();
-      } else {
-        try {
-          resizeObserver = new RO(() => scheduleResize());
-        } catch (_error) {
-          resizeObserver = null;
-          return;
-        }
-      }
-      resizeObserver.observe(mount);
-    }
-
-    // Buffering while a spawn is in flight and we don't yet know our own session
-    // id: `starting` is true from the top of startSession() until it settles
-    // (success, failure, or a disposed/stale-epoch bail), and `sessionId` stays
-    // '' until spawn resolves ok. Any onData/onExit heard in that window belongs
-    // to the spawn currently in flight (the service is single-session), but is
-    // matched again by its own carried sessionId at replay time (defensive).
+    // Buffering while a spawn is in flight and our session id is still unknown;
+    // replay re-matches each event by its own carried sessionId (defensive).
     function isBuffering() {
       return starting === true && !sessionId;
     }
 
-    function discardPreReadyBuffer() {
-      preReadyEvents.discard();
-    }
-
-    function discardWriteQueue() {
-      if (writeFrame !== null) {
-        cancelFrame(writeFrame);
-      }
-      writeFrame = null;
-      writeQueue = [];
-      writeQueueBytes = 0;
-    }
-
-    function resetWriteDropCounters() {
-      writeDroppedEvents = 0;
-      writeDroppedBytes = 0;
-    }
-
-    function dropOldestWriteQueueEntry() {
-      const dropped = writeQueue.shift();
-      if (!dropped) {
-        return;
-      }
-      writeQueueBytes -= dropped.length;
-      writeDroppedBytes += dropped.length;
-      writeDroppedEvents += 1;
-    }
-
-    function flushWriteQueue() {
-      writeFrame = null;
-      if (writeQueue.length === 0) {
-        return;
-      }
-      const combined = writeQueue.join('');
-      writeQueue = [];
-      writeQueueBytes = 0;
-      if (term) {
-        term.write(combined);
-      }
-    }
-
-    function scheduleWriteFlush() {
-      if (writeFrame !== null) {
-        return;
-      }
-      writeFrame = requestFrame(flushWriteQueue);
-    }
-
-    // Cancel any pending rAF-coalesced frame and flush the queue SYNCHRONOUSLY
-    // right now (mirrors discardWriteQueue, but writes instead of dropping).
-    // Used before the exit banner so already-queued output from the same
-    // frame renders BEFORE "[terminal] session ended", never after it.
-    function flushPendingWrites() {
-      if (writeFrame !== null) {
-        cancelFrame(writeFrame);
-        writeFrame = null;
-      }
-      flushWriteQueue();
-    }
-
-    // UIUX-035: every output event used to call term.write() the instant it
-    // crossed IPC — a chatty producer meant one xterm reflow per message with
-    // no aggregate backpressure. Queue bytes here and flush them in one
-    // coalesced write per animation frame instead, with a hard byte cap
-    // (drop-oldest + a visible counter surfaced via syncStatus) so a runaway
-    // producer can never grow this queue unbounded.
-    function queueWrite(data) {
-      const text = String(data == null ? '' : data);
-      if (!text) {
-        return;
-      }
-      let droppedNow = false;
-      while (writeQueue.length > 0 && writeQueueBytes + text.length > WRITE_QUEUE_MAX_BYTES) {
-        dropOldestWriteQueueEntry();
-        droppedNow = true;
-      }
-      writeQueue.push(text);
-      writeQueueBytes += text.length;
-      if (droppedNow) {
-        appendClientLog('WARN', 'ide.pty_writequeue_dropped', {
-          droppedEvents: writeDroppedEvents,
-          droppedBytes: writeDroppedBytes,
-        });
-        syncStatus();
-      }
-      scheduleWriteFlush();
-    }
-
     function applyDataEvent(payload) {
-      if (payload && !isOtherSlot(payload) && String(payload.sessionId || '') === sessionId && term) {
-        queueWrite(payload.data);
+      if (payload && !io.isOtherSlot(payload) && String(payload.sessionId || '') === sessionId && xterm.hasTerminal()) {
+        xterm.queueWrite(payload.data);
       }
     }
 
     function applyExitEvent(payload) {
-      if (isOtherSlot(payload)) {
+      if (io.isOtherSlot(payload)) {
         return;
       }
       const exitedId = String(payload?.sessionId || '');
+      if (exitedId && exitedId === unconfirmedSessionId) {
+        // The shell an unconfirmed Stop left behind has now really exited.
+        unconfirmedSessionId = '';
+        syncStatus();
+        return;
+      }
       if (exitedId && exitedId !== sessionId) {
         return;
       }
       // Data queued this same frame must render BEFORE the exit banner, not
       // after it — flush the coalesced write queue synchronously first.
-      flushPendingWrites();
+      xterm.flushPendingWrites();
       sessionId = '';
       notifySession();
       const code = payload?.exitCode == null ? '' : jt('ide.ptyTerminal.exitCode', ' (code {code})', { code: payload.exitCode });
-      if (term) {
-        try { term.writeln('\r\n' + jt('ide.ptyTerminal.sessionEnded', '[terminal] session ended{code}', { code })); } catch (error) { logIgnoredError('exit_banner', error); }
-      }
+      xterm.writeBanner('\r\n' + jt('ide.ptyTerminal.sessionEnded', '[terminal] session ended{code}', { code }));
       setStatusMessage('');
     }
 
-    // Replay in arrival order once sessionId is known (called right after a
-    // successful spawn). Reusing applyDataEvent/applyExitEvent means an exit
-    // buffered ahead of trailing data naturally clears sessionId mid-replay, so
-    // any data after it is correctly dropped (the session already ended) —
-    // exactly the "exit-before-subscribe must settle, never false running" gate.
-    function replayPreReadyBuffer() {
-      for (const entry of preReadyEvents.drain()) {
-        if (entry.kind === 'data') {
-          applyDataEvent(entry.payload);
-        } else if (entry.kind === 'exit') {
-          applyExitEvent(entry.payload);
+    // An unconfirmed kill of `id` shows on this panel unless a newer lifecycle
+    // (a start, a root switch, dispose) took the panel over meanwhile.
+    function settleKill(id, site, epoch) {
+      return io.killSession(id, site).then((confirmed) => {
+        if (!confirmed) {
+          appendClientLog('WARN', 'ide.pty_kill_unconfirmed', { site });
+          if (!disposed && epoch === lifecycleEpoch && !sessionId) {
+            unconfirmedSessionId = id;
+            syncStatus();
+          }
         }
-      }
-    }
-
-    function subscribeBridge(api) {
-      if (!unsubscribeData && typeof api.onData === 'function') {
-        unsubscribeData = api.onData((payload) => {
-          if (isOtherSlot(payload)) {
-            return;
-          }
-          if (isBuffering()) {
-            preReadyEvents.push('data', payload);
-            return;
-          }
-          applyDataEvent(payload);
-        }) || null;
-      }
-      if (!unsubscribeExit && typeof api.onExit === 'function') {
-        unsubscribeExit = api.onExit((payload) => {
-          if (isOtherSlot(payload)) {
-            return;
-          }
-          if (isBuffering()) {
-            preReadyEvents.push('exit', payload);
-            return;
-          }
-          applyExitEvent(payload);
-        }) || null;
-      }
-    }
-
-    function ensureTerminal() {
-      if (term) {
-        return term;
-      }
-      // theme is applied after the host exists (buildTheme, in startSession).
-      // buildTheme maps no ANSI palette, so shells' ANSI colours are xterm's
-      // dark-background defaults (yellow #e5e510 is 1.0:1 on Day's --bg-base).
-      // The WCAG AA floor makes xterm adjust any such foreground against the
-      // live background on every palette (VS Code's terminal default).
-      term = createTerminal({ convertEol: false, cursorBlink: true, scrollback: 1000, minimumContrastRatio: TERMINAL_MIN_CONTRAST_RATIO });
-      fitAddon = createFitAddon();
-      if (fitAddon && typeof term.loadAddon === 'function') {
-        try { term.loadAddon(fitAddon); } catch (error) { logIgnoredError('load_fit_addon', error); } // addon optional
-      }
-      if (typeof term.onData === 'function') {
-        // USER KEYSTROKES and sendCommand() are the only sanctioned api.write callers.
-        term.onData((data) => {
-          const api = getApi();
-          if (sessionId && api && typeof api.write === 'function') {
-            try { Promise.resolve(api.write({ sessionId, data })).catch(() => {}); } catch (error) { logIgnoredError('write', error); }
-          }
-        });
-      }
-      return term;
+        return confirmed;
+      });
     }
 
     // Every start failure funnels here: paint a status word, log a WARN, and show
@@ -670,9 +285,15 @@
       return false;
     }
 
-    async function startSession() {
+    // startSession(opts?): opts.cwd (root-relative start folder) and opts.profileId
+    // (shell id) are remembered for Restart; the default shell is the Settings pick.
+    let startOptions = {};
+    async function startSession(opts) {
       if (disposed || isRunning() || starting) {
         return false;
+      }
+      if (opts && typeof opts === 'object') {
+        startOptions = { cwd: typeof opts.cwd === 'string' ? opts.cwd : '', profileId: typeof opts.profileId === 'string' ? opts.profileId : '' };
       }
       const api = getApi();
       if (!api || typeof api.spawn !== 'function') {
@@ -681,13 +302,9 @@
       }
       starting = true;
       const epoch = lifecycleEpoch;
-      // UIUX-024: xterm.js/addon-fit.js load lazily on first real Start (see
-      // ensureXtermReady above); a Chat-only session never pays this cost, and
-      // an already-loaded/test-injected terminal factory adds zero microtask
-      // ticks (needsXtermRuntimeLoad() stays false), so this only awaits on
-      // an actual cold-start vendor-script load.
-      if (needsXtermRuntimeLoad()) {
-        const xtermReady = await ensureXtermReady();
+      // UIUX-024: xterm.js/addon-fit.js load lazily on the first real Start.
+      if (xterm.needsRuntimeLoad()) {
+        const xtermReady = await xterm.ensureRuntime();
         if (disposed || epoch !== lifecycleEpoch) {
           starting = false;
           return false;
@@ -698,38 +315,32 @@
             jt('ide.ptyTerminal.runtimeLoadFailed', 'The terminal runtime could not be loaded. Check your connection and try again.'));
         }
       }
-      // UIUX-011: subscribe BEFORE calling spawn, not after it resolves. Main
-      // wires the pty's data/exit forwarding synchronously inside spawn(), before
-      // its IPC reply is sent, so a subscribe-after-await renderer can miss
-      // immediate output or an immediate exit. Events heard before we know our
-      // own session id land in the bounded pre-ready buffer above and replay in
-      // order the moment spawn resolves.
-      subscribeBridge(api);
+      // UIUX-011: subscribe BEFORE spawn (main wires forwarding inside spawn(),
+      // before replying); early events land in the pre-ready buffer.
+      io.subscribe(api);
       try {
-        ensureTerminal();
-        const mount = getMount();
-        if (mount && mountedEl !== mount) {
-          try { term.open(mount); } catch (error) { logIgnoredError('term_open', error); }
-          mountedEl = mount;
-          observeResize(mount);
-        }
+        xterm.ensureTerminal();
+        xterm.attach(getMount());
         // Theme + mono font apply via term.options now that the host exists,
         // then track palette/typography switches for the terminal's lifetime.
-        applyAppearance();
-        startAppearanceObserver();
-        applyFit(); // fit-then-spawn: measure before we ask the pty for a size
-        const spawnCols = term.cols;
-        const spawnRows = term.rows;
-        const result = await api.spawn({ cols: spawnCols, rows: spawnRows, slot });
+        xterm.applyAppearance();
+        xterm.startAppearanceObserver();
+        xterm.applyFit(); // fit-then-spawn: measure before we ask the pty for a size
+        const { cols: spawnCols, rows: spawnRows } = xterm.getSize();
+        const profileId = startOptions.profileId || String(getIde()?.terminalDefaultProfile || '');
+        const result = await api.spawn(Object.assign({ cols: spawnCols, rows: spawnRows, slot },
+          profileId ? { profileId } : null, startOptions.cwd ? { cwd: startOptions.cwd } : null));
         if (disposed || epoch !== lifecycleEpoch) {
           const lateSessionId = String(result?.sessionId || '');
-          if (lateSessionId && typeof api.kill === 'function') {
-            try { await api.kill({ sessionId: lateSessionId }); } catch (error) { logIgnoredError('kill_late', error); } // main owns refusal logging
+          if (lateSessionId) {
+            // A superseded lifecycle owns the row; an unconfirmed kill only logs.
+            await settleKill(lateSessionId, 'kill_late', epoch);
           }
           return false;
         }
         if (!result || result.ok === false) {
           const message = toErrorMessage(result?.message, result?.code || jt('ide.ptyTerminal.startFailed', 'The terminal could not be started.'));
+          startOptions = { profileId: startOptions.profileId || '' }; // a refused folder is not retried on the next Start
           return failStart('failed', 'ide.pty_start_failed', message, { code: String(result?.code || ''), message });
         }
         sessionId = String(result.sessionId || '');
@@ -737,14 +348,14 @@
           return failStart('failed', 'ide.pty_start_no_session',
             jt('ide.ptyTerminal.noSessionId', 'The terminal session could not be started (no session id).'));
         }
+        unconfirmedSessionId = '';
         sessionShell = String(result.shell || '');
         sessionCwd = String(result.cwd || '');
         // A fresh spawn used this size; an attach to an already-running PTY did
         // not resize it, so leave the cache empty and let the resize below correct it.
         const spawnedAtSize = result.alreadyRunning !== true;
-        lastSentCols = spawnedAtSize ? spawnCols : 0;
-        lastSentRows = spawnedAtSize ? spawnRows : 0;
-        replayPreReadyBuffer();
+        xterm.setSentSize(spawnedAtSize ? spawnCols : 0, spawnedAtSize ? spawnRows : 0);
+        io.replayPreReady();
         if (!sessionId) {
           // A buffered exit for this session replayed above (it ended before we
           // finished subscribing) — settle as not-running rather than reporting
@@ -754,7 +365,7 @@
         }
         notifySession();
         setStatusMessage('');
-        applyFitAndResize();
+        xterm.applyFitAndResize();
         return true;
       } catch (error) {
         if (disposed || epoch !== lifecycleEpoch) return false;
@@ -764,60 +375,18 @@
       } finally {
         starting = false;
         if (!sessionId) {
-          discardPreReadyBuffer();
+          io.discardPreReady();
         }
       }
-    }
-
-    async function sendCommand(commandOrBuilder) {
-      try {
-        if (!isRunning() && !(await startSession())) {
-          return false;
-        }
-        const api = getApi();
-        if (typeof api?.write !== 'function') {
-          return false;
-        }
-        const command = typeof commandOrBuilder === 'function'
-          ? commandOrBuilder(sessionShell, sessionCwd)
-          : commandOrBuilder;
-        const data = `${String(command || '')}\r\n`;
-        const dataBytes = new TextEncoder().encode(data).length;
-        if (dataBytes > SEND_COMMAND_MAX_BYTES) {
-          appendClientLog('WARN', 'ide.pty_send_command_refused', { code: 'too_long' });
-          return false;
-        }
-        const result = await api.write({ sessionId, data });
-        // main answers { ok, written } or { ok: false, code }; only a complete,
-        // accepted write counts as sent.
-        const accepted = Boolean(result) && typeof result === 'object' && result.ok === true
-          && !(Number.isFinite(result.written) && result.written < dataBytes);
-        if (!accepted) {
-          appendClientLog('WARN', 'ide.pty_send_command_refused', { code: String(result?.code || '') });
-        }
-        return accepted;
-      } catch (_error) {
-        return false;
-      }
-    }
-
-    function sendInterrupt() {
-      const api = getApi();
-      if (!isRunning() || !api || typeof api.write !== 'function') {
-        return;
-      }
-      try { Promise.resolve(api.write({ sessionId, data: INTERRUPT_BYTE })).catch(() => {}); } catch (error) { logIgnoredError('interrupt', error); }
     }
 
     function clearTerminal() {
       // Discard any not-yet-flushed queued bytes so a Clear/Restart can never
       // be followed by stale pre-clear (or, on Restart, prior-session) output
       // reappearing on the next animation frame.
-      discardWriteQueue();
-      resetWriteDropCounters();
-      if (term && typeof term.clear === 'function') {
-        try { term.clear(); } catch (error) { logIgnoredError('clear', error); }
-      }
+      xterm.discardWriteQueue();
+      xterm.resetWriteDropCounters();
+      xterm.clear();
       syncStatus();
     }
 
@@ -831,7 +400,12 @@
           const dyingId = sessionId;
           sessionId = '';
           notifySession();
-          try { await api.kill({ sessionId: dyingId }); } catch (error) { logIgnoredError('kill_restart', error); } // exit event settles state
+          // An unconfirmed kill leaves the shell possibly alive: a new spawn
+          // would silently re-attach to it under a cleared terminal, so the
+          // restart stops here and the status says so.
+          if (!(await settleKill(dyingId, 'kill_restart', lifecycleEpoch))) {
+            return false;
+          }
         }
         clearTerminal();
         setStatusMessage('');
@@ -855,7 +429,7 @@
       if (kind === 'start') {
         startSession().then(focusWhenStarted, noop);
       } else if (kind === 'signal') {
-        sendInterrupt();
+        io.sendInterrupt();
       } else if (kind === 'clear') {
         clearTerminal();
       } else if (kind === 'restart') {
@@ -866,8 +440,8 @@
     // Focus the live xterm, else (no session yet) the Start button. Returns
     // true when focus landed; the bottom panel calls this on Ctrl+` / tab click.
     function focusTerminal() {
-      if (term && mountedEl && typeof term.focus === 'function') {
-        try { term.focus(); return true; } catch (error) { logIgnoredError('focus', error); }
+      if (xterm.focus()) {
+        return true;
       }
       const start = getPanelEl()?.querySelector?.('[data-ide-terminal-action="start"]') || null;
       if (!start || typeof start.focus !== 'function') {
@@ -877,32 +451,36 @@
       return start.ownerDocument?.activeElement === start;
     }
 
+    // Kill this panel's own session and return to the pre-Start state (Stop /
+    // Kill Terminal, and the workspace-root switch). Resolves whether the kill
+    // was confirmed; an unconfirmed one shows as 'stop unconfirmed'.
+    function stopSession(site = 'kill_stop') {
+      if (disposed) {
+        return Promise.resolve(true);
+      }
+      lifecycleEpoch += 1; // an in-flight spawn from before is killed on arrival
+      const epoch = lifecycleEpoch;
+      const dyingId = sessionId;
+      sessionId = '';
+      if (dyingId) unconfirmedSessionId = ''; // a bare Stop keeps an orphan warning
+      notifySession();
+      xterm.setSentSize(0, 0);
+      io.discardPreReady();
+      // On a root switch main normally killed it already (a no-op answer there).
+      const settled = dyingId ? settleKill(dyingId, site, epoch) : Promise.resolve(true);
+      xterm.discardWriteQueue();
+      xterm.resetWriteDropCounters();
+      xterm.reset();
+      setStatusMessage('');
+      return settled;
+    }
+
     // Main kills the PTY on a workspace-root switch; drop the old workspace's
     // scrollback and return to the pre-Start state so the new root starts clean.
     function resetForRoot() {
-      if (disposed) {
-        return;
-      }
-      lifecycleEpoch += 1; // an in-flight spawn from the old root is killed on arrival
-      const dyingId = sessionId;
-      sessionId = '';
-      notifySession();
-      lastSentCols = 0;
-      lastSentRows = 0;
-      discardPreReadyBuffer();
-      const api = getApi();
-      if (dyingId && typeof api?.kill === 'function') {
-        // Main normally killed it already (then this is a no-op there).
-        try { Promise.resolve(api.kill({ sessionId: dyingId })).catch(() => {}); } catch (error) { logIgnoredError('kill_root_switch', error); }
-      }
-      discardWriteQueue();
-      resetWriteDropCounters();
-      if (term) {
-        try {
-          if (typeof term.reset === 'function') { term.reset(); } else { term.clear(); }
-        } catch (error) { logIgnoredError('reset_root_switch', error); }
-      }
-      setStatusMessage('');
+      if (!disposed) unconfirmedSessionId = ''; // root-owned UI state clears synchronously
+      startOptions = {}; // a remembered folder or profile belongs to the old root
+      stopSession('kill_root_switch');
     }
 
     if (typeof windowRef?.addEventListener === 'function') {
@@ -923,60 +501,42 @@
       disposed = true;
       lifecycleEpoch += 1;
       try { windowRef?.removeEventListener?.(ROOT_COMMITTED_EVENT, resetForRoot); } catch (error) { logIgnoredError('unbind_root_committed', error); }
-      appearanceObserver?.disconnect?.();
-      appearanceObserver = null;
-      windowRef?.document?.removeEventListener?.(CODE_FONT_SIZE_EVENT, applyAppearance);
-      discardPreReadyBuffer();
-      discardWriteQueue();
+      io.discardPreReady();
       if (boundPanel) {
         boundPanel.removeEventListener('click', handleClick);
         boundPanel = null;
       }
-      try { unsubscribeData?.(); } catch (error) { logIgnoredError('unsubscribe_data', error); }
-      unsubscribeData = null;
-      try { unsubscribeExit?.(); } catch (error) { logIgnoredError('unsubscribe_exit', error); }
-      unsubscribeExit = null;
-      if (resizeObserver) {
-        resizeObserver.disconnect();
-        resizeObserver = null;
-      }
-      if (resizeTimer) {
-        ((windowRef && windowRef.clearTimeout) || clearTimeout)(resizeTimer);
-        resizeTimer = null;
-      }
-      if (term) {
-        try { term.dispose(); } catch (error) { logIgnoredError('dispose', error); }
-      }
-      term = null;
-      fitAddon = null;
-      mountedEl = null;
+      io.unsubscribe();
+      xterm.dispose();
       const dyingId = sessionId;
       sessionId = '';
       notifySession();
-      const api = getApi();
-      if (dyingId && typeof api?.kill === 'function') {
-        try { Promise.resolve(api.kill({ sessionId: dyingId })).catch(() => {}); } catch (error) { logIgnoredError('kill_dispose', error); } // main owns refusal logging
-      }
+      // The panel is gone: an unconfirmed kill is logged (settleKill's WARN).
+      if (dyingId) settleKill(dyingId, 'kill_dispose', lifecycleEpoch);
     }
 
     return {
       bindEvents,
+      // Terminal: Clear / Terminal: Find palette rows (row 82 T1).
+      clear: () => clearTerminal(),
       dispose,
       focusTerminal,
-      getSessionId: () => sessionId,
+      getSessionId,
       getSlot: () => slot,
       isRunning,
+      openFind: () => xterm.openFind(),
       renderTerminalPanel,
       resetForRoot,
-      sendCommand,
+      sendCommand: (commandOrBuilder) => io.sendCommand(commandOrBuilder),
       startSession,
-      // Kill this panel's own session and return to the not-started state.
-      stopSession: resetForRoot,
+      // Kill this panel's own session and return to the not-started state;
+      // resolves whether main confirmed the kill.
+      stopSession: () => stopSession(),
     };
   }
 
   return {
-    SEND_COMMAND_MAX_BYTES,
+    SEND_COMMAND_MAX_BYTES: ptyIo.SEND_COMMAND_MAX_BYTES,
     createIdePtyTerminalPanel,
   };
 });

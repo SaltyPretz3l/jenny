@@ -10,15 +10,17 @@
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(
       require('./renderer-stream-terminal-state'),
-      require('./tool-call-utils')
+      require('./tool-call-utils'),
+      require('./renderer-turn-normalization-utils')
     );
     return;
   }
   root.rendererTurnReducerStreamEventUtils = factory(
     root.rendererStreamTerminalState || {},
-    root.toolCallUtils || {}
+    root.toolCallUtils || {},
+    root.rendererTurnNormalizationUtils || {}
   );
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (terminalStateUtils, toolCallUtils) {
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (terminalStateUtils, toolCallUtils, turnNormalizationUtils) {
   'use strict';
 
   const resolveTerminalPresentation = terminalStateUtils.resolveTerminalPresentation;
@@ -316,6 +318,9 @@
             // A message to another chat is approved against its full body (cp5b-2), never the clipped input.
             ...(payload && payload.session_message_approval && typeof payload.session_message_approval === 'object' && !Array.isArray(payload.session_message_approval)
               ? { session_message_approval: deepCloneJsonValue(payload.session_message_approval) } : {}),
+            // A stop names its target from the app's directory (row 69 Q11), never from the input.
+            ...(payload && payload.session_stop_approval && typeof payload.session_stop_approval === 'object' && !Array.isArray(payload.session_stop_approval)
+              ? { session_stop_approval: deepCloneJsonValue(payload.session_stop_approval) } : {}),
             // The approval can beat its tool_use event to the reducer; carrying
             // the tool name, summary and input here lets the gap row name the
             // tool and quote the command in that race instead of rendering
@@ -365,6 +370,7 @@
         const resultStatus = approvalState === 'denied' || approvalState === 'timed_out' || approvalState === 'cancelled'
           ? approvalState
           : (payload && payload.isError ? 'errored' : 'completed');
+        const trustedAttachmentRefs = turnNormalizationUtils.normalizeTrustedAttachmentRefs(payload && payload.trustedAttachments);
         const toolResultEvent = {
           event_id: eventId,
           turn_id: turnId,
@@ -382,9 +388,11 @@
             is_error: Boolean(payload && payload.isError),
             error_code: normalizeId(payload && payload.errorCode),
             approval_state: approvalState,
+            duration_ms: Number(payload && payload.durationMs) || 0,
             generated_artifacts: Array.isArray(payload && payload.generatedArtifacts)
               ? payload.generatedArtifacts.map(normalizeGeneratedArtifact).filter(Boolean)
               : [],
+            ...(trustedAttachmentRefs.length ? { trusted_attachment_refs: trustedAttachmentRefs } : {}),
             ...(payload && payload.metadata && typeof payload.metadata === 'object' && !Array.isArray(payload.metadata)
               ? { metadata: deepCloneJsonValue(payload.metadata) }
               : {}),

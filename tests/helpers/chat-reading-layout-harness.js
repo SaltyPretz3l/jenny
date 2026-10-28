@@ -265,9 +265,12 @@ function checkToolbarOneLine(collector, label, { composer, controls }) {
 function checkPaneReadingLayout(collector, label, pane, { chatWidth, viewportWidth, single, fontScale, narrowFloor = true }) {
   const cap = CAP_CH[chatWidth] * pane.ch;
   const { measure, stage, composer } = pane;
-  const lowerBound = Math.min(cap, stage.width - 2 * GUTTER_MAX_PX) - 1;
+  // The gutter is max(the 40px clamp, the avatar rail) per side (styles/chat-panes.css); the rail
+  // shows while the composer toolbar fits, and the column's start padding is its resolved width.
+  const gutter = Math.max(GUTTER_MAX_PX, pane.columnPaddingStart || 0);
+  const lowerBound = Math.min(cap, stage.width - 2 * gutter) - 1;
   collector.ok(measure.width <= cap + 1, `${label}: measure ${fmt(measure.width)}px is within the ${CAP_CH[chatWidth]}ch cap ${fmt(cap)}px (ch ${fmt(pane.ch)}px, ${pane.proseFont.split(',')[0]})`);
-  collector.ok(measure.width >= lowerBound, `${label}: measure ${fmt(measure.width)}px follows the pane (${fmt(stage.width)}px wide), at least min(cap ${fmt(cap)}, pane - 80) - 1 = ${fmt(lowerBound)}px`);
+  collector.ok(measure.width >= lowerBound, `${label}: measure ${fmt(measure.width)}px follows the pane (${fmt(stage.width)}px wide), at least min(cap ${fmt(cap)}, pane - 2 x ${fmt(gutter)}) - 1 = ${fmt(lowerBound)}px`);
   collector.ok(measure.left >= stage.left - 0.5 && measure.right <= stage.right + 0.5, `${label}: measure [${fmt(measure.left)}, ${fmt(measure.right)}] stays inside its pane [${fmt(stage.left)}, ${fmt(stage.right)}]`);
   if (composer) {
     collector.ok(Math.abs(composer.left - measure.left) <= 1, `${label}: composer start ${fmt(composer.left)} lines up with the measure start ${fmt(measure.left)} (delta ${fmt(composer.left - measure.left)})`);

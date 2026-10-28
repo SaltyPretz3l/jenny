@@ -49,7 +49,7 @@
       const sourceOmitted = Number(result?.summary_source_dropped_messages) > 0
         ? ' ' + jt('chat.thinking.summarizerInputOmitted', 'Some older messages were omitted from the summarizer input') + '.'
         : '';
-      const base = (before != null && after != null ? jt('settings.compaction.completedWithTokenCounts', 'Compacted: {before} -> {after} tokens.', { before, after }) : 'Compacted.') + note + sourceOmitted;
+      const base = (before != null && after != null ? jt('settings.compaction.completedWithTokenCounts', 'Compacted: {before} -> {after} tokens.', { before, after }) : jt('settings.compaction.completed', 'Compacted.')) + note + sourceOmitted;
       if (result?.snapshot_persisted === true) {
         return { state: 'success', message: jt('settings.compaction.persisted', '{result} Future turns use the compact context.', { result: base }), tone: 'success', reason: 'persisted' };
       }
@@ -99,7 +99,6 @@
     // pane 0 showing that session renders its progress too.
     function render(sessionId) {
       callbacks.renderComposerState?.();
-      callbacks.renderComposerStatusNotice?.();
       if (sessionId) callbacks.renderSessionComposer?.(sessionId);
       callbacks.renderSettings?.();
     }
@@ -118,6 +117,8 @@
     function setActivity(sessionId, activity) {
       activities.delete(sessionId);
       activities.set(sessionId, Object.freeze({ sessionId, ...activity }));
+      // The inline compaction row and the sprite follow the pending flag.
+      callbacks.onActivityChange?.(sessionId, activities.get(sessionId));
       render(sessionId);
       return activities.get(sessionId);
     }
@@ -179,6 +180,9 @@
       log(described.state === 'success' ? 'INFO' : 'WARN', 'chat.compaction_settled', {
         sessionId: normalizedSessionId, source, status: described.state, reason: described.reason,
       });
+      // A saved compaction shows as the timeline divider; every other outcome
+      // (nothing to compact, busy, failed, not saved) is told once.
+      if (described.reason !== 'persisted') callbacks.notifySettled?.(activity);
       return { accepted: true, activity };
     }
 
@@ -212,10 +216,15 @@
       getChatApi: () => ctx.window?.jennyShell?.chat,
       callbacks: {
         renderComposerState: (...args) => ctx.renderComposerState?.(...args),
-        renderComposerStatusNotice: (...args) => ctx.renderComposerStatusNotice?.(...args),
         renderSessionComposer: (sessionId) => ctx.window?.rendererAppPaneComposition?.getPaneComposition?.()?.renderSessionPane?.(sessionId, 'composer'),
         renderSettings: (...args) => ctx.renderSettings?.(...args),
         appendClientLog: (...args) => ctx.appendClientLog?.(...args),
+        onActivityChange: (sessionId, activity) => ctx.state?.streamWaits?.noteSessionCompaction?.(sessionId, activity?.pending === true),
+        notifySettled: (activity) => ctx.showToastMessage?.(activity.message, {
+          title: jt('settings.compaction.toastTitle', 'Compaction'),
+          tone: activity.tone === 'danger' ? 'danger' : activity.tone === 'warning' ? 'warning' : 'info',
+          dedupeKey: `compaction:${activity.sessionId}`,
+        }),
         onCompactionPersisted: (sessionId, result) => {
           const usageModule = ctx.window?.rendererContextUsageUtils;
           usageModule?.updateCompactionUsage?.(sessionId, result, {
@@ -226,7 +235,12 @@
               || ''
             ).trim(),
           });
-          Promise.resolve(ctx.refreshSessionSummaries?.()).catch(() => {
+          Promise.resolve(ctx.refreshSessionSummaries?.()).then(() => {
+            // The divider is projected from the refreshed summary
+            // (renderer-manual-compaction-divider.js); undefined = one pane.
+            const paneComposition = ctx.window?.rendererAppPaneComposition?.getPaneComposition?.();
+            if (paneComposition?.renderSessionPane?.(sessionId, 'messages') === undefined) ctx.renderMessages?.();
+          }).catch(() => {
             ctx.appendClientLog?.('WARN', 'chat.compaction_summary_refresh_failed', {
               sessionId,
             });

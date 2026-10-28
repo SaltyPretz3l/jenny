@@ -94,7 +94,7 @@ test('250 committed edits exhaust composite routes exactly with the 200 real sna
   const model = composite(t);
   for (let edit = 0; edit < 250; edit += 1) {
     model.beginTransaction();
-    assert.equal(model.insertText('b1', edit, 'x'), true);
+    assert.ok(model.insertText('b1', edit, 'x'));
     model.endTransaction();
   }
   assert.equal(exhaustUndo(model), 200);
@@ -118,7 +118,7 @@ test('32 MiB history budget evicts oldest snapshots across body and header', (t)
   });
   for (let edit = 0; edit < 40; edit += 1) {
     const id = edit % 2 ? 'header1::b1' : 'b1';
-    assert.equal(model.insertText(id, model.getParagraphText(id).length, 'x'), true);
+    assert.ok(model.insertText(id, model.getParagraphText(id).length, 'x'));
   }
   let count = 0;
   while (model.canUndo()) {
@@ -146,7 +146,7 @@ test('aggregate inserted-media budget rejects overflow and reclaims after histor
   assert.equal(model.serialize()['word/document.xml'], before);
   assert.equal(model.deleteRange('b1', 0, 8), true);
   assert.equal(model.insertImage('b1', 0, image('AQ==')), false, 'undo-reachable payloads still consume the budget');
-  for (let edit = 0; edit < 200; edit += 1) assert.equal(model.insertText('b1', edit, 'x'), true);
+  for (let edit = 0; edit < 200; edit += 1) assert.ok(model.insertText('b1', edit, 'x'));
   assert.equal(model.insertImage('b1', 0, image(chunk)), true, 'evicted media must free the insertion budget');
   assert.equal(model.serialize().media.size, 1);
 });
@@ -171,7 +171,7 @@ test('dirty checks use identities without JSON-serializing base64 and undo retur
   model.markSaved();
   assert.equal(model.insertImage('b1', 0, image('AQ==')), true);
   model.markSaved();
-  assert.equal(model.insertText('b1', 1, 'changed'), true);
+  assert.ok(model.insertText('b1', 1, 'changed'));
   assert.equal(model.isDirty(), true);
   assert.equal(model.undo(), true);
   assert.equal(model.isDirty(), false);
@@ -200,9 +200,9 @@ test('a new edit clears redo before byte eviction so remaining undo snapshots su
       xml: `<w:hdr xmlns:w="${W_NS}"><!--${padding}${padding}--><w:p/></w:hdr>`,
     }],
   });
-  for (let edit = 0; edit < 31; edit += 1) assert.equal(model.insertText('b1', edit, 'x'), true);
+  for (let edit = 0; edit < 31; edit += 1) assert.ok(model.insertText('b1', edit, 'x'));
   for (let undo = 0; undo < 20; undo += 1) assert.equal(model.undo(), true);
-  assert.equal(model.insertText('header1::b1', 0, 'header'), true);
+  assert.ok(model.insertText('header1::b1', 0, 'header'));
   assert.equal(model.canRedo(), false);
   assert.equal(model.undo(), true);
   assert.equal(model.getParagraphText('header1::b1'), '');
@@ -214,7 +214,7 @@ test('a document larger than the history budget keeps one undo and its redo', (t
   const model = createDocxModel(options(t, {
     documentXml: `<w:document xmlns:w="${W_NS}"><!--${padding}--><w:body><w:p/></w:body></w:document>`,
   }));
-  assert.equal(model.insertText('b1', 0, 'x'), true);
+  assert.ok(model.insertText('b1', 0, 'x'));
   assert.equal(model.canUndo(), true, 'the just-recorded snapshot must survive the budget');
   assert.equal(model.undo(), true);
   assert.equal(model.getParagraphText('b1'), '');

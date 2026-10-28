@@ -1,7 +1,8 @@
 /* renderer/features/renderer-ide-map-controls.js - the Workspace File Map's
- * controls bar for the Living Atlas rework: a search field, three toggleable
- * layer chips (Activity / Health / Deps), the "Hide tests" toggle (with an
- * N/N visible-count readout), a flexible spacer, and Generate/Refresh/
+ * controls bar for the Living Atlas rework: the Atlas | Components lens
+ * switch (row 77 phase 3), a search field, three toggleable
+ * layer chips (Activity / Health / Deps), the "Hide tests" toggle (with a
+ * "N tests" / "N hidden" readout), a flexible spacer, and Generate/Refresh/
  * Overview action buttons plus a transient-over-persistent status slot. Pure
  * presentation + callbacks — no scan/graph/camera logic lives here (that
  * stays in the controller). Built exclusively from inventory primitives
@@ -38,19 +39,26 @@
  *   onRefresh         (fn?)     () => void. "Refresh" button.
  *   onOverviewToggle  (fn?)     () => void. "Overview" button (P5 Project
  *                                Overview panel toggle).
+ *   onLensChange      (fn?)     (lens) => void. 'atlas'|'components' from the
+ *                                lens switch (not fired by setState).
  *   timers            (object?) { setTimeout, clearTimeout } — defaults to
  *                                window/global; injectable for fake-timer
  *                                tests (debounces the search input).
  *
  * controller methods:
- *   setState({search?,hideTests?,layers?})  Restores UI state (e.g. from
+ *   setState({search?,hideTests?,layers?,lens?})  Restores UI state (e.g. from
  *                                    persisted prefs) without re-firing the
  *                                    change callbacks. `layers` may be a
  *                                    partial object; omitted keys keep their
  *                                    current value.
- *   setTestCounts(hidden, total)    Updates the "Hide tests" N/N readout
- *                                    (hidden = count currently hidden by the
- *                                    toggle, total = total test files found).
+ *   setTestCounts(hidden, total)    Updates the "Hide tests" readout (hidden =
+ *                                    count currently hidden by the toggle, total
+ *                                    = total test files found): empty for no
+ *                                    tests, "N hidden" while some are hidden,
+ *                                    else "1 test" / "N tests".
+ *   setHasMap(hasMap)               While true a map is drawn, so the Generate
+ *                                    button is hidden (Refresh stays); false
+ *                                    shows it again. Survives re-renders.
  *   setStatus(message, opts?)       Shows a transient status chip in the bar
  *                                    (opts: { tone?, spinner?, autoClearMs? }).
  *                                    Empty/absent message clears it. Used for
@@ -65,8 +73,6 @@
  *   setOverviewPressed(pressed)     Reflects the Overview panel's open state on
  *                                    the Overview button via aria-pressed.
  *   focusSearch()                   Focuses the search field.
- *   focusFilter()                   Alias for focusSearch() — kept for the
- *                                    a11y module, which still calls this name.
  *   dispose()                       Removes listeners + clears hostEl.
  *                                    Idempotent.
  */
@@ -79,6 +85,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
 
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
 
@@ -102,6 +109,7 @@
   const toggleSwitchModule = resolveModule('inventoryToggleSwitch', '../inventory/toggle-switch');
   const actionButton = resolveModule('inventoryActionButton', '../inventory/action-button');
   const statusRow = resolveModule('inventoryStatusRow', '../inventory/status-row');
+  const segmentedControl = resolveModule('inventorySegmentedControl', '../inventory/segmented-control');
 
   const SEARCH_DEBOUNCE_MS = 150;
 
@@ -116,16 +124,8 @@
   // here so the bar renders a sensible state before the controller's first
   // setState() (restored prefs) lands.
   const DEFAULT_LAYERS = { activity: true, health: false, deps: true };
-
-  function resolveTimers(injected) {
-    const g = typeof globalThis !== 'undefined' ? globalThis : {};
-    const t = injected || {};
-    const win = g.window || g;
-    return {
-      setTimeout: typeof t.setTimeout === 'function' ? t.setTimeout : (fn, ms) => win.setTimeout(fn, ms),
-      clearTimeout: typeof t.clearTimeout === 'function' ? t.clearTimeout : (id) => win.clearTimeout(id),
-    };
-  }
+  const LENSES = new Set(['atlas', 'components']);
+  const LENS_SWITCH_ID = 'ide-map-lens';
 
   function createMapControls(deps) {
     const d = deps || {};
@@ -138,15 +138,18 @@
     const onGenerate = typeof d.onGenerate === 'function' ? d.onGenerate : noop;
     const onRefresh = typeof d.onRefresh === 'function' ? d.onRefresh : noop;
     const onOverviewToggle = typeof d.onOverviewToggle === 'function' ? d.onOverviewToggle : noop;
-    const timers = resolveTimers(d.timers);
+    const onLensChange = typeof d.onLensChange === 'function' ? d.onLensChange : noop;
+    const timers = d.timers || globalThis;
 
     let disposed = false;
-    let state = { search: '', hideTests: false, layers: { ...DEFAULT_LAYERS } };
+    let state = { search: '', hideTests: false, layers: { ...DEFAULT_LAYERS }, lens: 'atlas' };
     let searchDebounceId = null;
     let transientStatus = { text: '', tone: 'default', spinner: false };
     let persistentStatus = { text: '', tone: 'warning', spinner: false };
     let statusClearId = null;
     let overviewPressed = false;
+    let hasMap = false;
+    let testCountText = '';
 
     let searchInputEl = null;
     let toggleCountEl = null;
@@ -154,6 +157,18 @@
     function render() {
       if (!hostEl) return;
       const parts = [];
+      if (typeof segmentedControl === 'function') {
+        parts.push(segmentedControl({
+          id: LENS_SWITCH_ID,
+          className: 'inv-segmented--compact ide-map-lens',
+          ariaLabel: jt('ide.map.lens.label', 'Map view'),
+          value: state.lens,
+          options: [
+            { value: 'atlas', label: jt('ide.map.lens.atlas', 'Atlas') },
+            { value: 'components', label: jt('ide.map.lens.components', 'Components') },
+          ],
+        }));
+      }
       if (typeof textField === 'function') {
         parts.push(textField({
           id: 'ide-map-search',
@@ -181,7 +196,7 @@
             label: jt('ide.map.hideTests', 'Hide tests'),
             checked: state.hideTests,
           })
-          + '<span class="ide-map-hide-tests-count" data-map-hide-tests-count>0/0</span>'
+          + '<span class="ide-map-hide-tests-count" data-map-hide-tests-count></span>'
           + '</span>');
       }
       parts.push('<div class="ide-map-controls-spacer"></div>');
@@ -200,7 +215,6 @@
         parts.push(actionButton({
           id: 'overview',
           label: jt('ide.map.overview', 'Overview'),
-          plain: true,
           className: 'ide-map-overview-toggle',
         }));
       }
@@ -214,6 +228,8 @@
       // innerHTML rebuild a setState()/render() performs.
       applyStatusToSlot();
       applyOverviewPressed();
+      applyHasMap();
+      if (toggleCountEl) toggleCountEl.textContent = testCountText;
     }
 
     function bindElements() {
@@ -249,6 +265,20 @@
       if (!hostEl) return;
       const btn = hostEl.querySelector('[data-action="overview"]');
       if (btn) btn.setAttribute('aria-pressed', overviewPressed ? 'true' : 'false');
+    }
+
+    // Generate is a no-op once a map is drawn (it returns the cached graph),
+    // so it is hidden while one exists; Refresh stays.
+    function applyHasMap() {
+      if (!hostEl) return;
+      const btn = hostEl.querySelector('[data-action="generate"]');
+      if (btn) btn.hidden = hasMap;
+    }
+
+    function setHasMap(next) {
+      if (disposed) return;
+      hasMap = next === true;
+      applyHasMap();
     }
 
     function setStatus(message, opts) {
@@ -380,8 +410,20 @@
       }
     }
 
+    function handleLensChange(event) {
+      const detail = event && event.detail;
+      if (disposed || !detail || detail.id !== LENS_SWITCH_ID || !LENSES.has(detail.value)) return;
+      if (detail.value === state.lens) return;
+      state = { ...state, lens: detail.value };
+      onLensChange(detail.value);
+    }
+
     function bindEvents() {
       if (!hostEl || typeof hostEl.addEventListener !== 'function') return;
+      if (segmentedControl && typeof segmentedControl.initSegmentedHandlers === 'function') {
+        segmentedControl.initSegmentedHandlers(hostEl);
+      }
+      hostEl.addEventListener('inv-segmented-change', handleLensChange);
       hostEl.addEventListener('input', handleSearchInput);
       hostEl.addEventListener('keydown', handleSearchKeydown);
       hostEl.addEventListener('click', handleToggleClick);
@@ -389,6 +431,7 @@
     }
     function unbindEvents() {
       if (!hostEl || typeof hostEl.removeEventListener !== 'function') return;
+      hostEl.removeEventListener('inv-segmented-change', handleLensChange);
       hostEl.removeEventListener('input', handleSearchInput);
       hostEl.removeEventListener('keydown', handleSearchKeydown);
       hostEl.removeEventListener('click', handleToggleClick);
@@ -407,6 +450,7 @@
           health: typeof nextLayers.health === 'boolean' ? nextLayers.health : state.layers.health,
           deps: typeof nextLayers.deps === 'boolean' ? nextLayers.deps : state.layers.deps,
         },
+        lens: LENSES.has(n.lens) ? n.lens : state.lens,
       };
       render();
     }
@@ -415,7 +459,15 @@
       if (disposed || !toggleCountEl) return;
       const h = Number.isFinite(Number(hidden)) ? Number(hidden) : 0;
       const t = Number.isFinite(Number(total)) ? Number(total) : 0;
-      toggleCountEl.textContent = `${h}/${t}`;
+      const fmt = (n) => n.toLocaleString(globalThis.jennyI18n?.tag?.());
+      if (t <= 0) {
+        testCountText = '';
+      } else if (h > 0) {
+        testCountText = jt('ide.map.hideTestsHidden', '{count} hidden', { count: fmt(h) });
+      } else {
+        testCountText = jtn('ide.map.hideTestsCount', t, { count: fmt(t) }, '{count} test', '{count} tests');
+      }
+      toggleCountEl.textContent = testCountText;
     }
 
     function focusSearch() {
@@ -448,13 +500,13 @@
     return {
       setState,
       setTestCounts,
+      setHasMap,
       setStatus,
       clearStatus,
       setPersistentStatus,
       clearPersistentStatus,
       setOverviewPressed,
       focusSearch,
-      focusFilter: focusSearch,
       dispose,
     };
   }

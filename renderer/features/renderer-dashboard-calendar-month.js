@@ -88,25 +88,6 @@
     return resolveGridModule().computeWeekStart(reference, 0);
   }
 
-  function categoryClass(instance) {
-    const categoryId = /^[a-z][a-z0-9-]*$/.test(String(instance.categoryId || ''))
-      ? instance.categoryId
-      : 'default';
-    return `cal-event--${categoryId}`;
-  }
-
-  // All-day events lead the day; then by start string, then title. (Twin of the
-  // agenda's comparator, which isn't exported.)
-  function compareForCell(a, b) {
-    if ((a.allDay === true) !== (b.allDay === true)) {
-      return a.allDay === true ? -1 : 1;
-    }
-    if (String(a.start) !== String(b.start)) {
-      return String(a.start) < String(b.start) ? -1 : 1;
-    }
-    return String(a.title || '') < String(b.title || '') ? -1 : 1;
-  }
-
   /**
    * Span of week rows to render for a snapshot window.
    * @param {string} windowStart local-naive start bound ("YYYY-MM-DDT00:00")
@@ -164,33 +145,17 @@
   // One event line — same data-cal-instance/-id/-event-id dataset the agenda and
   // week views emit, so the controller's shared click handler opens the form.
   function buildMonthEvent(button, instance) {
+    const grid = resolveGridModule();
     const readonly = instance.readonly === true;
-    const title = String(instance.title || '').trim() || jt('dashboard.calendar.agenda.noTitle', '(no title)');
+    const title = grid.instanceTitle(instance);
     const start = parseLocalDateTime(instance.start);
     const timeLabel = instance.allDay ? jt('dashboard.calendar.agenda.allDay', 'All day') : (start ? formatTimeShort(start) : '');
-    const dataset = { 'cal-instance': '1' };
-    if (instance.instanceId) {
-      dataset['cal-instance-id'] = String(instance.instanceId);
-    }
-    if (!readonly && instance.eventId) {
-      dataset['cal-event-id'] = String(instance.eventId);
-    }
-    if (readonly) {
-      dataset['cal-readonly'] = '1';
-    }
-    const markerGlyphs = `${instance.recurrenceUnsupported === true ? '↻' : ''}`
-      + `${instance.tzApprox === true ? '~' : ''}`;
-    const markerTitle = [
-      instance.recurrenceUnsupported === true ? jt('dashboard.calendar.agenda.partialRecurrence', 'Recurrence only partially supported') : '',
-      instance.tzApprox === true ? jt('dashboard.calendar.agenda.approximateFeedTime', 'Approximate time (unrecognized feed time zone)') : '',
-    ].filter(Boolean).join('; ');
-    const marker = markerGlyphs
-      ? `<span class="cal-event__marker" title="${escapeHtml(markerTitle)}">${markerGlyphs}</span>`
-      : '';
+    const dataset = grid.eventDataset(instance);
+    const marker = grid.eventMarkerHtml(instance);
     const labelBits = [title, timeLabel].filter(Boolean).join(', ') + (readonly ? jt('dashboard.calendar.agenda.readOnlySuffix', ', read-only') : '');
     return button({
       plain: true,
-      className: `cal-month__event ${categoryClass(instance)}${readonly ? ' cal-event--readonly' : ''}`,
+      className: `cal-month__event ${grid.categoryClass(instance)}${readonly ? ' cal-event--readonly' : ''}`,
       ariaLabel: labelBits,
       title: instance.notes ? `${title}\n${String(instance.notes)}` : title,
       dataset,
@@ -206,7 +171,7 @@
     const { button, chip, popover } = deps;
     const { todayKey, todayStartMs, windowStartMs, windowEndMs, maxChipsPerCell } = ctx;
     const dayKey = formatLocalDate(day);
-    const sorted = dayInstances.slice().sort(compareForCell);
+    const sorted = dayInstances.slice().sort(resolveGridModule().compareInstances);
     const shown = sorted.slice(0, maxChipsPerCell);
     const overflow = sorted.slice(maxChipsPerCell);
     const isToday = dayKey === todayKey;
@@ -214,7 +179,7 @@
     const isOutside = day.getTime() < windowStartMs || day.getTime() >= windowEndMs;
     const isFirstOfMonth = day.getDate() === 1;
     const isWeekend = day.getDay() === 0 || day.getDay() === 6;
-    const fullLabel = day.toLocaleDateString(globalThis.jennyI18n?.tag?.(), { weekday: 'long', month: 'long', day: 'numeric' });
+    const fullLabel = resolveGridModule().formatFullDateLabel(day);
     const count = sorted.length;
 
     const numHtml = `<span class="cal-month__daynum">`
@@ -226,12 +191,13 @@
     let eventsHtml = shown.map((instance) => buildMonthEvent(button, instance)).join('');
     if (overflow.length && chip && popover) {
       const popDomId = `calMonthPop-${dayKey}`;
+      const moreLabel = jtn('dashboard.calendar.month.moreEvents', overflow.length, { count: overflow.length, date: fullLabel }, '{count} more event on {date}', '{count} more events on {date}');
       eventsHtml += chip({
         label: jt('dashboard.calendar.month.moreCount', '+{count} more', { count: overflow.length }),
         hasPopup: true,
         ariaControls: popDomId,
-        ariaLabel: jtn('dashboard.calendar.month.moreEvents', overflow.length, { count: overflow.length, date: fullLabel }, '{count} more event on {date}', '{count} more events on {date}'),
-        title: jtn('dashboard.calendar.month.moreEvents', overflow.length, { count: overflow.length, date: fullLabel }, '{count} more event on {date}', '{count} more events on {date}'),
+        ariaLabel: moreLabel,
+        title: moreLabel,
         className: 'cal-month__more',
       });
       eventsHtml += popover({

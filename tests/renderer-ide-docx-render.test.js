@@ -83,7 +83,7 @@ test('renders real paragraph formatting, tabs, lists, tables, and image blocks',
   assert.equal(image.getAttribute('contenteditable'), 'false');
 });
 
-test('number labels restart after an interrupting paragraph and inside a new container', async () => {
+test('number labels continue across an interrupting paragraph like Word', async () => {
   const { dom, model } = await fixtureModel('lists-tables.docx');
   const blocks = model.getBlocks();
   const first = blocks.find((block) => block.text === 'First step');
@@ -92,7 +92,25 @@ test('number labels restart after an interrupting paragraph and inside a new con
   const host = mount(dom, [first, second, interrupt, first]);
   assert.deepEqual(
     Array.from(host.querySelectorAll('[data-list="number"]'), (item) => item.dataset.listLabel),
-    ['1.', '2.', '1.'],
+    ['1.', '2.', '3.'],
+  );
+});
+
+test('number labels keep one counter per list and level, resetting deeper levels', () => {
+  const dom = new JSDOM('<main></main>');
+  let ordinal = 0;
+  const item = (numId, level, kind = 'number', start) => ({
+    id: `b${++ordinal}`, type: 'paragraph', text: 'x', runs: [{ id: 'r', kind: 'text', text: 'x' }],
+    list: { kind, numId, level, ...(start === undefined ? {} : { start }) },
+  });
+  const plain = () => ({ id: `b${++ordinal}`, type: 'paragraph', text: 'p', runs: [], list: null });
+  const host = mount(dom, [
+    item('1', 0), item('1', 1), item('1', 1), item('1', 0), item('1', 1),
+    plain(), item('2', 0, 'number', 5), item('1', 0), item('3', 0, 'bullet'), item('1', 0),
+  ]);
+  assert.deepEqual(
+    Array.from(host.querySelectorAll('[data-list]'), (element) => element.dataset.listLabel),
+    ['1.', '1.', '2.', '2.', '1.', '5.', '3.', '•', '4.'],
   );
 });
 

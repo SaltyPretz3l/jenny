@@ -30,6 +30,8 @@ const MODULES = [
   'renderer/chat/renderer-turn-pause-interaction.js',
   'renderer/chat/renderer-composer-toolbar-fit.js',
   'renderer/chat/renderer-pane-composer-rail.js',
+  // Row 84: the controller module puts the mic before Stop (mountComposer).
+  'renderer/features/renderer-dictation-controller.js',
 ];
 
 function populateSettingsGroup(mode) {
@@ -97,6 +99,7 @@ async function mountComposer(browser, { paneWidth, lang = 'en', palette = 'darkr
   }, { strings: catalog(lang), palette });
   for (const file of MODULES) await page.addScriptTag({ content: fs.readFileSync(path.join(ROOT, file), 'utf8') });
   await page.evaluate(`window.__startStreaming = ${startStreaming}; window.__populateSettingsGroup = ${populateSettingsGroup}`);
+  await page.evaluate(() => window.rendererDictationController.insertMicBefore(document.getElementById('stopStreamButton'), window.inventoryActionButton));
   await page.evaluate(({ paneWidth: width, streaming: live, mode: runMode, projectTag: tag, hostSelector }) => {
     const view = document.getElementById('chatView');
     view.dataset.paneCount = '2';
@@ -166,7 +169,7 @@ function measureControlSizes(page) {
       secondaryToken: token('--composer-secondary-control-size'),
       primary: { stop: box('#stopStreamButton'), pause: box('.composer-pause-button'), send: box('#sendButton') },
       secondary: {
-        attach: box('#composerAttachShortcut'), commands: box('#composerTerminalShortcut'), chat: box('#composerToolToggleSlot .inv-chip'),
+        attach: box('#composerAttachShortcut'), chat: box('#composerToolToggleSlot .inv-chip'),
         runMode: box('.composer-run-mode-chip'), model: box('.composer-model-pill'), ring: box('#composerWrap .inv-context-ring'),
         summary: box('.composer-settings-summary'),
       },
@@ -198,7 +201,9 @@ function assertControlSizes(sizes, { primary, secondary }, label) {
   return seen;
 }
 
-function assertOneCleanLine({ pane, composer, buttons }, label, expectedControls = ['Attach', 'Commands', 'Tools', 'Composer settings', 'Pause', 'Stop', 'Queue']) {
+// Row 63: one + button (files, commands and skills) replaces Attach and Commands.
+// Row 84: the dictation mic sits beside Stop and Send.
+function assertOneCleanLine({ pane, composer, buttons }, label, expectedControls = ['Add files, commands and skills', 'Tools', 'Composer settings', 'Dictate', 'Pause', 'Stop', 'Queue']) {
   assert.equal(buttons.length, expectedControls.length, `${label}: expected controls (${buttons.map((b) => b.name).join(' | ')})`);
   for (const name of expectedControls) assert.ok(buttons.some((button) => button.name.toLowerCase().includes(name.toLowerCase())), `${label}: ${name} is visible`);
   for (const button of buttons) {
@@ -215,4 +220,4 @@ function assertOneCleanLine({ pane, composer, buttons }, label, expectedControls
   assert.ok(Math.max(...middles) - Math.min(...middles) <= 2, `${label}: one line (${middles.join(', ')})`);
 }
 
-module.exports = { SKIP, withBrowser, mountComposer, startStreaming, measureButtons, measureControlSizes, assertControlSizes, assertOneCleanLine, isCompact };
+module.exports = { SKIP, browserPath, withBrowser, mountComposer, startStreaming, measureButtons, measureControlSizes, assertControlSizes, assertOneCleanLine, isCompact };

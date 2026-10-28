@@ -13,20 +13,20 @@ from sidecar.ai.tools.builtins.rich_files.base import (
     RichInspectResult,
     build_dependency_missing_result,
     build_unsupported_result,
-    read_bounded_file_bytes,
     rich_inspect_result_to_tool_result,
+    source_bytes,
     string_argument,
     validate_rich_file_source,
 )
 from sidecar.ai.tools.builtins.rich_files.ooxml import (
     bounded_excerpt,
     collapse_whitespace,
-    has_part,
     integer_cap,
     iter_local,
     load_defused_element_tree,
     local_attribute,
     local_name_of,
+    macro_enabled,
     ooxml_boolean,
     preflight_ooxml_archive,
     read_xml_root,
@@ -37,7 +37,6 @@ from sidecar.ai.tools.contracts import ToolHandlerResult
 from sidecar.ai.tools.workspace import WorkspaceGuard
 
 SUPPORTED_PRESENTATION_EXTENSIONS = frozenset({".pptx", ".pptm", ".potx", ".potm"})
-MACRO_ENABLED_EXTENSIONS = frozenset({".pptm", ".potm"})
 DEFAULT_MAX_SLIDES = 20
 MAX_SLIDES = 50
 TEXT_LOCAL_NAMES = {"t"}
@@ -53,6 +52,7 @@ def presentation_inspect_tool(
         workspace=workspace,
         adapter="presentation",
         max_bytes=filesystem_content.MAX_MEDIA_FILE_BYTES,
+        supported_suffixes=SUPPORTED_PRESENTATION_EXTENSIONS,
     )
     if source.absolute_path.suffix.lower() not in SUPPORTED_PRESENTATION_EXTENSIONS:
         return rich_inspect_result_to_tool_result(
@@ -63,6 +63,7 @@ def presentation_inspect_tool(
             )
         )
 
+    # read_file's dispatcher forwards only path/pages/cursor: caps stay at their defaults.
     caps = _inspect_caps(arguments)
     try:
         element_tree = load_defused_element_tree()
@@ -76,10 +77,10 @@ def presentation_inspect_tool(
             )
         )
 
-    raw_presentation = read_bounded_file_bytes(
-        source.absolute_path,
+    raw_presentation = source_bytes(
+        source,
+        workspace=workspace,
         max_bytes=filesystem_content.MAX_MEDIA_FILE_BYTES,
-        authorized_root=workspace.require_root(),
         message="presentation source changed beyond rich-file size limit",
     )
     try:
@@ -152,10 +153,11 @@ def _inspect_presentation(
             "speaker_notes_count": len(note_parts),
             "comments_present": comment_count > 0,
             "comment_count": comment_count,
-            "macro_enabled": _macro_enabled(
-                source,
+            "macro_enabled": macro_enabled(
+                source.absolute_path,
                 archive,
-                lower_part_names=lower_part_names,
+                vba_part="ppt/vbaProject.bin",
+                lower_names=lower_part_names,
             ),
             "external_link_count": rel_counts["external_link_count"],
             "embedded_media_count": rel_counts["embedded_media_count"],
@@ -292,19 +294,6 @@ def _presentation_comment_count(
             continue
         total += sum(1 for _ in iter_local(root, "cm"))
     return total
-
-
-def _macro_enabled(
-    source: RichFileSource,
-    archive: zipfile.ZipFile,
-    *,
-    lower_part_names: set[str],
-) -> bool:
-    return source.absolute_path.suffix.lower() in MACRO_ENABLED_EXTENSIONS or has_part(
-        archive,
-        "ppt/vbaProject.bin",
-        lower_names=lower_part_names,
-    )
 
 
 def _inspect_caps(arguments: dict[str, object]) -> dict[str, int]:

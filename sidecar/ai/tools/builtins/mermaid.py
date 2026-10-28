@@ -10,7 +10,6 @@ from typing import Final
 from sidecar.ai.error_codes import (
     CMP_TOOL_MERMAID_FORMAT,
     CMP_TOOL_MERMAID_INTERNAL,
-    CMP_TOOL_MERMAID_OUTPUT_TOO_LARGE,
     CMP_TOOL_MERMAID_UNSUPPORTED_TYPE,
     CMP_TOOL_MERMAID_VALIDATION,
 )
@@ -21,7 +20,6 @@ from sidecar.ai.tools.workspace import WorkspaceGuard
 MAX_INPUT_CHARS: Final[int] = 4_000
 MAX_TITLE_CHARS: Final[int] = 160
 MAX_HINT_CHARS: Final[int] = 160
-MAX_OUTPUT_CHARS: Final[int] = 12_000
 
 SUPPORTED_DIAGRAM_TYPES: Final[tuple[str, ...]] = (
     "flowchart",
@@ -38,7 +36,31 @@ SUPPORTED_DIAGRAM_TYPES: Final[tuple[str, ...]] = (
     "quadrantChart",
 )
 
+# First keyword(s) a source of each type may open with; `graph` is the classic
+# flowchart header, and `-v2` / `-elk` style suffixes are accepted below.
+_DIAGRAM_KEYWORDS: Final[dict[str, tuple[str, ...]]] = {
+    "flowchart": ("flowchart", "graph"),
+    "sequence": ("sequenceDiagram",),
+    "class": ("classDiagram",),
+    "state": ("stateDiagram",),
+    "er": ("erDiagram",),
+    "journey": ("journey",),
+    "gantt": ("gantt",),
+    "pie": ("pie",),
+    "mindmap": ("mindmap",),
+    "timeline": ("timeline",),
+    "gitGraph": ("gitGraph",),
+    "quadrantChart": ("quadrantChart",),
+}
+
 _WHITESPACE_RE = re.compile(r"\s+")
+# Whitespace, `%%` comments / `%%{init}%%` directives and a `---` front-matter
+# block may all precede the diagram keyword.
+_PREAMBLE_RE = re.compile(
+    r"(?:\s+|%%\{.*?\}%%|%%[^\n]*|---[ \t\r]*\n.*?\n---[ \t\r]*(?:\n|\Z))*",
+    re.DOTALL,
+)
+_KEYWORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*")
 
 
 def _machine_error(
@@ -126,20 +148,19 @@ def _normalize_diagram_type(value: object) -> str:
     return normalized
 
 
-def _validate_generated_output(*, diagram_type: str, mermaid: str) -> None:
-    normalized = str(mermaid or "").strip()
-    if not normalized:
-        raise _machine_error(
-            code=CMP_TOOL_MERMAID_FORMAT,
-            reason="generated mermaid output is empty",
-            details={"diagram_type": diagram_type},
-        )
-    if len(normalized) > MAX_OUTPUT_CHARS:
-        raise _machine_error(
-            code=CMP_TOOL_MERMAID_OUTPUT_TOO_LARGE,
-            reason="generated mermaid exceeds max_output_chars",
-            details={"max_output_chars": MAX_OUTPUT_CHARS, "diagram_type": diagram_type},
-        )
+def _check_declared_diagram_type(*, diagram_type: str, mermaid: str) -> None:
+    """Fail when the source's opening keyword is not one `diagram_type` allows."""
+    keywords = _DIAGRAM_KEYWORDS[diagram_type]
+    preamble = _PREAMBLE_RE.match(mermaid)
+    found = _KEYWORD_RE.match(mermaid, preamble.end() if preamble else 0)
+    token = found.group(0) if found else ""
+    if any(token == word or token.startswith(f"{word}-") for word in keywords):
+        return
+    raise _machine_error(
+        code=CMP_TOOL_MERMAID_FORMAT,
+        reason="mermaid source does not start with the declared diagram_type",
+        details={"diagram_type": diagram_type, "expected_first_keyword": list(keywords)},
+    )
 
 
 def _build_mermaid_artifacts(
@@ -204,8 +225,11 @@ def mermaid_generate_tool(
             json.dumps(hash_payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
         ).hexdigest()
 
-        mermaid = prompt
-        _validate_generated_output(diagram_type=diagram_type, mermaid=mermaid)
+        mermaid = prompt.strip()
+        # Only an explicitly declared type is checked; an omitted one is just the
+        # flowchart label default and must not reject other diagram sources.
+        if arguments.get("diagram_type") is not None:
+            _check_declared_diagram_type(diagram_type=diagram_type, mermaid=mermaid)
 
         output_payload: dict[str, object] = {
             "mermaid": mermaid,

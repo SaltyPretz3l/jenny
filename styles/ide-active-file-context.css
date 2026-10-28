@@ -10,17 +10,8 @@
   display: none;
 }
 
-.composer-active-file-action-host .composer-active-file-action {
-  margin: 0;
-}
-
 .composer-active-file-name {
-  max-width: 150px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-muted);
-  font-size: var(--font-size-caption);
+  max-width: 200px;
 }
 
 .active-file-context-chip {

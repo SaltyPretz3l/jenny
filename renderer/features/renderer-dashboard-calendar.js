@@ -78,12 +78,15 @@
     // first render, then owned locally so a toggle is optimistic; the echoed
     // config write keeps the store honest.
     let viewMode = null;
+    let scrolledMode = null; // mode of the [data-cal-scroll] view now in the DOM
+    let savedScroll = null; // { mode, top }: survives a panel hiding the scroller
     let selectedDayKey = '';
     // Collapsible quick-add (natural-language create). quickAddPending holds a parsed
     // descriptor awaiting confirmation when its slot overlaps an existing event.
     let quickAddValue = '';
     let quickAddPending = null; // { payload, parsed, conflicts }
     let quickAddError = '';
+    let quickAddInFlight = false;
     let quickAddExpanded = false;
     let lastBody = null;
     let lastCtx = null;
@@ -131,22 +134,26 @@
       ctx.state.ui.homeCalendarFocusDay = '';
       const day = gridModule.parseLocalDateTime(`${key}T00:00`);
       if (!day || gridModule.formatLocalDate(day) !== key) return;
-      selectedDayKey = key;
-      weekOffset = gridModule.computeWeekOffsetForDate(now, day);
-      pendingFocusSelector = currentViewMode(ctx) === 'month'
-        ? `[data-cal-month-day="${key}"]` : `[data-cal-day-cell="${key}"]`;
-      pendingAnnounce = jt("dashboard.calendar.weekOf", "Week of {range}", { range: String(gridModule.formatWeekRangeLabel(gridModule.computeWeekStart(day, 0))) });
+      selectDay(key, day, now, currentViewMode(ctx) === 'month'
+        ? `[data-cal-month-day="${key}"]` : `[data-cal-day-cell="${key}"]`);
     }
 
-    // Persist the full calendar config object (feeds + view mode) so a partial
-    // write can never drop the sibling key. onHomeConfig folds the echo back
-    // into the shared state slice (wired through the manager).
-    function persistViewMode(next, ctx) {
+    function selectDay(key, day, now, focusSelector) {
+      selectedDayKey = key;
+      weekOffset = gridModule.computeWeekOffsetForDate(now, day);
+      pendingFocusSelector = focusSelector;
+      pendingAnnounce = jt('dashboard.calendar.weekOf', 'Week of {range}', { range: String(gridModule.formatWeekRangeLabel(gridModule.computeWeekStart(day, 0))) });
+    }
+
+    // Persist only the view mode: updateHomeConfig merges the calendar section
+    // shallowly, so the sibling feeds survive, and a feeds copy read from ctx
+    // would resurrect a feed whose removal is still in flight. onHomeConfig folds
+    // the echo back into the shared state slice (wired through the manager).
+    function persistViewMode(next) {
       if (!shell?.home?.updateConfig) {
         return;
       }
-      const feeds = readConfiguredFeeds(ctx);
-      Promise.resolve(shell.home.updateConfig({ calendar: { feeds, viewMode: next } }))
+      Promise.resolve(shell.home.updateConfig({ calendar: { viewMode: next } }))
         .then((config) => {
           if (config && onHomeConfig) {
             onHomeConfig(config);
@@ -166,7 +173,7 @@
       viewMode = next;
       selectedDayKey = '';
       pendingAnnounce = { agenda: jt('dashboard.calendar.agendaView', 'Agenda view'), week: jt('dashboard.calendar.weekView', 'Week view'), month: jt('dashboard.calendar.monthView', 'Month view') }[next] || '';
-      persistViewMode(next, ctx);
+      persistViewMode(next);
       requestRender();
     }
 
@@ -207,6 +214,12 @@
       ]);
     }
 
+    function applySnapshot(snapshot) {
+      if (snapshot && onSnapshot) {
+        onSnapshot(snapshot);
+      }
+    }
+
     function requestRender() {
       if (lastBody && lastCtx) {
         render(lastBody, lastCtx);
@@ -219,9 +232,7 @@
       }
       try {
         const snapshot = await shell.calendar.getState();
-        if (snapshot && onSnapshot) {
-          onSnapshot(snapshot);
-        }
+        applySnapshot(snapshot);
       } catch (error) {
         appendClientLog('WARN', 'home.calendar_retry_failed', { message: String(error?.message || error) });
       }
@@ -272,29 +283,38 @@
         return;
       }
       const eventId = String(form.values.id || '');
-      const eventTitle = String(form.values.title || '').trim() || 'Event';
+      const eventTitle = String(form.values.title || '').trim() || jt('dashboard.calendar.untitledEvent', 'Event');
       const occurrenceStart = String(form.values.occurrenceStart || '');
       const splitOccurrence = Boolean(eventId && scope === 'occurrence' && occurrenceStart);
+      // "Save all events" from a clicked occurrence: the form shows that
+      // occurrence's date, so move the series anchor by the same day delta
+      // instead of re-anchoring the whole series on the clicked day.
+      const finalPayload = eventId && !splitOccurrence && occurrenceStart
+        ? formModule.rebaseSeriesPayload(payload, form.values)
+        : payload;
+      const submitted = form;
       formSaveInFlight = true;
       try {
         let snapshot;
         if (splitOccurrence) {
-          snapshot = await shell.calendar.updateEvent(eventId, { ...payload, occurrenceStart });
+          snapshot = await shell.calendar.updateEvent(eventId, { ...finalPayload, occurrenceStart });
         } else if (eventId) {
-          snapshot = await shell.calendar.updateEvent(eventId, payload);
+          snapshot = await shell.calendar.updateEvent(eventId, finalPayload);
         } else {
-          snapshot = await shell.calendar.createEvent(payload);
+          snapshot = await shell.calendar.createEvent(finalPayload);
         }
         pendingAnnounce = eventId
           ? jt('dashboard.calendar.eventUpdated', '{title} updated{scope}', { title: eventTitle, scope: splitOccurrence ? jt('dashboard.calendar.thisEventSuffix', ' (this event)') : '' })
           : jt('dashboard.calendar.eventCreated', '{title} created', { title: eventTitle });
-        closeForm(true);
-        if (snapshot && onSnapshot) {
-          onSnapshot(snapshot);
-        }
+        // Escape/Cancel stay live during the await; never close (or steal focus
+        // from) a form the user opened after this save started.
+        if (form === submitted) closeForm(true);
+        applySnapshot(snapshot);
         requestRender();
       } catch (mutationError) {
-        form.error = String(mutationError?.message || mutationError || jt('dashboard.calendar.saveEventFailed', 'Could not save the event.'));
+        if (form === submitted) {
+          form.error = String(mutationError?.message || mutationError || jt('dashboard.calendar.saveEventFailed', 'Could not save the event.'));
+        }
         requestRender();
       } finally {
         formSaveInFlight = false;
@@ -303,23 +323,25 @@
 
     async function deleteFormEvent() {
       const eventId = String(form?.values?.id || '');
-      if (!eventId || !shell?.calendar) {
+      if (formSaveInFlight || !eventId || !shell?.calendar) {
         return;
       }
-      const eventTitle = String(form?.values?.title || '').trim() || 'Event';
+      const eventTitle = String(form?.values?.title || '').trim() || jt('dashboard.calendar.untitledEvent', 'Event');
+      const submitted = form;
+      formSaveInFlight = true;
       try {
         const snapshot = await shell.calendar.deleteEvent(eventId);
         pendingAnnounce = jt('dashboard.calendar.eventDeleted', '{title} deleted', { title: eventTitle });
-        closeForm(true);
-        if (snapshot && onSnapshot) {
-          onSnapshot(snapshot);
-        }
+        if (form === submitted) closeForm(true);
+        applySnapshot(snapshot);
         requestRender();
       } catch (mutationError) {
-        if (form) {
+        if (form === submitted) {
           form.error = String(mutationError?.message || mutationError || jt('dashboard.calendar.deleteEventFailed', 'Could not delete the event.'));
         }
         requestRender();
+      } finally {
+        formSaveInFlight = false;
       }
     }
 
@@ -387,24 +409,11 @@
       requestRender();
     }
 
-    function buildPayloadFromParsed(parsed) {
-      const start = parsed.allDay ? `${parsed.date}T00:00` : `${parsed.date}T${parsed.start}`;
-      const end = parsed.allDay ? `${parsed.date}T00:00` : `${parsed.date}T${parsed.end}`;
-      return {
-        title: String(parsed.title || ''),
-        start,
-        end,
-        allDay: parsed.allDay === true,
-        categoryId: 'default',
-        recurrence: 'none',
-        notes: '',
-      };
-    }
-
     async function createFromQuickAdd(payload, title) {
-      if (!shell?.calendar?.createEvent) {
+      if (quickAddInFlight || !shell?.calendar?.createEvent) {
         return;
       }
+      quickAddInFlight = true;
       try {
         const snapshot = await shell.calendar.createEvent(payload);
         quickAddValue = '';
@@ -419,14 +428,14 @@
           input.value = '';
         }
         pendingAnnounce = jt('dashboard.calendar.eventCreated', '{title} created', { title: String(title || '').trim() || jt('dashboard.calendar.untitledEvent', 'Event') });
-        if (snapshot && onSnapshot) {
-          onSnapshot(snapshot);
-        }
+        applySnapshot(snapshot);
         requestRender();
       } catch (error) {
         quickAddError = String(error?.message || error || jt('dashboard.calendar.addEventFailed', 'Could not add the event.'));
         quickAddPending = null;
         requestRender();
+      } finally {
+        quickAddInFlight = false;
       }
     }
 
@@ -463,7 +472,7 @@
       const conflicts = agendaModule && typeof agendaModule.findConflicts === 'function'
         ? agendaModule.findConflicts(parsed, instances)
         : [];
-      const payload = buildPayloadFromParsed(parsed);
+      const payload = formModule.buildQuickAddPayload(parsed);
       if (conflicts.length) {
         quickAddPending = { payload, parsed, conflicts };
         pendingFocusSelector = '[data-cal-quickadd-confirm]';
@@ -611,13 +620,10 @@
       if (dayCell) {
         preserveFormValues(body);
         preserveQuickAdd(body);
-        selectedDayKey = String(dayCell.dataset.calDayCell || '');
-        const selectedDay = gridModule.parseLocalDateTime(`${selectedDayKey}T00:00`);
-        if (selectedDay && typeof gridModule.computeWeekOffsetForDate === 'function') {
-          weekOffset = gridModule.computeWeekOffsetForDate(nowProvider(), selectedDay);
-          pendingFocusSelector = `[data-cal-day-cell="${selectedDayKey}"]`;
-          pendingAnnounce = jt('dashboard.calendar.weekOf', 'Week of {range}', { range: gridModule.formatWeekRangeLabel(gridModule.computeWeekStart(selectedDay, 0)) });
-        }
+        const key = String(dayCell.dataset.calDayCell || '');
+        const selectedDay = gridModule.parseLocalDateTime(`${key}T00:00`);
+        selectedDayKey = key;
+        if (selectedDay) selectDay(key, selectedDay, nowProvider(), `[data-cal-day-cell="${key}"]`);
         requestRender();
         return;
       }
@@ -695,7 +701,7 @@
     function handleKeydown(event, body) {
       // Enter inside the quick-add field commits the parse (the field is a
       // bare input with no surrounding <form>, so Enter wouldn't submit).
-      if (event.key === 'Enter' && event.target?.closest?.('[data-cal-quickadd-input]')) {
+      if (event.key === 'Enter' && !event.isComposing && event.target?.closest?.('[data-cal-quickadd-input]')) {
         event.preventDefault();
         submitQuickAdd(body, lastCtx);
         return;
@@ -754,6 +760,7 @@
           // (imperative DOM write — a rebuild here would drop focus mid-edit).
           if (field.dataset.calFormField === 'start'
             && form.values.allDay !== true
+            && formModule.endDayOffset(form.values) === 0
             && String(form.values.end || '') <= String(form.values.start || '')) {
             const bumped = addMinutesToHHMM(form.values.start, 30);
             form.values.end = bumped;
@@ -841,12 +848,8 @@
       const weekEndKey = gridModule.formatLocalDate(
         gridModule.listWeekDays(weekStart)[6]
       );
-      const nextWeekStart = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 7);
-      const weekInstances = instances.filter((instance) => {
-        const start = gridModule.parseLocalDateTime(instance.start);
-        const end = gridModule.parseLocalDateTime(instance.end);
-        return start && end && end > weekStart && start < nextWeekStart;
-      });
+      const nextWeekStartMs = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 7).getTime();
+      const weekInstances = instances.filter((instance) => gridModule.instanceOverlapsRange(instance, weekStart.getTime(), nextWeekStartMs));
       const monthDigest = mode === 'month'
         ? instances.map((i) => [i.instanceId, i.start, i.end, i.title, i.notes,
           i.categoryId, i.allDay, i.readonly, i.recurrenceUnsupported, i.tzApprox])
@@ -891,8 +894,13 @@
       }
       preserveFormValues(body);
       preserveQuickAdd(body);
+      // Remember the scrolled view's offset by mode: a panel (form/feeds) hides
+      // the scroller, and another mode's offset means nothing in this one.
       const scrollEl = body.querySelector('[data-cal-scroll]');
-      const previousScrollTop = scrollEl ? scrollEl.scrollTop : null;
+      if (scrollEl && scrolledMode) {
+        savedScroll = { mode: scrolledMode, top: scrollEl.scrollTop };
+      }
+      const previousScrollTop = savedScroll && savedScroll.mode === mode ? savedScroll.top : null;
 
       // View content and quick-add stand down while a panel (form or feeds) is
       // open, so the open task owns the pane.
@@ -969,11 +977,15 @@
       body.dataset.calRenderKey = renderKey;
 
       const nextScrollEl = body.querySelector('[data-cal-scroll]');
-      if (nextScrollEl) {
+      scrolledMode = nextScrollEl ? mode : null;
+      if (nextScrollEl && previousScrollTop !== null) {
+        nextScrollEl.scrollTop = previousScrollTop;
+      } else if (nextScrollEl) {
         let defaultTop;
         if (mode === 'month' && monthModule) {
           // Month anchors today's week just below the sticky header on first
-          // paint; later repaints keep the user's scroll position.
+          // paint (a forced layout, so only without a prior position); later
+          // repaints keep the user's scroll position.
           defaultTop = monthModule.defaultScrollTop(nextScrollEl);
         } else {
           // First build of the week that contains today lands near "now" (~90min
@@ -985,7 +997,7 @@
             ? Math.max(0, Math.min(gridModule.MINUTES_PER_DAY, gridModule.minutesOfDay(now) - 90))
             : DEFAULT_SCROLL_TOP_PX;
         }
-        nextScrollEl.scrollTop = previousScrollTop !== null ? previousScrollTop : defaultTop;
+        nextScrollEl.scrollTop = defaultTop;
       }
 
       applyDeferredFocusAndAnnounce(body);

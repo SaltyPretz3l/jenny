@@ -65,3 +65,50 @@ test('concurrent previews of unchanged inputs share one sidecar call; changed in
   await previewContext(service, 's1');
   assert.equal(calls.filter((call) => call.method === 'context.preview').length, 4, 'a settled call is never reused');
 });
+
+test('preview sends the stored calibration and omits an invalid or missing one', async () => {
+  const calibration = {
+    provider_tokens: 150000, estimate_tokens: 110000, engine: 'ninfer', model: 'qwen3.8', estimator: 'CharEstimationBackend',
+  };
+  const { service, calls, session } = fixture();
+  session.context_usage = { version: 1, used_tokens: 150000, context_window: 262144, compact_threshold_tokens: 0,
+    model: 'qwen3.8', usage_source: 'provider', updated_at: '2026-10-20T12:00:00.000Z', calibration };
+  const previews = () => calls.filter((call) => call.method === 'context.preview');
+  await previewContext(service, 's1');
+  assert.deepEqual(previews().at(-1).params.context_calibration, calibration);
+
+  session.updated_at = 'changed-1';
+  session.context_usage = { ...session.context_usage, calibration: { ...calibration, estimate_tokens: 0 } };
+  await previewContext(service, 's1');
+  assert.equal(previews().length, 2);
+  assert.equal(Object.hasOwn(previews().at(-1).params, 'context_calibration'), false);
+
+  session.updated_at = 'changed-2';
+  delete session.context_usage;
+  await previewContext(service, 's1');
+  assert.equal(previews().length, 3);
+  assert.equal(Object.hasOwn(previews().at(-1).params, 'context_calibration'), false);
+});
+
+test('row 69: the primary chat preview mirrors session_role and the profile overview block', async () => {
+  const { service, calls, session } = fixture();
+  const previews = () => calls.filter((call) => call.method === 'context.preview');
+  await previewContext(service, 's1');
+  assert.equal(Object.hasOwn(previews().at(-1).params, 'session_role'), false);
+  assert.equal(previews().at(-1).params.context_blocks.some((block) => block.kind === 'profile_overview'), false);
+
+  session.session_role = 'primary';
+  session.updated_at = 'primary-1';
+  service.getSessionDirectory = () => ({ list: () => ({ ok: true, scope_kind: 'profile', truncated: false, rows: [] }) });
+  await previewContext(service, 's1');
+  const params = previews().at(-1).params;
+  assert.equal(params.session_role, 'primary');
+  assert.equal(params.context_blocks.at(-1).kind, 'profile_overview');
+  assert.match(params.context_blocks.at(-1).content, /^## Profile Overview\n/);
+
+  service.featureFlags = { primary_chat: false };
+  session.updated_at = 'primary-2';
+  await previewContext(service, 's1');
+  assert.equal(Object.hasOwn(previews().at(-1).params, 'session_role'), false);
+  assert.equal(previews().at(-1).params.context_blocks.some((block) => block.kind === 'profile_overview'), false);
+});

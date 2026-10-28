@@ -12,7 +12,7 @@
 
 const crypto = require('node:crypto');
 const { createSessionMailStore } = require('./session-mail-store');
-const { INCLUDED_ROW_PREFIX, buildIncludedRow } = require('./session-message-envelope');
+const { INCLUDED_ROW_PREFIX, buildIncludedRow, isId } = require('./session-message-envelope');
 const { MAIL_LIMITS } = require('./session-mail-records');
 const {
   DEFAULT_SYSTEM_RESERVE_TOKENS, computeEffectiveContextBudget, estimateMessagesTokens,
@@ -418,14 +418,115 @@ function admitSessionMailForTurn({
   }
 }
 
+// ---------- mid-turn mail (row 70 W2a) ----------
+// A working chat's live turn takes named queued records through the same three durable steps,
+// spread over the turn: reserve when the mail is pushed, finalize after the terminal settle made
+// the context rows durable, release otherwise. The reserved snapshot is the reservePlan shape,
+// so reconcileAdmissionSnapshots stays the crash fallback. Never throws; never logs a body.
+
+// {ok, snapshot_id, rows[, reason]}: exactly the named records still queued (FIFO, at most the
+// snapshot entry cap), reserved for `turnId`, with their included rows (not yet in the transcript).
+function reserveMidTurnMail({ sessionStore, sessionId, turnId, messageIds, now } = {}) {
+  const refused = (reason) => ({ ok: false, reason, snapshot_id: null, rows: [] });
+  if (!sessionStore || !sessionId || !isId(turnId) || !Array.isArray(messageIds)) return refused('invalid_request');
+  const wanted = new Set(messageIds.map(String));
+  const nowIso = toIso(now);
+  let plan = null;
+  try {
+    const outcome = createSessionMailStore(sessionStore).mutate(sessionId, ({ mail }) => {
+      const selected = mail.inbox.filter((record) => record.context.state === 'queued' && wanted.has(record.envelope.message_id))
+        .sort(bySequence).slice(0, MAIL_LIMITS.snapshot_entries);
+      if (!selected.length) return { abort: { reason: 'nothing_queued' } };
+      const snapshot = {
+        schema_version: 1,
+        snapshot_id: crypto.randomUUID(),
+        turn_id: turnId,
+        cutoff_receive_sequence: selected[selected.length - 1].receive_sequence,
+        entries: selected.map((record) => ({ message_id: record.envelope.message_id, body_sha256: record.envelope.body_sha256 })),
+        deferred_count: 0,
+        deferred_reason: null,
+        estimator_id: ESTIMATOR_ID,
+        state: 'reserved',
+        created_at: nowIso,
+      };
+      const reservedIds = new Set(snapshot.entries.map((entry) => entry.message_id));
+      plan = { snapshot, selected };
+      return {
+        mail: {
+          ...mail,
+          inbox: mail.inbox.map((record) => (reservedIds.has(record.envelope.message_id)
+            ? { ...record, context: { state: 'reserved', turn_id: turnId, snapshot_id: snapshot.snapshot_id } }
+            : record)),
+          admission_snapshots: keepLatestPublished([...mail.admission_snapshots, snapshot]),
+        },
+      };
+    });
+    if (!outcome.ok || !plan) return refused(String(outcome.reason || 'nothing_queued'));
+  } catch {
+    return refused('reserve_failed');
+  }
+  const rows = plan.selected.map((record) => buildIncludedRow(record.envelope, { turn_id: turnId, timestamp: nowIso }));
+  if (rows.includes(null)) {
+    releaseMidTurnMail({ sessionStore, sessionId, snapshotId: plan.snapshot.snapshot_id });
+    return refused('invalid_row');
+  }
+  return { ok: true, snapshot_id: plan.snapshot.snapshot_id, rows };
+}
+
+// Marks the records whose rows are durable `included` (finalizeMail) and, in the same write, returns the
+// snapshot's other reserved records to queued and narrows its entries to the included ones. {ok, finalized, released}.
+function finalizeMidTurnMail({ sessionStore, sessionId, snapshotId, rowsByMessageId, now } = {}) {
+  const result = { ok: false, finalized: 0, released: 0 };
+  if (!sessionStore || !sessionId || !snapshotId || !(rowsByMessageId instanceof Map)) return result;
+  const nowIso = toIso(now);
+  try {
+    const outcome = createSessionMailStore(sessionStore).mutate(sessionId, ({ mail }) => {
+      const finalized = finalizeMail(mail, snapshotId, rowsByMessageId, nowIso);
+      if (!finalized) return { abort: { reason: 'not_reserved' } };
+      result.finalized = 0;
+      result.released = 0;
+      const inbox = finalized.inbox.map((record) => {
+        if (record.context.snapshot_id !== snapshotId) return record;
+        if (record.context.state === 'included') result.finalized += 1;
+        if (record.context.state !== 'reserved') return record;
+        result.released += 1;
+        return { ...record, context: { state: 'queued' } };
+      });
+      const included = new Set(inbox.filter((record) => record.context.state === 'included'
+        && record.context.snapshot_id === snapshotId).map((record) => record.envelope.message_id));
+      const snapshots = finalized.admission_snapshots.flatMap((entry) => {
+        if (entry.snapshot_id !== snapshotId) return [entry];
+        const entries = entry.entries.filter((item) => included.has(item.message_id));
+        return entries.length ? [{ ...entry, entries }] : [];
+      });
+      return { mail: { ...finalized, inbox, admission_snapshots: snapshots } };
+    });
+    return outcome.ok ? { ...result, ok: true } : { ok: false, finalized: 0, released: 0 };
+  } catch {
+    return { ok: false, finalized: 0, released: 0 };
+  }
+}
+
+// Returns every reserved record of a mid-turn snapshot to queued (releaseAdmission). {ok, released}.
+function releaseMidTurnMail({ sessionStore, sessionId, snapshotId } = {}) {
+  try {
+    return releaseAdmission({ sessionStore, sessionId, snapshotId });
+  } catch {
+    return { ok: false, released: 0 };
+  }
+}
+
 module.exports = {
   ADMISSION_LIMITS,
   ESTIMATOR_ID,
   SESSION_MESSAGE_PREAMBLE,
   admitSessionMailForTurn,
   estimateSessionMessageTokens,
+  finalizeMidTurnMail,
   reconcileAdmissionSnapshots,
   releaseAdmission,
+  releaseMidTurnMail,
   renderSessionMessageContent,
+  reserveMidTurnMail,
   selectAndPublishSessionMail,
 };

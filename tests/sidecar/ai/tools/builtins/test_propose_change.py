@@ -279,6 +279,34 @@ def test_overlap_with_a_live_suggestion_is_refused(tmp_path: Path) -> None:
     assert "revises" in result.output
 
 
+def test_overlap_is_refused_when_either_side_matched_through_a_fallback(tmp_path: Path) -> None:
+    root, guard, _ = _workspace(tmp_path)
+    _write_source(root)
+    # The new change's old text carries trailing whitespace the file lacks, so
+    # it matches only through the whitespace fallback.
+    exact_live = _live({"id": "sg_1", "path": "app.py", "kind": "replace", "old_string": "return 'hi '"})
+    fallback_new = propose_module.propose_change_tool(
+        _replace_args(
+            old_string="def greet(name):  \n    return 'hi ' + name",
+            new_string="def greet(name):\n    return 'hello ' + name",
+            **{LIVE_SUGGESTIONS_ARG: exact_live},
+        ),
+        guard,
+    )
+    # The live suggestion's old text is the one with trailing whitespace.
+    fallback_live = _live(
+        {"id": "sg_2", "path": "app.py", "kind": "replace", "old_string": "def greet(name): \t\n    return"}
+    )
+    fallback_old = propose_module.propose_change_tool(
+        _replace_args(**{LIVE_SUGGESTIONS_ARG: fallback_live}), guard
+    )
+
+    assert fallback_new.success is False, fallback_new.output
+    assert "sg_1" in fallback_new.output
+    assert fallback_old.success is False, fallback_old.output
+    assert "sg_2" in fallback_old.output
+
+
 def test_overlap_is_allowed_when_it_revises_that_suggestion(tmp_path: Path) -> None:
     root, guard, _ = _workspace(tmp_path)
     _write_source(root)

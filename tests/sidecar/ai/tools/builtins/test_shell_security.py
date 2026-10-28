@@ -376,6 +376,73 @@ def test_false_safe_executables_need_approval(cmd: str) -> None:
     assert result.verdict is CommandVerdict.NEEDS_APPROVAL, f"{cmd!r} -> {result}"
 
 
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        r".\ls.exe -la",
+        "./ls -la",
+        r"subdir\cat.bat x",
+        r"C:\Users\x\evil\git.exe log",
+        r"C:\Program Files\..\Users\x\git.exe log",
+        r"C:\Program Files\x\ls.bat",
+        "/tmp/ls -la",
+        "ls.bat",
+        "ls.cmd -la",
+        "git.bat status",
+        "cat.ps1 file",
+    ],
+)
+def test_pathed_or_script_spellings_of_safe_tools_need_approval(cmd: str) -> None:
+    """A planted `git.bat` or `.\\ls.exe` is not the allowlisted tool (2026-10-25 audit)."""
+    result = classify_command(cmd)
+    assert result.verdict is CommandVerdict.NEEDS_APPROVAL, f"{cmd!r} -> {result}"
+    assert result.reason.startswith(("pathed executable", "script executable"))
+
+
+@pytest.mark.parametrize(
+    ("cmd", "fragment"),
+    [
+        ("sed -i s/a/b/ file.txt", "in-place"),
+        ("sed --in-place s/a/b/ file.txt", "in-place"),
+        ("sed -i.bak s/a/b/ file.txt", "in-place"),
+        ("sed -ni 1p file.txt", "in-place"),
+        ("sort input.txt /O output.txt", "sort argument"),
+        ("sort input.txt /o output.txt", "sort argument"),
+        ("awk -f evil.awk data", "awk program or library"),
+        ("awk --file=evil.awk data", "awk program or library"),
+        ("awk -i lib data", "awk program or library"),
+        ("awk -l ext data", "awk program or library"),
+        ("awk -E prog.awk", "awk program or library"),
+        ('awk \'@include "x"\' data', "awk program shells out"),
+        ('awk \'@load "x"\' data', "awk program shells out"),
+    ],
+)
+def test_safe_tools_writing_or_loading_files_need_approval(cmd: str, fragment: str) -> None:
+    """sed -i, Windows sort /O and awk program files write or load outside the allowlist."""
+    result = classify_command(cmd)
+    assert result.verdict is CommandVerdict.NEEDS_APPROVAL, f"{cmd!r} -> {result}"
+    assert fragment in result.reason, result.reason
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "sed -n 1p file.txt",
+        "sed -e s/a/b/ file.txt",
+        "sort -r file.txt",
+        "awk -F, '{print $1}' data",
+        "awk -v x=1 '{print x}' data",
+        "git status",
+        "ls -la",
+        "/usr/bin/cat README.md",
+        '"C:\\Program Files\\Git\\bin\\git.exe" status',
+        r"C:\Windows\System32\where.exe git",
+    ],
+)
+def test_text_filter_forms_stay_allowed(cmd: str) -> None:
+    assert classify_command(cmd).verdict is CommandVerdict.ALLOWED, cmd
+
+
 def test_empty_command_blocked() -> None:
     result = classify_command("")
     assert result.verdict is CommandVerdict.BLOCKED

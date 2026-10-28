@@ -12,6 +12,11 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const {
   layout,
+  estimateLabelWidth,
+  TILE_W,
+  TILE_W_MAX,
+  WIDE_TILE_LIMIT,
+  TILE_CHROME,
   langClassFor,
   districtKeyOf,
   DISTRICT_HEADER,
@@ -183,7 +188,7 @@ test('degenerate: everything-in-root repo yields one sane "." district', () => {
   assert.equal(r.districts.length, 1);
   const root = r.districts[0];
   assert.equal(root.key, '.');
-  assert.equal(root.label, '(root)');
+  assert.equal(root.label, 'Top level');
   assert.equal(root.fileCount, 40);
   assert.ok(root.w > 0 && root.h > 0);
   const xs = new Set(Object.values(r.positions).map((p) => p.x));
@@ -245,4 +250,188 @@ test('langClassFor mapping sanity', () => {
   assert.equal(langClassFor('a/b.py'), 'py');
   assert.equal(langClassFor('a/b.yaml'), 'data');
   assert.equal(langClassFor('a/b.unknown'), 'other');
+});
+
+// ---- fit pass (2026-10-26): order, wide tiles, header width, fill, aspect ----
+
+function rowMajorIds(r, ids) {
+  return ids.slice().sort((a, b) => {
+    const pa = r.positions[a];
+    const pb = r.positions[b];
+    return (pa.y - pb.y) || (pa.x - pb.x);
+  });
+}
+
+test('constants and default estimator are exported', () => {
+  assert.equal(TILE_W, 132);
+  assert.equal(TILE_W_MAX, 220);
+  assert.equal(WIDE_TILE_LIMIT, 400);
+  assert.equal(TILE_CHROME, 30);
+  assert.equal(estimateLabelWidth('abcd'), Math.ceil(4 * 7.44));
+  assert.equal(estimateLabelWidth(''), 0);
+});
+
+test('file order: non-tests then tests, A-Z by label/name within each, importance ignored', () => {
+  const nodes = [
+    { id: 'd/zeta.js', importance: 1 },
+    { id: 'd/alpha.js', importance: 0 },
+    { id: 'd/Beta.js', importance: 0.5 },
+    { id: 'd/b.test.js', isTest: true, importance: 1 },
+    { id: 'd/a.test.js', isTest: true, importance: 0 },
+    { id: 'd/q.js', label: 'Aardvark.js' },
+  ];
+  const r = layout({ nodes });
+  assert.deepEqual(rowMajorIds(r, nodes.map((n) => n.id)), [
+    'd/q.js', 'd/alpha.js', 'd/Beta.js', 'd/zeta.js', 'd/a.test.js', 'd/b.test.js',
+  ]);
+});
+
+test('file order: equal labels tie-break on full id', () => {
+  const nodes = [
+    { id: 'd/y/same.js', label: 'same.js' },
+    { id: 'd/x/same.js', label: 'same.js' },
+  ];
+  // flatten both into one district so the tie-break decides the grid order
+  const r = layout({ nodes }, { maxDepth: 1 });
+  assert.deepEqual(rowMajorIds(r, nodes.map((n) => n.id)), ['d/x/same.js', 'd/y/same.js']);
+});
+
+test('small graph: tile width follows the p75 measured name; clamped to 132..220', () => {
+  const m = (t, kind) => (kind === 'tile' ? t.length * 10 : 0);
+  const mk = (name, n) => Array.from({ length: n }, (_, i) => ({ id: `d/${name}${i}.js` }));
+  // 'abcdefghij0.js' = 14 chars -> 140 + 30 = 170
+  let r = layout({ nodes: mk('abcdefghij', 10) }, { measureLabel: m });
+  for (const p of Object.values(r.positions)) assert.equal(p.w, 170);
+  // very short names clamp up to TILE_W
+  r = layout({ nodes: mk('a', 10) }, { measureLabel: m });
+  for (const p of Object.values(r.positions)) assert.equal(p.w, TILE_W);
+  // very long names clamp down to TILE_W_MAX
+  r = layout({ nodes: mk('x'.repeat(60), 10) }, { measureLabel: m });
+  for (const p of Object.values(r.positions)) assert.equal(p.w, TILE_W_MAX);
+});
+
+test('p75: one long outlier name does not set the district width', () => {
+  const m = (t, kind) => (kind === 'tile' ? t.length * 20 : 0);
+  const nodes = [];
+  for (let i = 0; i < 9; i += 1) nodes.push({ id: `d/aaaa${i}.js` }); // 8 chars -> 160
+  nodes.push({ id: `d/${'z'.repeat(40)}.js` }); // 43 chars -> 860
+  const r = layout({ nodes }, { measureLabel: m });
+  for (const p of Object.values(r.positions)) assert.equal(p.w, 160 + TILE_CHROME);
+});
+
+test('tile width is per district and grid cells keep 12px breathing room', () => {
+  const m = (t, kind) => (kind === 'tile' ? t.length * 10 : 0);
+  const nodes = [];
+  for (let i = 0; i < 20; i += 1) nodes.push({ id: `wide/abcdefghij${String(i).padStart(2, '0')}.js` });
+  for (let i = 0; i < 20; i += 1) nodes.push({ id: `narrow/n${String(i).padStart(2, '0')}.js` });
+  const r = layout({ nodes }, { measureLabel: m });
+  // 'abcdefghij00.js' = 15 chars -> 150 + 30 = 180
+  assert.equal(r.positions['wide/abcdefghij00.js'].w, 180);
+  assert.equal(r.positions['narrow/n00.js'].w, TILE_W);
+  const xs = Array.from(new Set(
+    Object.keys(r.positions).filter((k) => k.startsWith('wide/')).map((k) => r.positions[k].x),
+  )).sort((a, b) => a - b);
+  assert.ok(xs.length >= 2);
+  assert.equal(xs[1] - xs[0], 180 + 12);
+});
+
+test('graphs above WIDE_TILE_LIMIT keep every tile at TILE_W', () => {
+  const mk = (n) => Array.from({ length: n }, (_, i) => ({ id: `d${i % 4}/${'longname'.repeat(4)}${i}.js` }));
+  let r = layout({ nodes: mk(WIDE_TILE_LIMIT) });
+  assert.ok(Object.values(r.positions).every((p) => p.w > TILE_W), 'at the limit tiles are wide');
+  r = layout({ nodes: mk(WIDE_TILE_LIMIT + 1) });
+  assert.ok(Object.values(r.positions).every((p) => p.w === TILE_W), 'above the limit tiles stay 132');
+});
+
+test('buckets do not count toward the wide-tile file limit', () => {
+  const nodes = Array.from({ length: 5 }, (_, i) => ({ id: `d/${'longname'.repeat(4)}${i}.js` }));
+  for (let i = 0; i < 500; i += 1) nodes.push({ id: `b${i}`, dir: `b${i}`, bucket: true, count: 3 });
+  const r = layout({ nodes });
+  assert.ok(Object.values(r.positions).every((p) => p.w > TILE_W));
+});
+
+test('positions carry w for every file', () => {
+  const r = layout({ nodes: [{ id: 'a.js' }, { id: 'x/b.js' }] });
+  for (const p of Object.values(r.positions)) {
+    assert.ok(Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.w));
+    assert.ok(p.w >= TILE_W && p.w <= TILE_W_MAX);
+  }
+});
+
+test('district is at least as wide as its header row', () => {
+  const name = 'verylongdirectoryname';
+  const r = layout({ nodes: [{ id: `${name}/f.js` }] });
+  const d = r.districts[0];
+  // Header chrome is measured as 14 header-font digits, so it scales with the font.
+  assert.equal(d.w, estimateLabelWidth(`${name}/`) + estimateLabelWidth('0'.repeat(14)));
+  assert.ok(d.w > 2 * DISTRICT_PAD + 144, 'header, not the grid, set the width');
+  const hdr = [];
+  layout({ nodes: [{ id: `${name}/f.js` }, { id: 'f.js' }] }, {
+    measureLabel: (t, kind) => { if (kind === 'header') hdr.push(t); return t.length * 7; },
+  });
+  assert.ok(hdr.includes(`${name}/`), 'normal districts measure "label/"');
+  assert.ok(hdr.includes('Top level'), 'root district measures its label without a slash');
+});
+
+test('header minimum widens the root district too', () => {
+  const measureLabel = (t, kind) => (kind !== 'header' ? 0 : /^0+$/.test(t) ? 100 : 500);
+  const r = layout({ nodes: [{ id: 'f.js' }] }, { measureLabel });
+  assert.equal(r.districts[0].w, 500 + 100);
+});
+
+function fourTops() {
+  return { nodes: ['d0', 'd1', 'd2', 'd3'].map((d) => ({ id: `${d}/f.js` })) };
+}
+
+test('top level fills one row when availWidth is wide enough, wraps when narrow', () => {
+  const g = fourTops();
+  const wide = layout(g, { availWidth: 4000 });
+  const tops = wide.districts.filter((d) => d.depth === 1);
+  assert.equal(new Set(tops.map((d) => d.y)).size, 1, 'one row');
+  const narrow = layout(g, { availWidth: 400 });
+  const ntops = narrow.districts.filter((d) => d.depth === 1);
+  assert.ok(new Set(ntops.map((d) => d.y)).size >= 2, 'wraps when the row does not fit');
+  assert.ok(Math.max(...ntops.map((d) => d.x + d.w)) <= 400, 'respects availWidth');
+  const noFill = layout(g, {});
+  assert.ok(new Set(noFill.districts.map((d) => d.y)).size > 1, 'without availWidth the 1.4 aspect pack applies');
+});
+
+test('aspect option clamps to [0.6, 3.2]; invalid falls back to 1.4', () => {
+  const nodes = [];
+  for (let t = 0; t < 12; t += 1) for (let i = 0; i < 20; i += 1) nodes.push({ id: `t${t}/f${i}.js` });
+  const g = { nodes };
+  const same = (a, b) => assert.equal(JSON.stringify(a), JSON.stringify(b));
+  same(layout(g, { aspect: 100 }), layout(g, { aspect: 3.2 }));
+  same(layout(g, { aspect: 0.01 }), layout(g, { aspect: 0.6 }));
+  same(layout(g, { aspect: -2 }), layout(g, {}));
+  same(layout(g, { aspect: 'x' }), layout(g, {}));
+  same(layout(g, { aspect: 1.4 }), layout(g, {}));
+  const wideB = layout(g, { aspect: 3.2 }).bounds;
+  const tallB = layout(g, { aspect: 0.6 }).bounds;
+  assert.ok((wideB.maxX - wideB.minX) > (tallB.maxX - tallB.minX), 'larger aspect packs wider');
+});
+
+test('nested districts ignore opts.aspect and availWidth', () => {
+  const nodes = [];
+  for (const sub of ['a', 'b', 'c']) for (let i = 0; i < 30; i += 1) nodes.push({ id: `top/${sub}/f${i}.js` });
+  const base = layout({ nodes }, {});
+  const tuned = layout({ nodes }, { aspect: 3.2, availWidth: 5000 });
+  assert.equal(tuned.districts.find((d) => d.key === 'top').w, base.districts.find((d) => d.key === 'top').w);
+});
+
+test('deterministic with opts: same input + opts -> deep-equal output twice', () => {
+  const nodes = [];
+  for (let i = 0; i < 60; i += 1) {
+    nodes.push({ id: `d${i % 5}/s${i % 3}/file${i}.js`, isTest: i % 7 === 0, loc: i });
+  }
+  const opts = { aspect: 1.9, availWidth: 1500, measureLabel: (t, k) => t.length * (k === 'tile' ? 8 : 9) };
+  assert.deepEqual(layout({ nodes }, opts), layout({ nodes }, opts));
+});
+
+test('custom measureLabel is honoured for both kinds', () => {
+  const kinds = new Set();
+  layout({ nodes: [{ id: 'dir/a.js' }] }, { measureLabel: (t, k) => { kinds.add(k); return 1; } });
+  assert.ok(kinds.has('tile') && kinds.has('header'));
+  const wide = layout({ nodes: [{ id: 'dir/a.js' }] }, { measureLabel: (t, k) => (k === 'tile' ? 150 : 1) });
+  assert.equal(wide.positions['dir/a.js'].w, 180);
 });

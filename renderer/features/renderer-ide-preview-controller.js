@@ -13,10 +13,6 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
 
-  // The stage renders HTML/HTM in its sandboxed iframe, so they are
-  // previewable alongside markdown and mermaid.
-  const PREVIEW_EXTENSIONS = new Set(['md', 'markdown', 'mmd', 'mermaid', 'html', 'htm']);
-
   function resolveModule(globalName, requirePath) {
     if (globalRef[globalName]) {
       return globalRef[globalName];
@@ -37,6 +33,10 @@
       ? callbacks.openPreviewStage
       : () => {};
     const ideStateUtils = resolveModule('rendererIdeState', './renderer-ide-state');
+    // Exactly what the stage renders (markdown/mermaid + sandboxed HTML); read at
+    // construction because the stage script loads after this one.
+    const stageUtils = resolveModule('rendererIdePreviewStage', './renderer-ide-preview-stage');
+    const PREVIEW_EXTENSIONS = new Set([...(stageUtils.MARKDOWN_EXTENSIONS || []), ...(stageUtils.HTML_EXTENSIONS || [])]);
 
     function isPreviewablePath(path) {
       if (ideStateUtils.isDiffTabId?.(path) || ideStateUtils.isPreviewTabId?.(path)) {

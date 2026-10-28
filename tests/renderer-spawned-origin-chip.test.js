@@ -45,6 +45,14 @@ test('a deleted or replaced parent reads as an unavailable chat', (t) => {
   }
 });
 
+test('a chat started by /handoff shows "Continued from {source}" from its branch_origin', (t) => {
+  const origin = { source_session_id: 'sess_parent', source_message_id: 'msg_1', source_title: 'Benchmark the 128k setting', created_at: '2026-10-18T10:00:00.000Z' };
+  const { chip, label, render } = harness(t, [parent, { id: 'sess_child', title: 'Continued', branch_origin: origin }], []);
+  render();
+  assert.equal(chip.classList.contains('hidden'), false);
+  assert.equal(label.textContent, 'Continued from Benchmark the 128k setting');
+});
+
 test('an ordinary chat keeps the chip hidden', (t) => {
   const { chip, render } = harness(t, [parent, { id: 'sess_child', title: 'Plain' }]);
   render();

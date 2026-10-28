@@ -15,6 +15,7 @@ const {
   normalizeCalendarEvent,
   normalizeCalendarEventList,
   parseLocalDateTime,
+  parseRangeBound,
   addLocalDays,
 } = require('./home-calendar-schema');
 const { extractIcsInstances } = require('./ics-parse-util');
@@ -63,19 +64,11 @@ function buildFeedWarning(entry) {
 
 const MAX_RANGE_DAYS = 180;
 
-// Tool ranges arrive as local date-times, bare dates or timestamps with a zone
-// suffix; all are read as local wall-clock values like the stored events.
-function parseRangeBound(value) {
-  const text = String(value || '').trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return parseLocalDateTime(`${text}T00:00`);
-  return parseLocalDateTime(text.replace(/(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$/i, ''));
-}
-
 // A missing bound comes from the dashboard window, or sits one window away
 // from the given bound when that window would be empty; spans are clamped.
 function resolveRangeWindow(range, dashboardWindow) {
   let windowStart = parseRangeBound(range.start);
-  let windowEnd = parseRangeBound(range.end);
+  let windowEnd = parseRangeBound(range.end, true);
   if (!windowStart) {
     windowStart = windowEnd > dashboardWindow.windowStart ? dashboardWindow.windowStart : addLocalDays(windowEnd, -60);
   }
@@ -128,6 +121,7 @@ class CalendarService extends EventEmitter {
     this._refreshPromise = null;
     this._refreshQueued = false;
     this._lastEmitKey = '';
+    this._feedsKey = null;
     this._idCounter = 0;
     this._handleConfigChanged = this._handleConfigChanged.bind(this);
   }
@@ -136,6 +130,7 @@ class CalendarService extends EventEmitter {
     if (this._timer) {
       return;
     }
+    this._feedsKey = JSON.stringify(this._readConfiguredFeeds());
     this.configService.on('changed', this._handleConfigChanged);
     this._timer = this.setIntervalImpl(() => {
       void this.refreshFeeds();
@@ -163,7 +158,7 @@ class CalendarService extends EventEmitter {
   getState(range = {}) {
     const now = this.nowProvider();
     const dashboardWindow = computeCalendarWindow(now);
-    const ranged = Boolean(parseRangeBound(range.start) || parseRangeBound(range.end));
+    const ranged = Boolean(parseRangeBound(range.start) || parseRangeBound(range.end, true));
     const window = ranged ? resolveRangeWindow(range, dashboardWindow) : dashboardWindow;
     const feeds = this._readConfiguredFeeds();
     const instances = expandCalendarEvents(this.events, window);
@@ -394,10 +389,18 @@ class CalendarService extends EventEmitter {
     this._emitChangedIfNeeded();
   }
 
+  // Every home write (each scratchpad autosave included) carries this reason,
+  // so refetch only when the configured feed list itself changed.
   _handleConfigChanged(_state, context = {}) {
-    if (String(context?.reason || '') === 'home_config_updated') {
-      void this.refreshFeeds();
+    if (String(context?.reason || '') !== 'home_config_updated') {
+      return;
     }
+    const feedsKey = JSON.stringify(this._readConfiguredFeeds());
+    if (feedsKey === this._feedsKey) {
+      return;
+    }
+    this._feedsKey = feedsKey;
+    void this.refreshFeeds();
   }
 
   _readConfiguredFeeds() {

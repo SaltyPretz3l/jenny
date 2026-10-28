@@ -83,18 +83,12 @@ test('workspace-ide-service rename still refuses a different existing file', asy
   assert.equal(fs.readFileSync(path.join(root, 'target.js'), 'utf8'), 'target');
 });
 
-test('workspace-ide-service rename refuses a hardlink sibling without removing either entry', async (t) => {
+test('workspace-ide-service rename refuses a hardlink sibling without removing either entry', async () => {
   const root = createTrackedTempDir('jenny-ide-rename-case-');
   const sourcePath = path.join(root, 'a.txt');
   const targetPath = path.join(root, 'b.txt');
   fs.writeFileSync(sourcePath, 'shared', 'utf8');
-  try {
-    fs.linkSync(sourcePath, targetPath);
-  } catch (error) {
-    if (error?.code !== 'EPERM') throw error;
-    t.skip(`hardlink creation unavailable: ${error.code || error.message}`);
-    return;
-  }
+  fs.linkSync(sourcePath, targetPath);
 
   await assertExistsRefusal(createService(root).rename({ from: 'a.txt', to: 'b.txt' }));
 

@@ -23,6 +23,15 @@
   --accent-strong: #2d7a1e;
   --accent-cyan: #3888cc;
   --accent-amber: #b8840e;
+  /* File-map language tints: darker inks for a light canvas. */
+  --atlas-lang-js: #8a6d00;
+  --atlas-lang-ts: #2f6aa3;
+  --atlas-lang-py: #1f7a70;
+  --atlas-lang-css: #6a4fa8;
+  --atlas-lang-html: #a8456e;
+  --atlas-lang-md: #6b7480;
+  --atlas-lang-data: #8a5a1c;
+  --atlas-lang-other: #6b7480;
   --widget-reactive-grid-dot-idle: rgba(61, 140, 42, 0.28);
   --widget-reactive-grid-dot-active: rgba(98, 178, 232, 0.96);
   --reactive-grid-wave-contrast: 1.75;

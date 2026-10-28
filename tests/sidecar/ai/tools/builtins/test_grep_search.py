@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -16,6 +15,7 @@ from sidecar.ai.tools.builtins import grep_search_file
 from sidecar.ai.tools.builtins.regex_safety import looks_like_catastrophic_regex
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
+from tests.sidecar._platform_skips import make_dir_link
 
 
 def _guard(tmp_path: Path) -> WorkspaceGuard:
@@ -66,15 +66,7 @@ def test_grep_worker_rejects_parent_swap_before_open(
         opened_paths.append(path)
         target.unlink()
         sub.rmdir()
-        try:
-            if os.name == "nt":
-                import _winapi
-
-                _winapi.CreateJunction(str(outside), str(sub))
-            else:
-                os.symlink(outside, sub, target_is_directory=True)
-        except (OSError, NotImplementedError) as error:
-            pytest.skip(f"directory link creation unsupported: {error}")
+        make_dir_link(sub, outside)
         return original_open(path, *args, **kwargs)
 
     monkeypatch.setattr(grep_search_file, "open_regular_file", swap_before_open)

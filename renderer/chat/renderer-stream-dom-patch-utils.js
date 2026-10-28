@@ -24,6 +24,14 @@
     ? preservationModule.createComponentPreservationRegistry()
     : null;
 
+  // An attribute-selector value valid for any id (newlines, quotes,
+  // backslashes): CSS.escape when present, else the same hex-escape rule.
+  function escapeSelectorValue(value) {
+    const text = String(value == null ? '' : value);
+    if (typeof CSS !== 'undefined' && CSS && typeof CSS.escape === 'function') return CSS.escape(text);
+    return text.replace(/[^\w\u0080-\u{10FFFF}-]/gu, (char) => (char === '\0' ? '\uFFFD' : `\\${char.codePointAt(0).toString(16)} `));
+  }
+
   function queryAllSafe(rootNode, selector) {
     if (!rootNode || typeof rootNode.querySelectorAll !== 'function') return [];
     try { return Array.from(rootNode.querySelectorAll(selector)); } catch (_error) { return []; }
@@ -847,6 +855,7 @@
     captureCodeBlockExpandState,
     captureCodeBlockScroll,
     describeDomWrite,
+    escapeSelectorValue,
     invalidateRowStamp,
     morphChildren(target, source, stats) {
       noteRowSubtreeWrite(target);

@@ -45,13 +45,11 @@ from sidecar.ai.mcp.builtin_server_io import (
 )
 from sidecar.ai.mcp.builtin_server_ledger import (
     LedgerBracket,
-    OperationLedgerUnavailable,
     configure_operation_ledger,
-    current_operation_ledger,
     ledger_call_arguments,
     ledger_request_fingerprint,  # noqa: F401 - stable public re-export.
     operation_status_tool,
-    operation_timestamp,
+    start_background_compaction,
 )
 from sidecar.ai.mcp.builtin_snapshot_leases import SnapshotLeaseStore, session_scope
 from sidecar.ai.mcp.circuit_breaker import (
@@ -552,6 +550,7 @@ def _handle_tools_call(  # noqa: C901, PLR0911, PLR0912
     bracket = LedgerBracket(None, ledger_key, {}, "")
     process_observation = None
     execution_may_have_started = False
+    operation_id: str | None = None
     try:
         request_scope = builtin_request_scope(
             scope_carrier,
@@ -659,7 +658,7 @@ def _handle_tools_call(  # noqa: C901, PLR0911, PLR0912
                 "completion_status": (
                     "unknown" if execution_may_have_started else "not_started"
                 ),
-                "operation_id": locals().get("operation_id"),
+                "operation_id": operation_id,
                 "generation_id": SERVER_GENERATION_ID,
             },
         )
@@ -866,12 +865,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     configure_operation_ledger(
         ledger_root_arg if ledger_root_arg else resolve_operation_ledger_root()
     )
-    try:
-        ledger = current_operation_ledger()
-        if ledger is not None:
-            ledger.compact(now_iso=operation_timestamp())
-    except OperationLedgerUnavailable:
-        pass
+    start_background_compaction()
     workspace = _build_workspace_guard(args)
     configure_hosted_file_io(
         str(workspace.root) if workspace.root is not None else None,

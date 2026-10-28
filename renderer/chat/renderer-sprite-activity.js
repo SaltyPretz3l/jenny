@@ -6,12 +6,17 @@
   root.rendererSpriteActivity = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const SPRITE_ACTIVITIES = Object.freeze([
-    'think', 'write', 'compose', 'check', 'search', 'tool', 'compact',
+    'think', 'write', 'compose', 'check', 'search', 'make', 'run', 'tool', 'compact',
     'wait', 'stuck', 'approve', 'done', 'rest', 'stopped', 'error',
   ]);
 
   const SEARCH_VERBS = new Set(['read', 'list', 'search', 'web', 'fetch']);
+  // An artifact is a made file too; its tool has no run verb of its own.
+  const MAKE_TOOLS = new Set(['create_artifact']);
   const EXECUTING_STATUSES = new Set(['running', 'executing']);
+  // A tool that ran this recently still counts as running: a 1 ms read settles
+  // before the pipeline samples it, and the morph's hold then shows its form.
+  const JUST_RAN_MS = 300;
   const LIVE_LIFECYCLES = new Set(['preflight', 'streaming']);
   const AWAITING_APPROVAL_STATUS = 'awaiting_approval';
   const PENDING_QUESTION_STATUS = 'pending_user_input';
@@ -59,13 +64,18 @@
     return paused ? 'wait' : '';
   }
 
+  // The newest executing tool; failing that, the newest that just ran.
   function lastExecutingTool(runningTools) {
-    const tools = asArray(runningTools);
-    for (let index = tools.length - 1; index >= 0; index -= 1) {
-      const tool = asObject(tools[index]);
-      if (EXECUTING_STATUSES.has(str(tool.status))) return tool;
-    }
-    return null;
+    const tools = asArray(runningTools).map(asObject).reverse();
+    return tools.find((tool) => EXECUTING_STATUSES.has(str(tool.status)))
+      || tools.find((tool) => tool.justRan === true) || null;
+  }
+
+  function toolForm(tool) {
+    const verb = str(tool.verb);
+    if (SEARCH_VERBS.has(verb)) return 'search';
+    if (verb === 'edit' || MAKE_TOOLS.has(str(tool.toolName))) return 'make';
+    return verb === 'run' ? 'run' : 'tool';
   }
 
   function deriveLive(source) {
@@ -80,7 +90,7 @@
     if (typedKind === 'compaction') return result('compact', true);
 
     const tool = lastExecutingTool(source.runningTools);
-    if (tool) return result(SEARCH_VERBS.has(str(tool.verb)) ? 'search' : 'tool', true);
+    if (tool) return result(toolForm(tool), true);
 
     if (typedKind === 'tool_input') return result(typed.checklist ? 'check' : 'compose', true);
 
@@ -236,19 +246,27 @@
     }
 
     const tools = streamId ? asArray(state.toolCallsByStream?.get?.(streamId)) : [];
+    const now = typeof source.now === 'function' ? source.now() : Date.now();
+    // A manual compaction runs outside any turn but plays the same compact state.
+    const sessionTyped = state.streamWaits?.getSessionTypedActivity?.(sessionId) || null;
     return {
-      turnLive: LIVE_LIFECYCLES.has(lifecycle) || streamLive,
+      turnLive: LIVE_LIFECYCLES.has(lifecycle) || streamLive || Boolean(sessionTyped),
       admissionWait: userIndex >= 0 && !streamLive
         ? findAdmissionWait(sendController, sessionId, asObject(messages[userIndex])) : null,
       stoppedWithoutTerminal,
       outcome: token(target.outcome),
       approvalRefs,
       questionPending,
-      typed: (streamId && state.streamWaits?.getTypedActivity?.(streamId)) || null,
-      runningTools: tools.map((tool) => ({
-        status: normalizeStatus(asObject(tool).status),
-        verb: token(toolUtils?.toolRunVerb?.(asObject(tool).toolName)),
-      })),
+      typed: (streamId && state.streamWaits?.getTypedActivity?.(streamId)) || sessionTyped,
+      runningTools: tools.map((tool) => {
+        const ranAt = Number(asObject(tool).ranAt) || 0;
+        return {
+          status: normalizeStatus(asObject(tool).status),
+          verb: token(toolUtils?.toolRunVerb?.(asObject(tool).toolName)),
+          toolName: token(asObject(tool).toolName),
+          justRan: ranAt > 0 && now - ranAt >= 0 && now - ranAt < JUST_RAN_MS,
+        };
+      }),
       deltaKind: streamId ? str(state.streamDeltaKindByStream?.get?.(streamId)) : '',
     };
   }
@@ -352,5 +370,6 @@
     findPaneAdmissionWait,
     createSpriteViewApplier,
     SPRITE_ACTIVITIES,
+    JUST_RAN_MS,
   };
 });

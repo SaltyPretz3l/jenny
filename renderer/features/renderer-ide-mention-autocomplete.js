@@ -131,13 +131,6 @@
       return String(result.rootId) + '|' + String(result.generation);
     }
 
-    // Listener references (so dispose can detach exactly what attach added).
-    var onInput = null;
-    var onKeydownCapture = null;
-    var onPointerDownCapture = null;
-    var onPopoverClick = null;
-    var onRootCommitted = null;
-
     function detectTrigger() {
       if (!inputEl) {
         return null;
@@ -207,7 +200,7 @@
         }
       }
       if (visible) {
-        refreshResults();
+        scheduleRefresh();
       }
     }
 
@@ -224,15 +217,32 @@
           .slice(0, MAX_RESULTS)
           .map(function (path) { return { path: path, ranges: [] }; });
       }
-      var scored = [];
+      // The best MAX_RESULTS by score, then path: a bounded insertion keeps a
+      // keystroke from sorting (and localeCompare-ing) every workspace file.
+      var best = [];
       for (var i = 0; i < files.length; i += 1) {
         var m = scorer(files[i], query);
-        if (m) {
-          scored.push({ path: files[i], score: m.score, ranges: m.ranges });
+        if (!m) {
+          continue;
+        }
+        var candidate = { path: files[i], score: m.score, ranges: m.ranges };
+        if (best.length === MAX_RESULTS && compareMatches(candidate, best[MAX_RESULTS - 1]) >= 0) {
+          continue;
+        }
+        var at = best.length;
+        while (at > 0 && compareMatches(candidate, best[at - 1]) < 0) {
+          at -= 1;
+        }
+        best.splice(at, 0, candidate);
+        if (best.length > MAX_RESULTS) {
+          best.pop();
         }
       }
-      scored.sort(function (a, b) { return b.score - a.score || a.path.localeCompare(b.path); });
-      return scored.slice(0, MAX_RESULTS);
+      return best;
+    }
+
+    function compareMatches(a, b) {
+      return b.score - a.score || a.path.localeCompare(b.path);
     }
 
     function buildRowMarkup(match, index) {
@@ -264,7 +274,7 @@
       resultsEl.className = 'ide-mention-results';
       popoverEl.appendChild(resultsEl);
       mount.appendChild(popoverEl);
-      popoverEl.addEventListener('click', onPopoverClick);
+      popoverEl.addEventListener('click', handlePopoverClick);
       return popoverEl;
     }
 
@@ -300,6 +310,40 @@
       }
     }
 
+    // Re-scoring waits for the next frame, so a burst of inputs (fast typing,
+    // a paste, the file list landing) scores once. Keys that act on the rows
+    // flush it first (flushRefresh), so they never see a stale query.
+    var refreshFrame = null;
+    function scheduleRefresh() {
+      if (refreshFrame !== null) {
+        return;
+      }
+      if (!win || typeof win.requestAnimationFrame !== 'function') {
+        refreshResults();
+        return;
+      }
+      refreshFrame = win.requestAnimationFrame(function onRefreshFrame() {
+        refreshFrame = null;
+        if (!disposed && visible) {
+          refreshResults();
+        }
+      });
+    }
+
+    function cancelRefresh() {
+      if (refreshFrame !== null && win && typeof win.cancelAnimationFrame === 'function') {
+        win.cancelAnimationFrame(refreshFrame);
+      }
+      refreshFrame = null;
+    }
+
+    function flushRefresh() {
+      if (refreshFrame !== null) {
+        cancelRefresh();
+        refreshResults();
+      }
+    }
+
     function refreshResults() {
       if (!resultsEl) {
         return;
@@ -318,10 +362,11 @@
       visible = true;
       popoverEl.classList.remove('hidden');
       positionPopover();
-      refreshResults();
+      scheduleRefresh();
     }
 
     function hidePopover() {
+      cancelRefresh();
       visible = false;
       triggerStart = -1;
       triggerEnd = -1;
@@ -377,12 +422,7 @@
     }
 
     function acceptSelected() {
-      var match = matches[selectedIndex] || matches[0] || null;
-      if (match) {
-        acceptPath(match.path);
-      } else {
-        hidePopover();
-      }
+      acceptPath((matches[selectedIndex] || matches[0]).path);
     }
 
     function handleInput() {
@@ -407,6 +447,13 @@
       if (disposed || !visible || !inputEl || event.target !== inputEl) {
         return;
       }
+      // Keys that commit or steer an IME composition belong to the IME.
+      if (event.isComposing || event.keyCode === 229) {
+        return;
+      }
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Enter' || event.key === 'Tab') {
+        flushRefresh(); // these act on the rows: never on a stale query
+      }
       switch (event.key) {
         case 'ArrowDown':
           event.preventDefault();
@@ -420,6 +467,10 @@
           break;
         case 'Enter':
         case 'Tab':
+          if (!matches.length) {
+            hidePopover(); // nothing to accept: the key sends or moves focus as usual
+            break;
+          }
           event.preventDefault();
           event.stopPropagation();
           acceptSelected();
@@ -485,18 +536,14 @@
         return dispose;
       }
       attached = true;
-      onInput = handleInput;
-      onKeydownCapture = handleKeydownCapture;
-      onPointerDownCapture = handlePointerDownCapture;
-      onRootCommitted = function handleRootCommitted() { resetForRoot(); };
-      inputEl.addEventListener('input', onInput);
+      inputEl.addEventListener('input', handleInput);
       // Capture phase so we intercept Arrow/Enter/Escape BEFORE the composer's
       // bubble-phase send handler claims Enter.
-      doc.addEventListener('keydown', onKeydownCapture, true);
-      doc.addEventListener('pointerdown', onPointerDownCapture, true);
+      doc.addEventListener('keydown', handleKeydownCapture, true);
+      doc.addEventListener('pointerdown', handlePointerDownCapture, true);
       // The IDE controller broadcasts committed root transitions on the window
       // (this module is controller-free by design).
-      win.addEventListener('ide:workspace-root-committed', onRootCommitted);
+      win.addEventListener('ide:workspace-root-committed', resetForRoot);
       return dispose;
     }
 
@@ -667,22 +714,15 @@
       disposed = true;
       filesGate.bump();
       loadingToken = null;
-      if (inputEl && onInput) {
-        inputEl.removeEventListener('input', onInput);
-      }
-      if (doc && onKeydownCapture) {
-        doc.removeEventListener('keydown', onKeydownCapture, true);
-      }
-      if (doc && onPointerDownCapture) {
-        doc.removeEventListener('pointerdown', onPointerDownCapture, true);
-      }
-      if (win && onRootCommitted) {
-        win.removeEventListener('ide:workspace-root-committed', onRootCommitted);
+      cancelRefresh();
+      if (attached) {
+        inputEl.removeEventListener('input', handleInput);
+        doc.removeEventListener('keydown', handleKeydownCapture, true);
+        doc.removeEventListener('pointerdown', handlePointerDownCapture, true);
+        win.removeEventListener('ide:workspace-root-committed', resetForRoot);
       }
       if (popoverEl) {
-        if (onPopoverClick) {
-          popoverEl.removeEventListener('click', onPopoverClick);
-        }
+        popoverEl.removeEventListener('click', handlePopoverClick);
         if (popoverEl.parentNode) {
           popoverEl.parentNode.removeChild(popoverEl);
         }
@@ -690,8 +730,6 @@
       popoverEl = null;
       resultsEl = null;
     }
-
-    onPopoverClick = handlePopoverClick;
 
     return {
       attach: attach,

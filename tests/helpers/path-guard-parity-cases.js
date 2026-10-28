@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 
+const { linkDirectory } = require('./platform-skips');
 const { ToolPathPolicy } = require('../../services/tools/tool-path-policy');
 const { normalizeWorkspaceRelPath } = require('../../services/workspace-ide-path-guard');
 const { WorkspaceImportService } = require('../../services/workspace-import-service');
@@ -358,11 +359,7 @@ const BASE_CASES = [
     setup(rootDir, outsideDir) {
       const link = path.join(rootDir, 'link');
       fs.writeFileSync(path.join(outsideDir, 'file.txt'), 'outside', 'utf8');
-      try {
-        fs.symlinkSync(outsideDir, link, process.platform === 'win32' ? 'junction' : 'dir');
-      } catch (error) {
-        return { skip: `directory-link creation unavailable: ${error.code || error.message}` };
-      }
+      linkDirectory(outsideDir, link);
       return 'link/file.txt';
     },
     expected: {
@@ -378,22 +375,14 @@ const BASE_CASES = [
     setup(rootDir, outsideDir) {
       const parent = path.join(rootDir, 'swap');
       const displaced = path.join(rootDir, 'swap-original');
-      const probe = path.join(rootDir, 'link-probe');
       fs.mkdirSync(parent);
       fs.writeFileSync(path.join(parent, 'file.txt'), 'inside', 'utf8');
       fs.writeFileSync(path.join(outsideDir, 'file.txt'), 'outside', 'utf8');
-      try {
-        fs.symlinkSync(outsideDir, probe, process.platform === 'win32' ? 'junction' : 'dir');
-        if (process.platform === 'win32') fs.rmdirSync(probe);
-        else fs.unlinkSync(probe);
-      } catch (error) {
-        return { skip: `directory-link swap unavailable: ${error.code || error.message}` };
-      }
       return {
         requested: 'swap/file.txt',
         mutate() {
           fs.renameSync(parent, displaced);
-          fs.symlinkSync(outsideDir, parent, process.platform === 'win32' ? 'junction' : 'dir');
+          linkDirectory(outsideDir, parent);
         },
       };
     },
@@ -427,31 +416,11 @@ const BASE_CASES = [
     universal: 'never_escape',
   })),
   {
-    id: 'win32-short-name-alias',
-    description: '8.3 short-name alias of a long in-root directory',
-    win32Only: true,
-    setup() {
-      // realpathSync.native expands aliases but cannot derive an 8.3 alias. The
-      // contract forbids fsutil, so this row remains explicit and skip-by-default.
-      return { skip: '8.3 alias derivation unavailable without shelling out' };
-    },
-    expected: {
-      'tool-path-policy': 'reject_or_allow',
-      'root-operation': 'reject_or_allow',
-      'versioned-file': 'reject_or_allow',
-    },
-    universal: 'never_escape',
-  },
-  {
     id: 'symlink-parent-missing-leaf',
     description: 'outside directory link with a not-yet-existing leaf',
     setup(rootDir, outsideDir) {
       const link = path.join(rootDir, 'missing-link');
-      try {
-        fs.symlinkSync(outsideDir, link, process.platform === 'win32' ? 'junction' : 'dir');
-      } catch (error) {
-        return { skip: `directory-link creation unavailable: ${error.code || error.message}` };
-      }
+      linkDirectory(outsideDir, link);
       return 'missing-link/new-file.txt';
     },
     expected: {

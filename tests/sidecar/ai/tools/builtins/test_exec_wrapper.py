@@ -221,7 +221,8 @@ def test_main_collects_dataframe_tables(env) -> None:
 
 
 def test_child_table_collection_caps_count_columns_cells_and_aggregate(env) -> None:
-    pd = pytest.importorskip("pandas")
+    import pandas as pd
+
     frame = pd.DataFrame(
         [["x" * 10_000] * (env.wrapper._MAX_TABLE_COLUMNS + 4)],
     )
@@ -281,14 +282,85 @@ def test_compile_user_code_empty_source(env) -> None:
     exec(exec_code, {}, {})  # must not raise
 
 
-def test_format_traceback_without_user_frames_returns_full_trace(env) -> None:
+def test_format_traceback_without_user_frames_omits_wrapper_paths(env) -> None:
     try:
         raise RuntimeError("native boom")
     except RuntimeError as error:
         formatted = env.wrapper._format_traceback(error)
 
-    # No frame has filename "<analysis>", so the full default formatting is used.
-    assert "RuntimeError: native boom" in formatted
+    # No frame has filename "<analysis>": only the exception line is kept, so
+    # no absolute wrapper or stdlib path reaches the model.
+    assert formatted == "RuntimeError: native boom\n"
+    assert __file__ not in formatted
+
+
+def test_main_syntax_error_reports_only_the_user_line(env) -> None:
+    exit_code, payload = _run_main(env, "x = 1\ndef broken(:\n")
+
+    assert exit_code == 1
+    error = payload["error"]
+    assert error["type"] == "SyntaxError"
+    assert 'File "<analysis>", line 2' in error["traceback"]
+    assert "Traceback (most recent call last)" not in error["traceback"]
+    assert "_exec_wrapper" not in error["traceback"]
+    assert str(Path(env.wrapper.__file__).parent) not in error["traceback"]
+
+
+# --- main(): SystemExit / KeyboardInterrupt still write the result ------------
+
+def test_main_sys_exit_zero_keeps_output_and_succeeds(env) -> None:
+    exit_code, payload = _run_main(env, "import sys\nprint('hi')\nsys.exit(0)\n")
+
+    assert exit_code == 0
+    assert payload["stdout"] == "hi\n"
+    assert payload["error"] is None
+
+
+def test_main_bare_sys_exit_succeeds(env) -> None:
+    exit_code, payload = _run_main(env, "import sys\nsys.exit()\n")
+
+    assert exit_code == 0
+    assert payload["error"] is None
+
+
+def test_main_nonzero_sys_exit_reports_a_system_exit_error(env) -> None:
+    exit_code, payload = _run_main(env, "import sys\nprint('partial')\nsys.exit('bad input')\n")
+
+    assert exit_code == 1
+    assert payload["stdout"] == "partial\n"
+    assert payload["error"]["type"] == "SystemExit"
+    assert payload["error"]["message"] == "bad input"
+
+
+def test_main_keyboard_interrupt_writes_the_result(env) -> None:
+    exit_code, payload = _run_main(env, "raise KeyboardInterrupt\n")
+
+    assert exit_code == 130
+    assert payload["error"]["type"] == "KeyboardInterrupt"
+
+
+# --- tables: pandas is never imported on the user's behalf -------------------
+
+def test_main_does_not_import_pandas_when_user_code_never_did(
+    env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delitem(sys.modules, "pandas", raising=False)
+
+    exit_code, payload = _run_main(env, "x = 1\n")
+
+    assert exit_code == 0
+    assert payload["tables"] == []
+    assert "pandas" not in sys.modules
+
+
+def test_wrapper_table_budgets_match_the_parent(env) -> None:
+    from sidecar.ai.tools.builtins.python_runtime import output
+
+    assert env.wrapper._MAX_TABLES == output.MAX_TABLES
+    assert env.wrapper._MAX_TABLE_ROWS == output.MAX_TABLE_ROWS
+    assert env.wrapper._MAX_TABLE_HTML_CHARS == output.MAX_TABLE_HTML_CHARS
+    assert env.wrapper._MAX_TOTAL_TABLE_HTML_CHARS == output.MAX_TOTAL_TABLE_HTML_CHARS
+    assert env.wrapper._MAX_TABLE_NAME_CHARS == output.MAX_TABLE_NAME_CHARS
 
 
 def test_safe_json_dumps_replaces_lone_surrogate(env) -> None:

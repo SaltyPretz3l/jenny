@@ -380,3 +380,47 @@ test('a build straddling resetForRoot does not repopulate the cache with the sta
     'the fresh build for the new root paints its own graph'
   );
 });
+
+// A superseded in-flight build must neither block a rebuild of its own file
+// (dead pending marker) nor paint into another file's view.
+test('switching A -> B -> A mid-build rebuilds A and never paints B over it', async (t) => {
+  const dom = new JSDOM('<!doctype html><body><div id="bar"></div><div id="host" class="hidden"></div></body>');
+  const doc = dom.window.document;
+  const hostEl = doc.getElementById('host');
+  const ide = { activeTabPath: 'src/a.ts' };
+  const gates = [];
+  const builds = [];
+  global.rendererIdeExplodedGraph = {
+    buildExplodedGraph: async ({ model }) => {
+      builds.push(model.path);
+      await new Promise((r) => gates.push(r));
+      const name = model.path === 'src/a.ts' ? 'alpha' : 'beta';
+      return {
+        nodes: [{ id: `function:${name}@1`, kind: 'function', name, zone: 'entry', rank: 0, isExported: true, line: 1 }],
+        edges: [],
+        diagnostics: { parsed: true, degraded: false, reason: null },
+      };
+    },
+  };
+  const controller = createIdeExplodeController({
+    getDom: () => ({ ideExplodedHost: hostEl, ideViewModeBar: doc.getElementById('bar') }),
+    getIde: () => ide,
+    ideStateUtils: { getTabViewMode: () => 'exploded' },
+    editorHost: { getModel: (p) => ({ path: p }), getMonaco: () => ({}), getAltVersionId: () => 1 },
+    windowRef: dom.window,
+  });
+  t.after(() => controller.dispose());
+
+  controller.syncVisibility('src/a.ts');
+  ide.activeTabPath = 'src/b.ts';
+  controller.syncVisibility('src/b.ts');
+  ide.activeTabPath = 'src/a.ts';
+  controller.syncVisibility('src/a.ts');
+  await tick();
+  assert.deepEqual(builds, ['src/a.ts', 'src/b.ts', 'src/a.ts'], 'A is rebuilt; its superseded marker is dead');
+
+  for (const release of gates) release();
+  await tick(); await tick();
+  assert.ok(hostEl.querySelector('[data-map-node="function:alpha@1"]'), 'A is painted');
+  assert.equal(hostEl.querySelector('[data-map-node="function:beta@1"]'), null, 'B never paints into A');
+});

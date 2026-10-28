@@ -13,6 +13,7 @@ from sidecar.runtime.monitor_status import (
     decode_monitor_status,
     encode_monitor_status,
 )
+from tests.sidecar._platform_skips import make_dir_link, requires_file_symlinks
 
 MONITOR_ID = "mon_abcdef012345"
 
@@ -152,6 +153,7 @@ def test_monitor_status_store_rejects_identity_mismatch(tmp_path: Path) -> None:
         store.write(MONITOR_ID, payload)
 
 
+@requires_file_symlinks()
 def test_monitor_status_store_rejects_linked_status_leaf_without_touching_target(
     tmp_path: Path,
 ) -> None:
@@ -160,10 +162,7 @@ def test_monitor_status_store_rejects_linked_status_leaf_without_touching_target
     record_dir.mkdir()
     outside = tmp_path / "outside.json"
     outside.write_text("sentinel", encoding="utf-8")
-    try:
-        os.symlink(outside, record_dir / "status.json")
-    except (NotImplementedError, OSError) as error:
-        pytest.skip(f"file symlinks unavailable: {error}")
+    os.symlink(outside, record_dir / "status.json")
 
     with pytest.raises(MonitorStatusError):
         store.read(MONITOR_ID)
@@ -181,10 +180,7 @@ def test_monitor_status_store_rejects_linked_record_directory(tmp_path: Path) ->
         json.dumps(_status_payload()),
         encoding="utf-8",
     )
-    try:
-        os.symlink(outside, store.record_path(MONITOR_ID), target_is_directory=True)
-    except (NotImplementedError, OSError) as error:
-        pytest.skip(f"directory symlinks unavailable: {error}")
+    make_dir_link(store.record_path(MONITOR_ID), outside)
 
     with pytest.raises(MonitorStatusError, match="unsafe"):
         store.read(MONITOR_ID)

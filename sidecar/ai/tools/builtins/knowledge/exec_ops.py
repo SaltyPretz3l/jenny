@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from sidecar.ai.error_codes import CMP_TOOL_INVALID_PATH, CMP_TOOL_IO_FAILED
+from sidecar.ai.tools.argument_coercion import bounded_int as _bounded_int
 from sidecar.ai.tools.builtins.filesystem import SEARCH_IGNORE_DIRS
 from sidecar.ai.tools.builtins.knowledge.roots import (
     KnowledgeRoot,
@@ -66,14 +67,6 @@ def knowledge_exec_tool(
             retryable=False,
         )
     return _run_listing_op(op, arguments)
-
-
-def _bounded_int(value: object, *, default: int, minimum: int, maximum: int) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        return default
-    if value < minimum:
-        return default
-    return min(value, maximum)
 
 
 def _listing_scopes(arguments: dict[str, object]) -> list[tuple[KnowledgeRoot, Path]]:

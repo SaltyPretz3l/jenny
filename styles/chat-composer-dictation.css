@@ -1,0 +1,174 @@
+/* Push-to-talk dictation (row 84; owner picks P1, L1 and F1 from the
+   2026-10-27 product review of the dictation mockups). The mic is
+   a composer icon button beside Send; the live line sits inside the composer
+   above the draft, with no status dot; the first-use popover anchors to the
+   mic. Built from the composer's own tokens, no new visual language. */
+
+[data-dictation-off] .composer-dictate-button {
+  display: none;
+}
+
+/* Recording reads like an open composer control (the + menu's open state). */
+.composer-dictate-button[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent-cyan) 18%, transparent);
+  background: color-mix(in srgb, var(--accent-cyan) 14%, var(--surface-composer-signal-background));
+  color: var(--accent-cyan);
+}
+
+/* Squeezed, the mic keeps its size like Send and Stop. */
+.composer[data-toolbar-compact] .composer-rail > .composer-dictate-button {
+  flex: none;
+}
+
+.composer-dictation-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 24px;
+  padding: 0 var(--space-1);
+  font-size: var(--font-size-footnote);
+  color: var(--text-secondary);
+}
+
+.composer-dictation-label {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.composer-dictation-label--working {
+  animation: shimmer-text var(--motion-duration-sheen) var(--motion-ease-standard) infinite;
+}
+
+.composer-dictation-time {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 32 bars of 50 ms each: the last 1.6 s of input, newest on the right. Each
+   bar's height is its block's level (renderer-dictation-capture.js). */
+.composer-dictation-level {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 16px;
+  flex: none;
+}
+
+.composer-dictation-level > i {
+  display: block;
+  width: 2px;
+  height: calc(2px + var(--level, 0) * 14px);
+  border-radius: 1px;
+  background: var(--accent-cyan);
+}
+
+.composer-dictation-hint {
+  margin-inline-start: auto;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.composer-dictation-line--problem .composer-dictation-message {
+  min-width: 0;
+}
+
+.composer-dictation-action {
+  margin-inline-start: auto;
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--accent-cyan);
+  cursor: pointer;
+}
+
+.composer-dictation-action:hover {
+  text-decoration: underline;
+}
+
+.composer-dictation-action:focus-visible {
+  outline: 2px solid var(--focus-ring, var(--accent-cyan));
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* First use (F1): an inventory popover above the mic, right-aligned to the composer. */
+.composer-dictation-popover {
+  inset-inline-end: var(--space-3);
+  bottom: calc(100% + var(--space-2));
+  width: 320px;
+  max-width: calc(100vw - 2 * var(--space-4));
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.composer-dictation-popover-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-body);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.composer-dictation-popover-copy {
+  margin: 0 0 var(--space-2);
+}
+
+.composer-dictation-popover-meta {
+  margin: 0;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-dictation-popover-error {
+  margin: 0 0 var(--space-2);
+  color: var(--text-danger-emphasis);
+}
+
+.composer-dictation-popover-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.composer-dictation-progress {
+  height: 4px;
+  margin: var(--space-3) 0 var(--space-1);
+  border-radius: 2px;
+  background: var(--border-subtle);
+  overflow: hidden;
+}
+
+.composer-dictation-progress > span {
+  display: block;
+  height: 100%;
+  width: calc(var(--progress, 0) * 100%);
+  background: var(--accent-cyan);
+}
+
+@media (max-width: 719px) {
+  .composer-dictation-hint {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-dictation-label--working {
+    animation: none;
+  }
+}
+
+/* Settings > Dictation: the fixed shortcut, shown as a key. */
+.settings-dictation-kbd {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-footnote);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm, 4px);
+  padding: 2px var(--space-2);
+}

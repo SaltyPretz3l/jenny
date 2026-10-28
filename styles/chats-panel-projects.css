@@ -1,0 +1,211 @@
+/* Chats grouped by project (row 74, owner pick 2026-10-21, variant A). A project header is a row:
+ * same height and radius as a chat row, a folder that turns into a chevron on hover or focus, the
+ * name, and a trail that mirrors the chat row trail (chats-panel-row-trail.css): the roll-up dot of a
+ * collapsed project in the fixed dot column, the chat count in the time slot, and on hover or focus
+ * the "+" and "..." buttons where a row shows its chevron and menu. Chats indent under the name through
+ * --cw-base, which also moves the linked-chat guide line (chats-panel-tree.css). Imported after
+ * chats-panel-row-trail.css and before chats-panel-selection.css. Logical properties only. */
+
+.project-group {
+  /* Icon column + gap: chat titles start under the project name. */
+  --cw-base: calc(var(--project-header-icon) + var(--space-4));
+  --project-header-icon: 14px;
+}
+
+.project-group + .project-group,
+.conversation-group + .project-group {
+  margin-block-start: var(--space-2);
+}
+
+.project-header {
+  /* --session-row-time-slot and --session-row-dot-col-end come from chats-panel-row-trail.css. */
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  min-height: var(--session-row-height);
+  margin-bottom: var(--space-1);
+  border-radius: var(--rail-item-radius);
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.project-header:is(:hover, :focus-within) {
+  background: var(--rail-hover-bg);
+}
+
+.project-header__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+  height: var(--session-row-height);
+  padding-block: 0;
+  padding-inline: var(--space-4) var(--session-row-end-reserve);
+  border: 0;
+  border-radius: var(--rail-item-radius);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-body);
+  text-align: start;
+  cursor: pointer;
+}
+
+.project-header__toggle:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.project-header:is(:hover, :focus-within) .project-header__toggle {
+  color: var(--text-primary);
+}
+
+.project-header__icon {
+  position: relative;
+  flex: 0 0 auto;
+  inline-size: var(--project-header-icon);
+  block-size: var(--project-header-icon);
+  color: var(--text-muted);
+}
+
+.project-header__icon svg {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition:
+    opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* Folder at rest; the chevron swaps in on hover or focus and points down while the project is open. */
+.project-header__chevron { opacity: 0; }
+.project-header:is(:hover, :focus-within) .project-header__folder { opacity: 0; }
+.project-header:is(:hover, :focus-within) .project-header__chevron { opacity: 1; }
+.project-header__toggle[aria-expanded="true"] .project-header__chevron { transform: rotate(90deg); }
+:dir(rtl) .project-header__toggle[aria-expanded="false"] .project-header__chevron { transform: scaleX(-1); }
+
+.project-header__name {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 500;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-header__dot,
+.project-header__count,
+.project-header__new,
+.project-header__menu {
+  position: absolute;
+  inset-block-start: 50%;
+  transform: translateY(-50%);
+}
+
+.project-header__dot {
+  inset-inline-end: var(--session-row-dot-col-end);
+  inline-size: var(--session-row-dot-size);
+  block-size: var(--session-row-dot-size);
+  border-radius: var(--radius-pill);
+  pointer-events: none;
+}
+
+.project-header__dot[data-tone="approval"] { background: var(--sidebar-state-approval-color); }
+.project-header__dot[data-tone="streaming"] { background: var(--sidebar-state-streaming-color); }
+.project-header__dot[data-tone="unread"] { background: var(--accent-primary); }
+
+.project-header__count {
+  inset-inline-end: var(--space-5);
+  max-inline-size: var(--session-row-time-slot);
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* "+" and "..." take the row's chevron and menu places (their box, hover and icon size are the row
+ * menu's, styles/chats-panel.css); opacity only, so nothing moves. */
+.project-header__menu { inset-inline-end: var(--space-2); }
+.project-header__new { inset-inline-end: calc(var(--space-2) + 32px); }
+
+.project-header__new:focus-visible,
+.project-header__menu:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.project-header__new svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.project-header__menu circle { fill: currentColor; }
+
+.project-header:is(:hover, :focus-within) :is(.project-header__new, .project-header__menu) { opacity: 1; }
+.project-header:is(:hover, :focus-within) :is(.project-header__count, .project-header__dot) { opacity: 0; }
+
+/* "Show N more" / "Show less": quiet text aligned with the chat titles. */
+.project-group__more {
+  display: block;
+  inline-size: 100%;
+  min-height: 28px;
+  margin-block-end: var(--space-1);
+  padding-block: 0;
+  padding-inline: calc(var(--cw-base) + var(--space-4)) var(--space-4);
+  border: 0;
+  border-radius: var(--rail-item-radius);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--font-size-caption);
+  text-align: start;
+  cursor: pointer;
+}
+
+.project-group__more:is(:hover, :focus-visible) {
+  background: var(--rail-hover-bg);
+  color: var(--text-primary);
+}
+
+.project-group__more:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+/* "By project" / "By date" sits at the end of the project filter row; a long project name in the
+ * filter shrinks (ellipsis) rather than pushing it out of the row. */
+.chats-project-row .chats-project-filter {
+  min-width: 0;
+}
+
+.chats-project-row .chats-group-by {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+  margin-inline-end: 0;
+}
+
+/* Narrow panel: rows hide their time; the count goes too and the dot moves to the end margin. */
+@container viewpanel (max-width: 279px) {
+  .project-header__count { display: none; }
+  .project-header__toggle { padding-inline-end: calc(var(--space-2) + 64px + var(--space-2)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-header__icon svg,
+  .project-header__count { transition: none; }
+}
+
+@media (forced-colors: active) {
+  .project-header__dot[data-tone] { background: CanvasText; }
+  .project-header__dot[data-tone="unread"] { background: Highlight; }
+}

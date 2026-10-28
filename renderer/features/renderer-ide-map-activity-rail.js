@@ -1,8 +1,8 @@
 /* renderer/features/renderer-ide-map-activity-rail.js — the File Map's
  * activity PRESENTER: subscribes to the activity bus, resolves the bus's
  * workspace-relative paths to graph node ids (exact first, then Windows
- * case-insensitive; unresolved paths fall through to a bucket-chip prefix
- * match so a write into a gitignored dir still heats its rollup chip),
+ * case-insensitive; unresolved paths fall through to a bucket-row prefix
+ * match so a write into a gitignored dir still heats its not-mapped row),
  * forwards node-id-native heat/trail to the atlas view, drives the
  * turn-end fade ticker (ONE timer, never per-node), reports turn
  * activity to the controller (layout freeze), and renders the right-edge
@@ -18,11 +18,18 @@
  *   bus                the shared renderer-ide-map-activity-bus
  *   getSessionId       () => active chat session id (rail shows ONLY it)
  *   view               atlas view (applyActivity/getAllNodeIds/...)
- *   viewportEl         map viewport (rail host + bucket chips live here)
- *   escapeHtml, timers, appendClientLog
+ *   viewportEl         map viewport (rail host + footer bucket rows live here)
+ *   escapeHtml, timers (setTimeout/clearTimeout, optional rAF pair)
+ *   isHostVisible      () => boolean  false while the map stage is hidden:
+ *                      paints are skipped (refresh() on show repaints)
  *   onTurnActiveChange (active) => void   controller layout freeze hook
  *   onRowClick         (nodeId) => void   reveal-in-map
  * → { refresh, setVisible, dispose }
+ *
+ * Every bus notification (any session) re-evaluates the ACTIVE session's
+ * turn state synchronously, so a chat switch mid-turn releases the layout
+ * freeze; paints for the active session (or after a session switch) are
+ * coalesced to one per animation frame.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -49,10 +56,7 @@
   }
 
   const toolCallUtils = resolveModule('toolCallUtils', '../chat/tool-call-utils');
-  const inventoryButton = resolveModule('inventoryActionButton', '../inventory/action-button');
-  const actionButton = typeof inventoryButton === 'function'
-    ? inventoryButton
-    : inventoryButton.actionButton || inventoryButton.default || null;
+  const actionButton = resolveModule('inventoryActionButton', '../inventory/action-button');
 
   const ROW_CAP = 50;
   // Turn-end choreography: hold the finished trail briefly, fade, then clear.
@@ -81,6 +85,7 @@
     const viewportEl = d.viewportEl || null;
     const escapeHtml = typeof d.escapeHtml === 'function' ? d.escapeHtml : defaultEscapeHtml;
     const timers = d.timers || globalRef;
+    const isHostVisible = typeof d.isHostVisible === 'function' ? d.isHostVisible : () => true;
     const onTurnActiveChange = typeof d.onTurnActiveChange === 'function' ? d.onTurnActiveChange : () => {};
     const onRowClick = typeof d.onRowClick === 'function' ? d.onRowClick : () => {};
     const platform = String(d.platform
@@ -98,6 +103,18 @@
     let clearTimerId = null;
     let lastTurnActive = false;
     let expiredSessionId = '';
+    let paintedSessionId = String(getSessionId() || '');
+    let resolverIds = null;
+    let resolver = null;
+    let frameQueued = false;
+    let frameId = null;
+    // One paint per frame: the injected rAF pair, else the window's, else a
+    // ~frame timeout.
+    const [requestFrame, cancelFrame] = typeof timers.requestAnimationFrame === 'function'
+      ? [(fn) => timers.requestAnimationFrame(fn), (id) => timers.cancelAnimationFrame?.(id)]
+      : typeof globalRef.requestAnimationFrame === 'function'
+        ? [(fn) => globalRef.requestAnimationFrame(fn), (id) => globalRef.cancelAnimationFrame?.(id)]
+        : [(fn) => timers.setTimeout(fn, 16), (id) => timers.clearTimeout(id)];
 
     function doc() {
       return viewportEl && viewportEl.ownerDocument ? viewportEl.ownerDocument : null;
@@ -143,10 +160,11 @@
     }
 
     // rel -> node id: exact, then Windows-only case-insensitive fallback for
-    // tool inputs that case-mismatch the scan. Index rebuilt per paint —
-    // O(nodes), and paints are per-tool-event (low frequency), never per-frame.
-    function buildResolver() {
-      const ids = view && typeof view.getAllNodeIds === 'function' ? view.getAllNodeIds() : new Set();
+    // tool inputs that case-mismatch the scan. O(nodes) to build, so
+    // resolverFor() caches it per rendered graph (the view hands back the
+    // same id Set until its next render).
+    function buildResolver(nodeIds) {
+      const ids = nodeIds || (view && typeof view.getAllNodeIds === 'function' ? view.getAllNodeIds() : new Set());
       const lower = isWindowsPlatform(platform) ? new Map() : null;
       if (lower) {
         for (const id of ids) lower.set(String(id).toLowerCase(), id);
@@ -155,6 +173,15 @@
         if (ids.has(rel)) return rel;
         return lower ? lower.get(String(rel).toLowerCase()) || null : null;
       };
+    }
+
+    function resolverFor() {
+      const ids = view && typeof view.getAllNodeIds === 'function' ? view.getAllNodeIds() : new Set();
+      if (!resolver || ids !== resolverIds) {
+        resolverIds = ids;
+        resolver = buildResolver(ids);
+      }
+      return resolver;
     }
 
     function applyBucketHeat(unresolved) {
@@ -214,24 +241,48 @@
       }, CLEAR_AFTER_MS);
     }
 
+    function snapshotFor(sessionId) {
+      return bus && typeof bus.getState === 'function' ? bus.getState(sessionId) : null;
+    }
+
+    // Layout-freeze bookkeeping for the ACTIVE session; independent of
+    // painting so it also runs while the map is hidden.
+    function syncTurnState(sessionId) {
+      const snapshot = snapshotFor(sessionId);
+      const live = expiredSessionId !== sessionId && Boolean(snapshot && snapshot.turnActive);
+      if (live === lastTurnActive) return;
+      lastTurnActive = live;
+      onTurnActiveChange(live);
+      if (live) clearTimersPending();
+      else if (snapshot && (snapshot.trail.length || snapshot.heat.size)) scheduleTurnEndChoreo(sessionId);
+    }
+
+    function schedulePaint() {
+      if (disposed || frameQueued) return;
+      frameQueued = true;
+      const id = requestFrame(() => {
+        frameQueued = false;
+        frameId = null;
+        paint();
+      });
+      if (frameQueued) frameId = id;
+    }
+
     function paint(opts) {
       if (disposed) return;
-      const rail = ensureRail();
       const sessionId = String(getSessionId() || '');
-      const snapshot = bus && typeof bus.getState === 'function' ? bus.getState(sessionId) : null;
-      if (expiredSessionId === sessionId) {
+      syncTurnState(sessionId);
+      if (disposed || !isHostVisible()) return;
+      paintedSessionId = sessionId;
+      const rail = ensureRail();
+      const snapshot = snapshotFor(sessionId);
+      if (expiredSessionId === sessionId
+        || !snapshot || (!snapshot.trail.length && !snapshot.heat.size && !snapshot.turnActive)) {
         clearPresentation(rail);
         return;
       }
-      if (!snapshot || (!snapshot.trail.length && !snapshot.heat.size && !snapshot.turnActive)) {
-        if (rail) rail.classList.add('hidden');
-        view?.applyActivity?.({ heat: new Map(), editedIds: new Set(), trail: [], faded: false });
-        applyBucketHeat([]);
-        if (lastTurnActive) { lastTurnActive = false; onTurnActiveChange(false); }
-        return;
-      }
       const faded = opts && opts.faded === true;
-      const resolve = buildResolver();
+      const resolve = resolverFor();
 
       // Resolve heat + edited to node ids; collect unresolved for buckets.
       const heatById = new Map();
@@ -277,16 +328,10 @@
           footEl.textContent = outside ? jt('ide.map.activity.countsWithOutside', '{touched} touched · {edited} edited · {outside} outside workspace', c) : jt('ide.map.activity.counts', '{touched} touched · {edited} edited', c);
         }
       }
-
-      if (snapshot.turnActive !== lastTurnActive) {
-        lastTurnActive = snapshot.turnActive;
-        onTurnActiveChange(snapshot.turnActive);
-        if (!snapshot.turnActive) scheduleTurnEndChoreo(sessionId);
-        else clearTimersPending();
-      }
     }
 
-    // Re-apply after a view re-render (renderAtlas wipes classes/overlay).
+    // Re-apply after a view re-render (renderAtlas wipes classes/overlay),
+    // a session switch, or the map stage becoming visible.
     function refresh() {
       paint();
     }
@@ -302,6 +347,8 @@
       if (disposed) return;
       disposed = true;
       clearTimersPending();
+      if (frameId != null) cancelFrame(frameId);
+      frameId = null;
       if (typeof unsubscribe === 'function') {
         try { unsubscribe(); } catch (_error) { /* already gone */ }
         unsubscribe = null;
@@ -317,11 +364,12 @@
     }
 
     if (bus && typeof bus.subscribe === 'function') {
-      unsubscribe = bus.subscribe((sessionId) => {
-        if (String(sessionId || '') === String(getSessionId() || '')) {
-          if (expiredSessionId === String(sessionId || '')) expiredSessionId = '';
-          paint();
-        }
+      unsubscribe = bus.subscribe((changedSessionId) => {
+        const sessionId = String(getSessionId() || '');
+        const ownEvent = String(changedSessionId || '') === sessionId;
+        if (ownEvent && expiredSessionId === sessionId) expiredSessionId = '';
+        syncTurnState(sessionId);
+        if (ownEvent || sessionId !== paintedSessionId) schedulePaint();
       });
     }
 
@@ -329,7 +377,7 @@
       refresh,
       setVisible,
       dispose,
-      _internals: { paint, buildResolver, ROW_CAP, FADE_AFTER_MS, CLEAR_AFTER_MS },
+      _internals: { buildResolver },
     };
   }
 

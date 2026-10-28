@@ -15,6 +15,7 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_SUBAGENT_INVALID_GRANTS,
     CMP_TOOL_SUBAGENT_INVALID_PROMPT,
 )
+from sidecar.ai.routing.delegation_contract import MAX_DELEGATE_ANSWER_CHARS
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.sanitization import sanitize_tool_output
 
@@ -23,11 +24,11 @@ DELEGATE_EXECUTION_FAILURE_CODE = CMP_TOOL_EXECUTION_FAILED
 MAX_DELEGATE_TASKS = 3
 MAX_DELEGATE_TASK_BYTES = 16_000
 MAX_DELEGATE_TOTAL_BYTES = 32_000
-MAX_DELEGATE_ANSWER_CHARS = 1_000
 MAX_DELEGATE_EVIDENCE_ITEMS = 3
 MAX_DELEGATE_EVIDENCE_FIELD_CHARS = 300
 MAX_DELEGATE_OUTPUT_CHARS = 8_000
 MAX_DELEGATE_LABEL_CHARS = 60
+MAX_DELEGATE_PROMPT_CHARS = 2_000
 MAX_DELEGATE_ROUTE_CHARS = 160
 CANONICAL_DELEGATE_EXAMPLE = {"tasks": ["Inspect the repository and identify its test command"]}
 CANONICAL_DELEGATE_EXAMPLE_JSON = json.dumps(
@@ -40,6 +41,13 @@ _TOP_LEVEL_ALIASES = frozenset({"tasks", "task", "prompt"})
 _SUPPORTED_EVIDENCE_TOOLS = frozenset({"read_file", "grep_search", "git_status"})
 _GREP_LINE_RE = re.compile(r"^(?P<path>.+?):(?P<line>[1-9][0-9]*):(?P<quote>.*)$")
 _WHITESPACE_RE = re.compile(r"\s+")
+_SENTENCE_END_RE = re.compile(r"[.?!] ")
+# A head shorter than this ("1.", "Dr.", "Check e.g.") is a list marker or an
+# abbreviation, not a sentence: the label keeps reading past it.
+_MIN_LABEL_SENTENCE_CHARS = 12
+_LABEL_ABBREVIATIONS = frozenset({"e.g.", "i.e.", "etc.", "vs.", "cf.", "dr.", "mr.", "ms.", "no."})
+_SPACE_RUN_RE = re.compile(r"[ \t]+")
+_BLANK_RUN_RE = re.compile(r"\n{3,}")
 # Bidi overrides, zero-width and C1 controls survive the tool-output
 # sanitizer; in a UI label or step line they only spoof what the row says.
 _FORMAT_CONTROL_RE = re.compile(
@@ -156,7 +164,7 @@ def strip_format_controls(value: str) -> str:
 
 
 def delegate_task_label(task: DelegateTask) -> str:
-    """Short human label from the first non-empty prompt line, else ``Task N``."""
+    """Short UI-only title: the first sentence of the first prompt line, else ``Task N``."""
 
     fallback = f"Task {task.ordinal}"
     first_line = next(
@@ -165,9 +173,30 @@ def delegate_task_label(task: DelegateTask) -> str:
     )
     plain = strip_format_controls(_safe_text(first_line, max_chars=200))
     text = _WHITESPACE_RE.sub(" ", plain).strip()
+    for sentence_end in _SENTENCE_END_RE.finditer(text):
+        head = text[: sentence_end.end() - 1]
+        last_word = head.rsplit(" ", 1)[-1].lower()
+        if len(head) >= _MIN_LABEL_SENTENCE_CHARS and last_word not in _LABEL_ABBREVIATIONS:
+            text = head
+            break
+    text = text.rstrip(":").rstrip()
     if not text:
         return fallback
-    return _truncate_with_ellipsis(text, MAX_DELEGATE_LABEL_CHARS)
+    if len(text) <= MAX_DELEGATE_LABEL_CHARS:
+        return text
+    window = text[:MAX_DELEGATE_LABEL_CHARS]
+    boundary = window.rfind(" ")
+    cut = window[:boundary] if boundary > 0 else text[: MAX_DELEGATE_LABEL_CHARS - 1]
+    return f"{cut.rstrip()}\u2026"
+
+
+def delegate_task_prompt(task: DelegateTask) -> str:
+    """Sanitized full task prompt for the drill-in (UI-only), line breaks kept."""
+
+    plain = strip_format_controls(_safe_text(task.prompt, max_chars=MAX_DELEGATE_TASK_BYTES))
+    lines = (_SPACE_RUN_RE.sub(" ", line).strip() for line in plain.split("\n"))
+    text = _BLANK_RUN_RE.sub("\n\n", "\n".join(lines)).strip()
+    return _truncate_with_ellipsis(text, MAX_DELEGATE_PROMPT_CHARS).rstrip()
 
 
 def build_compact_delegate_settlement(
@@ -358,8 +387,12 @@ def _compact_result(report: dict[str, Any]) -> dict[str, Any]:
     status = (
         raw_status if raw_status in {"completed", "partial", "failed", "cancelled"} else "failed"
     )
+    # Prefer the child's full answer; summary is the monitor's 1_000-char card text.
     answer = _truncate_with_ellipsis(
-        _safe_text(report.get("summary"), max_chars=MAX_DELEGATE_ANSWER_CHARS * 2),
+        _safe_text(
+            report.get("answer") or report.get("summary"),
+            max_chars=MAX_DELEGATE_ANSWER_CHARS * 2,
+        ),
         MAX_DELEGATE_ANSWER_CHARS,
     )
     evidence: list[dict[str, Any]] = []
@@ -515,6 +548,7 @@ __all__ = [
     "DelegateTask",
     "build_compact_delegate_settlement",
     "delegate_task_label",
+    "delegate_task_prompt",
     "extract_tool_observed_evidence",
     "strip_format_controls",
     "validate_delegate_arguments",

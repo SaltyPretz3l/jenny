@@ -2,7 +2,8 @@
 
 Checkpoints self-lock through a per-thread reentrant registry. Dedupe uses
 content identity, metadata stores relative versioned snapshot names, and
-retention enforces count, age, and byte quotas with metadata reconciliation.
+retention enforces count and byte quotas (active-use age only orders
+eviction) with metadata reconciliation and orphaned metadata/lock cleanup.
 """
 
 from __future__ import annotations
@@ -13,17 +14,21 @@ import logging
 import os
 import stat as stat_module
 import threading
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, Iterator, Protocol
+from typing import Any, Callable, Iterable, Iterator
 
 from sidecar.ai.error_codes import CMP_TOOL_CAP_EXCEEDED, CMP_TOOL_IO_FAILED
+from sidecar.ai.tools.builtins.trash_maintenance import ActiveUseAgeSource
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace_store import (
     MAX_STORE_LIST_ENTRIES,
     GuardedWorkspaceStore,
+    StoreEntry,
+    StoreRead,
     StoreRef,
     WorkspaceStoreKind,
 )
@@ -35,12 +40,15 @@ BACKUP_ROOT = Path(".jenny") / "backups"
 BACKUP_HASH_LENGTH = 16
 CONTENT_TOKEN_HASH_LENGTH = 32
 MAX_BACKUP_SNAPSHOTS = 100
-MAX_BACKUP_AGE_DAYS = 30
 MAX_BACKUP_TOTAL_BYTES = 256 * 1024 * 1024
 MAX_CHECKPOINT_VERSION = 1_000_000_000
 MAX_CHECKPOINT_SOURCE_BYTES = 64 * 1024 * 1024
 CHECKPOINT_LOCK_TIMEOUT_SECONDS = 15.0
 _RECONCILE_LOCK_TIMEOUT_SECONDS = 2.0
+# A lock file touched this recently may belong to a checkpoint that is about
+# to write its first snapshot; the orphan sweep leaves it for a later pass.
+ORPHAN_LOCK_MIN_AGE_NS = 60 * 1_000_000_000
+_MAX_STALE_METADATA_PER_PASS = 32
 
 @dataclass(frozen=True)
 class CheckpointInfo:
@@ -61,17 +69,20 @@ class CheckpointPaths:
     lock_ref: StoreRef
 
 
-class ActiveUseAgeSource(Protocol):
-    """WO-26 seam: active-use (not wall-clock) age eligibility for one snapshot.
+@dataclass(frozen=True)
+class _ContentDigest:
+    """One sha256 pass over checkpoint content, shared by every consumer."""
 
-    Structural, mirroring ``trash_maintenance.ActiveUseAgeSource`` -- kept as
-    a separate protocol (not imported from that sibling module) so this file
-    and ``trash_maintenance.py`` stay free of a cross-import; both are
-    satisfied by the same concrete tracker in
-    ``sidecar.ai.tools.workspace_retention``.
-    """
+    byte_size: int
+    sha256: str
 
-    def is_age_eligible(self, entry_name: str, created_at_ns: int) -> bool: ...
+    @classmethod
+    def of(cls, data: bytes) -> _ContentDigest:
+        return cls(byte_size=len(data), sha256=hashlib.sha256(data).hexdigest())
+
+    @property
+    def content_token(self) -> str:
+        return f"{self.byte_size}:{self.sha256[:CONTENT_TOKEN_HASH_LENGTH]}"
 
 
 def checkpoint_paths_for(target_path: Path, workspace_root: Path) -> CheckpointPaths:
@@ -157,8 +168,19 @@ def checkpoint_store_lock_for(
 # ── checkpoint creation ──────────────────────────────────────────────────────
 
 
-def plan_checkpoint(target_path: Path, workspace_root: Path) -> CheckpointInfo:
-    """Resolve the exact recovery object without creating it."""
+def plan_checkpoint(
+    target_path: Path,
+    workspace_root: Path,
+    *,
+    data: bytes | None = None,
+) -> CheckpointInfo:
+    """Resolve the exact recovery object without creating it.
+
+    ``data`` lets a caller that already holds the file's current bytes (for
+    example ``existing_state.raw_bytes``) skip a second read. It only shapes
+    the plan: ``materialize_checkpoint_plan`` re-reads the file and refuses
+    when the on-disk content no longer matches the planned identity.
+    """
     if not target_path.exists():
         return CheckpointInfo(created=False)
     store = GuardedWorkspaceStore(workspace_root)
@@ -166,33 +188,36 @@ def plan_checkpoint(target_path: Path, workspace_root: Path) -> CheckpointInfo:
     with _reentrant_checkpoint_lock(
         store, paths, timeout_seconds=CHECKPOINT_LOCK_TIMEOUT_SECONDS
     ):
-        try:
-            source = store.read_workspace_source(
-                target_path, max_bytes=MAX_CHECKPOINT_SOURCE_BYTES
-            )
-        except ToolExecutionFailure as error:
-            raise ToolExecutionFailure(
-                code=error.code,
-                message=f"failed to read file before checkpoint: {error.message}",
-                retryable=error.retryable,
-            ) from error
+        if data is None or len(data) > MAX_CHECKPOINT_SOURCE_BYTES:
+            data = _read_checkpoint_source(store, target_path).data
         metadata = _load_metadata(store, paths.metadata_ref)
-        content_token = _content_token(source.data)
-        if _should_skip_checkpoint(store, metadata, content_token):
+        digest = _ContentDigest.of(data)
+        if _should_skip_checkpoint(store, metadata, digest.content_token):
             last_snapshot = metadata["last_snapshot"]
             return _checkpoint_info(
                 snapshot_name=str(last_snapshot["snapshot_name"]),
                 version=int(last_snapshot["version"]),
-                data=source.data,
+                digest=digest,
                 created=False,
             )
         version = _next_checkpoint_version(store, paths, metadata)
         return _checkpoint_info(
             snapshot_name=f"{paths.file_hash}@v{version}.bak",
             version=version,
-            data=source.data,
+            digest=digest,
             created=True,
         )
+
+
+def _read_checkpoint_source(store: GuardedWorkspaceStore, target_path: Path) -> StoreRead:
+    try:
+        return store.read_workspace_source(target_path, max_bytes=MAX_CHECKPOINT_SOURCE_BYTES)
+    except ToolExecutionFailure as error:
+        raise ToolExecutionFailure(
+            code=error.code,
+            message=f"failed to read file before checkpoint: {error.message}",
+            retryable=error.retryable,
+        ) from error
 
 
 def checkpoint_matches_plan(actual: CheckpointInfo, planned: CheckpointInfo) -> bool:
@@ -238,16 +263,8 @@ def create_checkpoint(
     with _reentrant_checkpoint_lock(
         store, paths, timeout_seconds=CHECKPOINT_LOCK_TIMEOUT_SECONDS
     ):
-        try:
-            source = store.read_workspace_source(
-                target_path, max_bytes=MAX_CHECKPOINT_SOURCE_BYTES
-            )
-        except ToolExecutionFailure as error:
-            raise ToolExecutionFailure(
-                code=error.code,
-                message=f"failed to read file before checkpoint: {error.message}",
-                retryable=error.retryable,
-            ) from error
+        # Always the on-disk bytes: the snapshot must be what the file holds.
+        source = _read_checkpoint_source(store, target_path)
         return _create_checkpoint_locked(
             store=store,
             paths=paths,
@@ -293,8 +310,8 @@ def _create_checkpoint_locked(  # noqa: PLR0913 - explicit checkpoint controls.
     apply_retention: bool = True,
 ) -> CheckpointInfo:
     metadata = _load_metadata(store, paths.metadata_ref)
-    content_token = _content_token(data)
-    if _should_skip_checkpoint(store, metadata, content_token):
+    digest = _ContentDigest.of(data)
+    if _should_skip_checkpoint(store, metadata, digest.content_token):
         log_event(
             logger,
             logging.DEBUG,
@@ -308,7 +325,7 @@ def _create_checkpoint_locked(  # noqa: PLR0913 - explicit checkpoint controls.
         return _checkpoint_info(
             snapshot_name=str(last_snapshot["snapshot_name"]),
             version=int(last_snapshot["version"]),
-            data=data,
+            digest=digest,
             created=False,
         )
 
@@ -337,17 +354,22 @@ def _create_checkpoint_locked(  # noqa: PLR0913 - explicit checkpoint controls.
         paths=paths,
         version=version,
         snapshot_name=snapshot_name,
-        content_token=content_token,
         source_stat=source_stat,
-        data=data,
+        digest=digest,
     )
     store.write_json_atomic(paths.metadata_ref, payload)
     if apply_retention:
-        _apply_backup_retention(
-            store,
-            active_file_hash=paths.file_hash,
-            is_object_pinned=is_object_pinned,
-        )
+        # Best-effort: the snapshot and its metadata are already durable, so
+        # a retention failure (for example an over-cap listing) must never
+        # turn this checkpoint, and the write it protects, into a failure.
+        try:
+            _apply_backup_retention(
+                store,
+                active_file_hash=paths.file_hash,
+                is_object_pinned=is_object_pinned,
+            )
+        except ToolExecutionFailure as error:
+            _log_evict_failed("checkpoint-retention", type(error).__name__)
     log_event(
         logger,
         logging.DEBUG,
@@ -360,13 +382,13 @@ def _create_checkpoint_locked(  # noqa: PLR0913 - explicit checkpoint controls.
     return _checkpoint_info(
         snapshot_name=snapshot_name,
         version=version,
-        data=data,
+        digest=digest,
         created=True,
     )
 
 
 def _checkpoint_info(
-    *, snapshot_name: str, version: int, data: bytes, created: bool
+    *, snapshot_name: str, version: int, digest: _ContentDigest, created: bool
 ) -> CheckpointInfo:
     relative_path = f"{BACKUP_ROOT.as_posix()}/{snapshot_name}"
     return CheckpointInfo(
@@ -375,27 +397,21 @@ def _checkpoint_info(
         display_path=relative_path,
         object_id=f"backup:{snapshot_name}",
         workspace_relative_path=relative_path,
-        byte_size=len(data),
-        sha256=hashlib.sha256(data).hexdigest(),
+        byte_size=digest.byte_size,
+        sha256=digest.sha256,
     )
 
 
 # ── metadata ─────────────────────────────────────────────────────────────────
 
 
-def _content_token(data: bytes) -> str:
-    digest = hashlib.sha256(data).hexdigest()[:CONTENT_TOKEN_HASH_LENGTH]
-    return f"{len(data)}:{digest}"
-
-
-def _checkpoint_payload(  # noqa: PLR0913 - complete persisted snapshot identity.
+def _checkpoint_payload(
     *,
     paths: CheckpointPaths,
     version: int,
     snapshot_name: str,
-    content_token: str,
     source_stat: os.stat_result,
-    data: bytes,
+    digest: _ContentDigest,
 ) -> dict[str, object]:
     # Store only relative, versioned snapshot identity so a relocated workspace
     # root keeps resolving its own history.
@@ -407,11 +423,11 @@ def _checkpoint_payload(  # noqa: PLR0913 - complete persisted snapshot identity
         "last_snapshot": {
             "version": version,
             "snapshot_name": snapshot_name,
-            "content_token": content_token,
+            "content_token": digest.content_token,
             "source_mtime_ns": source_stat.st_mtime_ns,
             "source_size": source_stat.st_size,
-            "byte_size": len(data),
-            "sha256": hashlib.sha256(data).hexdigest(),
+            "byte_size": digest.byte_size,
+            "sha256": digest.sha256,
             "created_at": datetime.now(UTC).isoformat(),
         },
     }
@@ -500,18 +516,12 @@ def _next_checkpoint_version(
     metadata: dict[str, Any],
 ) -> int:
     latest_version = metadata.get("latest_version")
-    highest = (
-        latest_version
-        if type(latest_version) is int and 0 <= latest_version <= MAX_CHECKPOINT_VERSION
-        else 0
-    )
-    for candidate in store.list_entries(store.resolve(WorkspaceStoreKind.BACKUPS)):
-        if not candidate.name.startswith(f"{paths.file_hash}@v") or not candidate.name.endswith(
-            ".bak"
-        ):
-            continue
-        version = _parse_snapshot_version(candidate.name)
-        highest = max(highest, version)
+    if type(latest_version) is int and 0 <= latest_version <= MAX_CHECKPOINT_VERSION:
+        # Trusted metadata: no directory listing on the hot path. The exists
+        # loop below still steps past a snapshot whose metadata write was lost.
+        highest = latest_version
+    else:
+        highest = _highest_listed_version(store, paths.file_hash)
     next_version = highest + 1
     while store.exists(
         store.resolve(
@@ -521,6 +531,25 @@ def _next_checkpoint_version(
     ):
         next_version += 1
     return next_version
+
+
+def _highest_listed_version(store: GuardedWorkspaceStore, file_hash: str) -> int:
+    """Highest snapshot version on disk, for missing or corrupt metadata."""
+    try:
+        candidates = store.list_entries(store.resolve(WorkspaceStoreKind.BACKUPS))
+    except ToolExecutionFailure as error:
+        if error.code != CMP_TOOL_CAP_EXCEEDED:
+            raise
+        return 0  # Over-cap directory: the caller's exists loop still finds a free name.
+    prefix = f"{file_hash}@v"
+    return max(
+        (
+            _parse_snapshot_version(candidate.name)
+            for candidate in candidates
+            if candidate.name.startswith(prefix) and candidate.name.endswith(".bak")
+        ),
+        default=0,
+    )
 
 
 def _parse_snapshot_version(candidate_name: str) -> int:
@@ -535,7 +564,7 @@ def _parse_snapshot_version(candidate_name: str) -> int:
     return version if version <= MAX_CHECKPOINT_VERSION else 0
 
 
-# ── retention (count + age + bytes) and metadata reconcile ──────────────────
+# ── retention (count + bytes) and metadata reconcile ─────────────────────────
 
 
 def apply_backup_retention_best_effort(
@@ -558,31 +587,32 @@ def apply_backup_retention_best_effort(
 def _apply_backup_retention(
     store: GuardedWorkspaceStore,
     *,
-    now_ns: int | None = None,
     active_file_hash: str | None = None,
     is_object_pinned: Callable[[str], bool] | None = None,
     active_use_age_source: ActiveUseAgeSource | None = None,
 ) -> None:
     """Evict under hard pressure, preferring oldest active-age-eligible snapshots.
 
-    Quotas are read from module constants at call time (test-injectable), the
-    clock is injectable, and every eviction is best-effort. Evicted snapshot
-    names are reconciled against their metadata so no ``last_snapshot`` keeps
-    pointing at a snapshot that no longer exists.
+    Quotas are read from module constants at call time (test-injectable) and
+    every eviction is best-effort. Evicted snapshot names are reconciled
+    against their metadata so no ``last_snapshot`` keeps pointing at a
+    snapshot that no longer exists; a file with no snapshot left loses its
+    metadata, and lock files with neither metadata nor a snapshot are swept,
+    so the backups directory stays bounded by the snapshot quota.
 
-    ``now_ns`` remains injectable for compatibility and ordering tests, but it
-    never makes a snapshot eligible. Eligibility comes from the persisted
-    active-use source and controls priority; hard quotas remain unconditional.
+    Wall-clock age never makes a snapshot eligible. Eligibility comes from the
+    persisted active-use source and controls priority; the count and byte
+    quotas remain unconditional.
     """
-    del now_ns
     source = active_use_age_source or _default_active_use_source(store)
+    listing = store.list_entries(
+        store.resolve(WorkspaceStoreKind.BACKUPS),
+        max_entries=MAX_STORE_LIST_ENTRIES,
+    )
     snapshots = sorted(
         (
             candidate
-            for candidate in store.list_entries(
-                store.resolve(WorkspaceStoreKind.BACKUPS),
-                max_entries=MAX_STORE_LIST_ENTRIES,
-            )
+            for candidate in listing
             if "@v" in candidate.name and candidate.name.endswith(".bak")
         ),
         key=lambda candidate: (candidate.mtime_ns, candidate.name),
@@ -616,10 +646,35 @@ def _apply_backup_retention(
     flush = getattr(source, "flush", None)
     if callable(flush):
         flush()
-    if evicted:
-        _reconcile_metadata_after_eviction(
-            store, evicted, active_file_hash=active_file_hash
-        )
+    evicted_set = set(evicted)
+    snapshot_hashes = {
+        _snapshot_file_hash(entry.name) for entry in snapshots if entry.name not in evicted_set
+    }
+    evicted_hashes = {_snapshot_file_hash(name) for name in evicted}
+    metadata_hashes = {
+        entry.name[: -len(".json")] for entry in listing if entry.name.endswith(".json")
+    }
+    # Metadata left without any snapshot by an earlier pass is cleaned a
+    # bounded batch at a time so one write never pays for a large backlog.
+    stale_metadata = sorted(metadata_hashes - snapshot_hashes - evicted_hashes)[
+        :_MAX_STALE_METADATA_PER_PASS
+    ]
+    deleted_metadata = _reconcile_metadata_after_eviction(
+        store,
+        sorted(evicted_hashes | set(stale_metadata)),
+        active_file_hash=active_file_hash,
+        snapshot_hashes=snapshot_hashes,
+    )
+    _sweep_orphaned_locks(
+        store,
+        listing,
+        live_hashes=snapshot_hashes | (metadata_hashes - deleted_metadata),
+        just_released=deleted_metadata,
+    )
+
+
+def _snapshot_file_hash(snapshot_name: str) -> str:
+    return snapshot_name.split("@v", 1)[0]
 
 
 def _default_active_use_source(store: GuardedWorkspaceStore) -> ActiveUseAgeSource:
@@ -630,18 +685,25 @@ def _default_active_use_source(store: GuardedWorkspaceStore) -> ActiveUseAgeSour
 
 def _reconcile_metadata_after_eviction(
     store: GuardedWorkspaceStore,
-    evicted_names: list[str],
+    file_hashes: list[str],
     *,
     active_file_hash: str | None,
-) -> None:
-    for file_hash in sorted({name.split("@v", 1)[0] for name in evicted_names}):
+    snapshot_hashes: set[str],
+) -> set[str]:
+    """Trim or delete metadata for the given files; return hashes whose metadata went."""
+    deleted: set[str] = set()
+    for file_hash in file_hashes:
         try:
             metadata_ref = store.resolve(WorkspaceStoreKind.BACKUPS, f"{file_hash}.json")
         except ToolExecutionFailure:
             continue
+        has_snapshots = file_hash in snapshot_hashes
         if file_hash == active_file_hash:
             # Our own lock is already held (re-entrant); reconcile directly.
-            _trim_orphaned_last_snapshot(store, metadata_ref)
+            if _trim_orphaned_last_snapshot(
+                store, metadata_ref, has_remaining_snapshots=has_snapshots
+            ):
+                deleted.add(file_hash)
             continue
         # Another file's metadata: take ITS lock (short timeout, skip on
         # contention — the next eviction pass retries) so a concurrent
@@ -656,25 +718,102 @@ def _reconcile_metadata_after_eviction(
             with _reentrant_checkpoint_lock(
                 store, paths, timeout_seconds=_RECONCILE_LOCK_TIMEOUT_SECONDS
             ):
-                _trim_orphaned_last_snapshot(store, metadata_ref)
+                if _trim_orphaned_last_snapshot(
+                    store, metadata_ref, has_remaining_snapshots=has_snapshots
+                ):
+                    deleted.add(file_hash)
         except ToolExecutionFailure:
             continue
+    return deleted
 
 
 def _trim_orphaned_last_snapshot(
     store: GuardedWorkspaceStore,
     metadata_ref: StoreRef,
-) -> None:
+    *,
+    has_remaining_snapshots: bool = True,
+) -> bool:
+    """Drop a dangling ``last_snapshot``; return True when the metadata was deleted.
+
+    Runs under the file's checkpoint lock. A ``last_snapshot`` that still
+    exists means a checkpoint landed after the retention listing, so the
+    metadata stays. With no snapshot of the file left, the metadata only
+    carries a version counter and is deleted so ``.jenny/backups`` does not
+    grow one file per path ever edited.
+    """
     metadata = _load_metadata(store, metadata_ref)
     last_snapshot = metadata.get("last_snapshot")
+    if isinstance(last_snapshot, dict):
+        snapshot_ref = _snapshot_ref_from_metadata(store, last_snapshot)
+        if snapshot_ref is not None and store.exists(snapshot_ref):
+            return False
+    if not has_remaining_snapshots:
+        try:
+            return store.delete(metadata_ref, recursive=False).removed
+        except ToolExecutionFailure as error:
+            _log_evict_failed(metadata_ref.parts[-1], type(error).__name__)
+            return False
     if not isinstance(last_snapshot, dict):
-        return
-    snapshot_ref = _snapshot_ref_from_metadata(store, last_snapshot)
-    if snapshot_ref is not None and store.exists(snapshot_ref):
-        return
+        return False
     metadata.pop("last_snapshot", None)
     metadata["format"] = 2
     store.write_json_atomic(metadata_ref, metadata)
+    return False
+
+
+def _sweep_orphaned_locks(
+    store: GuardedWorkspaceStore,
+    listing: Iterable[StoreEntry],
+    *,
+    live_hashes: set[str],
+    just_released: set[str],
+) -> None:
+    """Best-effort removal of lock files whose hash has no metadata or snapshot.
+
+    ``just_released`` hashes had their metadata deleted under their own lock
+    in this pass, so the recent-use age guard (which taking that lock may
+    have refreshed) does not apply to them.
+    """
+    now_ns = time.time_ns()
+    held = _held_lock_keys()
+    for entry in listing:
+        file_hash, dot, suffix = entry.name.partition(".")
+        if (
+            suffix != "lock"
+            or not dot
+            or len(file_hash) != BACKUP_HASH_LENGTH
+            or any(char not in "0123456789abcdef" for char in file_hash)
+            or file_hash in live_hashes
+            or (store.cache_key, file_hash) in held
+        ):
+            continue
+        if file_hash not in just_released and now_ns - entry.mtime_ns < ORPHAN_LOCK_MIN_AGE_NS:
+            continue
+        _delete_orphaned_lock(store, file_hash, entry.ref)
+
+
+def _delete_orphaned_lock(store: GuardedWorkspaceStore, file_hash: str, lock_ref: StoreRef) -> None:
+    try:
+        paths = CheckpointPaths(
+            relative_path="",
+            file_hash=file_hash,
+            metadata_ref=store.resolve(WorkspaceStoreKind.BACKUPS, f"{file_hash}.json"),
+            lock_ref=lock_ref,
+        )
+        if os.name == "nt":
+            # Windows refuses to rename a file another handle holds open, so
+            # an unlocked delete can never pull a held lock from its owner.
+            if not store.exists(paths.metadata_ref):
+                store.delete(lock_ref, recursive=False)
+            return
+        # POSIX unlinks a held file freely: take the lock first (no wait). A
+        # waiter that later wins the unlinked inode fails file_lock's identity
+        # revalidation instead of sharing the critical section.
+        with _reentrant_checkpoint_lock(store, paths, timeout_seconds=0.0):
+            if not store.exists(paths.metadata_ref):
+                store.delete(lock_ref, recursive=False)
+    except ToolExecutionFailure:
+        return
 
 
 def _log_evict_failed(name: str, error_type: str) -> None:

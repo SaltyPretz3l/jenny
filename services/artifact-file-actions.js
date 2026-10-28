@@ -52,7 +52,7 @@ function createArtifactFileActions({
 
     const image = nativeImage.createFromPath(artifact.absolute_path);
     if (image.isEmpty()) return { ok: false, reason: 'image_unreadable' };
-    clipboard.writeImage(image);
+    await clipboard.writeImage(image);
     return { ok: true };
   }
 

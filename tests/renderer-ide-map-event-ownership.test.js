@@ -56,6 +56,10 @@ function domWithClasses() {
         <div id="plain">plain decoration</div>
       </div>
       <div id="overview" class="ide-map-overview"><div id="overviewChild"></div></div>
+      <div id="footer" class="ide-map-footer">
+        <div id="footerFindings" class="ide-map-findings"><button id="footerChip">hub</button></div>
+        <div id="footerPopover" class="ide-map-footer-popover"><button id="footerPopBtn">x</button></div>
+      </div>
       <div id="findings" class="ide-map-findings"><span id="findingsChild"></span></div>
       <div id="controls" class="ide-map-controls">
         <input id="filterInput" />
@@ -63,6 +67,9 @@ function domWithClasses() {
         <button id="genBtn">Generate</button>
       </div>
       <div id="rail" class="ide-map-activity-rail"><div id="railChild">activity feed</div></div>
+      <div id="lens" class="ide-map-components"><div id="lensChild"></div></div>
+      <div id="lensStatus" class="ide-components-status"></div>
+      <div id="lensBeside" class="ide-atlas-bucket-strip ide-components-beside"><span id="lensChip"></span></div>
       <div id="editable" contenteditable="true"></div>
       <div id="ariaBtn" role="button"></div>
     </div>
@@ -98,6 +105,21 @@ test('classifyMapEventTarget: panel surfaces classify by nearest ancestor, inclu
   assert.equal(classifyMapEventTarget(document.getElementById('findingsChild')), 'findings');
   assert.equal(classifyMapEventTarget(document.getElementById('railChild')), 'rail');
   assert.equal(classifyMapEventTarget(document.getElementById('rail')), 'rail');
+  for (const id of ['lens', 'lensChild', 'lensStatus', 'lensChip']) {
+    assert.equal(classifyMapEventTarget(document.getElementById(id)), 'components', `${id} belongs to the Components lens`);
+  }
+});
+
+test('classifyMapEventTarget: the footer popover classifies footer, adopted findings chips stay findings', () => {
+  const dom = domWithClasses();
+  const { document } = dom.window;
+  for (const id of ['footer', 'footerPopover', 'footerPopBtn']) {
+    assert.equal(classifyMapEventTarget(document.getElementById(id)), 'footer', `${id} belongs to the footer`);
+  }
+  for (const id of ['footerFindings', 'footerChip']) {
+    assert.equal(classifyMapEventTarget(document.getElementById(id)), 'findings', `${id} is an adopted findings element`);
+  }
+  assert.equal(ownsCanvasPointerEvent(document.getElementById('footerPopBtn')), false);
 });
 
 test('classifyMapEventTarget: interactive controls classify as control', () => {
@@ -122,6 +144,23 @@ test('classifyMapEventTarget: falls back to canvas for plain decoration + the ba
   assert.equal(classifyMapEventTarget(document.getElementById('viewport')), 'canvas');
 });
 
+test('classifyMapEventTarget: IDE chrome around the map (a role="tabpanel" stage) never makes the canvas a control', () => {
+  const dom = new JSDOM(`
+    <section role="tabpanel"><div role="tabpanel">
+      <div id="viewport" class="ide-map-viewport" role="application" tabindex="0">
+        <div id="district" data-map-district="src"><div id="districtChild"></div></div>
+        <button id="inner">Generate</button>
+      </div>
+    </div></section>
+  `);
+  const { document } = dom.window;
+  assert.equal(classifyMapEventTarget(document.getElementById('viewport')), 'canvas');
+  assert.equal(classifyMapEventTarget(document.getElementById('districtChild')), 'district');
+  assert.equal(classifyMapEventTarget(document.getElementById('inner')), 'control');
+  assert.equal(ownsCanvasPointerEvent(document.getElementById('viewport')), true);
+  assert.equal(ownsMapWheelZoom(document.getElementById('districtChild')), true);
+});
+
 test('classifyMapEventTarget: null/undefined/non-element targets are canvas, never throw', () => {
   assert.equal(classifyMapEventTarget(null), 'canvas');
   assert.equal(classifyMapEventTarget(undefined), 'canvas');
@@ -136,7 +175,7 @@ test('ownsCanvasPointerEvent: true for canvas + node + district (node drag is re
   for (const id of ['plain', 'node', 'district', 'districtChild']) {
     assert.equal(ownsCanvasPointerEvent(document.getElementById(id)), true, `${id} should still pan`);
   }
-  for (const id of ['districtButton', 'railChild', 'overviewChild', 'findingsChild', 'filterInput', 'editable']) {
+  for (const id of ['districtButton', 'railChild', 'overviewChild', 'findingsChild', 'filterInput', 'editable', 'lens', 'lensChild']) {
     assert.equal(ownsCanvasPointerEvent(document.getElementById(id)), false, `${id} must not own canvas pan`);
   }
 });
@@ -147,7 +186,7 @@ test('ownsMapKeyboardEvent: true for canvas + node + district, false for the rai
   for (const id of ['plain', 'node', 'district', 'districtChild']) {
     assert.equal(ownsMapKeyboardEvent(document.getElementById(id)), true, `${id} should still trigger map shortcuts`);
   }
-  for (const id of ['railChild', 'overviewChild', 'findingsChild', 'filterInput', 'editable']) {
+  for (const id of ['railChild', 'overviewChild', 'findingsChild', 'filterInput', 'editable', 'lens']) {
     assert.equal(ownsMapKeyboardEvent(document.getElementById(id)), false, `${id} must not trigger map shortcuts`);
   }
 });
@@ -158,7 +197,7 @@ test('ownsMapWheelZoom: true for canvas + node + district, false for the rail an
   for (const id of ['plain', 'node', 'district', 'districtChild']) {
     assert.equal(ownsMapWheelZoom(document.getElementById(id)), true, `${id} should still zoom`);
   }
-  for (const id of ['railChild', 'overviewChild', 'findingsChild', 'filterInput', 'editable']) {
+  for (const id of ['railChild', 'overviewChild', 'findingsChild', 'filterInput', 'editable', 'lensChild']) {
     assert.equal(ownsMapWheelZoom(document.getElementById(id)), false, `${id} must not zoom on wheel`);
   }
 });

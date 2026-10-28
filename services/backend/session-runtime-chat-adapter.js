@@ -21,6 +21,7 @@ const { buildAdmittedContinuationContext } = require('../session-runtime/continu
 const { hydrateRuntimeContinuation, pausedOutcome } = require('./runtime-continuation-resume');
 const { getManagedRuntimeController } = require('./chat-lifecycle-contracts');
 const { managedServerKindForModel } = require('./ninfer-load-path');
+const { resolveDefaultChatModel } = require('./backend-chat-model-resolution');
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
@@ -50,7 +51,7 @@ function selectedEngine(service, request) {
   const inferred = inferEngineTypeFromModel(model);
   // Cloud IDs identify their provider even while startup is on a fallback.
   // Ambiguous local model names retain the selected runtime and catalog hints.
-  return hinted || (['chatgpt', 'codex-cli'].includes(inferred) ? inferred : current);
+  return hinted || (['chatgpt', 'codex-cli', 'api-provider'].includes(inferred) ? inferred : current);
 }
 
 // One sidecar stack serves one model: a turn on another engine or model
@@ -128,7 +129,7 @@ class SessionRuntimeChatAdapter {
     copy.sessionId = sessionId;
     copy.attachments = attachments;
     const engineType = selectedEngine(this.service, copy);
-    const route = captureSessionRuntimeProviderRoute(this.service, { engineType });
+    const route = captureSessionRuntimeProviderRoute(this.service, { engineType, model: copy.runtimePreferredModel || null });
     const session = typeof this.service.sessionStore.getSessionSummary === 'function'
       ? this.service.sessionStore.getSessionSummary(sessionId)
       : this.service.sessionStore.getSession(sessionId);
@@ -187,8 +188,10 @@ class SessionRuntimeChatAdapter {
       || request.failureRetry === true) throw new TypeError('runtime_new_send_required');
     this.assertSubmissionSession(request.sessionId);
     const authority = this.service.projectAuthority.captureSession(request.sessionId);
-    const selected = selectedEngine(this.service, { runtimePreferredModel: request.preferredModel });
-    const bindSelection = captureSessionRuntimeProviderSelection(this.service, selected);
+    // Default ('') routes to the same model prepareLocalEngineChatRequest pins.
+    const routeModel = String(request.preferredModel || '').trim() || resolveDefaultChatModel(this.service);
+    const selected = selectedEngine(this.service, { runtimePreferredModel: routeModel });
+    const bindSelection = captureSessionRuntimeProviderSelection(this.service, selected, routeModel || null);
     const normalized = await prepareLocalEngineChatRequest(this.service, cloneJson(request), options);
     normalized.runtimePreferredEngineType ||= selected;
     const selectedRoute = bindSelection(normalized.runtimePreferredEngineType);
@@ -249,7 +252,7 @@ class SessionRuntimeChatAdapter {
       throw error;
     }
     // A resume validates existing root state; it never creates a replacement budget.
-    const route = restoreSessionRuntimeProviderRoute(this.service, input.route);
+    const route = restoreSessionRuntimeProviderRoute(this.service, input.route, request?.runtimePreferredModel);
     assertSessionRuntimeProviderRouteCurrent(this.service, route);
     assertChatTurnAdmissible(this.service, work.session_id, route);
     const copy = cloneJson(request);
@@ -364,7 +367,8 @@ class SessionRuntimeChatAdapter {
 
   resolveRoute(work) {
     const context = this.contexts.get(work.work_id);
-    return context?.route || restoreSessionRuntimeProviderRoute(this.service, work.input?.route);
+    return context?.route
+      || restoreSessionRuntimeProviderRoute(this.service, work.input?.route, work.input?.request?.runtimePreferredModel);
   }
 
   validateWork(work, route) {
@@ -403,9 +407,10 @@ class SessionRuntimeChatAdapter {
     if (!context) throw new Error('session_runtime_context_unavailable');
     if (context.kind !== 'checkpoint_resume') {
       const reserved = this.lanes.tryAcquireInference({ ownerId: work.work_id, route,
-        signal: context.cancellation?.signal });
+        sessionId: work.session_id, signal: context.cancellation?.signal });
       if (reserved.status !== 'granted') throw Object.assign(new Error(reserved.reason), {
-        code: reserved.reason, retryable: reserved.status === 'waiting',
+        code: reserved.reason, retryable: reserved.status === 'waiting', // F20: name the chat holding the model
+        blocking_session_id: reserved.blockers?.find(b => b.session_id && b.quarantined_at === null)?.session_id,
       });
       context.initialInferenceLease = reserved.lease;
       return true;

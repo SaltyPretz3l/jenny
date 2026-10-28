@@ -6,220 +6,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { JSDOM } = require('jsdom');
 
-const { createIdePdfPane, createPdfjsLoader } = require('../renderer/features/renderer-ide-pdf-host');
+const { createIdePdfPane } = require('../renderer/features/renderer-ide-pdf-host');
 const { createViewKeydownHandler } = require('../renderer/features/renderer-ide-commands');
-
-const FIXTURE_PATH = path.join(__dirname, 'fixtures', 'documents', 'text.pdf');
-
-test('the PDF viewer imports only after its core global is ready, and concurrent loads share work', async () => {
-  const imports = [];
-  const core = { GlobalWorkerOptions: {} };
-  let resolveCore;
-  const pendingCore = new Promise(resolve => { resolveCore = resolve; });
-  const load = createPdfjsLoader({
-    resolveUrl: value => `file:///app/${value}`,
-    importModule: url => {
-      imports.push(url);
-      return url.endsWith('/pdf.mjs') ? pendingCore : Promise.resolve({ PDFViewer: 'viewer' });
-    },
-  });
-  const first = load();
-  const second = load();
-  assert.equal(first, second);
-  assert.deepEqual(imports, ['file:///app/node_modules/pdfjs-dist/build/pdf.mjs']);
-  resolveCore(core);
-  const result = await first;
-  assert.equal(result.pdfjs, core);
-  assert.equal(result.viewer.PDFViewer, 'viewer');
-  assert.equal(imports.length, 2);
-  assert.equal(core.GlobalWorkerOptions.workerSrc, 'file:///app/node_modules/pdfjs-dist/build/pdf.worker.mjs');
-  assert.equal(await load(), result);
-});
-
-test('a transient core import failure allows the PDF loader to retry', async () => {
-  let calls = 0;
-  const load = createPdfjsLoader({
-    resolveUrl: value => value,
-    importModule: async url => {
-      if (++calls === 1) throw new Error('temporary load failure');
-      return url.endsWith('/pdf.mjs') ? { GlobalWorkerOptions: {} } : { PDFViewer: 'viewer' };
-    },
-  });
-  await assert.rejects(load(), /temporary load failure/);
-  assert.equal((await load()).viewer.PDFViewer, 'viewer');
-});
-
-class FakeEventBus {
-  constructor() {
-    this.listeners = new Map();
-    this.events = [];
-  }
-
-  on(name, listener) {
-    const listeners = this.listeners.get(name) || new Set();
-    listeners.add(listener);
-    this.listeners.set(name, listeners);
-  }
-
-  off(name, listener) {
-    this.listeners.get(name)?.delete(listener);
-  }
-
-  dispatch(name, detail) {
-    this.events.push({ name, detail });
-    for (const listener of this.listeners.get(name) || []) {
-      listener(detail || {});
-    }
-  }
-}
-
-class FakePDFLinkService {
-  constructor(options) {
-    this.options = options;
-    this.externalLinkTarget = null;
-  }
-
-  setDocument(document, baseUrl) {
-    this.document = document;
-    this.baseUrl = baseUrl;
-  }
-
-  setViewer(viewer) {
-    this.viewer = viewer;
-  }
-}
-
-class FakePDFFindController {
-  constructor(options) {
-    this.options = options;
-  }
-}
-
-class FakePDFViewer {
-  constructor(options) {
-    this.options = options;
-    this.currentPageNumber = 1;
-    this.currentScaleValue = 1;
-    this.annotationEditorMode = { mode: 0 };
-    this.cleanupCalls = 0;
-    FakePDFViewer.instances.push(this);
-  }
-
-  setDocument(document) {
-    this.document = document;
-    if (document) {
-      this.options.eventBus.dispatch('pagesinit', { source: this });
-    }
-  }
-
-  cleanup() {
-    this.cleanupCalls += 1;
-  }
-
-  update() {
-    this.updatedWhileVisible = !this.options.container.closest('.hidden');
-  }
-}
-FakePDFViewer.instances = [];
-
-function makeDocument(label = '') {
-  const storage = {
-    onSetModified: null,
-    onResetModified: null,
-    resetCalls: 0,
-    size: 0,
-    resetModified() {
-      this.resetCalls += 1;
-      this.onResetModified?.();
-    },
-  };
-  return {
-    label,
-    numPages: 2,
-    annotationStorage: storage,
-    destroyCalls: 0,
-    async saveDocument() {
-      return new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]);
-    },
-    destroy() {
-      this.destroyCalls += 1;
-    },
-  };
-}
-
-function makePdfjsHarness(options = {}) {
-  const params = [];
-  const tasks = [];
-  const documents = [];
-  let loadCount = 0;
-  FakePDFViewer.instances = [];
-  const pdfjs = {
-    AnnotationEditorType: { NONE: 0, FREETEXT: 3, HIGHLIGHT: 9, INK: 15 },
-    AnnotationMode: { ENABLE_FORMS: 2 },
-    getDocument(loadParams) {
-      params.push(loadParams);
-      const document = makeDocument(`doc-${loadCount}`);
-      if (options.annotationStorage) document.annotationStorage = options.annotationStorage;
-      documents.push(document);
-      const rejection = options.rejections?.[loadCount];
-      loadCount += 1;
-      const task = {
-        destroyCalls: 0,
-        promise: rejection ? Promise.reject(rejection) : Promise.resolve(document),
-        destroy() {
-          this.destroyCalls += 1;
-          document.destroy();
-        },
-      };
-      tasks.push(task);
-      return task;
-    },
-  };
-  const viewer = {
-    EventBus: FakeEventBus,
-    PDFLinkService: FakePDFLinkService,
-    PDFFindController: FakePDFFindController,
-    PDFViewer: FakePDFViewer,
-  };
-  return {
-    documents,
-    params,
-    pdfjs,
-    tasks,
-    viewer,
-    loadPdfjs: options.importError
-      ? async () => { throw options.importError; }
-      : async () => ({ pdfjs, viewer }),
-  };
-}
-
-function makePane(options = {}) {
-  const dom = new JSDOM('<!doctype html><body><div id="host"></div></body>', {
-    url: 'file:///D:/Projects/jenny/index.html',
-  });
-  const host = dom.window.document.getElementById('host');
-  const harness = options.harness || makePdfjsHarness();
-  const dirtyEvents = [];
-  let saveRequests = 0;
-  const pane = createIdePdfPane({
-    getHost: () => host,
-    loadPdfjs: harness.loadPdfjs,
-    onDirtyChange: (filePath, dirty) => dirtyEvents.push([filePath, dirty]),
-    onEdit: options.onEdit,
-    onSaveRequest: () => { saveRequests += 1; },
-  });
-  return { dom, host, harness, pane, dirtyEvents, get saveRequests() { return saveRequests; } };
-}
-
-async function loadFixture(env, filePath = 'docs/text.pdf') {
-  const bytes = fs.readFileSync(FIXTURE_PATH);
-  const result = await env.pane.load(filePath, {
-    base64: bytes.toString('base64'),
-    size: bytes.length,
-    mtimeMs: 123,
-  });
-  return { bytes, result };
-}
+const {
+  FIXTURE_PATH, FakePDFViewer, click, loadFixture, makePane, makePdfjsHarness,
+} = require('./helpers/ide-pdf-pane-harness');
 
 test('Ctrl+S in a focused FreeText editor is saved by the pane after pdf.js commits it', async (t) => {
   const order = [];
@@ -239,13 +30,6 @@ test('Ctrl+S in a focused FreeText editor is saved by the pane after pdf.js comm
   assert.equal(env.saveRequests, 1, 'the pane saves once, in the bubble phase after the commit');
   assert.equal(event.defaultPrevented, true);
 });
-
-function click(env, selector) {
-  const element = env.host.querySelector(selector);
-  assert.ok(element, `missing ${selector}`);
-  element.dispatchEvent(new env.dom.window.MouseEvent('click', { bubbles: true }));
-  return element;
-}
 
 test('load decodes exact bytes, uses hardened PDF.js options, and stays hidden until show', async (t) => {
   const env = makePane();
@@ -313,10 +97,12 @@ test('dirty transitions are deduplicated and markSaved resets annotation storage
   assert.equal(env.pane.isDirty('docs/text.pdf'), false);
 });
 
-test('exportBytes returns saved PDF bytes as base64 and unknown paths return null', async (t) => {
+test('exportBytes returns loaded bytes while storage is empty, saved bytes after edits, and null for unknown paths', async (t) => {
   const env = makePane();
   t.after(() => env.pane.dispose());
   await loadFixture(env);
+  assert.equal(await env.pane.exportBytes('docs/text.pdf'), 'JVBERg==', 'nothing stored: getData, no page walk');
+  env.harness.documents[0].annotationStorage.size = 1;
   assert.equal(await env.pane.exportBytes('docs/text.pdf'), 'JVBERi0=');
   assert.equal(await env.pane.exportBytes('missing.pdf'), null);
 });
@@ -392,7 +178,7 @@ test('Ctrl+S inside the pane requests save and prevents default', async (t) => {
   assert.equal(event.defaultPrevented, true);
 });
 
-test('load failures map to stable codes and reveal the error state', async (t) => {
+test('first-open failures map to stable codes and leave the active view uncovered', async (t) => {
   const cases = [
     { harness: makePdfjsHarness({ importError: new Error('no engine') }), code: 'document_engine_unavailable' },
     { harness: makePdfjsHarness({ rejections: [{ name: 'InvalidPDFException' }] }), code: 'document_corrupt' },
@@ -404,10 +190,12 @@ test('load failures map to stable codes and reveal the error state', async (t) =
     const result = await env.pane.load(`${item.code}.pdf`, { base64: 'JVBERg==', size: 4, mtimeMs: 1 });
     assert.equal(result.ok, false);
     assert.equal(result.code, item.code);
-    const error = env.host.querySelector('.ide-pdf-error');
-    assert.equal(error.classList.contains('hidden'), false);
+    // The lifecycle closes the failed tab and toasts; the pane must not
+    // cover whatever editor is active with a stale error panel.
+    assert.equal(env.host.querySelector('.ide-pdf-error').classList.contains('hidden'), true);
+    assert.equal(env.host.querySelector('.ide-pdf-pane').classList.contains('hidden'), true);
     if (item.code === 'document_unsupported') {
-      assert.match(result.message, /password-protected/i);
+      assert.match(result.message, /needs a password/i);
     }
   }
 });
@@ -438,7 +226,8 @@ test('toolbar inputs and buttons are emitted by inventory primitives', async (t)
   t.after(() => env.pane.dispose());
   await loadFixture(env);
 
-  const controls = [...env.host.querySelectorAll('button, input')];
+  // The sidebar, ask button and password prompt have their own suites.
+  const controls = [...env.host.querySelectorAll('.ide-pdf-toolbar button, .ide-pdf-toolbar input')];
   assert.ok(controls.length > 0);
   for (const control of controls) {
     if (control.tagName === 'BUTTON') {
@@ -596,4 +385,11 @@ test('viewer is built with a highlight palette so pdf.js can name highlight colo
     assert.match(name, /^[a-z]+$/);
     assert.match(color, /^#[0-9A-F]{6}$/i);
   }
+});
+
+test('viewer caps a page canvas at 16 megapixels instead of the pdf.js 32M default', async (t) => {
+  const env = makePane();
+  t.after(() => env.pane.dispose());
+  await loadFixture(env);
+  assert.equal(FakePDFViewer.instances[0].options.maxCanvasPixels, 16_777_216);
 });

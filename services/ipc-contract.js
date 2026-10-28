@@ -143,6 +143,19 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'cloudModels.chatgptExtendPending': invokeMethod('cloud-models:chatgpt-extend-pending'),
   'cloudModels.chatgptPendingLink': invokeMethod('cloud-models:chatgpt-pending-link'),
   'cloudModels.onChanged': subscribeMethod('cloud-models:changed'),
+  // apiProviders.*: Settings > Models user API-key providers (row 78). The key
+  // goes in through the write-only setKey and never comes back out.
+  'apiProviders.getState': invokeMethod('api-providers:get-state'),
+  'apiProviders.addInstance': invokeMethod('api-providers:add-instance'),
+  'apiProviders.removeInstance': invokeMethod('api-providers:remove-instance'),
+  'apiProviders.renameInstance': invokeMethod('api-providers:rename-instance'),
+  'apiProviders.setKey': invokeMethod('api-providers:set-key'),
+  'apiProviders.clearKey': invokeMethod('api-providers:clear-key'),
+  'apiProviders.discover': invokeMethod('api-providers:discover'),
+  'apiProviders.setModelEnabled': invokeMethod('api-providers:set-model-enabled'),
+  'apiProviders.setModelPin': invokeMethod('api-providers:set-model-pin'),
+  'apiProviders.acknowledgeNotice': invokeMethod('api-providers:acknowledge-notice'),
+  'apiProviders.onChanged': subscribeMethod('api-providers:changed'),
   // Desktop-only settled-history copy; main owns receipts and assets.
   'conversationTransfer.list': invokeMethod('conversation-transfer:list'),
   'conversationTransfer.preview': invokeMethod('conversation-transfer:preview'),
@@ -227,6 +240,8 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'workspaceGit.getLog': invokeMethod('workspace-git:get-log'),
   'workspaceGit.getBranches': invokeMethod('workspace-git:get-branches'),
   'workspaceGit.blameRange': invokeMethod('workspace-git:blame-range'),
+  // Row 82 X1: read-only check-ignore for explorer dimming.
+  'workspaceGit.checkIgnored': invokeMethod('workspace-git:check-ignored'),
   'workspaceGit.stage': invokeMethod('workspace-git:stage'),
   'workspaceGit.unstage': invokeMethod('workspace-git:unstage'),
   'workspaceGit.commit': invokeMethod('workspace-git:commit'),
@@ -234,10 +249,28 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'workspaceGit.checkout': invokeMethod('workspace-git:checkout'),
   'workspaceGit.stash': invokeMethod('workspace-git:stash'),
   'workspaceGit.undoLastCommit': invokeMethod('workspace-git:undo-last-commit'),
+  'workspaceGit.resolveDelete': invokeMethod('workspace-git:resolve-delete'),
+  // Row 82 P4 (G1/G2): index/commit reads, stash list, branch -d, apply --cached.
+  'workspaceGit.getFileAtIndex': invokeMethod('workspace-git:get-file-at-index'),
+  'workspaceGit.getFileAtCommit': invokeMethod('workspace-git:get-file-at-commit'),
+  'workspaceGit.getCommitFiles': invokeMethod('workspace-git:get-commit-files'),
+  'workspaceGit.listStashes': invokeMethod('workspace-git:list-stashes'),
+  'workspaceGit.getLastCommitMessage': invokeMethod('workspace-git:get-last-commit-message'),
+  'workspaceGit.deleteBranch': invokeMethod('workspace-git:delete-branch'),
+  'workspaceGit.applyPatch': invokeMethod('workspace-git:apply-patch'),
+  // Row 82 cleanup G2/G3: whole-file blame (read) and Discard All as one write.
+  'workspaceGit.blameFile': invokeMethod('workspace-git:blame-file'),
+  'workspaceGit.discardFiles': invokeMethod('workspace-git:discard-files'),
   'workspaceIde.getState': invokeMethod('workspace-ide:get-state'),
   'workspaceIde.updateSettings': invokeMethod('workspace-ide:update-settings'),
   'workspaceIde.updateState': invokeMethod('workspace-ide:update-state'),
+  // Row 82 E3 hot exit backups
+  'workspaceBackup.write': invokeMethod('workspace-backup:write'),
+  'workspaceBackup.remove': invokeMethod('workspace-backup:remove'),
+  'workspaceBackup.list': invokeMethod('workspace-backup:list'),
+  'workspaceBackup.read': invokeMethod('workspace-backup:read'),
   'workspacePty.spawn': invokeMethod('workspace-pty:spawn'),
+  'workspacePty.listProfiles': invokeMethod('workspace-pty:list-profiles'),
   'workspacePty.write': invokeMethod('workspace-pty:write'),
   'workspacePty.resize': invokeMethod('workspace-pty:resize'),
   'workspacePty.kill': invokeMethod('workspace-pty:kill'),
@@ -343,6 +376,11 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'updates.install': invokeMethod('updates:install'),
   'updates.skip': invokeMethod('updates:skip'),
   'updates.onChanged': subscribeMethod('updates:changed'),
+  // Opt-in "Install command-line tool" (services/cli-path-service.js). Main
+  // resolves the packaged resources/bin itself; the renderer never sends a path.
+  'cli.path.getState': invokeMethod('cli:path:get-state'),
+  'cli.path.install': invokeMethod('cli:path:install'),
+  'cli.path.remove': invokeMethod('cli:path:remove'),
   'personality.getState': invokeMethod('personality:get-state'),
   'personality.save': invokeMethod('personality:save'),
   'personality.clear': invokeMethod('personality:clear'),
@@ -416,6 +454,9 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   // service (sidecar), so the handler is registered with the auxiliary
   // backend-aware handlers, not the git-service-only workspaceGit block.
   'commit.generateMessage': invokeMethod('commit:generate-message'),
+  // /handoff: an off-transcript handoff note drafted by the local model from
+  // the chat's prepared history; resolves { ok, note | reason }, never throws.
+  'handoff.generateNote': invokeMethod('handoff:generate-note'),
   // ollamaTray.* namespace: owner-triggered remediation for the Ollama
   // tray-app conflict (detection lives in ollama-tray-conflict.js). Explicit-
   // click actions only — never automatic.
@@ -541,6 +582,21 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'chatMessages.revokeGrant': invokeMethod('chat-messages:revoke-grant'),
   'chatMessages.setReporting': invokeMethod('chat-messages:set-reporting'),
   'chatMessages.onChanged': subscribeMethod('chat-messages:changed'),
+  // primaryChat.*: the Jenny chat's launch permission, activity log, Pause and
+  // Reset / Forget controls (row 76). Closed `{schema_version:1, ...}` requests
+  // answered with `{schema_version:1, ok, ...}` or `{ok:false, code, reason}`;
+  // trusted-sender authorized in services/main/primary-chat-ipc-registration.js.
+  // onChanged carries only an invalidation; the renderer refetches. Desktop only.
+  'primaryChat.getState': invokeMethod('primary-chat:get-state'),
+  'primaryChat.activity': invokeMethod('primary-chat:activity'),
+  'primaryChat.permissions': invokeMethod('primary-chat:permissions'),
+  'primaryChat.pause': invokeMethod('primary-chat:pause'),
+  'primaryChat.resume': invokeMethod('primary-chat:resume'),
+  'primaryChat.grantLaunch': invokeMethod('primary-chat:grant-launch'),
+  'primaryChat.revokeLaunch': invokeMethod('primary-chat:revoke-launch'),
+  'primaryChat.reset': invokeMethod('primary-chat:reset'),
+  'primaryChat.forgetPreview': invokeMethod('primary-chat:forget-preview'),
+  'primaryChat.onChanged': subscribeMethod('primary-chat:changed'),
   // performance.*: live inference metrics, GPU-pressure warnings and their two
   // settings (row 59 checkpoint 6). Closed `{schema_version:1, ...}` requests answered
   // with `{ok, ...}` or `{ok:false, code, reason}`; trusted-sender authorized in
@@ -565,6 +621,21 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'pdfAddon.cancel': invokeMethod('pdf-addon:cancel'),
   'pdfAddon.remove': invokeMethod('pdf-addon:remove'),
   'pdfAddon.onChanged': subscribeMethod('pdf-addon:changed'),
+  // dictation.*: push-to-talk speech input (row 84). getState/setup/cancel/remove/
+  // onChanged manage the downloaded speech model (state: not_installed | downloading |
+  // verifying | ready | failed); prepare() warms the engine and transcribe(ArrayBuffer of
+  // 16 kHz mono PCM16, 0.2-120 s) answers { ok, text, durationMs, engineMs } or
+  // { ok: false, reason }. The renderer never sees a model path. Trusted-sender-authorized
+  // in services/main/dictation-ipc-registration.js; desktop only.
+  'dictation.getState': invokeMethod('dictation:get-state'),
+  'dictation.setup': invokeMethod('dictation:setup'),
+  'dictation.cancel': invokeMethod('dictation:cancel'),
+  'dictation.remove': invokeMethod('dictation:remove'),
+  'dictation.onChanged': subscribeMethod('dictation:changed'),
+  'dictation.prepare': invokeMethod('dictation:prepare'),
+  'dictation.transcribe': invokeMethod('dictation:transcribe'),
+  // Windows only: opens the OS microphone privacy page (fixed URL); { ok } or { ok: false, reason }.
+  'dictation.openMicrophoneSettings': invokeMethod('dictation:open-microphone-settings'),
   // imageEngine.*: native image generation in the Model Library. Install/remove
   // require confirmation; runtime and folder picks use main-owned dialogs.
   // Trusted-sender-authorized in services/main/image-engine-ipc-registration.js.

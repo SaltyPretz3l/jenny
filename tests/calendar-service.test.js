@@ -153,6 +153,20 @@ test('HOM-13 requested ranges re-expand the last good feed body and report uncov
   assert.deepEqual(after.uncoveredFeeds, []);
 });
 
+test('a bare-date range end covers its whole day while a date-time end stays exclusive', () => {
+  const { service } = createService();
+  service.createEvent({ title: 'Noon', start: '2026-09-15T12:00', end: '2026-09-15T13:00' });
+  service.createEvent({ title: 'Next', start: '2026-09-16T12:00', end: '2026-09-16T13:00' });
+  const sameDay = service.getState({ start: '2026-09-15', end: '2026-09-15' });
+  assert.equal(sameDay.windowStart, '2026-09-15T00:00');
+  assert.equal(sameDay.windowEnd, '2026-09-16T00:00');
+  assert.deepEqual(sameDay.instances.map((item) => item.title), ['Noon']);
+  const dateTimeEnd = service.getState({ start: '2026-09-15', end: '2026-09-16T00:00' });
+  assert.equal(dateTimeEnd.windowEnd, '2026-09-16T00:00');
+  assert.throws(() => service.getState({ start: '2026-09-15T09:00', end: '2026-09-15T09:00' }), /after its start/);
+  assert.deepEqual(service.getState({ start: '2026-09-15' }).instances.map((item) => item.title), ['Noon', 'Next']);
+});
+
 test('calendar start can defer only the initial refresh while keeping the poll timer', () => {
   const configService = createConfigStub();
   const intervals = [];
@@ -358,6 +372,22 @@ test('home_config_updated triggers a feed refresh and dropped feeds leave the ca
   configService.emit('changed', {}, { reason: 'home_config_updated' });
   await drainRefreshes();
   assert.equal(service.getState().instances.some((i) => i.source === 'feed'), false);
+  service.stop();
+});
+
+test('a home write that leaves the feed list unchanged does not refetch feeds', async () => {
+  let fetches = 0;
+  const home = { calendar: { feeds: [{ name: 'Team', url: 'https://cal.example/team.ics' }] } };
+  const { service, configService } = createService({
+    home,
+    fetchImpl: async () => { fetches += 1; return new Response(FEED_ICS); },
+  });
+  service.start({ deferInitialRefresh: true });
+  // A scratchpad autosave rewrites home with the same feeds.
+  configService.home = { ...home, scratchpad: { notes: [] } };
+  configService.emit('changed', {}, { reason: 'home_config_updated' });
+  assert.equal(service._refreshPromise, null);
+  assert.equal(fetches, 0);
   service.stop();
 });
 

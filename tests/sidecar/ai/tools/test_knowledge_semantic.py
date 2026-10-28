@@ -186,7 +186,7 @@ def test_scope_is_applied_before_the_top_results_are_chosen(
 def test_without_a_catalog_the_query_matches_its_words_and_says_so(notes: Path) -> None:
     payload = _search({"query": "Where do rockets climb?"})
     assert payload["note"] == NOTE_OFF
-    assert payload["pattern"] == "where|rockets|climb"
+    assert payload["pattern"] == "rockets|climb"
     assert [source["path"] for source in payload["sources"]] == ["notes/rockets.txt"]
     assert "passages" not in payload
 
@@ -273,12 +273,68 @@ def test_container_forwards_reader_settings_but_never_a_key(tmp_path: Path) -> N
 def test_query_terms_and_fusion_helpers() -> None:
     assert query_terms_pattern("a b ?") == r"a\ b\ \?"
     assert query_terms_pattern("Lease lease renewal") == "lease|renewal"
+    assert query_terms_pattern("how to configure the proxy") == "configure|proxy"
+    # Only short words and stopwords: keep the 3+ character words rather than nothing.
+    assert query_terms_pattern("how are you") == "how|are|you"
     fused = fuse_entries(
         [("r/a.md", "a"), ("r/b.md", "b")],
         [Passage("r/b.md", "L1", "passage b"), Passage("r/c.md", "L2", "passage c")],
     )
-    assert [path for path, _ in fused] == ["r/b.md", "r/a.md", "r/c.md"]
+    # Both lists beat either; a passage outranks an exact-word hit (weighted 0.5).
+    assert [path for path, _ in fused] == ["r/b.md", "r/c.md", "r/a.md"]
     assert dict(fused)["r/b.md"] == "passage b"
+
+
+def test_attach_identities_pins_the_first_passage_and_hashes_hashless_ones(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from sidecar.ai.tools.builtins.knowledge import semantic_fusion
+
+    monkeypatch.setattr(
+        semantic_fusion, "source_identity", lambda path, _guard: {"source_hash": f"lex:{path}"}
+    )
+    root = SimpleNamespace(guard=None)
+    sources: list[dict[str, object]] = [{"path": "r/a.md"}, {"path": "r/b.md"}]
+    passages = [
+        Passage("r/a.md", "L1", "first", source_hash="h1"),
+        Passage("r/a.md", "L9", "later", source_hash="h2"),
+        Passage("r/b.md", "L1", "hashless"),
+    ]
+    lexical = {"r/b.md": (root, Path("b.md"))}
+
+    truncated = semantic_fusion.attach_identities(sources, passages, lexical, limit=4)
+
+    assert truncated is False
+    assert sources[0]["source_hash"] == "h1"
+    assert sources[1]["source_hash"] == f"lex:{Path('b.md')}"
+
+
+def test_fusion_ranks_lexical_hits_by_distinct_terms_then_count() -> None:
+    exact = [("r/a.md", "a"), ("r/b.md", "b"), ("r/c.md", "c")]
+    strength = {"r/a.md": (1, 9), "r/b.md": (2, 1), "r/c.md": (1, 10)}
+
+    fused = fuse_entries(exact, [Passage("r/z.md", "L1", "z")], strength)
+    lexical = [path for path, _ in fused if path != "r/z.md"]
+
+    assert lexical == ["r/b.md", "r/c.md", "r/a.md"]
+
+
+def test_query_words_rank_a_content_match_above_stopword_repetition(
+    tmp_path: Path, provider: SynonymProvider
+) -> None:
+    root = tmp_path / "proxy-notes"
+    _write(root, "a-filler.md", "the the the")
+    _write(root, "z-proxy.md", "zzz proxy")
+    configure_knowledge_tools({"tools_knowledge_enabled": True, "knowledge_roots": [str(root)]})
+    configure_catalog_reader(_settings(_build_catalog(tmp_path, root)))
+
+    payload = _search({"query": "how to configure the proxy"})
+
+    paths = [source["path"] for source in payload["sources"]]
+    assert paths[0] == "proxy-notes/z-proxy.md"
+    assert "proxy-notes/a-filler.md" not in paths[:1]
 
 
 @pytest.mark.parametrize("replace_with_directory", [False, True])

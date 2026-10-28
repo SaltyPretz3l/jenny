@@ -38,6 +38,22 @@
       && String(echoed.createdAt || '') === String(expected?.createdAt || '');
   }
 
+  // What the body-level pinned-note overlay shows (id, title, text per pin, in pin order).
+  function pinnedNotesKey(scratchpad) {
+    const pins = Array.isArray(scratchpad?.pins) ? scratchpad.pins : [];
+    if (pins.length === 0) return '';
+    const notes = Array.isArray(scratchpad.notes) ? scratchpad.notes : [];
+    return JSON.stringify(pins.map((id) => {
+      const note = notes.find((entry) => entry?.id === id);
+      return [id, String(note?.title || ''), String(note?.text || '')];
+    }));
+  }
+
+  // The home config minus the scratchpad: tells a pad-only echo from one that moved another section.
+  function homeConfigWithoutScratchpadKey(homeConfig) {
+    return JSON.stringify({ ...(asObject(homeConfig) || {}), scratchpad: null });
+  }
+
   function uniqueReminderIndex(reminders) {
     if (!Array.isArray(reminders)) return null;
     const byId = new Map();
@@ -47,18 +63,6 @@
       byId.set(id, reminder);
     }
     return byId;
-  }
-
-  function updatedReminderMatches(requested, echoed, prior) {
-    if (!asObject(echoed) || !String(echoed.id || '')) return false;
-    if (String(requested?.id || '') && String(echoed.id || '') !== String(requested.id)) return false;
-    if (String(echoed.label || '') !== String(requested?.label || '')) return false;
-    if (String(echoed.prompt || '') !== String(requested?.prompt || '')) return false;
-    if ((echoed.enabled !== false) !== (requested?.enabled !== false)) return false;
-    if (prior || Object.prototype.hasOwnProperty.call(requested || {}, 'createdAt')) {
-      return String(echoed.createdAt || '') === String((requested?.createdAt ?? prior?.createdAt) || '');
-    }
-    return typeof echoed.createdAt === 'string';
   }
 
   function createDashboardManager(deps) {
@@ -74,12 +78,10 @@
       setActiveView = noop,
       renderAll = noop,
       applyCompanionPayload = noop,
-      // Ask-pill mini-composer seams. handleCreateSession is the shell's real
-      // create path (options.preferences carries the pill's draft); the send
-      // trigger defaults to the composer's own send control so a Home ask goes
-      // out through exactly the code path the composer uses.
+      // The ask pill's seam: the shell's real New chat path. A Home ask then
+      // goes out through the composer's own send control, never a second
+      // send path.
       handleCreateSession = null,
-      getRuntimePreferences = null,
     } = deps.callbacks || {};
     // Owner document of the grid first: the hidden strip and every registry
     // widget are created here and inserted around/into that deps-provided host.
@@ -125,7 +127,6 @@
       nowProvider: deps.nowProvider,
     }) || null;
     const daybookModule = deps.modules?.dashboardDaybook || windowRef.rendererDashboardDaybook || null;
-    const askConfigModule = deps.modules?.dashboardAskConfig || windowRef.rendererDashboardAskConfig || null;
     const pageMenuModule = deps.modules?.dashboardPageMenu || windowRef.rendererDashboardPageMenu || null;
 
     // The hero's page-level controls (focus mode / edit layout) live in one
@@ -138,39 +139,48 @@
       actionButton: actionButton || undefined,
     }) || null;
 
-    // The ask pill's mini-composer draft (model / effort / tools). Renderer
-    // local and never persisted; the manager applies it exactly once, to the
-    // session an ask starts.
-    const askConfigController = askConfigModule?.createAskConfigController?.({
-      documentRef,
-      shell,
-      getState: () => state,
-      getRuntimePreferences: typeof getRuntimePreferences === 'function'
-        ? getRuntimePreferences
-        : undefined,
-      appendClientLog,
-      inventory: deps.inventory,
-      modules: deps.modules,
-    }) || null;
-    const askLauncher = askConfigModule?.createAskLauncher?.({
-      documentRef,
-      appendClientLog,
-      askConfig: askConfigController,
-      handleCreateSession,
-      getCurrentSessionId: () => state.currentSessionId,
-      setSessionToolOverrides: (sessionId, overrides) => Promise.resolve(
-        shell?.sessions?.setPreferences?.(sessionId, { tool_category_overrides: overrides })
-      ),
-      prefillComposer: (text) => sendScratchpadToChat(text),
-      navigateOnly: () => sendScratchpadToChat('', { allowEmpty: true }),
-    }) || null;
+    // Enter on the pill: bare New chat (reuses an untouched empty chat), then
+    // prefill and press the composer's own send; the composer owns model,
+    // effort and tools. send:false only prefills. The daybook's latch spans
+    // the promise, so a second Enter cannot open a second chat.
+    function startAskFromPill(text, options = {}) {
+      const body = String(text || '');
+      if (!body.trim() || typeof handleCreateSession !== 'function') {
+        return sendScratchpadToChat(body, { allowEmpty: true });
+      }
+      return openChatAndSend(body, options);
+    }
 
-    // Enter on the pill starts a configured chat; without the launcher module
-    // it degrades to prefill-and-navigate behaviour.
-    function startAskFromPill(text, options) {
-      return askLauncher
-        ? askLauncher.startAsk(text, options)
-        : sendScratchpadToChat(text, { allowEmpty: true });
+    async function openChatAndSend(body, options) {
+      let sessionId;
+      try {
+        sessionId = String(await handleCreateSession() || '').trim();
+      } catch (error) {
+        appendClientLog('WARN', 'home.ask_open_chat_failed', { message: String(error?.message || error || '') });
+        return false;
+      }
+      // Write only into the chat this ask opened; otherwise the question
+      // stays in the pill rather than landing in another chat's composer.
+      if (!sessionId || String(state.currentSessionId || '').trim() !== sessionId) {
+        appendClientLog('WARN', 'home.ask_chat_not_opened', {
+          reason: sessionId ? 'session_changed' : 'missing_session_id',
+        });
+        return false;
+      }
+      if (!sendScratchpadToChat(body)) {
+        return false;
+      }
+      if (options.send === false) return true;
+      // The prefilled composer's own send control (same pane as the text).
+      const trigger = documentRef?.getElementById?.('chatInput')
+        ?.closest?.('.composer')?.querySelector?.('[data-chat-node="sendButton"]') || null;
+      if (!trigger || trigger.disabled === true) {
+        // The text is already safe in the composer; the user presses send.
+        appendClientLog('WARN', 'home.ask_send_unavailable', {});
+        return true;
+      }
+      trigger.click();
+      return true;
     }
 
     // Owns the rail width, the scratchpad-height grip, and the hero ask pill's
@@ -216,42 +226,8 @@
     state.awayDigestReader = awayDigestReader;
     if (awayDigestReader?.subscribe) unsubscribes.push(awayDigestReader.subscribe(scheduleAwayDigestRepaint));
 
-    // Reminder persistence, kept live after the reminders widget was cut from
-    // Home: the Daybook agenda consumes these next to own reminder CRUD.
+    // Reminder deletion for the Daybook agenda's Done affordance.
     const reminderActions = {
-      upsert: async (reminder) => {
-        const priorReminders = Array.isArray(state.proactive?.reminders)
-          ? state.proactive.reminders.slice()
-          : [];
-        const payload = await shell?.proactive?.upsertReminder?.(reminder);
-        const reminders = asObject(payload)?.proactive?.reminders;
-        const expectedId = String(reminder?.id || '');
-        const priorIds = new Set(priorReminders.map((entry) => String(entry?.id || '')));
-        const priorTarget = priorReminders.find((entry) => String(entry?.id || '') === expectedId);
-        const echoedById = uniqueReminderIndex(reminders);
-        const newIds = echoedById
-          ? [...echoedById.keys()].filter((id) => !priorIds.has(id))
-          : [];
-        const echoedTargetId = expectedId || (newIds.length === 1 ? newIds[0] : '');
-        const echoed = echoedById?.get(echoedTargetId);
-        const expectedCount = priorReminders.length + (priorTarget ? 0 : 1);
-        const unaffectedPreserved = priorReminders
-          .filter((entry) => String(entry?.id || '') !== echoedTargetId)
-          .every((entry) => reminderFieldsMatch(entry, echoedById?.get(String(entry?.id || ''))));
-        if (
-          !echoedById
-          || echoedById.size !== expectedCount
-          || newIds.length !== (priorTarget ? 0 : 1)
-          || !updatedReminderMatches(reminder, echoed, priorTarget)
-          || !unaffectedPreserved
-        ) {
-          throw new Error('Reminder persistence acknowledgement did not match the requested change.');
-        }
-        applyProactivePayload(payload);
-        await refreshCompanionPayload();
-        repaintIfHomeActive();
-        return payload;
-      },
       remove: async (reminderId) => {
         const removedId = String(reminderId || '');
         const survivingReminders = (Array.isArray(state.proactive?.reminders) ? state.proactive.reminders : [])
@@ -270,7 +246,11 @@
           throw new Error('Reminder deletion was not acknowledged.');
         }
         applyProactivePayload(payload);
-        await refreshCompanionPayload();
+        try {
+          await refreshCompanionPayload();
+        } catch (error) {
+          appendClientLog('WARN', 'home.companion_refresh_failed', { message: String(error?.message || error || '') });
+        }
         repaintIfHomeActive();
         return payload;
       },
@@ -292,15 +272,18 @@
             // switch) reflect; the widget's render-key skip keeps an autosave
             // echo from clobbering an in-focus textarea or rebuilding the strip.
             onHomeConfig: (payload) => {
-              // When a pin is (or was) involved, also drive a full renderAll so
-              // the body-level sticky-note overlay (outside the dashboard repaint
-              // scope) refreshes via the renderPinnedNotes chrome hook. Gated on
-              // pin presence so the common no-pins autosave echo pays nothing.
-              const prevPins = (state.homeConfig?.scratchpad?.pins || []).length;
+              // A changed pinned overlay (pin set, or a pinned note's title/text) also
+              // drives a full renderAll: the body-level sticky-note overlay sits outside
+              // the dashboard repaint scope. Autosaves of unpinned notes pay nothing.
+              const prevPinned = pinnedNotesKey(state.homeConfig?.scratchpad);
+              const prevOthers = homeConfigWithoutScratchpadKey(state.homeConfig);
               applyHomeConfigPayload(payload);
-              repaintIfHomeActive();
-              const nextPins = (state.homeConfig?.scratchpad?.pins || []).length;
-              if (prevPins > 0 || nextPins > 0) {
+              if (homeConfigWithoutScratchpadKey(state.homeConfig) === prevOthers) {
+                repaintScratchpadIfHomeActive();
+              } else {
+                repaintIfHomeActive();
+              }
+              if (pinnedNotesKey(state.homeConfig?.scratchpad) !== prevPinned) {
                 renderAll();
               }
             },
@@ -334,8 +317,7 @@
           appendClientLog,
           reminderActions, // the Daybook agenda's reminder Done affordance
           onSnapshot: (payload) => {
-            applyCalendarPayload(payload);
-            repaintIfHomeActive();
+            if (applyCalendarChange(payload)) repaintIfHomeActive();
           },
           // Without this the local homeConfig slice (feeds + view mode) lags a
           // refresh after the widget writes config, so a just-saved view toggle
@@ -348,7 +330,7 @@
         }),
         // Finished background work sits under the week, before open loops.
         (awayDigestWidget = awayDigestReader && awayDigestModule?.createAwayDigestWidget?.({
-          reader: awayDigestReader, actionButton: windowRef.inventoryActionButton,
+          reader: awayDigestReader, actionButton,
           tooltip: windowRef.inventory?.tooltip || null, documentRef, setTimeoutImpl, clearTimeoutImpl,
           callbacks: { appendClientLog, showComposerActionError: null,
             // Same route as continue-session: activate, then leave Home for the chat.
@@ -361,6 +343,10 @@
       }
     }
 
+    // Placeholder slices so the first paint has shapes to read. The homeConfig
+    // seed is deliberately NOT a complete config (no pins/showContextualTips):
+    // isCompleteHomeConfig is how the pad writers and Settings tell it from the
+    // user's real config, so they load first instead of writing over it.
     function seedDashboardState() {
       if (!asObject(state.scheduler)) {
         state.scheduler = { upcoming: [], running: [], generatedAt: '', relevant: false, lifecycle: null };
@@ -428,6 +414,19 @@
         feeds: Array.isArray(source.feeds) ? source.feeds : [],
       };
       return state.calendar;
+    }
+
+    // A mutation reaches Home twice with the same content: the service's
+    // 'changed' push and the widget's invoke reply (only generatedAt differs).
+    // Applies either way; reports whether the content moved, so the second
+    // arrival skips a full repaint.
+    let calendarContentKey = '';
+    function applyCalendarChange(payload) {
+      applyCalendarPayload(payload);
+      const key = JSON.stringify({ ...state.calendar, generatedAt: '' });
+      if (key === calendarContentKey) return false;
+      calendarContentKey = key;
+      return true;
     }
 
     function applyHomeConfigPayload(payload) {
@@ -579,29 +578,37 @@
       } else {
         delete focusHost.dataset.focusMode;
       }
-      daybookController?.syncFromConfig?.();
-      if (infoStripRenderer && homeInfoStrip) {
-        try {
-          infoStripRenderer.render(homeInfoStrip, { state });
-          // The config chip joins the ask pill INSIDE the built-once region,
-          // so the 30s chrome repaint above never touches a live draft.
-          const askRegion = homeInfoStrip.querySelector?.('.home-info-strip__ask');
-          if (askRegion && askConfigController) {
-            askConfigController.ensure(askRegion);
-            askConfigController.sync();
-          }
-          if (askRegion && pageMenuController) {
-            pageMenuController.ensure(askRegion);
-            pageMenuController.sync();
-          }
-        } catch (error) {
-          appendClientLog('WARN', 'home.dashboard_info_strip_failed', {
-            message: String(error?.message || error || ''),
-          });
-        }
+      // A throw in the chrome must not cost the widgets their paint.
+      guardPaintStep('home.dashboard_daybook_sync_failed', () => daybookController?.syncFromConfig?.());
+      paintInfoStrip();
+      guardPaintStep('home.dashboard_hidden_strip_failed', renderHiddenStrip);
+      return registry.renderInto(homeDashboardGrid, paintContext());
+    }
+
+    function guardPaintStep(logEvent, step) {
+      try {
+        step();
+      } catch (error) {
+        appendClientLog('WARN', logEvent, { message: String(error?.message || error || '') });
       }
-      renderHiddenStrip();
-      return registry.renderInto(homeDashboardGrid, {
+    }
+
+    function paintInfoStrip() {
+      if (!infoStripRenderer || !homeInfoStrip) return;
+      guardPaintStep('home.dashboard_info_strip_failed', () => {
+        infoStripRenderer.render(homeInfoStrip, { state });
+        // The page menu joins the ask pill INSIDE the built-once region,
+        // so the chrome repaint above never touches a live draft.
+        const askRegion = homeInfoStrip.querySelector?.('.home-info-strip__ask');
+        if (askRegion && pageMenuController) {
+          pageMenuController.ensure(askRegion);
+          pageMenuController.sync();
+        }
+      });
+    }
+
+    function paintContext() {
+      return {
         state,
         documentRef,
         slotHosts: { main: homeDashboardGrid, rail: homeDashboardRail || homeDashboardGrid },
@@ -609,7 +616,7 @@
         widgetsConfig: asObject(state.homeConfig?.widgets) || null,
         editMode: isEditMode(),
         buildEditToolbar,
-      });
+      };
     }
 
     function repaintIfHomeActive() {
@@ -618,8 +625,18 @@
       }
     }
 
+    // A pad autosave echo touches no other card: repaint just the pad (full paint when absent).
+    function repaintScratchpadIfHomeActive() {
+      if (fence.isDisposed() || !isHomeActive()) return;
+      if (!registry?.renderOne?.(homeDashboardGrid, 'scratchpad', paintContext())) {
+        paint();
+      }
+    }
+
+    let primeFailed = false;
     async function refreshDashboardState() {
       if (fence.isDisposed()) return state;
+      primeFailed = false;
       const sources = [
         ['scheduler', () => shell?.scheduler?.getState?.(), applySchedulerPayload],
         ['home_config', () => shell?.home?.getConfig?.(), applyHomeConfigPayload],
@@ -636,6 +653,7 @@
           }
         } catch (error) {
           if (fence.isDisposed()) return;
+          primeFailed = true;
           appendClientLog('WARN', 'home.dashboard_refresh_failed', {
             source: sourceId,
             message: String(error?.message || error || ''),
@@ -645,32 +663,25 @@
       return state;
     }
 
-    function updateClockIfHomeActive() {
-      if (!isHomeActive()) {
-        return;
-      }
-      const clockNode = homeInfoStrip?.querySelector?.('.home-info-strip__time');
-      if (!clockNode || typeof widgetsCoreModule?.formatClockTime !== 'function') {
+    // The clock, the next-event digest, the greeting, the date and the
+    // calendar's now-line and "in 35m" labels all move with the minute and
+    // nothing else, so the tick repaints once per new minute while Home is
+    // visible (render keys keep unchanged cards cheap) and is idle otherwise.
+    let lastTickMinute = null;
+    function repaintOnMinuteTick() {
+      if (fence.isDisposed() || !isHomeActive() || documentRef?.visibilityState === 'hidden') {
         return;
       }
       const now = typeof deps.nowProvider === 'function' ? deps.nowProvider() : new Date();
-      clockNode.textContent = widgetsCoreModule.formatClockTime(now);
+      const minute = Math.floor(now.getTime() / 60000);
+      if (minute === lastTickMinute) return;
+      lastTickMinute = minute;
+      paint();
     }
 
     function track(unsubscribe) {
       if (typeof unsubscribe === 'function') {
         unsubscribes.push(unsubscribe);
-      }
-    }
-
-    async function handleDashboardAction(action, dataset) {
-      if (action === 'continue-session' && dataset?.sessionId) {
-        clearPendingOrigin();
-        if (typeof activateWorkspaceSession === 'function') {
-          await activateWorkspaceSession(dataset.sessionId);
-        }
-        setActiveView('chat');
-        renderAll();
       }
     }
 
@@ -717,27 +728,41 @@
       return true;
     }
 
-    // Optimistic flip (instant dim), then persist; the echoed config corrects
-    // state if the write was rejected.
+    // Optimistic flip (instant dim), then persist. A refused write restores the
+    // prior mode; only the latest toggle's echo may land, so a slow first echo
+    // cannot undo a second flip.
+    let focusToggleSeq = 0;
     function toggleFocusMode() {
-      const next = state.homeConfig?.focusMode !== true;
-      state.homeConfig = { ...(asObject(state.homeConfig) || {}), focusMode: next };
+      const previous = state.homeConfig?.focusMode === true;
+      const seq = ++focusToggleSeq;
+      state.homeConfig = { ...(asObject(state.homeConfig) || {}), focusMode: !previous };
       paint();
+      persistHomeConfig({ focusMode: !previous }, 'home.focus_mode_persist_failed', {
+        isCurrent: () => seq === focusToggleSeq,
+        onFailure: () => { state.homeConfig = { ...(asObject(state.homeConfig) || {}), focusMode: previous }; },
+      });
+    }
+
+    // Writes a home config patch and adopts the echo, repainting only when the
+    // echo changed what is on screen.
+    function persistHomeConfig(patch, logEvent, { isCurrent = () => true, onFailure = noop } = {}) {
       const updateConfig = shell?.home?.updateConfig;
-      if (typeof updateConfig === 'function') {
-        Promise.resolve(updateConfig({ focusMode: next }))
-          .then((config) => {
-            if (config) {
-              applyHomeConfigPayload(config);
-              repaintIfHomeActive();
-            }
-          })
-          .catch((error) => {
-            appendClientLog('WARN', 'home.focus_mode_persist_failed', {
-              message: String(error?.message || error || ''),
-            });
-          });
+      if (typeof updateConfig !== 'function') {
+        return;
       }
+      Promise.resolve(updateConfig(patch))
+        .then((config) => {
+          if (!config || !isCurrent()) return;
+          const before = JSON.stringify(state.homeConfig);
+          applyHomeConfigPayload(config);
+          if (JSON.stringify(state.homeConfig) !== before) repaintIfHomeActive();
+        })
+        .catch((error) => {
+          appendClientLog('WARN', logEvent, { message: String(error?.message || error || '') });
+          if (!isCurrent()) return;
+          onFailure();
+          repaintIfHomeActive();
+        });
     }
 
     function isEditableTarget(target) {
@@ -747,7 +772,8 @@
     }
 
     function handleFocusHotkey(event) {
-      if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey) {
+      // Auto-repeat of a held chord would flip (and persist) once per repeat.
+      if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey || event.repeat) {
         return;
       }
       if (String(event.key || '').toLowerCase() !== 'f') {
@@ -775,22 +801,7 @@
     }
 
     function persistWidgetsConfig(patch) {
-      const updateConfig = shell?.home?.updateConfig;
-      if (typeof updateConfig !== 'function') {
-        return;
-      }
-      Promise.resolve(updateConfig({ widgets: patch }))
-        .then((config) => {
-          if (config) {
-            applyHomeConfigPayload(config);
-            repaintIfHomeActive();
-          }
-        })
-        .catch((error) => {
-          appendClientLog('WARN', 'home.widget_layout_persist_failed', {
-            message: String(error?.message || error || ''),
-          });
-        });
+      persistHomeConfig({ widgets: patch }, 'home.widget_layout_persist_failed');
     }
 
     function handleWidgetEdit(action, widgetId) {
@@ -810,39 +821,31 @@
       if (action !== 'up' && action !== 'down') {
         return;
       }
-      // Reorder over the currently visible sequence and persist the FULL
-      // sequence as the explicit order — what you see is what gets saved.
-      const sequence = registry?.listRenderableIds?.({
-        state,
-        widgetsConfig: widgets,
-      }) || [];
-      const index = sequence.indexOf(widgetId);
-      const swapWith = action === 'up' ? index - 1 : index + 1;
-      if (index === -1 || swapWith < 0 || swapWith >= sequence.length) {
+      // Swap with the nearest visible card in the SAME column (the rail and the
+      // main grid are separate hosts), then persist the full order including
+      // hidden ids, so a restored card returns to its old place.
+      const hostOf = (id) => (registry?.list?.().find((entry) => entry.id === id)?.slot === 'rail'
+        ? homeDashboardRail || homeDashboardGrid
+        : homeDashboardGrid);
+      const visible = registry?.listRenderableIds?.({ state, widgetsConfig: widgets }) || [];
+      const peers = visible.filter((id) => hostOf(id) === hostOf(widgetId));
+      const index = peers.indexOf(widgetId);
+      const target = peers[action === 'up' ? index - 1 : index + 1];
+      if (index === -1 || !target) {
         return;
       }
-      const next = [...sequence];
-      [next[index], next[swapWith]] = [next[swapWith], next[index]];
-      persistWidgetsConfig({ order: next });
+      const order = registry.listRenderableIds({ state, widgetsConfig: { ...widgets, hidden: [] } });
+      const from = order.indexOf(widgetId);
+      const to = order.indexOf(target);
+      [order[from], order[to]] = [order[to], order[from]];
+      persistWidgetsConfig({ order });
     }
 
     function handleGridClick(event) {
       const editTrigger = event?.target?.closest?.('[data-widget-edit]');
       if (editTrigger) {
         handleWidgetEdit(editTrigger.dataset.widgetEdit, String(editTrigger.dataset.widgetId || ''));
-        return;
       }
-      const trigger = event?.target?.closest?.('[data-dashboard-action]');
-      if (!trigger || !homeDashboardGrid?.contains(trigger)) {
-        return;
-      }
-      handleDashboardAction(trigger.dataset.dashboardAction, trigger.dataset)
-        .catch((error) => {
-          appendClientLog('WARN', 'home.dashboard_action_failed', {
-            action: String(trigger.dataset.dashboardAction || ''),
-            message: String(error?.message || error || ''),
-          });
-        });
     }
 
     function bind() {
@@ -877,21 +880,20 @@
         };
         documentRef.addEventListener('visibilitychange', visibilityFlushHandler);
       }
+      // Only the info-strip digest reads the scheduler slice, and its "in 5m"
+      // etas move every minute: repaint the strip, not every widget.
       track(shell?.scheduler?.onChanged?.((payload) => {
         applySchedulerPayload(payload);
-        repaintIfHomeActive();
+        if (!fence.isDisposed() && isHomeActive()) paintInfoStrip();
       }));
       track(shell?.calendar?.onChanged?.((payload) => {
-        applyCalendarPayload(payload);
-        repaintIfHomeActive();
+        if (applyCalendarChange(payload)) repaintIfHomeActive();
       }));
       // The ONLY push channel reminders have: entity pushes ride calendar.onChanged,
       // but a reminder Jenny adds reaches Home over this event alone.
       track(shell?.home?.onAiChanged?.(applyHomeAiPayload));
-      // Keep only the clock text honest; the other Home chrome and registered
-      // widgets do not depend on this 30-second tick.
       if (infoStripRenderer && homeInfoStrip && !clockUpdateTimer) {
-        clockUpdateTimer = setIntervalImpl(updateClockIfHomeActive, CLOCK_REPAINT_INTERVAL_MS);
+        clockUpdateTimer = setIntervalImpl(repaintOnMinuteTick, CLOCK_REPAINT_INTERVAL_MS);
         if (typeof clockUpdateTimer?.unref === 'function') {
           clockUpdateTimer.unref();
         }
@@ -903,6 +905,9 @@
       if (!primeStarted) {
         primeStarted = true;
         refreshDashboardState().then(() => {
+          // A failed source (main busy at boot) re-primes on the next render
+          // instead of leaving the seeded placeholders up until a push.
+          if (primeFailed) primeStarted = false;
           repaintIfHomeActive();
         }).catch(noop);
       }
@@ -942,7 +947,6 @@
         stripClickHandler = null;
       }
       daybookController?.dispose?.();
-      askConfigController?.dispose?.();
       pageMenuController?.dispose?.();
       if (focusHotkeyHandler) {
         const keyTarget = documentRef?.defaultView || windowRef;
@@ -970,7 +974,6 @@
       bind,
       render,
       refreshDashboardState,
-      refreshAwayDigest: () => Promise.resolve(awayDigestReader?.refresh?.() ?? false),
       registry,
       // Reachable for the Daybook agenda wave, which becomes their only caller.
       reminderActions,
@@ -978,5 +981,5 @@
     };
   }
 
-  return { createDashboardManager };
+  return { createDashboardManager, pinnedNotesKey };
 });

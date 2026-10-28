@@ -118,6 +118,11 @@ class LoopRuntime:
     clock: Callable[[], float] = field(default=time.monotonic, repr=False)
     sleep: Callable[[float], None] = field(default=time.sleep, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    # call_id -> (the emitted arguments object, its fingerprint): emitted
+    # arguments are immutable, so every audit of one call hashes them once.
+    _argument_fingerprints: dict[str, tuple[Any, str]] = field(
+        default_factory=dict, repr=False
+    )
 
     def _preview_context_tokens(self, messages: list[Any]) -> int:
         """Release compacted observations before reserving their context cost."""
@@ -225,15 +230,9 @@ class LoopRuntime:
         try:
             call_id = str(fields.get("tool_call_id") or "").strip()
             if call_id and "_argument_fingerprint" not in fields:
-                with self._lock:
-                    emitted_call = self.emitted_tool_calls.get(call_id)
-                    arguments = (
-                        emitted_call.get("arguments")
-                        if isinstance(emitted_call, dict)
-                        else None
-                    )
-                if arguments is not None:
-                    fields["_argument_fingerprint"] = tool_argument_fingerprint(arguments)
+                fingerprint = self.argument_fingerprint(call_id)
+                if fingerprint is not None:
+                    fields["_argument_fingerprint"] = fingerprint
             event = ToolObservationEvent(
                 kind=kind,
                 request_id=self.request_id,
@@ -242,6 +241,21 @@ class LoopRuntime:
         except Exception:  # noqa: BLE001  # telemetry
             return
         self.observe(event)
+
+    def argument_fingerprint(self, call_id: str) -> str | None:
+        """Memoized ``tool_argument_fingerprint`` of an emitted call's arguments."""
+        with self._lock:
+            emitted_call = self.emitted_tool_calls.get(call_id)
+            arguments = emitted_call.get("arguments") if isinstance(emitted_call, dict) else None
+            cached = self._argument_fingerprints.get(call_id)
+        if arguments is None:
+            return None
+        if cached is not None and cached[0] is arguments:
+            return cached[1]
+        fingerprint = tool_argument_fingerprint(arguments)
+        with self._lock:
+            self._argument_fingerprints[call_id] = (arguments, fingerprint)
+        return fingerprint
 
     @property
     def cancelled(self) -> bool:

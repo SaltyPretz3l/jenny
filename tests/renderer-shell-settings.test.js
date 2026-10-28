@@ -837,6 +837,11 @@ test('phase7D Settings account row opens Help and bounded factory reset modal', 
   assert.match(actions.textContent, /Run setup again/);
   assert.match(actions.textContent, /help/i);
   assert.match(actions.textContent, /Reset onboarding/);
+  // The setup progress card is wired into Account and agrees with the headline.
+  const progress = doc.querySelector('#setupProgressContainer .settings-progress-card');
+  assert.ok(progress, 'the setup progress card paints');
+  assert.match(progress.textContent, /Setup is complete/);
+  assert.equal(progress.querySelector('[role="progressbar"]').getAttribute('aria-valuenow'), '100');
 
   actions.querySelector('[data-action="settingsOpenSetupHelp"]').click();
   await waitForUi(window, 30);
@@ -905,13 +910,16 @@ test('Settings relocates standalone MCP management into Extensions', async (t) =
   assert.equal(doc.querySelector('[data-action="mcpDiscoveryOpenConfig"]'), null);
 });
 
-test('primary paperclip toggles the attach menu and supports navigation and dismissal', async (t) => {
+test('the + button toggles its menu and supports navigation and dismissal', async (t) => {
   const { window } = await loadRendererTestApp(t);
   const doc = window.document;
   const clip = doc.getElementById('composerAttachShortcut');
   const menu = doc.getElementById('composerAttachMenu');
   const files = doc.getElementById('attachFilesButton');
   const capture = doc.getElementById('captureScreenButton');
+  // Row 63: Commands and Skills follow the file rows in the one + menu.
+  const commands = doc.getElementById('composerMenuCommandsButton');
+  const skills = doc.getElementById('composerMenuSkillsButton');
   const key = (name) => {
     const event = new window.KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true });
     doc.activeElement.dispatchEvent(event);
@@ -921,24 +929,28 @@ test('primary paperclip toggles the attach menu and supports navigation and dism
   assert.equal(clip.disabled, false);
   assert.equal(clip.getAttribute('aria-haspopup'), 'menu');
   assert.equal(clip.getAttribute('aria-controls'), menu.id);
-  assert.equal(clip.getAttribute('aria-label'), 'Attach');
+  assert.equal(clip.getAttribute('aria-label'), 'Add files, commands and skills');
   assert.equal(menu.getAttribute('role'), 'menu');
   clip.click();
   assert.equal(window.__rendererState.ui.composerPopoverOpen, true);
   assert.equal(clip.getAttribute('aria-expanded'), 'true');
   assert.equal(doc.activeElement, files);
-  assert.equal(files.textContent, 'Attach files');
+  assert.equal(files.textContent.trim(), 'Attach files');
   key('ArrowDown');
   assert.equal(doc.activeElement, capture);
-  assert.equal(capture.textContent, 'Capture screen');
+  assert.equal(capture.textContent.trim(), 'Capture screen');
+  key('ArrowDown');
+  assert.equal(doc.activeElement, commands, 'the separator is skipped');
+  key('ArrowDown');
+  assert.equal(doc.activeElement, skills);
   key('ArrowDown');
   assert.equal(doc.activeElement, files, 'Down wraps');
   key('End');
-  assert.equal(doc.activeElement, capture);
+  assert.equal(doc.activeElement, skills);
   key('Home');
   assert.equal(doc.activeElement, files);
   key('ArrowUp');
-  assert.equal(doc.activeElement, capture, 'Up wraps');
+  assert.equal(doc.activeElement, skills, 'Up wraps');
   key('Escape');
   assert.equal(menu.classList.contains('hidden'), true);
   assert.equal(clip.getAttribute('aria-expanded'), 'false');
@@ -952,7 +964,7 @@ test('primary paperclip toggles the attach menu and supports navigation and dism
   capture.disabled = true;
   clip.click();
   key('ArrowDown');
-  assert.equal(doc.activeElement, files, 'disabled actions are skipped');
+  assert.equal(doc.activeElement, commands, 'disabled actions are skipped');
   assert.equal(key('Tab').defaultPrevented, false, 'Tab leaves naturally');
   assert.equal(menu.classList.contains('hidden'), true);
   capture.disabled = false;
@@ -960,7 +972,7 @@ test('primary paperclip toggles the attach menu and supports navigation and dism
   clip.click();
   assert.equal(doc.activeElement, capture, 'opening skips hidden actions');
   clip.click();
-  assert.equal(menu.classList.contains('hidden'), true, 'paperclip toggles closed');
+  assert.equal(menu.classList.contains('hidden'), true, 'the + button toggles closed');
 });
 
 test('Attach files from the menu invokes the attachment picker exactly once and closes', async (t) => {

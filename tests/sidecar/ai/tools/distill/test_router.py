@@ -64,5 +64,29 @@ class TestSelectFilter:
         assert f is not None
         assert f.name == "test_output"
 
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cat notes.md",
+            "type notes.md",
+            "tail -n 50 ci.log",
+            "git show HEAD:README.md",
+            "git log -5",
+            "Get-Content notes.md",
+            "gc notes.md",
+            "rg passed docs/",
+        ],
+    )
+    def test_read_commands_skip_the_content_sniff(self, command: str) -> None:
+        notes = "Release notes\n\nCI: 2 passed, 0 failed\ncollected 3 items\nTest Suites: 1"
+        assert select_filter(command=command, content=notes) is None
+
+    def test_read_command_lookalikes_still_sniff_content(self) -> None:
+        log = "collected 3 items\n1 failed, 2 passed"
+        for command in ("./catalog.sh", "typecheck-and-test", "category"):
+            f = select_filter(command=command, content=log)
+            assert f is not None, command
+            assert f.name == "test_output"
+
     def test_disabled_filter_is_skipped(self) -> None:
         assert select_filter(command="pytest", disabled=("test_output",)) is None

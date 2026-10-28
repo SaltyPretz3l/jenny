@@ -126,3 +126,31 @@ def test_quarantine_stranded_pending_is_reconciled_before_fresh_directory_creati
     quarantined = list(quarantine.iterdir())
     assert len(quarantined) == 1
     assert quarantined[0].read_bytes() == b"unsafe original"
+
+
+def test_purge_quarantine_entry_removes_one_entry_and_never_follows_a_link(tmp_path: Path) -> None:
+    quarantine = tmp_path / ".jenny" / "quarantine"
+    quarantine.mkdir(parents=True)
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    (outside / "precious.txt").write_bytes(b"keep")
+    link = quarantine / "backups-link-unsafe"
+    if os.name == "nt":
+        import _winapi
+
+        _winapi.CreateJunction(str(outside), str(link))
+    else:
+        os.symlink(outside, link, target_is_directory=True)
+    (quarantine / "tree").mkdir()
+    (quarantine / "tree" / "leaf.txt").write_bytes(b"gone")
+    store = GuardedWorkspaceStore(tmp_path)
+
+    store.purge_quarantine_entry("backups-link-unsafe")
+    store.purge_quarantine_entry("tree")
+    with pytest.raises(ToolExecutionFailure):
+        store.purge_quarantine_entry("tree")  # already gone: the identity probe fails
+
+    with pytest.raises(ToolExecutionFailure):
+        store.purge_quarantine_entry("tree/leaf.txt")
+    assert list(quarantine.iterdir()) == []
+    assert (outside / "precious.txt").read_bytes() == b"keep"

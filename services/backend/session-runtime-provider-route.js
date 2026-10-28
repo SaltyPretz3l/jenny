@@ -5,6 +5,7 @@ const {
   captureRuntimeRoute,
   isRuntimeRoute,
 } = require('../session-runtime/lanes');
+const { apiProviderCredentialState, apiProviderRouteIdentity } = require('./api-provider-runtime');
 
 const ENGINE_TOKEN = /^[a-z0-9][a-z0-9._-]{0,127}$/u;
 const REVISION_TOKEN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
@@ -18,6 +19,7 @@ const BUILTIN_ROUTES = Object.freeze({
   replay: Object.freeze({ provider_id: 'replay', resource_class: 'local', requires_gpu: false }),
   chatgpt: Object.freeze({ provider_id: 'chatgpt', resource_class: 'cloud', requires_gpu: false }),
   'codex-cli': Object.freeze({ provider_id: 'codex-cli', resource_class: 'cloud', requires_gpu: false }),
+  'api-provider': Object.freeze({ provider_id: 'api-provider', resource_class: 'cloud', requires_gpu: false }),
   // Jenny's persisted desktop settings explicitly own this under localEngines.
   // Hosted endpoints currently have no trusted locality field, so they remain
   // conservatively local regardless of their hostname.
@@ -48,7 +50,7 @@ function normalizeEngineType(value) {
   return engineType;
 }
 
-function safeConfigIdentity(service, engineType) {
+function safeConfigIdentity(service, engineType, model = null) {
   const state = service?.configService?.getState?.() || {};
   const localEngines = state.localEngines || state.local_engines || {};
   const hosted = service?.hostMode === 'server' && service?.options?.modelEndpoint?.engine === engineType
@@ -70,6 +72,7 @@ function safeConfigIdentity(service, engineType) {
   if (engineType === 'codex-cli') {
     return { engine_type: engineType, settings: state.codexCli || state.codex_cli || null };
   }
+  if (engineType === 'api-provider') return apiProviderRouteIdentity(service, model);
   if (hosted) {
     return {
       engine_type: engineType,
@@ -115,7 +118,8 @@ function configurationRevision(identity) {
   return `cfg:${createHash('sha256').update(encoded).digest('hex')}`;
 }
 
-function builtinCredentialState(service, engineType) {
+function builtinCredentialState(service, engineType, model = null) {
+  if (engineType === 'api-provider') return apiProviderCredentialState(service, model);
   if (engineType === 'chatgpt') {
     const auth = service?.chatgptAuthService;
     const authEpoch = auth?.getCredentialEpoch?.();
@@ -163,7 +167,9 @@ function validateTrustedState(state, engineType) {
   return state;
 }
 
-function resolveProviderState(service, engineType) {
+// `model` matters only to api-provider, whose route and credentials are per model;
+// every other engine resolves from its own configuration.
+function resolveProviderState(service, engineType, model = null) {
   const registry = service?.sessionRuntimeProviderRouteRegistry;
   if (registry !== undefined && registry !== null) {
     if (typeof registry.resolve !== 'function') {
@@ -182,18 +188,23 @@ function resolveProviderState(service, engineType) {
     route: {
       engine_type: engineType,
       provider_id: builtin.provider_id,
-      configuration_revision: configurationRevision(safeConfigIdentity(service, engineType)),
+      configuration_revision: configurationRevision(safeConfigIdentity(service, engineType, model)),
       resource_class: builtin.resource_class,
       requires_gpu: builtin.requires_gpu,
     },
-    credential: builtinCredentialState(service, engineType),
+    credential: builtinCredentialState(service, engineType, model),
   };
 }
 
-function bindProviderState(state, engineType) {
+function routeModel(engineType, model) {
+  return engineType === 'api-provider' && typeof model === 'string' && model.trim() ? model.trim() : null;
+}
+
+function bindProviderState(state, engineType, model = null) {
   const route = captureRuntimeRoute(state.route);
   capturedRoutes.set(route, Object.freeze({
     engine_type: engineType,
+    model,
     configuration_revision: route.configuration_revision,
     credential_revision: state.credential.revision,
   }));
@@ -203,38 +214,41 @@ function bindProviderState(state, engineType) {
 // Capture comparison evidence before async force-local resolution without granting
 // an unused provider authority or requiring its credentials. Only the effective
 // selected candidate is validated and branded when the request is normalized.
-function captureSessionRuntimeProviderSelection(service, selectedEngineType) {
+function captureSessionRuntimeProviderSelection(service, selectedEngineType, model = null) {
   const candidates = new Map();
   for (const engine of new Set([selectedEngineType, 'ollama', 'vllm'])) {
-    try { candidates.set(engine, { state: canonicalJson(resolveProviderState(service, engine)) }); }
+    try { candidates.set(engine, { state: canonicalJson(resolveProviderState(service, engine, routeModel(engine, model))) }); }
     catch (error) { candidates.set(engine, { error }); }
   }
   return engine => {
     const captured = candidates.get(engine);
     if (!captured) throw routeError('runtime_provider_selection_changed', 'Provider selection changed.');
     if (captured.error) throw captured.error;
-    const current = resolveProviderState(service, engine);
+    const current = resolveProviderState(service, engine, routeModel(engine, model));
     if (canonicalJson(current) !== captured.state) {
       throw routeError('runtime_provider_configuration_changed', 'Provider configuration changed while the request was prepared.');
     }
-    return bindProviderState(current, engine);
+    return bindProviderState(current, engine, routeModel(engine, model));
   };
 }
 
 function captureSessionRuntimeProviderRoute(service, options = {}) {
   if (!options || typeof options !== 'object' || Array.isArray(options)
-    || Object.keys(options).some(key => key !== 'engineType')) {
+    || Object.keys(options).some(key => key !== 'engineType' && key !== 'model')
+    || (Object.hasOwn(options, 'model') && options.model != null && typeof options.model !== 'string')) {
     throw routeError('runtime_provider_capture_invalid', 'Provider route capture options are invalid.');
   }
   // engineType is an internal application-owner override for force-local
-  // selection. No model id, prompt, or endpoint metadata is accepted here.
+  // selection; model is the turn's own model, read only by api-provider. No
+  // prompt or endpoint metadata is accepted here.
   const engineType = normalizeEngineType(
     Object.hasOwn(options, 'engineType') ? options.engineType : service?.currentEngineType
   );
-  return bindProviderState(resolveProviderState(service, engineType), engineType);
+  const model = routeModel(engineType, options.model);
+  return bindProviderState(resolveProviderState(service, engineType, model), engineType, model);
 }
 
-function restoreSessionRuntimeProviderRoute(service, persistedRoute) {
+function restoreSessionRuntimeProviderRoute(service, persistedRoute, requestModel = null) {
   if (!exactKeys(
     persistedRoute,
     ['configuration_revision', 'engine_type', 'provider_id', 'requires_gpu', 'resource_class']
@@ -242,13 +256,14 @@ function restoreSessionRuntimeProviderRoute(service, persistedRoute) {
     throw routeError('runtime_provider_route_invalid', 'The stored provider route is invalid.');
   }
   const engineType = normalizeEngineType(persistedRoute.engine_type);
-  const state = resolveProviderState(service, engineType);
+  const model = routeModel(engineType, requestModel);
+  const state = resolveProviderState(service, engineType, model);
   if (Object.keys(state.route).some(key => state.route[key] !== persistedRoute[key])) {
     throw routeError('runtime_provider_configuration_changed', 'Provider configuration changed while the turn was paused.');
   }
   // Issue a fresh capability from the current trusted state. The persisted
   // object is comparison evidence only and is never passed to the route factory.
-  return bindProviderState(state, engineType);
+  return bindProviderState(state, engineType, model);
 }
 
 function assertSessionRuntimeProviderRouteCurrent(service, route) {
@@ -258,7 +273,7 @@ function assertSessionRuntimeProviderRouteCurrent(service, route) {
   }
   // Re-resolve the bound engine. A later UI/model selection is deliberately
   // irrelevant to the request that already captured this route.
-  const current = resolveProviderState(service, captured.engine_type);
+  const current = resolveProviderState(service, captured.engine_type, captured.model);
   if (current.route.engine_type !== route.engine_type
     || current.route.provider_id !== route.provider_id
     || current.route.resource_class !== route.resource_class

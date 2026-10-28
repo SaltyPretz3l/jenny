@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-import subprocess
+import stat
 from pathlib import Path
 
 import pytest
@@ -12,20 +12,12 @@ from sidecar.ai.error_codes import CMP_TOOL_IO_FAILED
 from sidecar.ai.tools.builtins import file_atomic_write as atomic
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
+from tests.sidecar._platform_skips import make_dir_link, posix_only
 
 
 def _swap_parent(parent: Path, moved: Path, outside: Path) -> None:
     os.rename(parent, moved)
-    if os.name == "nt":
-        result = subprocess.run(
-            ["cmd", "/c", "mklink", "/J", str(parent), str(outside)],
-            capture_output=True, check=False, text=True,
-        )
-        if result.returncode != 0:
-            os.rename(moved, parent)
-            pytest.skip(f"mklink /J not permitted: {result.stderr.strip()}")
-    else:
-        os.symlink(outside, parent, target_is_directory=True)
+    make_dir_link(parent, outside)
 
 
 def _assert_creation_swap_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -54,13 +46,8 @@ def _assert_creation_swap_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert (moved / "file.txt").read_bytes() == b"original"
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX symlinks only")
-def test_parent_swap_before_temp_create_posix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _assert_creation_swap_rejected(tmp_path, monkeypatch)
-
-
-@pytest.mark.skipif(os.name != "nt", reason="Windows junctions only")
-def test_parent_swap_before_temp_create_windows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_parent_swap_before_temp_create(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # make_dir_link swaps in a junction on Windows and a directory symlink elsewhere.
     _assert_creation_swap_rejected(tmp_path, monkeypatch)
 
 
@@ -92,7 +79,41 @@ def test_honest_write_has_no_temp(tmp_path: Path) -> None:
     assert sorted(p.name for p in tmp_path.iterdir()) == ["file.txt"]
 
 
-@pytest.mark.skipif(os.name == "nt", reason="Pinned directory handles require POSIX dir_fd")
+def test_directory_fsync_failure_is_swallowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[int] = []
+
+    def failing_fsync(fd: int) -> None:
+        calls.append(fd)
+        raise OSError("injected directory fsync failure")
+
+    monkeypatch.setattr(atomic.os, "fsync", failing_fsync)
+    atomic._fsync_directory_best_effort(12345)
+    assert calls == [12345]
+
+
+@posix_only("pinned directory handles need POSIX dir_fd")
+def test_pinned_parent_is_fsynced_after_replace_and_failure_keeps_the_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "file.txt"
+    target.write_bytes(b"original")
+    real_fsync = os.fsync
+    directory_syncs: list[int] = []
+
+    def fsync(fd: int) -> None:
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            directory_syncs.append(fd)
+            raise OSError("injected directory fsync failure")
+        real_fsync(fd)
+
+    monkeypatch.setattr(atomic.os, "fsync", fsync)
+    assert atomic.write_bytes_atomic(target, b"replacement") is None
+    assert len(directory_syncs) == 1, "the parent directory is fsynced once after the rename"
+    assert target.read_bytes() == b"replacement"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["file.txt"]
+
+
+@posix_only("pinned directory handles need POSIX dir_fd")
 def test_parent_swap_before_replace_cleans_pinned_temp(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

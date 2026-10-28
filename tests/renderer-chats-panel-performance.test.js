@@ -6,15 +6,9 @@ const segmentedControl = require('../renderer/inventory/segmented-control');
 const popover = require('../renderer/inventory/popover');
 const { createSidebarBulkActions } = require('../renderer/shell/renderer-sidebar-bulk-actions');
 const { createStreamHandlerRuntime } = require('../renderer/chat/renderer-stream-handler-runtime');
-const {
-  PAGE_SIZE,
-  MAX_VISIBLE,
-  SEARCH_LIMIT,
-  buildChatsViewModel,
-  groupVisibleSessions,
-  formatSessionTime,
-  createChatsPanelController,
-} = require('../renderer/shell/renderer-chats-panel');
+const { buildChatsViewModel, createChatsPanelController } = require('../renderer/shell/renderer-chats-panel');
+const { PAGE_SIZE, MAX_VISIBLE, SEARCH_LIMIT } = require('../renderer/shell/renderer-chats-panel-model');
+const { groupVisibleSessions, formatSessionTime } = require('../renderer/shell/renderer-chats-panel-tree');
 
 function buildSessions(count, extra = {}) {
   return Array.from({ length: count }, (_, index) => ({
@@ -207,7 +201,7 @@ test('session time labels use relative recent values and explicit calendar dates
   assert.equal(formatSessionTime(new Date(now.valueOf() - 50 * 60 * 1000), now), '50m');
   assert.equal(formatSessionTime(localDayIso(now, 2), now), 'Aug 12');
   assert.equal(formatSessionTime(localDayIso(now, 7), now), 'Aug 7');
-  assert.equal(formatSessionTime(new Date(2025, 7, 7, 8, 0, 0, 0), now), 'Aug 7, 2025');
+  assert.equal(formatSessionTime(new Date(2025, 7, 7, 8, 0, 0, 0), now), '8/7/25', 'an earlier year is a short numeric date that fits the time slot');
   assert.equal(formatSessionTime('not-a-date', now), '');
 });
 
@@ -524,8 +518,8 @@ test('bulk mode survives real panel rerenders and roving focus without replacing
   assert.equal(row.querySelector('.session-row__selection'), glyph);
   assert.equal(open.getAttribute('aria-checked'), 'true');
   h.controller.setRovingSession('session-0');
-  assert.equal(row.querySelector('[data-session-action="menu"]').tabIndex, -1);
-  assert.equal(row.querySelector('[data-session-action="menu"]').hidden, true);
+  // The row class hides the menu (styles/chats-panel-selection.css); nothing parks its tabindex.
+  assert.equal(row.classList.contains('sidebar-bulk-selecting'), true);
   h.state.sessions[0].title = 'Renamed while selecting';
   h.controller.renderNow();
   const replacement = row.querySelector('[data-session-open]');

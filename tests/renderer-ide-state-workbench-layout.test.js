@@ -36,18 +36,6 @@ function hydrate(payload) {
   return ideState.applyPersistedState(freshIde(), payload);
 }
 
-function hooksWithCounters() {
-  const calls = { opened: [], persist: 0, render: 0 };
-  return {
-    calls,
-    hooks: {
-      openSecondary: (id) => calls.opened.push(id),
-      schedulePersist: () => { calls.persist += 1; },
-      requestRender: () => { calls.render += 1; },
-    },
-  };
-}
-
 function stackIdOf(ide, viewId) {
   return model.findView(ide.workbenchLayout, viewId).stackId;
 }
@@ -242,24 +230,6 @@ test('getWorkbenchLayout builds, keeps and heals the tree', () => {
 
 /* ---------------------------------------------------------------- panel helpers */
 
-test('isPanelActive reads the tree: active, in an expanded stack', () => {
-  const ide = freshIde();
-  assert.equal(ideState.isPanelActive(ide, 'explorer'), true);
-  assert.equal(ideState.isPanelActive(ide, 'search'), false);
-  assert.equal(ideState.isPanelActive(ide, 'terminal'), false, 'collapsed stack');
-  assert.equal(ideState.isPanelActive(ide, 'bogus'), false);
-
-  const open = hydrate(OPEN_SECONDARY_RIGHT_DOCK_LEFT);
-  assert.equal(ideState.isPanelActive(open, 'search'), true);
-  assert.equal(ideState.isPanelActive(open, 'explorer'), false, 'inactive in its stack');
-  assert.equal(ideState.isPanelActive(open, 'source-control'), true);
-  ideState.commitWorkbenchLayout(
-    open,
-    model.setCollapsed(open.workbenchLayout, stackIdOf(open, 'source-control'), true)
-  );
-  assert.equal(ideState.isPanelActive(open, 'source-control'), false, 'collapsed secondary');
-});
-
 test('getPanelLocation reports the tree side: the Explorer stack is primary', () => {
   const ide = hydrate(OPEN_SECONDARY_RIGHT_DOCK_LEFT);
   assert.equal(ideState.getPanelLocation(ide, 'explorer'), 'primary');
@@ -268,114 +238,9 @@ test('getPanelLocation reports the tree side: the Explorer stack is primary', ()
   assert.equal(ideState.getPanelLocation(ide, 'terminal'), 'primary');
   assert.equal(ideState.getPanelLocation(ide, 'bogus'), 'primary');
   assert.deepEqual(ideState.secondaryPanels(ide), ['source-control']);
-  assert.deepEqual(ideState.primaryPanels(ide), ['explorer', 'search']);
 });
 
-test('showPanel reveals the view, persists only on change, always renders, and ignores openSecondary', () => {
-  const ide = freshIde();
-  const { calls, hooks } = hooksWithCounters();
-  assert.equal(ideState.showPanel(ide, 'search', hooks), 'primary');
-  assert.equal(ideState.isPanelActive(ide, 'search'), true);
-  assert.equal(ide.railPanel, 'search', 'the mirror follows');
-  assert.deepEqual([calls.persist, calls.render], [1, 1]);
-
-  ideState.showPanel(ide, 'search', hooks);
-  assert.deepEqual([calls.persist, calls.render], [1, 2], 'already revealed: render only');
-
-  ideState.showPanel(ide, 'terminal', hooks);
-  assert.equal(ide.bottomPanelOpen, true, 'revealing a bottom view opens its stack');
-  assert.deepEqual([calls.persist, calls.render], [2, 3]);
-
-  ideState.showPanel(ide, 'bogus', hooks);
-  assert.deepEqual([calls.persist, calls.render], [2, 4], 'an unknown id changes nothing');
-  assert.deepEqual(calls.opened, []);
-  assert.doesNotThrow(() => ideState.showPanel(ide, 'search'));
-  assert.doesNotThrow(() => ideState.showPanel(ide, 'search', null));
-});
-
-test('showPanel on a secondary-located panel opens the secondary stack without the openSecondary hook', () => {
-  const ide = hydrate(OPEN_SECONDARY_RIGHT_DOCK_LEFT);
-  ideState.commitWorkbenchLayout(ide, model.setCollapsed(ide.workbenchLayout, stackIdOf(ide, 'source-control'), true));
-  assert.equal(ide.secondaryPanelOpen, false);
-  const { calls, hooks } = hooksWithCounters();
-  assert.equal(ideState.showPanel(ide, 'source-control', hooks), 'secondary');
-  assert.equal(ide.secondaryPanelOpen, true);
-  assert.deepEqual(calls.opened, [], 'the hook is accepted and ignored');
-  assert.deepEqual([calls.persist, calls.render], [1, 1]);
-});
-
-test('movePanelLocation moves views between the Explorer stack and a secondary stack', () => {
-  const ide = freshIde();
-  ideState.movePanelLocation(ide, 'search', 'secondary');
-  assert.equal(ideState.getPanelLocation(ide, 'search'), 'secondary');
-  assert.equal(ide.secondaryPanelOpen, true);
-  assert.equal(ide.secondaryPanel, 'search');
-  assert.equal(ide.railPanel, 'explorer');
-  // The fresh secondary stack is its own: it did not join (or open) the chat dock stack.
-  assert.notEqual(stackIdOf(ide, 'search'), stackIdOf(ide, 'chat'));
-  assert.equal(ide.chatDockOpen, false);
-  const row = ide.workbenchLayout.root;
-  assert.deepEqual(row.children[row.children.length - 1].node.views, ['search'], 'opposite the left rail');
-
-  // A second move joins the existing secondary stack.
-  ideState.movePanelLocation(ide, 'source-control', 'secondary');
-  assert.equal(stackIdOf(ide, 'source-control'), stackIdOf(ide, 'search'));
-  assert.equal(ide.secondaryPanel, 'source-control');
-
-  // Back to primary: the view joins the Explorer stack and becomes the active rail panel.
-  ideState.movePanelLocation(ide, 'search', 'primary');
-  assert.equal(stackIdOf(ide, 'search'), stackIdOf(ide, 'explorer'));
-  assert.equal(ide.railPanel, 'search');
-  assert.deepEqual(ideState.secondaryPanels(ide), ['source-control']);
-  ideState.movePanelLocation(ide, 'source-control', 'primary');
-  assert.deepEqual(ideState.secondaryPanels(ide), []);
-  assert.equal(ide.secondaryPanelOpen, false, 'the last one out closes the secondary');
-  assert.equal(ide.secondaryPanel, '');
-});
-
-test('movePanelLocation opens the secondary on the left when the rail is on the right', () => {
-  const ide = hydrate({ railSide: 'right' });
-  ideState.movePanelLocation(ide, 'search', 'secondary');
-  assert.deepEqual(ide.workbenchLayout.root.children[0].node.views, ['search']);
-  assert.equal(ideState.getPanelLocation(ide, 'search'), 'secondary');
-});
-
-test('movePanelLocation keeps the last Explorer-stack view in place and ignores invalid input', () => {
-  const ide = freshIde();
-  ideState.movePanelLocation(ide, 'search', 'secondary');
-  ideState.movePanelLocation(ide, 'source-control', 'secondary');
-  const before = ide.workbenchLayout;
-  ideState.movePanelLocation(ide, 'explorer', 'secondary');
-  assert.equal(ide.workbenchLayout, before, 'the Explorer stack keeps its last view');
-  assert.deepEqual(ideState.primaryPanels(ide), ['explorer']);
-
-  assert.equal(ideState.movePanelLocation(ide, 'terminal', 'secondary'), ide, 'not a rail panel');
-  assert.equal(ideState.movePanelLocation(ide, 'search', 'sideways'), ide, 'not a location');
-  assert.equal(ideState.movePanelLocation(ide, 'changes', 'secondary'), ide);
-  assert.equal(ide.workbenchLayout, before);
-  ideState.movePanelLocation(ide, 'search', 'secondary'); // already there
-  assert.equal(ide.workbenchLayout, before);
-});
-
-test('normalizePanelLocations re-derives the mirror from the tree', () => {
-  const ide = hydrate(OPEN_SECONDARY_RIGHT_DOCK_LEFT);
-  ide.railPanel = 'bogus';
-  ide.panelLocations = { explorer: 'secondary', changes: 'secondary' };
-  ide.secondaryPanel = 'nope';
-  ideState.normalizePanelLocations(ide);
-  assert.equal(ide.railPanel, 'search', 'the tree wins over the drifted mirror');
-  assert.deepEqual(ide.panelLocations, { explorer: 'primary', search: 'primary', 'source-control': 'secondary' });
-  assert.equal(ide.secondaryPanel, 'source-control');
-
-  // On a slice with no tree yet, the legacy heal runs first and the tree is built from it.
-  const bare = freshIde();
-  bare.railPanel = 'bogus';
-  bare.panelLocations = { explorer: 'primary', search: 'primary', changes: 'secondary', 'source-control': 'primary' };
-  ideState.normalizePanelLocations(bare);
-  assert.equal(bare.railPanel, 'explorer');
-  assert.equal('changes' in bare.panelLocations, false);
-  assert.ok(bare.workbenchLayout);
-
+test('syncLegacyFromLayout restores the drifted mirror from the tree', () => {
   const synced = hydrate(OPEN_SECONDARY_RIGHT_DOCK_LEFT);
   synced.bottomPanelOpen = false; // drift
   assert.equal(ideState.syncLegacyFromLayout(synced), synced);
@@ -394,21 +259,10 @@ test('without the layout modules every helper keeps the legacy behaviour', () =>
 
     // The default slice keeps Source Control secondary-located (no fold without the tree).
     assert.equal(ideState.getPanelLocation(ide, 'source-control'), 'secondary');
-    assert.equal(ideState.isPanelActive(ide, 'explorer'), true);
-    assert.equal(ideState.isPanelActive(ide, 'source-control'), false);
 
-    const { calls, hooks } = hooksWithCounters();
-    assert.equal(ideState.showPanel(ide, 'source-control', hooks), 'secondary');
-    assert.deepEqual(calls.opened, ['source-control'], 'the legacy openSecondary hook still runs');
-    assert.equal(ideState.showPanel(ide, 'search', hooks), 'primary');
-    assert.equal(ide.railPanel, 'search');
-    assert.deepEqual([calls.persist, calls.render], [1, 1]);
-
-    ideState.movePanelLocation(ide, 'search', 'secondary');
-    assert.equal(ide.panelLocations.search, 'secondary');
-    assert.equal(ide.secondaryPanel, 'search');
-    assert.equal(ide.secondaryPanelOpen, true);
-    assert.equal(ide.railPanel, 'explorer');
+    ide.panelLocations = { ...ide.panelLocations, search: 'secondary' };
+    ide.secondaryPanel = 'search';
+    ide.secondaryPanelOpen = true;
 
     const persisted = ideState.toPersistedState(ide);
     assert.equal('workbenchLayout' in persisted, false);
@@ -424,7 +278,6 @@ test('without the layout modules every helper keeps the legacy behaviour', () =>
     assert.equal(restored.workbenchLayout, null, 'the tree key is ignored without the modules');
     assert.equal(restored.panelLocations.search, 'secondary');
     assert.equal(restored.secondaryPanelOpen, true);
-    assert.equal(ideState.normalizePanelLocations(restored), restored);
   });
   // The override is reset: the tree path is live again.
   assert.ok(ideState.getWorkbenchLayout(freshIde()));

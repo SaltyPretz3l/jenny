@@ -107,3 +107,61 @@ test('a workspace root commit lets the presentation controller drop a stale chip
     else globalThis.rendererWorkspacePresentationController = prev;
   }
 });
+
+test('the collector wires hot exit: bind, dispose, root commit and noteHydrated restore', () => {
+  const prev = globalThis.rendererIdeHotExit;
+  const calls = [];
+  let seen = null;
+  globalThis.rendererIdeHotExit = {
+    createIdeHotExit: (deps) => {
+      seen = deps;
+      return {
+        bind: () => calls.push('bind'),
+        dispose: () => calls.push('dispose'),
+        restore: () => { calls.push('restore'); return Promise.resolve(); },
+        handleWorkspaceRootCommitted: () => calls.push('root'),
+      };
+    },
+  };
+  try {
+    withStubbedModules(
+      { breadcrumbs: () => null, mru: () => null, saveHygiene: () => null },
+      () => {
+        const toast = () => {};
+        const qol = createIdeQolWiring({
+          getDom: () => ({}),
+          getIde: () => ({}),
+          editorHost: { id: 'host' },
+          showToastMessage: toast,
+          getFeatureFlags: () => ({ ide_hot_exit: true }),
+        });
+        assert.equal(seen.editorHost.id, 'host');
+        assert.equal(seen.showToastMessage, toast);
+        assert.equal(typeof seen.onOpenFile, 'function');
+        assert.equal(typeof seen.activateTab, 'function');
+        qol.bindAll();
+        qol.noteHydrated();
+        qol.handleWorkspaceRootCommitted({ context: { rootId: 'root_x' } });
+        qol.disposeAll();
+        assert.deepEqual(calls, ['bind', 'restore', 'root', 'dispose']);
+      }
+    );
+  } finally {
+    if (prev === undefined) delete globalThis.rendererIdeHotExit;
+    else globalThis.rendererIdeHotExit = prev;
+  }
+});
+
+test('noteHydrated is a safe no-op when hot exit is unavailable', () => {
+  const prev = globalThis.rendererIdeHotExit;
+  globalThis.rendererIdeHotExit = { createIdeHotExit: () => null };
+  try {
+    const qol = createIdeQolWiring({ getDom: () => ({}), getIde: () => ({}) });
+    assert.equal(qol.hotExit, null);
+    assert.equal(qol.noteHydrated(), undefined);
+    assert.doesNotThrow(() => { qol.bindAll(); qol.disposeAll(); });
+  } finally {
+    if (prev === undefined) delete globalThis.rendererIdeHotExit;
+    else globalThis.rendererIdeHotExit = prev;
+  }
+});

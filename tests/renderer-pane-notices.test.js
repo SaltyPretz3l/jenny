@@ -260,7 +260,10 @@ test('a keyed notice moving from pane 0 to pane 1 takes pane 0\'s copy down at o
   assert.equal(isShown(paneZeroNotice), false, 'pane 0 repaints when the slot leaves it, with no composer render of its own');
 });
 
-test('compaction progress for pane 1\'s session shows under pane 1\'s composer, not pane 0\'s', async (t) => {
+// Compaction is told by the inline activity row and the timeline divider, so
+// neither pane's composer notice carries it; the row mounts in the pane that
+// shows the compacting session.
+test('compaction of pane 1\'s session shows its inline row in pane 1 and leaves both composer notices alone', async (t) => {
   let settle = null;
   const compactNow = () => new Promise((resolve) => {
     settle = () => resolve({ status: 'ok', compacted: true, snapshot_persisted: true, tokens_before: 4000, tokens_after: 1200 });
@@ -271,15 +274,16 @@ test('compaction progress for pane 1\'s session shows under pane 1\'s composer, 
   const run = state.compactionCoordinator.invoke('session-b', { source: 'test' });
   await waitForUi(window, 40);
   assert.ok(settle, 'precondition: the compaction is in flight');
-  assert.equal(isShown(paneOneNotice), true, 'pane 1 shows its session compacting');
-  assert.match(paneOneNotice.textContent, /Compacting context/);
-  assert.equal(paneOneNotice.getAttribute('aria-busy'), 'true');
-  assert.equal(isShown(paneZeroNotice), false, 'pane 0 (session-a) is not compacting');
+  assert.equal(isShown(paneOneNotice), false);
+  assert.equal(isShown(paneZeroNotice), false);
+  const paneOneRow = pane1.dom.chatTimeline.querySelector('.turn-activity-row[data-turn-activity-kind="compaction"]');
+  assert.ok(paneOneRow, 'pane 1 shows its session compacting inline');
+  assert.equal(doc.getElementById('chatTimeline').querySelector('.turn-activity-row'), null, 'pane 0 does not');
   settle();
-  await run;
+  assert.equal((await run).activity.reason, 'persisted');
   await waitForUi(window, 40);
-  assert.match(paneOneNotice.textContent, /Compacted: 4000 -> 1200 tokens/, 'the settled result follows in pane 1');
-  assert.notEqual(paneOneNotice.getAttribute('aria-busy'), 'true');
+  assert.equal(pane1.dom.chatTimeline.querySelector('.turn-activity-row'), null, 'the row leaves when it settles');
+  assert.equal(isShown(paneOneNotice), false);
   assert.equal(isShown(paneZeroNotice), false);
 });
 

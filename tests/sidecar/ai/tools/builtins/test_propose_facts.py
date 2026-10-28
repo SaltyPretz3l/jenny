@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
 
+from sidecar.ai.tools.builtins import propose_facts
 from sidecar.ai.tools.builtins.propose_facts import derive_import_facts
 from sidecar.ai.tools.builtins.propose_suggestion import LiveSuggestion
 from sidecar.ai.tools.workspace import WorkspaceGuard
+from tests.sidecar._platform_skips import make_dir_link
 
 
 def _guard(tmp_path: Path) -> tuple[Path, WorkspaceGuard]:
@@ -80,12 +81,11 @@ def test_absolute_imports_and_escapes_are_never_reported(tmp_path: Path) -> None
     assert js == []
 
 
-@pytest.mark.skipif(os.name == "nt", reason="symlink creation needs privileges on Windows")
 def test_a_link_out_of_the_workspace_is_not_provable(tmp_path: Path) -> None:
     root, guard = _guard(tmp_path)
     outside = tmp_path / "outside"
     outside.mkdir()
-    (root / "src" / "out").symlink_to(outside, target_is_directory=True)
+    make_dir_link(root / "src" / "out", outside)
     facts = derive_import_facts(
         relative_path="src/app.py", kind="replace", old_string="a = 1\n",
         new_string="from .out.thing import x\na = 1\n", workspace=guard,
@@ -125,3 +125,28 @@ def test_propose_change_records_the_facts_in_its_metadata(tmp_path: Path) -> Non
     assert result.success is True
     facts = result.metadata["suggested_change"]["facts"]
     assert facts == [{"kind": "import_missing", "name": ".util.money", "target": "src/util/money"}]
+
+
+def test_import_resolution_stops_once_the_fact_cap_is_reached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _root, guard = _guard(tmp_path)
+    lookups: list[str] = []
+    real_exists = propose_facts._exists
+
+    def counting_exists(workspace: WorkspaceGuard, candidate: str) -> bool | None:
+        lookups.append(candidate)
+        return real_exists(workspace, candidate)
+
+    monkeypatch.setattr(propose_facts, "_exists", counting_exists)
+    removed = "".join(f"from .gone{index} import x\n" for index in range(propose_facts.MAX_FACTS))
+    added = "".join(f"from .new{index} import y\n" for index in range(5))
+
+    facts = derive_import_facts(
+        relative_path="src/app.py", kind="replace", old_string=removed,
+        new_string=added, workspace=guard,
+    )
+
+    assert len(facts) == propose_facts.MAX_FACTS
+    assert all(fact["kind"] == "import_removed" for fact in facts)
+    assert lookups == [], "no import is resolved on disk once the cap is full"

@@ -79,21 +79,23 @@ function registerOllamaTrayRemediationIpcHandlers(ipcMainLike, {
 
   const logEvent = typeof log === 'function' ? log : () => {};
   const {
-    detectOllamaTrayConflictSync,
+    detectOllamaTrayConflictAsync,
   } = require('../backend/ollama-tray-conflict');
   const {
     quitOllamaTrayAppSync,
     disableOllamaStartupShortcutsSync,
   } = require('../backend/ollama-tray-remediation');
 
-  const detect = detectImpl || detectOllamaTrayConflictSync;
+  // Async default: the sync scan's PowerShell process list (~1 s) blocked the
+  // main process, and the renderer asks for this status during boot.
+  const detect = detectImpl || detectOllamaTrayConflictAsync;
   const quit = quitImpl || quitOllamaTrayAppSync;
   const disable = disableImpl || disableOllamaStartupShortcutsSync;
 
   return registerIpcInvokeHandlers(ipcMainLike, {
-    'ollamaTray.status': () => {
+    'ollamaTray.status': async () => {
       try {
-        const { detected, trayProcesses, startupShortcuts } = detect({
+        const { detected, trayProcesses, startupShortcuts } = await detect({
           platform: process.platform,
           env: process.env,
           logger: undefined,
@@ -334,6 +336,7 @@ function registerMainIpcHandlers({
   require('./chat-workspace-ipc-registration').registerChatWorkspaceIpc(ipcMain, { backendService, authorization: workspaceAuthorization });
   require('./chat-proposal-ipc-registration').registerChatProposalIpc(ipcMain, { backendService, authorization: workspaceAuthorization });
   require('./chat-messaging-ipc-registration').registerChatMessagingIpc(ipcMain, { backendService, authorization: workspaceAuthorization });
+  require('./primary-chat-ipc-registration').registerPrimaryChatIpc(ipcMain, { backendService, authorization: workspaceAuthorization });
   require('./performance-ipc-registration').registerPerformanceIpc(ipcMain, { backendService, authorization: workspaceAuthorization });
   require('./tools-settings-ipc-registration').registerToolsSettingsIpc(ipcMain, {
     backendService, authorization: workspaceAuthorization, dialog, getMainWindow, userDataPath: app.getPath('userData'),
@@ -343,8 +346,8 @@ function registerMainIpcHandlers({
     dialog, getMainWindow, shell: require('electron')?.shell || null, // projects.chooseRoot / revealFolder stay in main
   });
   registerWorkspaceIpcHandlers(ipcMain, shellConfigService, {
-    authorization: workspaceAuthorization,
-    getRootContext: () => backendService.workspaceRootCoordinator?.captureContext?.() || null,
+    authorization: workspaceAuthorization, userDataPath: app.getPath('userData'), // row 82 E3 hot exit backups
+    getRootContext: () => backendService.workspaceRootCoordinator?.captureContext?.() || null, isWorkspaceBackupEnabled: () => backendService.featureFlags?.ide_hot_exit !== false,
   });
   // W2-2 background-job chips: snapshot + kill. Kill dispatches an OS
   // pid-tree kill, so both handlers sit behind the trusted-sender
@@ -420,16 +423,16 @@ function registerMainIpcHandlers({
   // before any chat turn runs, without adding a new constructor param.
   backendService.workspaceGitService = workspaceGitService;
   registerWorkspaceGitIpcHandlers(ipcMain, workspaceGitService, workspaceAuthorization);
-  // workspaceFileMap.* namespace: interactive dependency-graph "Map" tab
-  // (registration here is unconditional, matching the house pattern). Reuses
-  // the already-constructed workspaceIdeService/workspaceGitService so file
-  // enumeration/reads and co-change history share the same root-scoped,
-  // fail-soft primitives as the rest of the Workspace IDE surface.
+  // workspaceFileMap.* namespace: interactive dependency-graph "Map" tab (registration here is
+  // unconditional, matching the house pattern). Reuses the already-constructed
+  // workspaceIdeService/workspaceGitService so file enumeration/reads and co-change history
+  // share the same root-scoped, fail-soft primitives as the rest of the Workspace IDE surface.
   const workspaceFileMapService = new WorkspaceFileMapService({
     ideService: workspaceIdeService,
     gitService: workspaceGitService,
     versionedFileServiceProvider: () => versionedWorkspaceFileService,
     logger: log,
+    componentsEnabled: () => backendService.featureFlags?.file_map_components !== false,
   });
   registerWorkspaceFileMapIpcHandlers(ipcMain, workspaceFileMapService, workspaceAuthorization);
   // workspaceTestRunner.* namespace, gated by the default-on workspace_test_runner
@@ -606,6 +609,13 @@ function registerMainIpcHandlers({
   });
   require('./ollama-daemon-ipc').registerOllamaDaemonIpcHandlers(ipcMain, {
     getManager: () => backendService?.ollamaManager, authorization: workspaceAuthorization,
+  });
+  require('./cli-path-ipc-handlers').registerCliPathIpcHandlers(ipcMain, {
+    service: require('../cli-path-service').createCliPathService({
+      platform: processRef.platform, isPackaged: app.isPackaged === true,
+      resourcesPath: processRef.resourcesPath, env: processRef.env,
+    }),
+    authorization: workspaceAuthorization,
   });
   registerOllamaTrayRemediationIpcHandlers(ipcMain, {
     backendService,

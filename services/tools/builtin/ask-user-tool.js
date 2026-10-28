@@ -4,6 +4,7 @@ const { projectDecisionPause } = require('../../backend/runtime-decision-control
 const crypto = require('node:crypto');
 
 const { TOOL_ERROR_CODES } = require('../../backend/error-codes');
+const { boundedString, manifestSchema, plural } = require('./tool-result');
 
 const LIMITS = Object.freeze({
   questions: 4,
@@ -13,13 +14,6 @@ const LIMITS = Object.freeze({
   id: 64,
   answer: 500,
 });
-
-function boundedString(value, limit, { required = false } = {}) {
-  if (typeof value !== 'string') return required ? null : '';
-  const normalized = value.trim();
-  if (required && !normalized) return null;
-  return normalized.slice(0, limit);
-}
 
 function uniqueQuestionId(value, index, seen) {
   const fallback = `q${index + 1}`;
@@ -141,17 +135,15 @@ function buildTranscript(questions, answers) {
 
 module.exports = {
   name: 'ask_user',
-  description: 'Ask the user one to four structured questions and wait for their answers before continuing the turn.',
+  ...manifestSchema('ask_user'),
   category: 'builtin',
   readOnly: true,
   sideEffecting: false,
   planModeOnly: false,
   workspaceRequired: false,
-  parameters: {},
 
   summarize(input) {
-    const count = normalizeQuestions(input).length;
-    return `Ask user ${count || 1} question${count === 1 ? '' : 's'}`;
+    return `Ask user ${plural(normalizeQuestions(input).length || 1, 'question')}`;
   },
 
   async execute(input, context = {}) {

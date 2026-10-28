@@ -20,6 +20,7 @@ const {
   stageRestore,
   workspaceRootIdentity,
 } = require('../services/data-lifecycle/restore-service');
+const { fileSymlinkSkip, linkDirectory } = require('./helpers/platform-skips');
 
 function makeTempRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-restore-'));
@@ -204,7 +205,8 @@ describe('restore service', () => {
               preferredEngineType: 'vllm',
               chatUi: { zoomPercent: 115 },
               toolsWorkspaceRoot: 'C:\\untrusted',
-              featureOverrides: { plugins: true },
+              featureOverrides: { plugins: true, command_palette: false },
+              uiLanguage: 'de',
               secureState: { token: 'drop' },
             }),
           },
@@ -225,7 +227,9 @@ describe('restore service', () => {
       assert.equal(shellConfig.preferredEngineType, 'vllm');
       assert.equal(shellConfig.chatUi.zoomPercent, 115);
       assert.equal(Object.hasOwn(shellConfig, 'toolsWorkspaceRoot'), false);
-      assert.equal(Object.hasOwn(shellConfig, 'featureOverrides'), false);
+      // Portable preferences restore through their normalizers: unknown flags drop.
+      assert.deepEqual(shellConfig.featureOverrides, { command_palette: false });
+      assert.equal(shellConfig.uiLanguage, 'de');
       assert.equal(Object.hasOwn(shellConfig, 'secureState'), false);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -370,7 +374,7 @@ describe('restore service', () => {
     }
   });
 
-  it('rejects a restore pointer symlink before reading it', async (t) => {
+  it('rejects a restore pointer symlink before reading it', { skip: fileSymlinkSkip() }, async () => {
     const root = makeTempRoot();
     try {
       const userDataPath = path.join(root, 'profile');
@@ -380,12 +384,7 @@ describe('restore service', () => {
       const pointerPath = restorePointerPath(userDataPath);
       const externalPointer = path.join(root, 'external-pointer.json');
       fs.renameSync(pointerPath, externalPointer);
-      try {
-        fs.symlinkSync(externalPointer, pointerPath, 'file');
-      } catch (error) {
-        t.skip(`file symlink creation unavailable: ${error.code || 'unknown'}`);
-        return;
-      }
+      fs.symlinkSync(externalPointer, pointerPath, 'file');
       await assert.rejects(promotePendingRestore({ userDataPath }), {
         code: 'CMP-DATA-0007',
         reason: 'restore_state_invalid',
@@ -831,7 +830,7 @@ describe('restore service', () => {
     }
   });
 
-  it('rejects a workspace restore target whose parent escapes through a junction', async (t) => {
+  it('rejects a workspace restore target whose parent escapes through a junction', async () => {
     const root = makeTempRoot();
     try {
       const workspaceRoot = path.join(root, 'workspace');
@@ -839,12 +838,7 @@ describe('restore service', () => {
       const linkPath = path.join(workspaceRoot, '.jenny', 'artifacts');
       fs.mkdirSync(path.dirname(linkPath), { recursive: true });
       fs.mkdirSync(outsideRoot, { recursive: true });
-      try {
-        fs.symlinkSync(outsideRoot, linkPath, process.platform === 'win32' ? 'junction' : 'dir');
-      } catch (error) {
-        t.skip(`directory link creation unavailable: ${error.code || 'unknown'}`);
-        return;
-      }
+      linkDirectory(outsideRoot, linkPath);
       const result = await createArchive({
         destinationRoot: path.join(root, 'archives'),
         encrypted: false,

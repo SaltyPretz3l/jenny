@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "companion-sidecar"
-version = "1.5.0"
+version = "1.6.0"
 description = "Python AI sidecar for the Companion desktop app"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -26,12 +26,13 @@ content = [
     "html2text==2025.4.15",
 ]
 media = [
-    "Pillow==12.3.0",
+    "Pillow==13.0.0",
     "PyMuPDF==1.27.2.2",
 ]
 ocr = [
     "rapidocr==3.9.2",
     "onnxruntime==1.30.0",
+    "onnx-asr==0.12.0",
     "opencv-python-headless==5.0.0.93",
     "numpy==2.4.3",
 ]
@@ -44,7 +45,7 @@ office = [
 ]
 dev = [
     "html2text==2025.4.15",
-    "Pillow==12.3.0",
+    "Pillow==13.0.0",
     "PyMuPDF==1.27.2.2",
     "defusedxml==0.7.1",
     "openpyxl==3.1.5",
@@ -66,7 +67,7 @@ packaging = [
 all = [
     "ollama>=0.4.0",
     "html2text==2025.4.15",
-    "Pillow==12.3.0",
+    "Pillow==13.0.0",
     "PyMuPDF==1.27.2.2",
     "defusedxml==0.7.1",
     "openpyxl==3.1.5",
@@ -74,6 +75,7 @@ all = [
     "numpy==2.4.3",
     "rapidocr==3.9.2",
     "onnxruntime==1.30.0",
+    "onnx-asr==0.12.0",
     "opencv-python-headless==5.0.0.93",
     "pytest>=8.0",
     "pytest-cov>=5.0",
@@ -276,7 +278,9 @@ warn_unused_configs = true
 # stubs. They are imported defensively (lazy, inside try/except) so a missing
 # install degrades gracefully; mypy must not fail the gate when they are absent
 # from the checking environment. (transformers is the tokenizer backend;
-# rapidocr is the optional scanned-PDF OCR engine from the external media site.)
+# rapidocr is the optional scanned-PDF OCR engine from the external media site;
+# onnxruntime is its CPU runtime, also used by the dictation speech engine;
+# onnx_asr is the dictation engine from the same media site.)
 [[tool.mypy.overrides]]
-module = ["transformers", "transformers.*", "rapidocr"]
+module = ["transformers", "transformers.*", "rapidocr", "onnxruntime", "onnx_asr"]
 ignore_missing_imports = true

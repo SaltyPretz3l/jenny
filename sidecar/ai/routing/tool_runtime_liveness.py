@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from sidecar.ai.mcp.builtin_server_ledger import current_operation_ledger
-from sidecar.ai.tools.builtins.shell_background import active_job_ids
+from sidecar.ai.tools.builtins.shell_background import active_job_ids, owned_job_running
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace_store import GuardedWorkspaceStore
 from sidecar.runtime.diagnostics import log_event
@@ -45,7 +45,11 @@ def snapshot_tool_runtime_liveness(
         # Jobs are registered per workspace store (B3S-4): another workspace's
         # job must not keep the status tools in this turn's schema.
         store_key = _workspace_store_key(kernel, request_context)
-        background_jobs = bool(active_job_ids(store_key=store_key)) if store_key else False
+        # A registered job whose process already exited is not live: its
+        # finalizer removes it later and the schema must not wait for that.
+        background_jobs = bool(store_key) and any(
+            owned_job_running(job_id) for job_id in active_job_ids(store_key=store_key)
+        )
         monitor_manager = getattr(kernel, "_monitor_manager", None)
         monitor_probe = getattr(monitor_manager, "has_active_monitors", None)
         active_monitors = bool(monitor_probe()) if callable(monitor_probe) else False

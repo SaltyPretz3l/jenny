@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import functools
 import hashlib
 import json
 import os
@@ -384,17 +385,23 @@ def _journal_schema_path() -> Path:
     )
 
 
-def load_journal_schema() -> dict[str, Any]:
-    schema_path = _journal_schema_path()
-    parsed = json.loads(schema_path.read_text(encoding="utf-8"))
+@functools.lru_cache(maxsize=4)
+def _cached_journal_schema(schema_path: str) -> dict[str, Any]:
+    """Parse the schema once per path; internal callers treat it as read-only."""
+    parsed = json.loads(Path(schema_path).read_text(encoding="utf-8"))
     if not isinstance(parsed, dict):
         raise RuntimeError("workspace mutation journal schema root is not an object")
     return cast(dict[str, Any], parsed)
 
 
+def load_journal_schema() -> dict[str, Any]:
+    """A private deep copy of the cached schema, safe for the caller to mutate."""
+    return copy.deepcopy(_cached_journal_schema(str(_journal_schema_path())))
+
+
 def validate_record(record: object) -> ValidationResult:
     try:
-        schema = load_journal_schema()
+        schema = _cached_journal_schema(str(_journal_schema_path()))
     except (OSError, UnicodeError, json.JSONDecodeError, RuntimeError) as error:
         return _failure(
             "journal_schema_unavailable",

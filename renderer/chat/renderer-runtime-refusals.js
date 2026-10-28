@@ -129,6 +129,11 @@
   var LINKED_FIRST_TURN = entry('setup', 'calm', null,
     jt('chat.runtimeRefusal.linkedFirstTurn.title', 'This chat is still starting'),
     jt('chat.runtimeRefusal.linkedFirstTurn.hint', "Its first turn hasn't started. Try again or cancel it from the original chat, then send."));
+  /* The durable run store opened read-only (index and records disagree, or
+   * a read failed), so nothing new can be queued until Jenny reopens it. */
+  var RUNTIME_STORE_READ_ONLY = entry('setup', 'danger', null,
+    jt('chat.runtimeRefusal.runtimeStoreReadOnly.title', "Jenny can't queue messages right now"),
+    jt('chat.runtimeRefusal.runtimeStoreReadOnly.hint', "Its saved run history opened read-only, so new messages can't start. Restart Jenny to open it again."));
   var SUBMISSION_REFUSED = entry('transport', 'danger', 'open_diagnostics',
     jt('chat.runtimeRefusal.submissionRefused.title', "Jenny couldn't queue that"),
     jt('chat.runtimeRefusal.submissionRefused.hint', "The runtime didn't accept the message. Your draft is back in the composer."));
@@ -165,6 +170,7 @@
     runtime_checkpoint_required: CHECKPOINT_REQUIRED,
     work_not_found: WORK_GONE,
     runtime_work_not_found: WORK_GONE,
+    runtime_store_read_only: RUNTIME_STORE_READ_ONLY,
     runtime_unavailable: SUBMISSION_REFUSED,
     runtime_submission_refused: SUBMISSION_REFUSED,
     runtime_submission_request_invalid: SUBMISSION_REFUSED,

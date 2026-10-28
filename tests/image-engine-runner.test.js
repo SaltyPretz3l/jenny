@@ -1,6 +1,7 @@
 'use strict';
 
 const test = require('node:test');
+const { windowsOnly } = require('./helpers/platform-skips');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -172,18 +173,20 @@ test('unknown lines are indeterminate and progress is throttled with a fake cloc
   child.stdout.emit('data', 'unknown\n');
   assert.equal(events.length, 0);
   child.stdout.emit('data', '[INFO ] loading model from <path>\n');
+  child.stdout.emit('data', '[INFO ] loading vae from <path>\n');
   time = 100;
   child.stdout.emit('data', '[INFO ] generating image\n');
-  assert.equal(events.length, 0);
+  // Phase changes pass the step throttle without consuming it; the load phase is reported once.
+  assert.deepEqual(events, [{ phase: 'load' }]);
   time = 200;
   child.stdout.emit('data', '|=>| 1/20 - 1s/it\r');
   time = 300;
   child.stdout.emit('data', '|=>| 2/20 - 1s/it\n');
   time = 450;
   child.stderr.emit('data', '|=>| 3/20 - 1s/it\r\n');
-  assert.deepEqual(events.map((event) => event.step), [1, 3]);
+  assert.deepEqual(events.filter((event) => event.phase === 'sample').map((event) => event.step), [1, 3]);
   child.stdout.emit('data', '[INFO ] sampling completed, taking 0.25s\n');
-  assert.equal(events.length, 2);
+  assert.deepEqual(events.map((event) => event.phase), ['load', 'sample', 'sample', 'decode']);
   child.emit('exit', 0, null);
   const result = await pending;
   assert.equal(result.seconds.load, 0.1);
@@ -207,7 +210,7 @@ test('invalid inputs and redirected output fail without spawning', async () => {
   }
 });
 
-test('Windows output containment accepts equivalent directory casing', { skip: process.platform !== 'win32' }, async () => {
+test('Windows output containment accepts equivalent directory casing', { skip: windowsOnly('case-insensitive output containment') }, async () => {
   const options = setup();
   options.outputPath = path.join(options.scratchDir.toUpperCase(), 'image.png');
   options.argv[options.argv.indexOf('-o') + 1] = options.outputPath;

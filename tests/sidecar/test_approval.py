@@ -6,7 +6,6 @@ import time
 import pytest
 
 from sidecar.runtime.approval import (
-    approval_decision_from_response,
     approval_request_message,
     approval_resolution_from_response,
     request_tool_approval,
@@ -34,13 +33,13 @@ def test_approval_request_message_ids_are_unique() -> None:
     assert msg1["id"] != msg2["id"]
 
 
-# ── approval_decision_from_response ──
+# ── approval_resolution_from_response: binary decision ──
 
 
 def test_decision_approved_true() -> None:
     msg_id = 1000
     assert (
-        approval_decision_from_response({"id": msg_id, "result": {"approved": True}}, msg_id)
+        approval_resolution_from_response({"id": msg_id, "result": {"approved": True}}, msg_id).approved
         is True
     )
 
@@ -48,7 +47,7 @@ def test_decision_approved_true() -> None:
 def test_decision_approved_false() -> None:
     msg_id = 1001
     assert (
-        approval_decision_from_response({"id": msg_id, "result": {"approved": False}}, msg_id)
+        approval_resolution_from_response({"id": msg_id, "result": {"approved": False}}, msg_id).approved
         is False
     )
 
@@ -56,7 +55,7 @@ def test_decision_approved_false() -> None:
 def test_decision_string_approve() -> None:
     msg_id = 1002
     assert (
-        approval_decision_from_response({"id": msg_id, "result": {"decision": "approve"}}, msg_id)
+        approval_resolution_from_response({"id": msg_id, "result": {"decision": "approve"}}, msg_id).approved
         is True
     )
 
@@ -64,17 +63,17 @@ def test_decision_string_approve() -> None:
 def test_decision_string_denied() -> None:
     msg_id = 1003
     assert (
-        approval_decision_from_response({"id": msg_id, "result": {"decision": "denied"}}, msg_id)
+        approval_resolution_from_response({"id": msg_id, "result": {"decision": "denied"}}, msg_id).approved
         is False
     )
 
 
 def test_decision_wrong_id_returns_false() -> None:
-    assert approval_decision_from_response({"id": 999, "result": {"approved": True}}, 1000) is False
+    assert approval_resolution_from_response({"id": 999, "result": {"approved": True}}, 1000).approved is False
 
 
 def test_decision_missing_result_returns_false() -> None:
-    assert approval_decision_from_response({"id": 1000}, 1000) is False
+    assert approval_resolution_from_response({"id": 1000}, 1000).approved is False
 
 
 @pytest.mark.parametrize("decision", ["approved", "approved_auto", "accepted", "rejected"])
@@ -105,6 +104,9 @@ def test_unknown_decision_fails_closed_even_with_approved_true(result: dict) -> 
     {"decision": " Denied ", "approved": True},
     {"decision": "approve", "approved": False},
     {"decision": "allow", "approved": False},
+    {"decision": "approved", "approved": False},
+    {"decision": "accepted", "approved": False},
+    {"decision": "approved_auto", "approved": False, "edited_plan": {"title": "x"}},
 ])
 def test_conflicting_legacy_decision_and_bool_fail_closed(result: dict) -> None:
     resolution = approval_resolution_from_response({"id": 1011, "result": result}, 1011)

@@ -102,9 +102,14 @@ function createRuntimeShutdownController({
   // identity the GPU handoff restores) the config is re-brokered so the client
   // drops the dead origin and that launch's key.
   let ninferEndpointBrokered = false;
+  // Set when app shutdown begins; re-brokering the sidecar to the stopped NInfer is then waste.
+  let runtimeShutdownStarted = false;
   function releaseNinferEndpoint(status) {
     if (!ninferEndpointBrokered || !['stopped', 'crashed'].includes(status.state) || status.identityRetained === true) return undefined;
-    ninferEndpointBrokered = false;
+    ninferEndpointBrokered = false; // cleared even on shutdown: the endpoint is gone either way
+    // An engine switch initializes the sidecar for its new model itself; a re-broker
+    // here would start a flight for the OLD model and refuse the switch as busy.
+    if (runtimeShutdownStarted || status.stoppedBy === 'engine_switch') return undefined;
     const backendService = getBackendService();
     if (backendService?.currentEngineType !== 'openai-compatible' || typeof backendService.refreshManagedConfig !== 'function') return undefined;
     return Promise.resolve(backendService.refreshManagedConfig('ninfer_stopped')).catch(() => null);
@@ -464,6 +469,7 @@ function createRuntimeShutdownController({
   }
 
   async function stopRuntimeBeforeQuit({ signal } = {}) {
+    runtimeShutdownStarted = true;
     if (signal?.aborted) return;
     beginSessionRuntimeShutdown('app_shutdown');
     const shutdownStartedAt = Date.now();
@@ -579,6 +585,7 @@ function createRuntimeShutdownController({
       return;
     }
     emergencyRuntimeShutdownTriggered = true;
+    runtimeShutdownStarted = true;
     const startedAt = Date.now();
     let sidecarExitConfirmed;
     let llamaExitConfirmed;

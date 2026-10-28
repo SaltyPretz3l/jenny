@@ -239,20 +239,9 @@ def test_post_tool_invalid_response_reason_returns_empty_chat_menu() -> None:
 
     result = _post_tool_invalid_response_reason(
         response_text=chat_menu_text,
-        harness_inventory_invalid=False,
     )
 
     assert result == "empty_chat_menu"
-
-
-def test_post_tool_invalid_response_reason_returns_harness_inventory() -> None:
-    """Line 397: 'harness_inventory' is returned when harness_inventory_invalid=True."""
-    result = _post_tool_invalid_response_reason(
-        response_text="Here are the results you asked for.",
-        harness_inventory_invalid=True,
-    )
-
-    assert result == "harness_inventory"
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +256,6 @@ def test_post_tool_invalid_log_data_includes_outcome_count_when_provided() -> No
         response_text="hello",
         invalid_reason="generic_greeting",
         successful_outcome_count=2,
-        harness_summary_available=True,
         outcome_count=5,
     )
     data_without = _post_tool_invalid_log_data(
@@ -275,7 +263,6 @@ def test_post_tool_invalid_log_data_includes_outcome_count_when_provided() -> No
         response_text="hello",
         invalid_reason="generic_greeting",
         successful_outcome_count=2,
-        harness_summary_available=True,
     )
 
     assert data_with["outcome_count"] == 5
@@ -926,7 +913,6 @@ def test_post_tool_invalid_response_reason_returns_generic_greeting() -> None:
 
     result = _post_tool_invalid_response_reason(
         response_text=greeting,
-        harness_inventory_invalid=False,
     )
 
     assert result == "generic_greeting"
@@ -936,7 +922,6 @@ def test_post_tool_invalid_response_reason_returns_empty_for_normal_response() -
     """Lines 1787-1788: Returns '' for a normal (non-greeting) response."""
     result = _post_tool_invalid_response_reason(
         response_text="Here is the file you requested.",
-        harness_inventory_invalid=False,
     )
 
     assert result == ""
@@ -1046,14 +1031,12 @@ def test_post_tool_invalid_log_data_shapes_correctly() -> None:
         response_text="hi",
         invalid_reason="generic_greeting",
         successful_outcome_count=1,
-        harness_summary_available=False,
     )
 
     assert data["iteration"] == 1
     assert data["response_length"] == 2
     assert data["invalid_reason"] == "generic_greeting"
     assert data["successful_outcome_count"] == 1
-    assert data["harness_summary_available"] is False
 
 
 # ---------------------------------------------------------------------------

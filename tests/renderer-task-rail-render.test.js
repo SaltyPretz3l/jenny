@@ -47,7 +47,7 @@ test('task rail markup uses inventory controls and escapes task metadata', () =>
   assert.ok(inputTags.every((tag) => tag.includes('data-inv-checkbox')));
   const buttonTags = html.match(/<button\b[^>]*>/g) || [];
   assert.ok(buttonTags.length > 0);
-  assert.ok(buttonTags.every((tag) => /class="(?:btn|inv-segmented-option|task-rail-overflow)/.test(tag)));
+  assert.ok(buttonTags.every((tag) => /class="(?:btn|inv-segmented-option|task-rail-overflow|task-rail-title|task-rail-group-action)/.test(tag)));
   assert.equal(html.includes(attack), false);
   assert.ok(html.includes('&lt;img src=x onerror=1&gt;'));
 });
@@ -223,29 +223,35 @@ test('task rail renders checklist groups per filter and keeps checklist rows rea
     { content: 'Finished item', status: 'completed' },
   ], updatedAt: '2026-09-21T09:00:00.000Z' };
   const openHtml = renderTaskRailSurface(rows, { filter: 'open' }, { checklist });
-  // The panel header carries the title (area 3); the rail keeps only the summary.
-  assert.match(openHtml, /<header class="task-rail-header"><span class="task-rail-summary">1 of 3 done &middot; 1 follow-up open<\/span>/);
-  assert.doesNotMatch(openHtml, /task-rail-title-text/);
-  assert.match(openHtml, /<b>This conversation<\/b><span>Jenny&#39;s checklist<\/span>/);
+  // The panel header carries the title; the rail's toolbar row carries the counts.
+  assert.match(openHtml, /<span class="inv-segmented-option-label">Open 3<\/span>[\s\S]*?<span class="inv-segmented-option-label">Done 1<\/span>/);
+  assert.doesNotMatch(openHtml, /task-rail-title-text|task-rail-summary|task-rail-footer/);
+  assert.match(openHtml, /<b>Jenny&#39;s checklist<\/b><span>1 of 3 done<\/span>/);
   assert.match(openHtml, /data-check-status="pending"[\s\S]*?Pending item/);
-  assert.match(openHtml, /data-check-status="in_progress"[\s\S]*?Working item[\s\S]*?class="task-rail-check-meta">in progress/);
+  assert.match(openHtml, /data-check-status="in_progress"[\s\S]*?Working item[\s\S]*?class="task-rail-check-meta">now/);
+  // Finished steps fold into one line in Open; the fold opens them in place.
   assert.doesNotMatch(openHtml, /Finished item/);
+  assert.match(openHtml, /<button[^>]*class="task-rail-check-fold"[^>]*data-action="task-rail-checklist-fold"[^>]*aria-expanded="false"[\s\S]*?<span>1 done<\/span><\/button>/);
   const checklistMarkup = openHtml.slice(
     openHtml.indexOf('class="task-rail-check"'),
     openHtml.indexOf('<div class="task-rail-group"><b>Follow-ups</b>')
   );
   assert.doesNotMatch(checklistMarkup, /data-inv-checkbox|data-action=/);
+  // Unfolded, the fold stays as the toggle that folds them back.
+  const unfolded = renderTaskRailSurface(rows, { filter: 'open' }, { checklist, checklistFoldOpen: true });
+  assert.match(unfolded, /data-action="task-rail-checklist-fold"[^>]*aria-expanded="true"[\s\S]*Pending item[\s\S]*Working item[\s\S]*Finished item/);
 
   const doneHtml = renderTaskRailSurface(rows, { filter: 'done' }, { checklist });
   assert.match(doneHtml, /Finished item/);
-  assert.doesNotMatch(doneHtml, /Pending item|Working item/);
+  assert.doesNotMatch(doneHtml, /Pending item|Working item|task-rail-check-fold/);
   const allHtml = renderTaskRailSurface(rows, { filter: 'all' }, { checklist });
   assert.match(allHtml, /Pending item/);
   assert.match(allHtml, /Working item/);
   assert.match(allHtml, /Finished item/);
+  assert.doesNotMatch(allHtml, /task-rail-check-fold/);
 });
 
-test('follow-up rows use one plain metadata line and no secondary action row', () => {
+test('a follow-up row is its title and one fact; the title opens notes, origin and the chat action', () => {
   const rows = buildTaskRows({
     currentSessionId: 'current',
     sessions: [{ id: 'current', linked_task_id: 'task-1' }],
@@ -257,9 +263,56 @@ test('follow-up rows use one plain metadata line and no secondary action row', (
     },
   });
   const html = renderTaskRailSurface(rows, { filter: 'open' }, {});
-  assert.match(html, /class="task-rail-meta">Agent task &middot; Tomorrow &middot; from Origin chat &middot; This session<\/div>/);
-  assert.doesNotMatch(html, /task-rail-row-actions|task-rail-origin-badge|task-rail-current-badge/);
+  assert.match(html, /<article class="task-rail-row" data-task-id="task-1" data-expanded="false">/);
+  assert.match(html, /<button type="button" class="task-rail-title" data-action="task-rail-toggle" aria-expanded="false" title="Keep it focused\." data-task-id="task-1">Ship the task rail<\/button>/);
+  assert.match(html, /<span class="task-rail-fact task-rail-fact--here">This session<\/span>/);
+  assert.doesNotMatch(html, /task-rail-meta|task-rail-notes|task-rail-detail|Agent task|Manual/, 'notes and origin wait for the title');
   assert.doesNotMatch(html, /data-action="task-rail-open-session"|data-action="task-rail-start"/);
+
+  const open = renderTaskRailSurface(rows, { filter: 'open', expandedTaskId: 'task-1' }, {});
+  assert.match(open, /data-expanded="true"/);
+  assert.match(open, /aria-expanded="true" aria-controls="taskRailDetail-task-1"/);
+  assert.match(open, /<div class="task-rail-detail" id="taskRailDetail-task-1"><div class="task-rail-notes">Keep it focused\.<\/div><div class="task-rail-meta">from Origin chat<\/div>/);
+  assert.match(open, /<button type="button" class="btn btn--sm" data-action="task-rail-open-session" data-task-id="task-1">Open session<\/button>/);
+  assert.match(open, /data-action="task-rail-edit" data-task-id="task-1">Edit<\/button>/);
+
+  const unlinked = buildTaskRows({ companion: { openLoopsBoard: { active: [task()], deferred: [], recentResolved: [], archived: [] } } });
+  const fresh = renderTaskRailSurface(unlinked, { filter: 'open', expandedTaskId: 'task-1' }, {});
+  assert.match(fresh, /data-action="task-rail-start" data-task-id="task-1">Start a session<\/button>/);
+  assert.match(fresh, /<div class="task-rail-meta">Added by you<\/div>/);
+});
+
+test('the row fact says when: due, snoozed until, added, or done', () => {
+  const minutesAgo = (minutes) => new Date(Date.now() - minutes * 60000).toISOString();
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(9, 0, 0, 0);
+  const rows = buildTaskRows({
+    companion: {
+      openLoopsBoard: {
+        active: [
+          task({ followUpId: 'plain', title: 'Plain', createdAt: minutesAgo(12), updatedAt: minutesAgo(12) }),
+          task({ followUpId: 'due', title: 'Due', isDue: true }),
+        ],
+        deferred: [task({ followUpId: 'later', title: 'Later', status: 'deferred', deferredUntil: tomorrow.toISOString(), updatedAt: minutesAgo(1) })],
+        recentResolved: [task({ followUpId: 'done', title: 'Done', status: 'resolved', resolvedAt: minutesAgo(180) })],
+        archived: [],
+      },
+    },
+  });
+  assert.deepEqual(rows.map((row) => row.followUpId), ['due', 'plain', 'later', 'done'], 'due first, snoozed after open');
+  const html = renderTaskRailSurface(rows, { filter: 'all' }, {});
+  const fact = (id) => {
+    const start = html.indexOf(`data-task-id="${id}" data-expanded`);
+    return (html.slice(start).match(/<span class="(task-rail-fact[^"]*)">([^<]*)<\/span>/) || []).slice(1);
+  };
+  assert.deepEqual(fact('due'), ['task-rail-fact task-rail-fact--due', 'Due now']);
+  assert.deepEqual(fact('plain'), ['task-rail-fact', '12m']);
+  assert.deepEqual(fact('later'), ['task-rail-fact', 'Tomorrow']);
+  assert.deepEqual(fact('done'), ['task-rail-fact', '3h']);
+  assert.match(html, /<article class="task-rail-row task-rail-row--later" data-task-id="later"/);
+  // All keeps open work first and gathers finished rows under Done.
+  assert.match(html, /<b>Follow-ups<\/b>[\s\S]*data-task-id="later"[\s\S]*<div class="task-rail-group"><b>Done<\/b><\/div><article class="task-rail-row task-rail-row--resolved" data-task-id="done"/);
 });
 
 // ---- Project scope (FG-002 B4) ----------------------------------------------
@@ -302,7 +355,7 @@ const UI = { filter: 'open' };
 test('scope button names the project, carries the scope mode and marks an away project', () => {
   const rows = scopedRows([{ followUpId: 'a1', title: 'Alpha task', projectId: 'project_a' }]);
   const current = renderTaskRailSurface(rows, UI, { scope: scopeHelper() });
-  assert.match(current, /<header class="task-rail-header"><span class="task-rail-summary">[^<]*<\/span><button[^>]*id="task-rail-scope"/);
+  assert.match(current, /<header class="task-rail-header"><div class="inv-segmented task-rail-filters inv-segmented--compact"[\s\S]*?<\/div><button[^>]*id="task-rail-scope"/);
   assert.match(current, /class="task-rail-scope"/);
   assert.match(current, /data-action="task-rail-scope"/);
   assert.match(current, /data-task-scope="current"/);
@@ -340,7 +393,7 @@ test('a single-project scope hides the other projects rows and rows without a pr
   assert.match(html, /Alpha one/);
   assert.doesNotMatch(html, /Beta one|Orphan one/);
   assert.match(html, /<b>Follow-ups<\/b>/, 'the single heading stays in a single-project scope');
-  assert.match(html, /1 follow-up open<\/span>/);
+  assert.match(html, /<span class="inv-segmented-option-label">Open 1<\/span>/);
 
   const beta = renderTaskRailSurface(rows, UI, { scope: scopeHelper({ mode: 'project', projectId: 'project_b', projectName: 'Beta' }) });
   assert.match(beta, /Beta one/);
@@ -359,7 +412,7 @@ test('All projects groups follow-ups by project: chat project first, then switch
   const html = renderTaskRailSurface(rows, UI, {
     scope: scopeHelper({ mode: 'all', projectId: '', projectName: '', chatProjectId: 'project_b', projectOrder: ['project_a', 'project_b', GENERAL] }),
   });
-  const headings = Array.from(html.matchAll(/<div class="task-rail-group"><b>([^<]*)<\/b><span>([^<]*)<\/span><\/div>/g))
+  const headings = Array.from(html.matchAll(/<div class="task-rail-group"><b>([^<]*)<\/b><span>([^<]*)<\/span>(?:<button[^>]*>[^<]*<\/button>)?<\/div>/g))
     .map((match) => [match[1], match[2]]);
   assert.deepEqual(headings, [
     ['Beta', '2 open &middot; this chat'],
@@ -387,19 +440,25 @@ test('All projects omits empty groups and counts only open rows in a heading', (
   assert.match(all, /<b>Beta<\/b><span>0 open<\/span>/);
 });
 
-test('summary counts the open follow-ups across projects in All projects', () => {
+test('the filter counts what the scope shows: open follow-ups plus open checklist steps', () => {
   const rows = scopedRows([
     { followUpId: 'a1', title: 'A1', projectId: 'project_a' },
     { followUpId: 'a2', title: 'A2', projectId: 'project_a' },
     { followUpId: 'b1', title: 'B1', projectId: 'project_b' },
+    { followUpId: 'a-done', title: 'A done', projectId: 'project_a', section: 'done' },
   ]);
+  const label = (html, value) => (html.match(new RegExp(`data-value="${value}"[^>]*><span class="inv-segmented-option-label">([^<]*)<`)) || [])[1];
   const all = renderTaskRailSurface(rows, UI, { scope: scopeHelper({ mode: 'all', projectId: '', projectName: '' }) });
-  assert.match(all, /<span class="task-rail-summary">3 follow-ups open in 2 projects<\/span>/);
-  const single = renderTaskRailSurface(scopedRows([{ followUpId: 'a1', title: 'A1', projectId: 'project_a' }]), UI,
-    { scope: scopeHelper({ mode: 'all', projectId: '', projectName: '' }) });
-  assert.match(single, /<span class="task-rail-summary">1 follow-up open<\/span>/, 'one project reads as a plain count');
-  const scoped = renderTaskRailSurface(rows, UI, { scope: scopeHelper() });
-  assert.match(scoped, /<span class="task-rail-summary">2 follow-ups open<\/span>/);
+  assert.equal(label(all, 'open'), 'Open 3');
+  assert.equal(label(all, 'done'), 'Done 1');
+  const scoped = renderTaskRailSurface(rows, UI, {
+    scope: scopeHelper(), checklist: { items: [{ content: 'Step', status: 'pending' }, { content: 'Was', status: 'completed' }] },
+  });
+  assert.equal(label(scoped, 'open'), 'Open 3', 'two Alpha follow-ups and one open step');
+  assert.equal(label(scoped, 'done'), 'Done 2');
+  const empty = renderTaskRailSurface([], UI, { scope: scopeHelper() });
+  assert.equal(label(empty, 'open'), 'Open', 'no count when there is nothing');
+  assert.equal(label(empty, 'done'), 'Done');
 });
 
 test('Add placeholder names the scoped project, or the chat project in All projects', () => {
@@ -425,15 +484,26 @@ test('the checklist stays first and visible in every scope', () => {
   const checklist = { items: [{ content: 'Chat step', status: 'pending' }], updatedAt: '' };
   const rows = scopedRows([{ followUpId: 'b1', title: 'Beta one', projectId: 'project_b' }]);
   const html = renderTaskRailSurface(rows, UI, { checklist, scope: scopeHelper() });
-  assert.match(html, /<b>This conversation<\/b>/);
+  assert.match(html, /<b>Jenny&#39;s checklist<\/b>/);
   assert.match(html, /Chat step/);
   assert.doesNotMatch(html, /No open tasks in/, 'the empty copy is only for an empty list');
 });
 
-test('send-list stays enabled only for open follow-ups inside the scope', () => {
+test('send-list sits on the first follow-up heading and only while the scope has open follow-ups', () => {
   const rows = scopedRows([{ followUpId: 'b1', title: 'Beta one', projectId: 'project_b' }]);
   const empty = renderTaskRailSurface(rows, UI, { scope: scopeHelper() });
-  assert.match(empty, /data-action="task-rail-send-list"[^>]*disabled/);
+  assert.doesNotMatch(empty, /task-rail-send-list/);
   const populated = renderTaskRailSurface(rows, UI, { scope: scopeHelper({ mode: 'all', projectId: '', projectName: '' }) });
-  assert.doesNotMatch(populated, /data-action="task-rail-send-list"[^>]*disabled/);
+  assert.match(populated, /<div class="task-rail-group"><b>Beta<\/b><span>1 open<\/span><button type="button" class="task-rail-group-action" data-action="task-rail-send-list">Send list to chat<\/button><\/div>/);
+  const single = renderTaskRailSurface(rows, UI, { scope: scopeHelper({ mode: 'project', projectId: 'project_b', projectName: 'Beta' }) });
+  assert.match(single, /<b>Follow-ups<\/b><button[^>]*data-action="task-rail-send-list"/);
+  assert.equal((single.match(/task-rail-send-list/g) || []).length, 1);
+  // In All, a group of finished rows never carries it; the first group with an open row does.
+  const mixed = scopedRows([
+    { followUpId: 'a1', title: 'Alpha done', projectId: 'project_a', section: 'done' },
+    { followUpId: 'b1', title: 'Beta one', projectId: 'project_b' },
+  ]);
+  const allScope = renderTaskRailSurface(mixed, { filter: 'all' }, { scope: scopeHelper({ mode: 'all', projectId: '', projectName: '' }) });
+  assert.match(allScope, /<b>Alpha<\/b><span>0 open &middot; this chat<\/span><\/div>[\s\S]*<b>Beta<\/b><span>1 open<\/span><button[^>]*data-action="task-rail-send-list"/);
+  assert.equal((allScope.match(/task-rail-send-list/g) || []).length, 1);
 });

@@ -23,11 +23,18 @@ test('chat group labels do not paint a sticky panel gradient', () => {
   assert.doesNotMatch(body, /var\(--view-panel-bg\)/);
 });
 
+test('the primary Jenny row paints an accent spark and a firmer title', () => {
+  assert.match(ruleBody('.session-row__primary-mark'), /color\s*:\s*var\(--accent\)/);
+  assert.match(ruleBody('.session-row__primary-mark svg'), /fill\s*:\s*currentColor/);
+  assert.match(ruleBody('.session-row--primary .session-row__title-text'), /font-weight\s*:\s*600/);
+  assert.match(ruleBody('.session-row .session-row__title'), /font-weight\s*:\s*400/, 'ordinary titles are regular; unread titles are 600 in chat-messages.css');
+});
+
 test('chat session rows do not restore per-row bottom dividers', () => {
   assert.doesNotMatch(ruleBody('.session-row'), /border-bottom\s*:/);
 });
 
-test('reserved dot is visible for every runtime state but yields to bulk selection', t => {
+test('the dot column is rendered for every runtime state but yields to bulk selection', t => {
   const dom = new JSDOM('<!doctype html><head></head><body><div class="sidebar-bulk-actions" hidden></div></body>');
   t.after(() => dom.window.close());
   const style = dom.window.document.createElement('style');
@@ -77,12 +84,15 @@ test('linked-chat tree styles use logical properties, keep the row height and le
   const treeCss = fs.readFileSync(path.join(__dirname, '..', 'styles', 'chats-panel-tree.css'), 'utf8');
   assert.ok(panelCss.split('\n').length <= 600, 'chats-panel.css stays within the 600-line ratchet');
   assert.doesNotMatch(treeCss, /(?:^|[;{\s])(?:left|right|margin-left|margin-right|padding-left|padding-right|border-left|border-right)\s*:/m);
-  assert.match(treeCss, /--cw-indent:\s*16px/);
-  assert.match(treeCss, /padding-inline-start:\s*calc\(var\(--cw-depth, 0\) \* var\(--cw-indent\)\)/);
-  assert.match(treeCss, /--cw-thread:\s*var\(--line-strong\)/);
+  assert.match(treeCss, /--cw-indent:\s*24px/);
+  assert.match(treeCss, /padding-inline-start:\s*calc\(var\(--cw-base, 0px\) \+ var\(--cw-depth, 0\) \* var\(--cw-indent\)\)/);
+  assert.match(treeCss, /--cw-thread-x:\s*calc\(var\(--cw-base, 0px\) \+ var\(--space-4\) \+ 4px\)/, 'a section indent moves the guide line with the rows');
+  assert.match(treeCss, /--cw-thread:\s*color-mix\(in srgb, var\(--text-muted\) 55%, transparent\)/);
   assert.match(treeCss, /text-box:\s*trim-both cap alphabetic/);
   assert.doesNotMatch(treeCss, /font-size:\s*[\d.]+(?:px|rem)/, 'type uses the role tokens');
-  const withoutOrigin = treeCss.replace(/\.session-row\[data-tree-origin\] \.session-row__open \{[^}]*\}/, '');
+  const withoutOrigin = treeCss
+    .replace(/\.session-row\[data-tree-origin\] \.session-row__open \{[^}]*\}/, '')
+    .replace(/\.session-row\[data-tree-last="true"\]:not\(\[data-tree-depth="0"\]\)::after \{[^}]*\}/, '');
   assert.doesNotMatch(withoutOrigin, /(?:^|[\s;{])(?:block-size|height)\s*:\s*[^;]*session-row-height/m, 'only origin rows may grow past the row height');
   const imports = fs.readFileSync(path.join(__dirname, '..', 'styles.css'), 'utf8');
   if (imports.includes('chats-panel-tree.css')) {
@@ -104,6 +114,6 @@ test('tree rows: thread levels resolve through the attribute selectors', t => {
   const [grand, middle] = dom.window.document.querySelectorAll('.session-row');
   const computed = node => dom.window.getComputedStyle(node);
   assert.equal(computed(grand).getPropertyValue('--cw-c1').trim(), 'var(--cw-thread)', 'the grandparent level-1 line runs through the grandchild');
-  assert.equal(computed(grand).getPropertyValue('--cw-c2').trim(), '', 'the last child draws an elbow, not a level-2 line');
+  assert.equal(computed(grand).getPropertyValue('--cw-c2').trim(), '', 'the last child draws its own segment, not a level-2 line');
   assert.equal(computed(middle).getPropertyValue('--cw-c2').trim(), 'var(--cw-thread)');
 });

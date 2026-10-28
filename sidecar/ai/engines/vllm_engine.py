@@ -121,6 +121,8 @@ class VLLMEngine(_VLLMGenerationMixin, _VLLMTelemetryMixin, BaseEngine):
     _ENGINE_TYPE: str = "vllm"
     _DISPLAY_NAME: str = "vLLM"
     _START_COMMAND_HINT: str = "vllm serve <model>"
+    # OpenAI-compatible ``usage.prompt_tokens`` is the whole prompt, cache hit or not.
+    reports_full_prompt_input_tokens: bool = True
 
     def __init__(
         self,
@@ -141,6 +143,7 @@ class VLLMEngine(_VLLMGenerationMixin, _VLLMTelemetryMixin, BaseEngine):
         self._context_length: int | None = None
         self._served_context_length: int | None = None
         self._served_thinking_control: ThinkingControl | None = None
+        self._served_props_ok = False
         self._thinking = False
         self._vision = False
         self._turn_diagnostics_store: Any | None = None
@@ -225,6 +228,7 @@ class VLLMEngine(_VLLMGenerationMixin, _VLLMTelemetryMixin, BaseEngine):
             self._context_length = self._extract_context_length(models, matched)
             props = probe_server_modalities(base_url=self._base_url, headers=self._headers)
             props_vision = vision_from_props(props)
+            self._served_props_ok = props is not None
             self._served_context_length = context_length_from_props(props)
             self._served_thinking_control = thinking_control_from_props(props)
             served_thinking = bool(
@@ -304,6 +308,7 @@ class VLLMEngine(_VLLMGenerationMixin, _VLLMTelemetryMixin, BaseEngine):
         self._context_length = None
         self._served_context_length = None
         self._served_thinking_control = None
+        self._served_props_ok = False
         self._thinking = False
         self._vision = False
         self._local_runtime_capability_sources = {

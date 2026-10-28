@@ -449,3 +449,20 @@ test('dispose() removes the live region and listeners, and is idempotent', (t) =
 
   assert.doesNotThrow(() => a11y.dispose());
 });
+
+test('announcements survive a re-render that wipes the content layer', (t) => {
+  const { dom, viewportEl, contentEl, teardown } = setupDom();
+  const graph = makeGraph();
+  const view = makeFakeView(dom, contentEl, graph);
+  const a11y = createMapA11y({
+    viewportEl, contentEl, view, transform: makeFakeTransform(), getGraph: () => graph,
+  });
+  t.after(() => { a11y.dispose(); teardown(); });
+
+  view._rerender(); // renderAtlas-style replaceChildren detaches the live region
+  a11y.focusNode('src/a.js');
+  viewportEl.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: ']', bubbles: true }));
+  const live = contentEl.querySelector('.ide-map-a11y-live');
+  assert.ok(live && live.isConnected, 'a connected live region exists after the wipe');
+  assert.match(live.textContent, /→ b\.js, 1 of 2 dependencies/);
+});

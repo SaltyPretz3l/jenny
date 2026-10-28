@@ -9,6 +9,7 @@
  * workspace-pty-service-slots.test.js), write/resize/kill
  * plumbing to the IPty handle, byte-capped onData / onExit bridge events,
  * MODULE_LOAD_FAILED fail-soft, and the powershell->cmd fixture fallback.
+ * Shell profiles and the start folder live in workspace-pty-profiles.test.js.
  * Uses a fake pty module - no native ConPTY is launched. */
 
 const { test } = require('node:test');
@@ -42,6 +43,7 @@ function createFixture({
   setTimeoutImpl,
   clearTimeoutImpl,
   terminationTimeoutMs,
+  detectShellProfiles = () => [],
 } = {}) {
   const spawns = [];
   const events = [];
@@ -70,6 +72,7 @@ function createFixture({
     setTimeoutImpl,
     clearTimeoutImpl,
     terminationTimeoutMs,
+    detectShellProfiles,
   });
   return {
     service, spawns, events, logs, ptys,
@@ -320,11 +323,7 @@ test('wide-036: PTY output bursts coalesce into one bounded bridge delivery', as
 });
 
 // 11. powershell throws -> cmd.exe fallback attempted.
-test('spawn falls back to cmd.exe when powershell.exe throws (win32 path)', async (t) => {
-  if (process.platform !== 'win32') {
-    t.skip('win32-only shell fallback');
-    return;
-  }
+test('spawn falls back to cmd.exe when powershell.exe throws (win32 path)', async () => {
   const spawns = [];
   const service = new WorkspacePtyService({
     configService: { getToolsWorkspaceRoot: () => 'G:/fake-root' },
@@ -339,12 +338,19 @@ test('spawn falls back to cmd.exe when powershell.exe throws (win32 path)', asyn
       },
     }),
     env: { PATH: 'C:/windows' },
+    // node-pty is faked and nothing is detected, so the win32 bare-name chain runs
+    // on every OS.
+    platform: 'win32',
+    detectShellProfiles: () => [],
   });
   const result = await service.spawn({ cols: 80, rows: 24 });
   assert.equal(result.ok, true);
   assert.equal(result.shell, 'cmd.exe');
+  assert.equal(result.profileId, 'cmd');
   assert.equal(spawns.length, 2);
   assert.equal(spawns[0].shell, 'powershell.exe');
+  // Owner pick O4 (row 82): PowerShell loads the user's profile; -NoLogo stays.
+  assert.deepEqual(spawns[0].args, ['-NoLogo']);
   assert.equal(spawns[1].shell, 'cmd.exe');
 });
 

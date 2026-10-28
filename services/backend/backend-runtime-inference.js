@@ -13,9 +13,11 @@ const { RUNTIME_ERROR_CODES } = require('./error-codes');
 const { registerPreemptibleAuxiliary } = require('./auxiliary-preemption');
 const { isLocalEngine, openAiCompatibleUrlFromService } = require('./session-lockdown-gate');
 
-const METHODS = new Set(['suggestions.generate', 'commit.generate_message', 'chat.compact', 'memory.reflect']);
+const METHODS = new Set([
+  'suggestions.generate', 'commit.generate_message', 'chat.compact', 'memory.reflect', 'handoff.generate_note',
+]);
 // Session-scoped methods hold the session's turn lease and captured authority.
-const SCOPED_METHODS = new Set(['chat.compact', 'memory.reflect']);
+const SCOPED_METHODS = new Set(['chat.compact', 'memory.reflect', 'handoff.generate_note']);
 const unsettledRequests = new WeakMap();
 
 function admissionError(reason) {
@@ -48,7 +50,8 @@ async function requestRuntimeInference(service, method, params, {
     }
     // Embedded legacy adapters without application composition retain their
     // existing request contract. Production declares the flag, even when OFF.
-    const result = scoped ? await client.chatCompact(sessionId, params.messages, { signal, timeoutMs })
+    const result = method === 'chat.compact'
+      ? await client.chatCompact(sessionId, params.messages, { signal, timeoutMs })
       : await client.request(method, params, { signal, timeoutMs });
     return await consumeResult(result);
   }

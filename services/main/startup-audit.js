@@ -6,6 +6,7 @@ function createStartupAudit({
   log = () => {},
   canLog = () => true,
   getStartupElapsedMs = () => 0,
+  processRef = process,
 } = {}) {
   const STARTUP_AUDIT_ENABLED = /^(1|true|yes|on)$/i.test(String(env.JENNY_COLD_START_AUDIT || '').trim());
   const STARTUP_AUDIT_RUN_ID = String(env.JENNY_COLD_START_AUDIT_RUN_ID || '').trim();
@@ -94,7 +95,33 @@ function createStartupAudit({
   // is the launcher's own start time; JENNY_LAUNCH_PATH labels dev vs the two
   // public wrappers). Lives here, not main.js, so main.js stays under its cap
   // and the fields are unit-testable; audit-gated like every other mark.
+  // The 'process-start' mark: the Electron main process's real OS creation
+  // time (process.getCreationTime(), Electron-only), so launcher -> process
+  // and process -> main-entry separate. Skipped when the runtime cannot say
+  // (plain Node, or null from Electron) rather than inventing a time.
+  function emitProcessStartMark() {
+    if (!STARTUP_AUDIT_ENABLED) {
+      return;
+    }
+    let createdAtMs;
+    try {
+      createdAtMs = typeof processRef?.getCreationTime === 'function' ? processRef.getCreationTime() : null;
+    } catch (_error) {
+      createdAtMs = null;
+    }
+    if (typeof createdAtMs !== 'number' || !Number.isFinite(createdAtMs) || createdAtMs <= 0) {
+      return;
+    }
+    emitStartupAuditMark('process-start', {
+      source: 'main',
+      basis: 'process.getCreationTime',
+      ts_ms: Math.round(createdAtMs),
+      startupMs: 0,
+    });
+  }
+
   function emitMainEntryMark({ mainModuleEntryAt, appStartupStartedAt } = {}) {
+    emitProcessStartMark();
     const launcherStartedAtMs = Number(env.JENNY_LAUNCHER_STARTED_AT_MS) || 0;
     const launchPath = String(env.JENNY_LAUNCH_PATH || '').trim();
     emitStartupAuditMark('main-entry', {
@@ -172,6 +199,7 @@ function createStartupAudit({
   return {
     enabled: STARTUP_AUDIT_ENABLED,
     emitMainEntryMark,
+    emitProcessStartMark,
     emitStartupAuditMark,
     flushStartupAuditMarks,
     getStartupAuditConfig,

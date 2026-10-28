@@ -4,8 +4,10 @@ const path = require('path');
 const { executeHostedRunCommand } = require('./hosted-command-bridge');
 
 const { TOOL_ERROR_CODES } = require('./error-codes');
+const { FORBIDDEN_STORAGE_KEYS } = require('./tool-result-metadata-bounds');
 const { getTrustedExecutionBinding } = require('./session-execution-authority');
 const { withQuestionWithdrawal } = require('./runtime-decision-control');
+const { emitToolProgress } = require('./chat-stream-tool-progress');
 
 const MAX_BRIDGE_METADATA_DEPTH = 6;
 const MAX_BRIDGE_METADATA_ITEMS = 100;
@@ -36,7 +38,7 @@ const ELECTRON_BRIDGE_TOOL_NAMES = new Set([
   'propose_command',
   'propose_session',
   'complete_session_handoff',
-  'session_message',
+  'session_message', 'sessions_list', 'session_status', 'session_transcript', 'session_stop', 'jenny_help',
 ]);
 
 function normalizeBridgeArguments(value) {
@@ -122,8 +124,23 @@ function normalizeLocalGeneratedArtifacts(value) {
     : [];
 }
 
+// Matched per key segment (snake_case, kebab-case or camelCase), so `files`,
+// `file_count`, `locale`, `max_tokens` and `cache_key` survive while
+// `file_path`, `local_path`, `access_token`, `api_key` and `local_trusted` drop.
+const SENSITIVE_METADATA_KEY_SEGMENTS = new Set([
+  'absolute', 'path', 'paths', 'token', 'secret', 'secrets', 'password', 'passwords',
+  'passwd', 'credential', 'credentials', 'apikey', 'trusted',
+]);
+const SENSITIVE_KEY_QUALIFIERS = new Set(['api', 'access', 'private', 'secret', 'auth', 'session']);
 function isSensitiveMetadataKey(key) {
-  return /(absolute|local|path|file|token|secret|password|credential|key)/iu.test(String(key || ''));
+  const segments = String(key || '')
+    .replace(/([a-z0-9])([A-Z])/gu, '$1_$2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/u)
+    .filter(Boolean);
+  if (segments.length === 1 && segments[0] === 'key') return true;
+  return segments.some((segment, index) => SENSITIVE_METADATA_KEY_SEGMENTS.has(segment)
+    || (segment === 'key' && index > 0 && SENSITIVE_KEY_QUALIFIERS.has(segments[index - 1])));
 }
 
 function sanitizeBridgeMetadataString(value) {
@@ -185,9 +202,13 @@ function sanitizeBridgeMetadataValue(value, depth = 0) {
   return undefined;
 }
 
+// The stored-metadata prototype keys plus payloads the bridge never forwards.
+const FORBIDDEN_BRIDGE_METADATA_KEYS = new Set([
+  ...FORBIDDEN_STORAGE_KEYS, 'preview_image', 'previewImage', 'data_base64', 'trusted_attachments',
+]);
+
 function isForbiddenMetadataKey(key) {
-  return ['__proto__', 'prototype', 'constructor', 'preview_image', 'previewImage',
-    'data_base64', 'trusted_attachments'].includes(key);
+  return FORBIDDEN_BRIDGE_METADATA_KEYS.has(key);
 }
 
 function sanitizeBridgeMetadata(value) {
@@ -195,7 +216,10 @@ function sanitizeBridgeMetadata(value) {
     ? value
     : {};
   const sanitized = {};
+  let entryCount = 0;
   for (const [key, rawValue] of Object.entries(metadata)) {
+    if (entryCount >= MAX_BRIDGE_METADATA_ITEMS) break;
+    entryCount += 1;
     if (key === 'generatedArtifacts' || key === 'generated_artifacts'
       || isForbiddenMetadataKey(key) || isSensitiveMetadataKey(key)) {
       continue;
@@ -324,6 +348,7 @@ async function executeElectronToolRequest(
     logicalTurnId = null,
     sessionIncarnation = null,
     beforeProducer = null,
+    onProgress = null,
   } = {}
 ) {
   const payload = params && typeof params === 'object' && !Array.isArray(params) ? params : {};
@@ -357,12 +382,10 @@ async function executeElectronToolRequest(
     || String(sessionId || payload.session_id || '').trim();
   const scopedStreamId = trustedExecution?.requestId
     || String(streamId || payload.request_id || '').trim();
-  const effectivePlanMode = trustedExecution
-    ? trustedExecution.mode === 'plan'
-    : typeof payload.plan_mode === 'boolean' ? payload.plan_mode : true;
-  const effectiveReadOnly = trustedExecution
-    ? trustedExecution.readOnly
-    : typeof payload.read_only === 'boolean' ? payload.read_only : true;
+  // Without a trusted execution authority the payload's own mode flags are not
+  // believed: the request runs as Plan + read-only.
+  const effectivePlanMode = trustedExecution ? trustedExecution.mode === 'plan' : true;
+  const effectiveReadOnly = trustedExecution ? trustedExecution.readOnly : true;
 
   if (service?.hostMode === 'server' && toolName === 'run_command') {
     if (effectivePlanMode || effectiveReadOnly) {
@@ -472,6 +495,7 @@ async function executeElectronToolRequest(
       executionAuthority,
       projectAuthority: trustedExecution?.authority || null,
       beforeProducer,
+      ...(typeof onProgress === 'function' ? { onProgress } : {}),
       ...(toolName === 'ask_user' && runtimeDecisionControl ? {
         runtimeDecisionControl: withQuestionWithdrawal(runtimeDecisionControl, service, {
           sessionId: scopedSessionId, streamId: scopedStreamId, callId, turnId: logicalTurnId,
@@ -736,8 +760,9 @@ function buildManagedSidecarChatSendOptions({
       }
       // Human answers and image renders can take minutes without stream activity.
       const resumeAfterAnswers = suspendIdleWatchdog();
-      const run = (abortSignal, producer = beforeProducer) => executeElectronToolRequest(service, {
+      const run = (abortSignal, producer = beforeProducer, onProgress = null) => executeElectronToolRequest(service, {
         beforeProducer: producer,
+        onProgress,
         runtimeDecisionControl: controller._runtimeDecisionControl,
         logicalTurnId: turnEventCollector?.turnId || streamId,
         params,
@@ -752,8 +777,14 @@ function buildManagedSidecarChatSendOptions({
         const announceProducer = beforeProducer ? async () => {
           await beforeProducer(); producerAcknowledged = true;
         } : null;
+        // The live render progress: an ephemeral row update, never persisted, and
+        // silent once the render's own signal is cancelled.
+        const reportProgress = (signal) => (progress) => {
+          if (!signal.aborted) emitToolProgress(service, runtime.getEventBase(),
+            { callId: String(params.tool_call_id || ''), toolName: 'image_generate', progress });
+        };
         return await trackImageBridgeExecution(service, streamId, controller.signal,
-          (signal) => run(signal, announceProducer), (result) => {
+          (signal) => run(signal, announceProducer, reportProgress(signal)), (result) => {
             if (producerAcknowledged) runtime.handleNotification({ method: 'tool.result',
               params: { ...result, tool_call_id: params.tool_call_id, tool_input: params.arguments } },
             { toolContext, handleToolNotification });

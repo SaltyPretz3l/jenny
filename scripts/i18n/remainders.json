@@ -34,5 +34,59 @@
     "file": "renderer/features/renderer-image-edit-draft.js",
     "text": "Copy source_artifact_id and region exactly; if region is absent, omit region. Omit width and height to keep the source size. Give the edited variant a short descriptive title.",
     "reason": "Model-facing selection instructions appended only to the provider prompt; visiblePrompt retains the human message. Tool parameter vocabulary must remain stable."
+  },
+  {
+    "name": "file-map-summary",
+    "file": "renderer/features/renderer-ide-map-overview.js",
+    "text": "- {expr}: {expr} files",
+    "reason": "Ask-the-Map graph summary: a data block in a code fence for the model, built beside the summary's existing untranslated lines (baseline); translate the summary as one unit or not at all."
+  },
+  {
+    "name": "file-map-summary",
+    "file": "renderer/features/renderer-ide-map-overview.js",
+    "text": "Beside the components: {expr}.",
+    "reason": "Ask-the-Map graph summary: a data block in a code fence for the model, built beside the summary's existing untranslated lines (baseline); translate the summary as one unit or not at all."
+  },
+  {
+    "name": "file-map-summary",
+    "file": "renderer/features/renderer-ide-map-overview.js",
+    "text": "+{expr} more",
+    "reason": "Ask-the-Map graph summary: a data block in a code fence for the model, built beside the summary's existing untranslated lines (baseline); translate the summary as one unit or not at all."
+  },
+  {
+    "name": "file-map-summary",
+    "file": "renderer/features/renderer-ide-map-overview.js",
+    "text": "{expr}; inside:",
+    "reason": "Ask-the-Map graph summary: a data block in a code fence for the model, built beside the summary's existing untranslated lines (baseline); translate the summary as one unit or not at all."
+  },
+  {
+    "name": "file-map-summary",
+    "file": "renderer/features/renderer-ide-map-overview.js",
+    "text": "imported: file imports):",
+    "reason": "Ask-the-Map graph summary: a data block in a code fence for the model, built beside the summary's existing untranslated lines (baseline); translate the summary as one unit or not at all."
+  },
+  {
+    "name": "file-map-summary",
+    "file": "renderer/features/renderer-ide-map-overview.js",
+    "text": "{expr} {expr} files{expr}",
+    "reason": "Ask-the-Map graph summary: a data block in a code fence for the model, built beside the summary's existing untranslated lines (baseline); translate the summary as one unit or not at all."
+  },
+  {
+    "name": "file-map-summary",
+    "file": "renderer/features/renderer-ide-map-overview.js",
+    "text": "Components (source files; {expr} at the top level):",
+    "reason": "Ask-the-Map graph summary: a data block in a code fence for the model, built beside the summary's existing untranslated lines (baseline); translate the summary as one unit or not at all."
+  },
+  {
+    "name": "file-map-summary",
+    "file": "renderer/features/renderer-ide-map-overview.js",
+    "text": "{expr}{expr}+{expr} more",
+    "reason": "Ask-the-Map graph summary: a data block in a code fence for the model, built beside the summary's existing untranslated lines (baseline); translate the summary as one unit or not at all."
+  },
+  {
+    "name": "file-map-summary",
+    "file": "renderer/features/renderer-ide-map-overview.js",
+    "text": "(importing {expr})",
+    "reason": "Ask-the-Map graph summary: a data block in a code fence for the model, built beside the summary's existing untranslated lines (baseline); translate the summary as one unit or not at all."
   }
 ]

@@ -208,15 +208,29 @@ test('/help works without a session and lists only active built-ins', async () =
   });
   assert.equal((await registry.execute('/help').completion).ok, true);
   assert.match(calls.toasts[0][0], /Available now: \/help, \/note/);
-  assert.match(calls.toasts[0][0], /Start a conversation for: \/context, \/compact, \/linked, \/remember, \/forget, \/memory\./);
+  assert.match(calls.toasts[0][0], /Start a conversation for: \/context, \/compact, \/linked, \/handoff, \/remember, \/forget, \/memory, \/activity\./);
   assert.doesNotMatch(calls.toasts[0][0], /research/i);
-  assert.equal(registry.listCommands().length, 8);
+  assert.equal(registry.listCommands().length, 10);
   const byName = Object.fromEntries(registry.listCommands().map((entry) => [entry.name, entry]));
   assert.equal(byName['/remember'].action, 'insert');
   assert.equal(byName['/linked'].action, 'insert');
   assert.equal(byName['/forget'].action, 'insert');
   assert.equal(byName['/memory'].action, 'run');
   assert.equal(byName['/memory'].description, 'List what Jenny remembers here');
+  assert.equal(byName['/activity'].description, 'What the Jenny chat did and may do');
+});
+
+test('/activity is registered with requiresSession and reaches the activity handler', async () => {
+  const { registry } = buildHarness();
+  const calls = [];
+  registerBuiltInSlashCommands({ registry, activityHandler: (invocation) => { calls.push(invocation); return { ok: true }; } });
+  assert.equal(registry.listCommands().find((entry) => entry.name === '/activity').available, true);
+  assert.equal((await registry.execute('/activity').completion).ok, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].sessionId, 'session_1');
+  const bare = buildHarness({ state: { currentSessionId: '' } });
+  registerBuiltInSlashCommands({ registry: bare.registry, activityHandler: () => ({ ok: true }) });
+  assert.equal(bare.registry.listCommands().find((entry) => entry.name === '/activity').available, false);
 });
 
 test('/help groups attachable skills before ordinary commands', async () => {

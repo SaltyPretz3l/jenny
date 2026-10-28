@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 
@@ -11,7 +14,10 @@ from sidecar.ai.tools.builtins.lsp.manager import (
     LSPServerCommand,
     LSPUnavailableResult,
 )
-from sidecar.ai.tools.builtins.lsp.paths import resolve_lsp_target
+from sidecar.ai.tools.builtins.lsp.paths import (
+    resolve_lsp_target,
+    workspace_relative_file_uri,
+)
 from sidecar.ai.tools.builtins.lsp.tools import (
     configure_lsp_tools,
     lsp_definition_tool,
@@ -20,8 +26,10 @@ from sidecar.ai.tools.builtins.lsp.tools import (
     lsp_symbols_tool,
     shutdown_lsp_tools,
 )
+from sidecar.ai.tools.builtins.lsp_settings import _STATE
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace import WorkspaceGuard
+from tests.sidecar._platform_skips import windows_only
 
 
 class FakeSession:
@@ -72,10 +80,17 @@ class FakeManager:
     def shutdown(self) -> None:
         self.lifecycle_calls.append("shutdown")
 
-    def ensure_session(self, **kwargs: object) -> FakeSession:
-        self.lifecycle_calls.append("ensure_session")
+    def retire_sessions(self) -> None:
+        self.lifecycle_calls.append("retire_sessions")
+
+    @contextmanager
+    def session_for_request(self, **kwargs: object) -> Iterator[FakeSession]:
+        self.lifecycle_calls.append("session_for_request")
         self.ensure_calls.append(kwargs)
-        return self.session
+        try:
+            yield self.session
+        finally:
+            self.lifecycle_calls.append("release")
 
     def ensure_initialized(self, **kwargs: object) -> None:
         self.session.requests.append(("initialize", dict(kwargs)))
@@ -142,6 +157,7 @@ def test_lsp_diagnostics_tool_syncs_document_and_returns_bounded_payload(tmp_pat
         "language": "python",
         "file": "module.py",
         "truncated": False,
+        "effects": "none",
     }
     assert payload["status"] == "ready"
     assert payload["diagnostics"][0]["severity"] == "error"
@@ -264,6 +280,7 @@ def test_lsp_definition_tool_normalizes_locations_and_omits_external_targets(
         "language": "python",
         "file": "module.py",
         "truncated": False,
+        "effects": "none",
     }
     assert session.requests[-1] == (
         "textDocument/definition",
@@ -580,7 +597,7 @@ def test_lsp_request_evicts_idle_sessions_before_acquisition(tmp_path: Path) -> 
     )
 
     assert result.success is True
-    assert manager.lifecycle_calls[:2] == ["evict_idle_sessions", "ensure_session"]
+    assert manager.lifecycle_calls == ["evict_idle_sessions", "session_for_request", "release"]
 
 
 def test_shutdown_lsp_tools_closes_the_configured_manager() -> None:
@@ -594,3 +611,80 @@ def test_shutdown_lsp_tools_closes_the_configured_manager() -> None:
     shutdown_lsp_tools()
 
     assert manager.lifecycle_calls == ["shutdown"]
+
+
+def _vscode_drive_uri(path: Path, colon: str) -> str:
+    # vscode-uri form: lower-case drive, percent-encoded colon, forward slashes.
+    drive, rest = str(path).split(":", 1)
+    return f"file:///{drive.lower()}{colon}{rest.replace(chr(92), '/')}"
+
+
+@windows_only("drive-letter URIs are a Windows form")
+@pytest.mark.parametrize("colon", ["%3A", "%3a"])
+def test_workspace_relative_file_uri_accepts_percent_encoded_drive(
+    tmp_path: Path, colon: str
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    (workspace_root / "other.py").write_text("x = 1\n", encoding="utf-8")
+    workspace = WorkspaceGuard(str(workspace_root))
+
+    uri = _vscode_drive_uri(workspace_root.resolve() / "other.py", colon)
+
+    assert workspace_relative_file_uri(uri, workspace) == "other.py"
+
+
+def test_workspace_relative_file_uri_refuses_encoded_traversal(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    (tmp_path / "outside.py").write_text("x = 1\n", encoding="utf-8")
+    workspace = WorkspaceGuard(str(workspace_root))
+    inside_uri = (workspace_root.resolve() / "inside.py").as_uri()
+    traversal = inside_uri.replace("/inside.py", "/..%2foutside.py")
+    candidates = [traversal]
+    if os.name == "nt":
+        candidates.append(
+            _vscode_drive_uri(workspace_root.resolve(), "%3A") + "/..%2foutside.py"
+        )
+
+    for uri in candidates:
+        assert workspace_relative_file_uri(uri, workspace) is None, uri
+    assert workspace_relative_file_uri("file://server/share/outside.py", workspace) is None
+
+
+def test_configure_retires_sessions_only_when_a_server_command_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(_STATE, "manager", _STATE.manager)
+    monkeypatch.setattr(_STATE, "config", _STATE.config)
+    monkeypatch.setattr(_STATE, "detected_servers", _STATE.detected_servers)
+    monkeypatch.setattr(_STATE, "configured_commands", None)
+    monkeypatch.setattr(_STATE, "request_timeout_seconds", _STATE.request_timeout_seconds)
+    manager = FakeManager(FakeSession({}))
+    configure_lsp_tools({"tools_lsp_command_python": "pyright-a"}, manager=manager)
+    configure_lsp_tools({"tools_lsp_command_python": " pyright-a "})
+    assert manager.lifecycle_calls == []
+
+    _STATE.detected_servers = {"python": _server()}
+    configure_lsp_tools({"tools_lsp_command_python": "pyright-b"})
+
+    assert manager.lifecycle_calls == ["retire_sessions"]
+    assert _STATE.detected_servers is None
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(None, 15.0), (0, 1.0), (45, 45.0), (2.5, 2.5), (500, 120.0), (True, 15.0), ("9", 15.0)],
+)
+def test_configure_bounds_the_request_timeout(
+    monkeypatch: pytest.MonkeyPatch, value: object, expected: float
+) -> None:
+    monkeypatch.setattr(_STATE, "config", _STATE.config)
+    monkeypatch.setattr(_STATE, "detected_servers", _STATE.detected_servers)
+    monkeypatch.setattr(_STATE, "configured_commands", None)
+    monkeypatch.setattr(_STATE, "request_timeout_seconds", _STATE.request_timeout_seconds)
+    config = {} if value is None else {"tools_lsp_request_timeout_seconds": value}
+
+    configure_lsp_tools(config)
+
+    assert _STATE.request_timeout_seconds == expected

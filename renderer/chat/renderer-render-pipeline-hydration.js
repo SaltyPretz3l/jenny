@@ -22,6 +22,8 @@
   const touchMapEntry = typeof longThreadBudget.touchMapEntry === 'function'
     ? longThreadBudget.touchMapEntry
     : () => false;
+  const manualCompactionDivider = globalRef.rendererManualCompactionDivider
+    || (typeof require === 'function' ? require('./renderer-manual-compaction-divider') : null);
 
   function monotonicNow() {
     return typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -316,6 +318,7 @@
       const rowsByTurnId = new Map();
       const rowByPrimaryMessageId = new Map();
       const viewModelByTurnId = new Map();
+      const manualCompaction = manualCompactionDivider?.resolveManualCompaction(state, sessionId) || null;
       for (let turnIndex = 0; turnIndex < turns.length; turnIndex += 1) {
         const turn = turns[turnIndex];
         const turnId = String(turn && turn.turn_id || '').trim();
@@ -380,6 +383,10 @@
           sessionId: String(sessionId || '').trim(),
           isNewestTurn: turnIndex === turns.length - 1,
         });
+        // After the per-turn cache, on a copy: the summary is not in its signature.
+        if (manualCompaction && turnIdByMessageId.get(manualCompaction.boundaryMessageId) === turnId) {
+          rows = manualCompactionDivider.appendManualCompactionRow(rows, turn, manualCompaction);
+        }
         rowsByTurnId.set(turnId, rows);
         if (viewModel) {
           viewModelByTurnId.set(turnId, viewModel);

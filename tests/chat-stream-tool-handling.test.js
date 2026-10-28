@@ -714,7 +714,7 @@ test('handleToolNotification restores trusted local artifact paths with session 
     .find((message) => String(message.kind || '') === 'tool_result').tool_result.generated_artifacts).length, 1);
 });
 
-test('handleToolNotification preserves explicit untrusted local artifact markers', () => {
+test('handleToolNotification never takes an artifact trust flag from the wire', () => {
   const messagesBySession = new Map([['session-untrusted-artifact', []]]);
   const sessionStore = {
     getSessionMessages(sessionId) {
@@ -777,7 +777,9 @@ test('handleToolNotification preserves explicit untrusted local artifact markers
   const [toolResult] = sessionStore.getSessionMessages('session-untrusted-artifact')
     .filter((message) => String(message.kind || '') === 'tool_result');
   assert.equal(toolResult.tool_result.generated_artifacts[0].absolute_path, '[redacted:path]');
-  assert.equal(toolResult.tool_result.generated_artifacts[0].local_trusted, false);
+  // Only the Electron-side artifact cache can mark an artifact trusted; a
+  // sidecar-supplied flag (true or false) is dropped rather than copied.
+  assert.equal(Object.hasOwn(toolResult.tool_result.generated_artifacts[0], 'local_trusted'), false);
 });
 
 test('handleToolNotification sanitizes structured metadata for stream and persisted tool results', () => {

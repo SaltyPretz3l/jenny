@@ -79,3 +79,37 @@ test('notifySessionRunModeUpdated writes the live session mode projection', () =
     read_only: false,
   });
 });
+
+test('notifySessionMailArrived writes the mid-turn rows for the live request and reports the hand-off', () => {
+  const client = new SidecarClient();
+  const proc = createMockProcess();
+  const writes = [];
+  proc.stdin.write = (chunk) => {
+    writes.push(Buffer.from(chunk));
+    return true;
+  };
+  client.attachProcess(proc);
+  const rows = [{ role: 'context', kind: 'session_message', content: 'b', session_message: { message_id: 'm1' } }];
+
+  assert.equal(client.notifySessionMailArrived({ sessionId: ' session-dst ', requestId: 'req-1', rows }), true);
+
+  assert.equal(writes.length, 1);
+  const payload = Buffer.concat(writes).toString('utf8');
+  const body = JSON.parse(payload.slice(payload.indexOf('\r\n\r\n') + 4));
+  assert.equal(body.method, 'session.mail_arrived');
+  assert.equal(body.id, undefined, 'a notification: no response expected');
+  assert.deepEqual(body.params, { session_id: 'session-dst', request_id: 'req-1', rows });
+
+  for (const bad of [{ requestId: 'req-1', rows }, { sessionId: 's', rows }, { sessionId: 's', requestId: 'r', rows: [] },
+    { sessionId: 's', requestId: 'r', rows: 'x' }]) {
+    assert.equal(client.notifySessionMailArrived(bad), false, JSON.stringify(bad));
+  }
+  proc.stdin.write = () => { throw new Error('pipe closed'); };
+  assert.equal(client.notifySessionMailArrived({ sessionId: 's', requestId: 'r', rows }), false, 'a throwing write is not a hand-off');
+  client._setSidecarFeatureFlags({ multiplexer: false, chat_cancel: true });
+  assert.equal(client.notifySessionMailArrived({ sessionId: 's', requestId: 'r', rows }), false, 'never without the multiplexer');
+  client._setSidecarFeatureFlags({ multiplexer: true, chat_cancel: true });
+  client.detachProcess();
+  assert.equal(client.notifySessionMailArrived({ sessionId: 's', requestId: 'r', rows }), false);
+  assert.equal(writes.length, 1);
+});

@@ -459,3 +459,136 @@ def test_sync_document_rejects_handle_swapped_outside_workspace(tmp_path, monkey
     result = manager.sync_document(session=session, language="python", file_path=target)
     assert result.stale_content is True
     assert session.notifications == []
+
+
+@pytest.mark.parametrize(
+    ("name", "language", "language_id"),
+    [
+        ("view.tsx", "typescript", "typescriptreact"),
+        ("view.jsx", "javascript", "javascriptreact"),
+        ("view.TSX", "typescript", "typescriptreact"),
+        ("view.ts", "typescript", "typescript"),
+        ("view.mjs", "javascript", "javascript"),
+    ],
+)
+def test_sync_document_opens_jsx_dialects_with_their_language_id(
+    tmp_path: Path, name: str, language: str, language_id: str
+) -> None:
+    manager = LSPManager(session_factory=FakeSession)
+    session = manager.ensure_session(language="typescript", workspace_root=tmp_path, command=("ts",))
+    target = tmp_path / name
+    target.write_text("export const x = 1;\n", encoding="utf-8")
+
+    manager.sync_document(session=session, language=language, file_path=target)  # type: ignore[arg-type]
+
+    method, params = session.notifications[0]
+    assert method == "textDocument/didOpen"
+    assert params["textDocument"]["languageId"] == language_id
+
+
+def test_sync_document_skips_resend_of_unchanged_open_document(tmp_path: Path) -> None:
+    manager = LSPManager(session_factory=FakeSession)
+    session = manager.ensure_session(language="python", workspace_root=tmp_path, command=("fake",))
+    target = tmp_path / "module.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+
+    first = manager.sync_document(session=session, language="python", file_path=target)
+    manager._record_notification(session, {"method": "textDocument/publishDiagnostics", "params": {
+        "uri": first.uri, "version": first.version, "diagnostics": [{"message": "kept"}]}})
+    again = manager.sync_document(session=session, language="python", file_path=target)
+
+    assert (first.version, again.version) == (1, 1)
+    assert again.stale_content is False
+    assert [method for method, _ in session.notifications] == ["textDocument/didOpen"]
+    # The publication for the unchanged text stays valid.
+    assert manager._published_diagnostics[(id(session), first.uri)] == [{"message": "kept"}]
+
+    target.write_text("x = 2\n", encoding="utf-8")
+    changed = manager.sync_document(session=session, language="python", file_path=target)
+
+    assert changed.version == 2
+    assert session.notifications[-1][0] == "textDocument/didChange"
+    assert (id(session), first.uri) not in manager._published_diagnostics
+
+
+def test_fingerprints_are_dropped_with_the_session_document_state(tmp_path: Path) -> None:
+    manager = LSPManager(session_factory=FakeSession)
+    session = manager.ensure_session(language="python", workspace_root=tmp_path, command=("fake",))
+    target = tmp_path / "module.py"
+    target.write_text("x = 1\n", encoding="utf-8")
+    manager.sync_document(session=session, language="python", file_path=target)
+    assert manager._document_fingerprints
+
+    manager._clear_document_state(session)
+
+    assert not manager._document_fingerprints
+    assert not manager._document_versions
+
+
+def test_initialize_sends_the_sidecar_process_id(tmp_path: Path) -> None:
+    import os
+
+    manager = LSPManager(session_factory=FakeSession)
+    session = manager.ensure_session(language="python", workspace_root=tmp_path, command=("fake",))
+
+    manager.ensure_initialized(session=session, language="python", workspace_root=tmp_path)
+
+    assert session.requests[0][1]["processId"] == os.getpid()  # type: ignore[index]
+
+
+def test_changed_command_replaces_an_idle_session(tmp_path: Path) -> None:
+    manager = LSPManager(session_factory=FakeSession)
+    first = manager.ensure_session(language="python", workspace_root=tmp_path, command=("old",))
+
+    second = manager.ensure_session(language="python", workspace_root=tmp_path, command=("new",))
+
+    assert second is not first
+    assert first.closed is True
+    assert second.command == ("new",)  # type: ignore[attr-defined]
+
+
+def test_changed_command_closes_a_leased_session_at_release(tmp_path: Path) -> None:
+    manager = LSPManager(session_factory=FakeSession)
+    with manager.session_for_request(
+        language="python", workspace_root=tmp_path, command=("old",)
+    ) as leased:
+        replacement = manager.ensure_session(
+            language="python", workspace_root=tmp_path, command=("new",)
+        )
+        assert replacement is not leased
+        assert leased.closed is False, "an in-flight request lost its server"
+    assert leased.closed is True
+    assert replacement.closed is False
+
+
+def test_retire_sessions_closes_idle_and_defers_leased(tmp_path: Path) -> None:
+    manager = LSPManager(session_factory=FakeSession)
+    idle = manager.ensure_session(language="python", workspace_root=tmp_path, command=("py",))
+    other = tmp_path / "other"
+    other.mkdir()
+    with manager.session_for_request(
+        language="python", workspace_root=other, command=("py",)
+    ) as leased:
+        manager.retire_sessions()
+        assert idle.closed is True
+        assert leased.closed is False
+        assert not manager._sessions
+    assert leased.closed is True
+
+
+def test_default_session_factory_applies_the_configured_request_timeout(tmp_path: Path) -> None:
+    manager = LSPManager(request_timeout_seconds=lambda: 45.0)
+    session = manager._default_session_factory(("fake",), tmp_path)
+    try:
+        assert session._request_timeout_seconds == 45.0  # type: ignore[attr-defined]
+        assert session._initialize_timeout_seconds == 45.0  # type: ignore[attr-defined]
+    finally:
+        session.close()
+    short = LSPManager(request_timeout_seconds=lambda: 2.0)._default_session_factory(
+        ("fake",), tmp_path
+    )
+    try:
+        assert short._request_timeout_seconds == 2.0  # type: ignore[attr-defined]
+        assert short._initialize_timeout_seconds == 30.0  # type: ignore[attr-defined]
+    finally:
+        short.close()

@@ -92,7 +92,7 @@
       toastViewport,
       composerModelSelect,
       composerEffortSelect,
-      composerCommandPopover, composerRunModeSlot,
+      composerRunModeSlot,
       artifactReviewPanel, chatSelectionOverlayHost,
     } = deps.dom;
 
@@ -112,8 +112,6 @@
       resetArtifactsState,
       resetAttachmentQueue,
       closeComposerPopover,
-      closeCommandPopover,
-      openCommandPopover,
       hideAssistantSprite,
       setFollowLatest,
       setActiveView,
@@ -185,7 +183,6 @@
       scrollMessageIntoView, viewportReveal, focusEntryByMessageId,
       setComposerStatusNotice = function noopSetComposerStatusNotice() {},
       clearComposerStatusNotice = function noopClearComposerStatusNotice() {},
-      handleSlashCommandSelection = function noopSlashCommandSelection() {},
     } = deps.callbacks;
 
     const { thinkingController, toastActionHandlers, timelineVirtualizer, chatScrollCoordinator, messageEditController, messageBranchController, selectionController, bulkActionsController, unreadOrientationController } = deps.controllers;
@@ -813,6 +810,12 @@
       registerListener(chatInput, 'keydown', (event) => {
         if (globalThis.rendererPlanModeShortcut?.handleRunModeCycleShortcut?.(event, document)) return;
         if (globalThis.rendererPlanModeShortcut?.handlePlanModeShortcut?.(event, document)) return;
+        // Up in an empty composer takes the queued sends back as a draft (Claude Code parity).
+        const queueView = globalThis.rendererRuntimeQueueView;
+        if (queueView?.handleTakeBackKeydown?.(event, { input: chatInput,
+          rows: state.runtimeSendController?.listPending?.(sessionContext.getSessionId()) || [],
+          actions: { withdraw: row => state.runtimeSendController?.withdraw?.(row.key),
+            putDraft: texts => queueView.putBackInComposer(chatInput, texts) } })) return;
         if (shouldSendOnEnterKeydown(event)) {
           event.preventDefault();
           if (sendButton?.disabled === true) return;
@@ -823,7 +826,11 @@
       }, listenerOptions);
 
       registerListener(chatInput, 'input', () => {
-        syncComposerInputHeight(); syncComposerVisualState(); renderComposerState();
+        // Pane 0's renderComposerState (the chrome pipeline) ends with the
+        // height and visual syncs; running them here too doubled the forced
+        // layouts per keystroke. A split pane's renderComposerState does not.
+        if (!documentLevel) { syncComposerInputHeight(); syncComposerVisualState(); }
+        renderComposerState();
         if (documentLevel) globalThis.rendererComposerSessionStateController?.captureActive(sessionContext.getSessionId(), 'input'); // reads #chatInput
         else globalThis.rendererComposerSessionStateController?.capturePaneDraft(sessionContext.getSessionId(), chatInput);
       }, listenerOptions);
@@ -848,25 +855,6 @@
           ? window.jennyShell.spellcheck
           : null,
       });
-
-      if (documentLevel) {
-        registerListener(composerCommandPopover, 'click', (event) => {
-          const btn = event.target.closest('[data-command-name]');
-          if (!btn) return;
-          if (btn.getAttribute('aria-disabled') === 'true' || btn.dataset.commandAvailable === 'false') {
-            showToastMessage(btn.dataset.commandReason || jt('chat.events.commandUnavailable', 'That command is unavailable.'), {
-              title: jt('chat.events.commandUnavailableTitle', 'Command unavailable'),
-              tone: 'warning',
-            });
-            return;
-          }
-          handleSlashCommandSelection(btn.dataset.commandName, btn.dataset.commandAction === 'run' ? 'run' : 'insert');
-          closeCommandPopover();
-          chatInput.focus();
-          syncComposerInputHeight();
-          syncComposerVisualState();
-        }, listenerOptions);
-      }
 
       if (!chatScrollCoordinator?.attach) {
         let pendingLegacyScrollFrame = 0;
@@ -928,19 +916,6 @@
           });
         }, listenerOptions);
       }
-
-      registerListener(composerWrap, 'click', (event) => {
-        const commandShortcut = event.target.closest('#composerTerminalShortcut');
-        if (commandShortcut) {
-          event.preventDefault();
-          if (state.ui.commandPopoverOpen) {
-            closeCommandPopover({ restoreFocus: true });
-          } else {
-            openCommandPopover();
-          }
-          return;
-        }
-      }, listenerOptions);
 
       interactiveBindings.bindInteractiveComposerEvents({
         composerWrap,

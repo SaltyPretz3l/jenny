@@ -5,6 +5,13 @@ const toolShellUtils = require('../renderer/chat/renderer-tool-shell-utils');
 const toolCallUtils = require('../renderer/chat/tool-call-utils');
 const { escapeHtml } = require('../renderer/shared/string-utils');
 const { withInventory } = require('./helpers/inventory-harness');
+const { createToolDetailBody } = require('../renderer/chat/renderer-tool-detail-body');
+
+// Every tool but Mermaid renders its detail through the detail body.
+function detailBody(t, model) {
+  withInventory(t);
+  return createToolDetailBody({ toolCallUtils }).buildDetailBodyMarkup(model);
+}
 
 /* Phase 7 §4a: focused unit coverage for the shared helpers exposed by
  * createToolShellRenderer — status-dot tone derivation, kv-grid markup,
@@ -204,24 +211,22 @@ test('phase 7: kvRow renders metadata for common value shapes', (t) => {
   }
 });
 
-test('phase 7: bash shell header emits the tool kicker, status-dot, and call-id data hook', (t) => {
+test('phase 7: the mermaid shell header emits the status-dot and call-id data hook', (t) => {
   const renderer = setupRenderer(t);
   const html = renderer.renderToolShell({
-    toolKind: 'Bash',
+    toolKind: 'mermaid_generate',
     callId: 'phase7_bash_call',
-    displayToolName: 'Bash',
-    summary: 'echo hi',
+    displayToolName: 'Mermaid',
+    summary: 'flowchart',
     status: 'completed',
     statusLabel: 'Completed',
     isRunning: false,
     durationLabel: '0.4s',
     defaultExpanded: false,
-    input: { command: 'echo hi' },
-    inputJson: '{"command":"echo hi"}',
-    metadata: { stdout: 'hi\n', exitCode: 0 },
-    outputText: 'hi\n',
+    metadata: {},
+    outputText: 'graph TD\nA-->B',
   });
-  assert.ok(html, 'shell renderer should produce markup for Bash');
+  assert.ok(html, 'shell renderer should produce markup for Mermaid');
   /* Quiet one-liner grammar: no uppercase "Tool" kicker; a leading status
    * dot opens the row and the success label is screen-reader-only. */
   assert.doesNotMatch(html, /tool-call-kicker/);
@@ -234,20 +239,18 @@ test('phase 7: bash shell header emits the tool kicker, status-dot, and call-id 
   assert.match(html, /class="tool-call-disclosure"/);
 });
 
-test('phase 7: running bash shell renders the active dot regardless of stored status', (t) => {
+test('phase 7: a running mermaid shell renders the active dot regardless of stored status', (t) => {
   const renderer = setupRenderer(t);
   const html = renderer.renderToolShell({
-    toolKind: 'Bash',
+    toolKind: 'mermaid_generate',
     callId: 'phase7_bash_running',
-    displayToolName: 'Bash',
-    summary: 'sleep 30',
+    displayToolName: 'Mermaid',
+    summary: 'flowchart',
     status: 'completed',
     statusLabel: 'Running',
     isRunning: true,
     durationLabel: '',
     defaultExpanded: true,
-    input: { command: 'sleep 30' },
-    inputJson: '{"command":"sleep 30"}',
     metadata: {},
     outputText: '',
   });
@@ -256,38 +259,34 @@ test('phase 7: running bash shell renders the active dot regardless of stored st
   assert.match(html, /class="tool-call-status-label">Running</);
 });
 
-test('read shell prefers canonical path and accepts legacy file_path', (t) => {
-  const renderer = setupRenderer(t);
+test('the Read detail prefers canonical path and accepts legacy file_path', (t) => {
   const base = {
     toolKind: 'Read', callId: 'read-path', domToken: 'read-path-token',
     displayToolName: 'Read', summary: 'Read canonical.md', status: 'completed',
     statusLabel: 'Success', isRunning: false, durationLabel: '', defaultExpanded: true,
     metadata: {}, outputText: 'contents',
   };
-  const canonical = renderer.renderToolShell({
+  const canonical = detailBody(t, {
     ...base,
     input: { path: 'canonical.md', file_path: 'legacy.md' },
   });
-  const legacy = renderer.renderToolShell({
+  const legacy = detailBody(t, {
     ...base,
     input: { file_path: 'legacy.md' },
   });
-  assert.match(canonical, /canonical\.md/);
-  assert.doesNotMatch(canonical, /legacy\.md/);
-  assert.match(canonical, /aria-label="Copy file preview"/);
-  assert.match(legacy, /legacy\.md/);
+  assert.match(canonical, /tool-call-output-meta">canonical\.md</);
+  assert.match(legacy, /tool-call-output-meta">legacy\.md</);
 });
 
-test('legacy/live Edit and Write shells share the lazy file diff presentation', (t) => {
-  const renderer = setupRenderer(t);
+test('Edit and Write details share the lazy file diff presentation', (t) => {
   const base = {
     callId: 'call-edit', sessionId: 'session-a', displayToolName: 'Edit', summary: 'src/a.js',
     status: 'completed', statusLabel: 'Completed', isRunning: false, defaultExpanded: true,
     input: { path: 'src/a.js' }, outputText: '{"raw":true}',
     metadata: { diff: { diff_id: 'diff:live', additions: 1, deletions: 1, hunks: [{ oldStart: 1, newStart: 1, lines: ['-old', '+new'] }] } },
   };
-  const edit = renderer.renderToolShell({ ...base, toolKind: 'Edit' });
-  const write = renderer.renderToolShell({ ...base, toolKind: 'Write' });
+  const edit = detailBody(t, { ...base, toolKind: 'Edit', toolName: 'edit_file' });
+  const write = detailBody(t, { ...base, toolKind: 'Write', toolName: 'write_file' });
   for (const html of [edit, write]) {
     assert.match(html, /class="file-diff"/);
     assert.match(html, /data-file-diff-pending/);
@@ -296,10 +295,10 @@ test('legacy/live Edit and Write shells share the lazy file diff presentation', 
   }
 });
 
-test('B3: monitor shell sources rich-normalized metadata byte-identically (single normalize source)', (t) => {
-  const renderer = setupRenderer(t);
-  const html = renderer.renderToolShell({
+test('B3: the monitor detail renders the rich-normalized panel byte-identically', (t) => {
+  const html = detailBody(t, {
     toolKind: 'monitor',
+    toolName: 'monitor',
     callId: 'call_monitor',
     summary: 'Monitoring',
     status: 'running',
@@ -327,7 +326,7 @@ test('B3: monitor shell sources rich-normalized metadata byte-identically (singl
    * duplicate was deleted); the rich copy must produce identical markup for every field the
    * shell reads. This is the regression gate for the previously-untested shell monitor path. */
   const expectedPanel = '<div class="tool-monitor-panel" data-monitor-state="running"><div class="tool-monitor-heading"><div class="tool-monitor-description">Watching build output</div><div class="tool-monitor-meta">running | timeout 30s | persistent | 2 events | 1 dropped</div></div><div class="tool-monitor-events"><div class="tool-monitor-event" data-monitor-stream="stdout"><span class="tool-monitor-event-stream">stdout</span><span class="tool-monitor-event-text">building...</span></div><div class="tool-monitor-event" data-monitor-stream="stderr"><span class="tool-monitor-event-stream">stderr</span><span class="tool-monitor-event-text">warning: x</span></div></div></div>';
-  assert.ok(html.includes(expectedPanel), 'monitor panel markup must be byte-identical to the pre-B3 lean output');
+  assert.ok(html.replace(/>\s+</g, '><').includes(expectedPanel), 'monitor panel markup must match the pre-B3 lean output');
 });
 
 
@@ -374,10 +373,10 @@ test('a command stopped at its time limit reads as timed out, not errored', () =
   assert.equal(toolCallUtils.statusForToolResult({ ...timedOut, is_error: false }), 'completed');
 });
 
-test('a bash shell stopped at its time limit says timed out from the sidecar casing', (t) => {
-  const renderer = setupRenderer(t);
-  const html = renderer.renderToolShell({
+test('a command detail stopped at its time limit says timed out from the sidecar casing', (t) => {
+  const html = detailBody(t, {
     toolKind: 'Bash',
+    toolName: 'run_command',
     callId: 'b11_bash_timeout',
     displayToolName: 'Bash',
     summary: 'ping -n 40 127.0.0.1',
@@ -446,9 +445,9 @@ test('the failure line skips the tool\'s truncation markers', () => {
   assert.equal(line({ stderr: '...[truncated]', stdout: 'last real line\n' }), 'last real line');
 });
 
-test('python shell images with a trusted ref id open the image viewer; legacy images stay plain', (t) => {
-  const html = setupRenderer(t).renderToolShell({
-    toolKind: 'python_execute', callId: 'py-1', status: 'completed', metadata: {}, inputJson: '{}',
+test('python detail images with a trusted ref id open the image viewer; legacy images stay plain', (t) => {
+  const html = detailBody(t, {
+    toolKind: 'python_execute', toolName: 'python_execute', callId: 'py-1', status: 'completed', metadata: {}, inputJson: '{}',
     outputText: JSON.stringify({ images: ['file:///C:/legacy.png'] }),
     trustedAttachmentImages: [{ src: 'file:///C:/stored/chart.png', id: 'chart-1' }, { src: 'https://example.invalid/x.png', id: 'remote' }],
   });

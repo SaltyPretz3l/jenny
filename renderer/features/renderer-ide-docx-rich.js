@@ -2,26 +2,20 @@
  * document with editable first/default/even header and footer parts. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory();
+    module.exports = factory(require('./renderer-ide-docx-ooxml'));
     return;
   }
-  root.rendererIdeDocxRich = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  root.rendererIdeDocxRich = factory(root.rendererIdeDocxOoxml);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (ooxml) {
   'use strict';
 
-  const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
-  const R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  const { W_NS, R_NS, declarationOf, hasDoctype, hasParserError } = ooxml;
   const XMLNS_NS = 'http://www.w3.org/2000/xmlns/';
 
   function parseXml(Parser, xml) {
+    if (hasDoctype(xml)) return null;
     const doc = new Parser().parseFromString(String(xml || ''), 'application/xml');
-    if (!doc.documentElement || doc.documentElement.localName === 'parsererror'
-      || doc.getElementsByTagName('parsererror').length) return null;
-    return doc;
-  }
-
-  function declarationOf(xml) {
-    return String(xml || '').match(/^<\?xml[^\r\n]*\?>(?:\r\n|\n|\r)?/)?.[0] || '';
+    return hasParserError(doc) ? null : doc;
   }
 
   function resolvePartPath(basePath, target) {
@@ -129,7 +123,7 @@
         ...descriptor, wrapped,
         model: createModel({
           documentXml: wrapped.xml, numberingXml: options.numberingXml, relsXml: descriptor.relsXml,
-          media: options.media, DOMParser: Parser, XMLSerializer: Serializer,
+          media: options.media, mediaUrl: options.mediaUrl, DOMParser: Parser, XMLSerializer: Serializer,
           occupiedNames: options.occupiedNames,
           resources,
           mediaPrefix: descriptor.key,
@@ -208,6 +202,13 @@
     return {
       getRegions,
       getBlocks: () => getRegions().flatMap((region) => region.blocks),
+      getBlock(blockId) {
+        const target = route(blockId);
+        const block = target.part?.model.getBlock(target.id) || null;
+        return block && target.part !== body ? prefixBlock(block, target.part.key) : block;
+      },
+      // Sum of the parts' versions: it moves whenever any part edits or restores.
+      getStateVersion: () => parts.reduce((total, part) => total + part.model.getStateVersion(), 0),
       getParagraphText(blockId) { const target = route(blockId); return target.part?.model.getParagraphText(target.id) || ''; },
       getListInfo(blockId) { const target = route(blockId); return target.part?.model.getListInfo(target.id) || null; },
       insertText: (id, ...args) => mutate('insertText', id, ...args),

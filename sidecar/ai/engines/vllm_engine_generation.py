@@ -15,6 +15,7 @@ import httpx
 from sidecar.ai.engines.base import EngineMessage, clamp_timeout_to_deadline
 from sidecar.ai.engines.engine_events import EngineEvent
 from sidecar.ai.engines.provider_call_finalize import ProviderCallFinalizer
+from sidecar.ai.engines.provider_http import ProviderHttpError
 from sidecar.ai.engines.provider_metrics import (
     ProviderMetrics,
     configure_metrics_request,
@@ -86,6 +87,22 @@ _EVENT = THINKING_BUDGET_ABORT_EVENT
 _STREAM_TIMEOUT_SECONDS = 120.0
 _SSE_DATA_PREFIX = "data: "
 _SSE_DONE_SENTINEL = "[DONE]"
+_HTTP_BAD_REQUEST = 400
+
+
+def _is_response_format_rejection(error: Exception) -> bool:
+    """True when a 400 says the server does not support ``response_format`` at all.
+
+    NInfer answers ``response_format_not_supported`` ("only {"type":"text"} is
+    available") for json_object and json_schema alike. A 400 that merely mentions
+    the field (a bad schema, a validation echo) is not a capability answer.
+    """
+    if getattr(error, "status_code", None) != _HTTP_BAD_REQUEST:
+        return False
+    text = f"{getattr(error, 'body', '')} {error}".lower()
+    if "response_format_not_supported" in text:
+        return True
+    return "response_format" in text and ("not supported" in text or "unsupported" in text)
 
 
 def _terminal_gap_diagnostics(
@@ -333,7 +350,7 @@ class _VLLMGenerationMixin:
                 json=payload,
                 timeout=request_timeout,
             ) as response:
-                response.raise_for_status()
+                self._raise_for_stream_status(response)
                 yield from prefill.start_events()
                 for line in _iter_cancel_aware_sse_lines(response, cancel_handle):
                     if not line:
@@ -504,7 +521,7 @@ class _VLLMGenerationMixin:
                 f"{self._DISPLAY_NAME} streaming request failed with "
                 f"status {exc.response.status_code}"
             ) from exc
-        except (EngineConnectionError, ModelNotLoadedError, GenerationError):
+        except (EngineConnectionError, ModelNotLoadedError, GenerationError, ProviderHttpError):
             raise
         except Exception as exc:
             _raise_if_cancelled(cancel_handle)
@@ -585,7 +602,7 @@ class _VLLMGenerationMixin:
                 timeout=request_timeout,
             ) as response:
                 _raise_if_cancelled(cancel_handle)
-                response.raise_for_status()
+                self._raise_for_stream_status(response)
                 usage, saw_sentinel, thinking_budget_aborted, inband_error = (
                     yield from _stream_tool_response(
                         self,
@@ -658,7 +675,7 @@ class _VLLMGenerationMixin:
             )
         except Exception as error:
             _raise_if_cancelled(cancel_handle)
-            if isinstance(error, (GenerationError, EngineConnectionError)):
+            if isinstance(error, (GenerationError, EngineConnectionError, ProviderHttpError)):
                 raise
             raise GenerationError(
                 f"{self._DISPLAY_NAME} tool streaming failed: {type(error).__name__}"
@@ -762,16 +779,15 @@ class _VLLMGenerationMixin:
 
         finalizer = ProviderCallFinalizer(self)
         try:
-            # A non-streaming completion sends no headers until it finishes, so
-            # a cancellable call needs a connection a cancel can sever before
-            # headers; the pooled client is never closed (see stream_with_tools).
-            body = (
-                self._service.post_json("/chat/completions", payload)
-                if cancel_handle is None
-                else self._service.post_json_interruptible(
-                    "/chat/completions", payload, cancel_handle=cancel_handle
-                )
-            )
+            # The pooled client is never closed (see stream_with_tools).
+            try:
+                body = self._post_completion(payload, cancel_handle=cancel_handle)
+            except Exception as error:  # noqa: BLE001 - narrowed below
+                if "response_format" not in payload or not _is_response_format_rejection(error):
+                    raise
+                self._disable_json_response_format()
+                payload.pop("response_format", None)
+                body = self._post_completion(payload, cancel_handle=cancel_handle)
             observe_nonstream_body(body)
             self._record_first_chunk()
             self._record_provider_usage(body)
@@ -784,6 +800,15 @@ class _VLLMGenerationMixin:
             return result
         finally:
             finalizer.finalize()
+
+    def _post_completion(self, payload: dict[str, Any], *, cancel_handle: Any) -> Any:
+        # A non-streaming completion sends no headers until it finishes, so a
+        # cancellable call needs a connection a cancel can sever before headers.
+        if cancel_handle is None:
+            return self._service.post_json("/chat/completions", payload)
+        return self._service.post_json_interruptible(
+            "/chat/completions", payload, cancel_handle=cancel_handle
+        )
 
     def _parse_tool_completion(self, body: dict[str, Any]) -> GenerationResult:
         usage = _parse_usage(
@@ -829,6 +854,10 @@ class _VLLMGenerationMixin:
             usage=usage,
             thinking_text=thinking_text.strip(),
         )
+
+    def _raise_for_stream_status(self, response: Any) -> None:
+        """Map an initial streaming status; remote providers override with typed errors."""
+        response.raise_for_status()
 
     def _fit_output_to_window(self, payload: dict[str, Any]) -> int:
         """Return the finished payload's wire ``max_tokens``.
@@ -877,10 +906,34 @@ class _VLLMGenerationMixin:
             payload[penalty_key] = effective_repeat_penalty
         if isinstance(reasoning_effort, str) and reasoning_effort.strip():
             payload["reasoning_effort"] = reasoning_effort.strip().lower()
-        if response_format is not None and getattr(response_format, "is_json", False):
+        if (
+            response_format is not None
+            and getattr(response_format, "is_json", False)
+            and not getattr(self, "_json_response_format_unsupported", False)
+        ):
             payload["response_format"] = self._json_response_format(response_format)
         configure_metrics_request(self, payload)
         return payload
+
+    def _disable_json_response_format(self) -> None:
+        """Remember that this server rejects JSON mode (NInfer serves text only).
+
+        The JSON callers (memory reflection, suggestions, tool-call retry) ask for
+        JSON in their prompts as well, so they keep working on plain text.
+        """
+        if getattr(self, "_json_response_format_unsupported", False):
+            return
+        self._json_response_format_unsupported = True
+        # INFO, not WARN: an expected capability fallback the callers absorb.
+        logger.info(
+            "%s rejected response_format; JSON mode disabled for this server",
+            self._DISPLAY_NAME,
+            extra={
+                "event": "ai.engines.json_response_format_unsupported",
+                "provider": self._PROVIDER_LABEL,
+                "model": self.model_name,
+            },
+        )
 
     def _json_response_format(self, response_format: Any) -> dict[str, Any]:
         """``json_object``, or llama.cpp's strict ``json_schema`` when opted in.

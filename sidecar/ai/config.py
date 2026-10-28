@@ -175,9 +175,10 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         "vllm",
         "codex-cli",
         "chatgpt",
+        "api-provider",
     }:
         model = ""
-    if engine_type == "chatgpt" and normalized_model is None:
+    if engine_type in {"chatgpt", "api-provider"} and normalized_model is None:
         model = ""
     context_length = (
         _as_bounded_int(
@@ -235,6 +236,9 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
     openai_compatible_api_key = _as_nullable_string(
         raw_config.get("openai_compatible_api_key")
     )
+    api_provider_descriptor = _as_mapping(raw_config.get("api_provider_descriptor")) or None
+    api_provider_model_limits = _as_mapping(raw_config.get("api_provider_model_limits")) or None
+    api_provider_key = _as_nullable_string(raw_config.get("api_provider_key"))
     chatgpt_account_id = _as_nullable_string(raw_config.get("chatgpt_account_id"))
     chatgpt_model_catalog = normalize_chatgpt_model_catalog(raw_config.get("chatgpt_model_catalog"))
     chatgpt_base_url = _as_nullable_string(raw_config.get("chatgpt_base_url"))
@@ -547,6 +551,10 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         raw_config.get("tools_project_notes_enabled"),
         default=False,
     )
+    tools_session_directory_enabled = _as_bool(
+        raw_config.get("tools_session_directory_enabled"),
+        default=False,
+    )
     tools_memory_enabled = _as_bool(raw_config.get("tools_memory_enabled"), default=True)
     tools_conversations_enabled = _as_bool(
         raw_config.get("tools_conversations_enabled"), default=True,
@@ -770,6 +778,9 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         codex_cli_auth_reason=codex_cli_auth_reason,
         chatgpt_access_token=chatgpt_access_token,
         openai_compatible_api_key=openai_compatible_api_key,
+        api_provider_descriptor=api_provider_descriptor,
+        api_provider_model_limits=api_provider_model_limits,
+        api_provider_key=api_provider_key,
         managed_prefill_progress=raw_config.get("managed_prefill_progress") is True,
         json_schema_response_format=raw_config.get("json_schema_response_format") is True,
         chatgpt_account_id=chatgpt_account_id,
@@ -845,6 +856,7 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         tools_home_enabled=tools_home_enabled,
         tools_task_board_enabled=tools_task_board_enabled,
         tools_project_notes_enabled=tools_project_notes_enabled,
+        tools_session_directory_enabled=tools_session_directory_enabled,
         tools_memory_enabled=tools_memory_enabled,
         tools_conversations_enabled=tools_conversations_enabled,
         tools_rich_files_enabled=tools_rich_files_enabled,

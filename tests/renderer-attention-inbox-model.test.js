@@ -15,7 +15,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildAttentionInbox } = require('../renderer/shell/renderer-attention-inbox-model');
+const { buildAttentionInbox, rowNote } = require('../renderer/shell/renderer-attention-inbox-model');
 
 function factsStub() {
   const calls = [];
@@ -90,6 +90,7 @@ function build(options = {}) {
     pendingToolApprovals: options.pendingToolApprovals || new Map(),
     currentSessionId: options.currentSessionId || '',
     facts: 'facts' in options ? options.facts : factsStub(),
+    stuckSends: options.stuckSends,
   });
 }
 
@@ -101,7 +102,7 @@ test('nothing waiting is a hidden inbox with zero counts and no rows', () => {
   const inbox = build({ sessions: [session('s1')] });
   assert.equal(inbox.hidden, true);
   assert.deepEqual(inbox.rows, []);
-  assert.deepEqual({ ...inbox.counts }, { approvals: 0, planReviews: 0, questions: 0, stuckSends: 0, answerable: 0 });
+  assert.deepEqual({ ...inbox.counts }, { approvals: 0, planReviews: 0, questions: 0, deliveryFailures: 0, stuckSends: 0, answerable: 0 });
 });
 
 test('the whole result, its rows and its counts are frozen', () => {
@@ -231,7 +232,7 @@ test('approvals and questions in the same session are two different waits', () =
     pendingToolApprovals: approvalMap([liveApproval()]),
   });
   assert.deepEqual(inbox.rows.map((row) => row.kind), ['approval', 'question']);
-  assert.deepEqual({ ...inbox.counts }, { approvals: 1, planReviews: 0, questions: 1, stuckSends: 0, answerable: 2 });
+  assert.deepEqual({ ...inbox.counts }, { approvals: 1, planReviews: 0, questions: 1, deliveryFailures: 0, stuckSends: 0, answerable: 2 });
 });
 
 test('ordering is approvals, then plan reviews, then questions, oldest first inside each kind', () => {
@@ -253,7 +254,7 @@ test('ordering is approvals, then plan reviews, then questions, oldest first ins
     'question:s1:b1', 'question:s2:b2',
   ]);
   assert.deepEqual(inbox.rows.map((row) => row.order), [0, 1, 2, 3, 4, 5]);
-  assert.deepEqual({ ...inbox.counts }, { approvals: 2, planReviews: 2, questions: 2, stuckSends: 0, answerable: 6 });
+  assert.deepEqual({ ...inbox.counts }, { approvals: 2, planReviews: 2, questions: 2, deliveryFailures: 0, stuckSends: 0, answerable: 6 });
 });
 
 test('the conversation on screen keeps its rows but sorts last inside its kind', () => {
@@ -291,6 +292,39 @@ test('no facts helper still yields a row, with an empty fact list rather than a 
   assert.equal(inbox.rows.length, 1);
   assert.deepEqual(inbox.rows[0].facts, []);
   assert.equal(inbox.rows[0].preview, '');
+});
+
+test('a chat whose sent messages failed to deliver gets one row to open, named by its count', () => {
+  const inbox = build({ sessions: [session('s1', { failed_delivery_count: 2 }), session('s2', { failed_delivery_count: 0 })] });
+  assert.equal(inbox.rows.length, 1);
+  assert.deepEqual({ ...inbox.rows[0] }, {
+    key: 'delivery_failed:s1', kind: 'delivery_failed', sessionId: 's1', sessionTitle: 'Chat s1', failedCount: 2, order: 0,
+  });
+  assert.deepEqual({ ...inbox.counts }, { approvals: 0, planReviews: 0, questions: 0, deliveryFailures: 1, stuckSends: 0, answerable: 1 });
+  assert.equal(inbox.hidden, false);
+  assert.equal(rowNote(inbox.rows[0]), "Couldn't deliver 2 messages");
+  assert.equal(rowNote({ ...inbox.rows[0], failedCount: 1 }), "Couldn't deliver a message");
+});
+
+test('a malformed failed-delivery count is not a wait', () => {
+  for (const failed_delivery_count of [undefined, null, -1, 0, 1.5, '2', NaN]) {
+    assert.equal(build({ sessions: [session('s1', { failed_delivery_count })] }).rows.length, 0, String(failed_delivery_count));
+  }
+});
+
+test('failed deliveries sort after questions and before stuck sends, the chat on screen last', () => {
+  const inbox = build({
+    currentSessionId: 's1',
+    sessions: [
+      session('s1', { failed_delivery_count: 1 }),
+      session('s2', { failed_delivery_count: 3, pending_question_batch: questionBatch('b2') }),
+    ],
+    stuckSends: [{ key: 'w1', sessionId: 's2' }],
+  });
+  assert.deepEqual(inbox.rows.map((row) => row.key), [
+    'question:s2:b2', 'delivery_failed:s2', 'delivery_failed:s1', 'stuck_send:w1',
+  ]);
+  assert.deepEqual({ ...inbox.counts }, { approvals: 0, planReviews: 0, questions: 1, deliveryFailures: 2, stuckSends: 1, answerable: 4 });
 });
 
 test('junk input builds an empty inbox instead of throwing', () => {

@@ -12,6 +12,7 @@ const {
   loadHostConfig,
 } = require('../../server/config');
 const { hostedSidecarEnvironment } = require('../../services/host/sidecar-environment');
+const { fileSymlinkSkip } = require('../helpers/platform-skips');
 
 test.beforeEach((t) => {
   // CI checks out under the real home; isolate the home-containment fixture too.
@@ -205,13 +206,9 @@ test('builds a writable isolated sidecar environment under runtime home', () => 
 }));
 
 
-test('preserves an operator-selected virtualenv interpreter symlink', (t) => withFixture(({ root, configPath, write }) => {
+test('preserves an operator-selected virtualenv interpreter symlink', { skip: fileSymlinkSkip() }, () => withFixture(({ root, configPath, write }) => {
   const interpreter = path.join(root, 'venv-python');
-  try { fs.symlinkSync(process.execPath, interpreter, 'file'); }
-  catch (error) {
-    if (process.platform === 'win32' && error.code === 'EPERM') return t.skip('Windows symlink privilege unavailable; real Linux image covers this path');
-    throw error;
-  }
+  fs.symlinkSync(process.execPath, interpreter, 'file');
   write({ python_executable: interpreter });
   assert.notEqual(fs.realpathSync(interpreter), interpreter);
   assert.equal(loadHostConfig(configPath).pythonExecutable, interpreter);

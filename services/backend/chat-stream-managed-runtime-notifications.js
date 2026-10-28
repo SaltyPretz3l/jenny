@@ -26,7 +26,7 @@ const {
 } = require('./work-lifecycle-coordinator');
 const { normalizePendingQuestionBatch } = require('./message-normalization');
 const { noteDiscardedDraft } = require('./chat-stream-discarded-drafts');
-const { mergeLocalGeneratedArtifactPaths } = require('./chat-stream-tool-payload-utils');
+const { attachWorkspaceIdentityToCanonicalEvent, mergeLocalGeneratedArtifactPaths, opensNewToolRow } = require('./chat-stream-tool-payload-utils');
 const { withIngestedAttachmentRefs } = require('./tool-result-attachments');
 const {
   buildStreamToolResultMessageId,
@@ -47,9 +47,7 @@ const {
 const {
   noteBackgroundJobFromToolResult,
 } = require('./chat-stream-background-jobs');
-const {
-  attachWorkspaceIdentityToCanonicalEvent,
-} = require('./chat-stream-tool-payload-utils');
+const { acceptMailConsumedNotification } = require('./session-mail-mid-turn');
 const {
   commitMidTurnCompactionSnapshot,
   persistAutomaticCompactionSnapshot,
@@ -84,6 +82,7 @@ const KNOWN_NOTIFICATION_METHODS = new Set([
   'chat.done',
   'chat.error',
   'runtime.gap_candidate',
+  'session.mail_consumed',
 ]);
 
 function canonicalToolNotification(ctx, event) {
@@ -469,10 +468,9 @@ function handleNotification(ctx, notification, {
     ) {
       turnMetrics.recordDroppedCanonicalEvent();
     }
-    // The approval event names its tool call, so the text written before the
-    // call must enter the turn log first; captured after it, a reload draws
-    // the tool row above the commentary that introduced it.
-    if (validation.status === 'accepted' && identityStampedParams.type === 'tool_approval_requested') {
+    // The pre-tool text enters the turn log before the event that opens its tool row.
+    if (validation.status === 'accepted'
+      && opensNewToolRow(identityStampedParams, ctx.canonicalToolStartedCallIds, toolContext?.seenToolCalls)) {
       persistCurrentTextSegment({ allowReasoningOnly: true, atToolBoundary: true });
     }
     const captured = turnEventCollector && typeof turnEventCollector.noteEvent === 'function'
@@ -927,6 +925,8 @@ function handleNotification(ctx, notification, {
   }
   // Ephemeral live metrics (row 59 cp6): the intake validates ownership; the stream never waits on it.
   if (notification.method === 'inference.performance') return void service.inferenceIntake?.accept(ctx, params);
+  // Mid-turn mail acknowledgement (row 70 W2a): ids only; the rows persist at the terminal settle.
+  if (notification.method === 'session.mail_consumed') return void acceptMailConsumedNotification(ctx, params);
   if (notification.method === 'context.usage') {
     // Ephemeral mid-turn meter snapshot.
     emitChatStream({

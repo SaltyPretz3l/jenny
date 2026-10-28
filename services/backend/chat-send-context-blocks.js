@@ -36,9 +36,11 @@ const CONTEXT_BLOCK_KINDS = Object.freeze([
   'codebase',
   'linked_session',
   'workspace_presentation',
+  // Row 69: the primary Jenny chat's counts and recent chats (per-turn).
+  'profile_overview',
 ]);
 const CONTEXT_BLOCK_KIND_SET = new Set(CONTEXT_BLOCK_KINDS);
-const MAX_CONTEXT_BLOCKS = 6;
+const MAX_CONTEXT_BLOCKS = 7;
 // Generous by design: context-budget-trimmer.js already trims these blocks to
 // the model's MEASURED effective window, so these ceilings are a
 // transport-integrity backstop against a runaway block, not a context policy. A

@@ -390,3 +390,31 @@ test('the pane runtime loads before the app bootstrap that mints pane 0', () => 
     + 'if that changed, pin the pane runtime BEFORE it positionally here'
   );
 });
+
+// The compaction coordinator reads its callbacks lazily as `ctx.NAME?.()`, so a
+// name missing from the ctx it is built with is a silent no-op, not a throw:
+// that is how a settled /compact left the composer disabled (renderComposerState
+// is built inside the composition, never passed in app.js's ctx). Each name it
+// reads must be an app.js ctx key or a key of the composition's overlay.
+test('every ctx callback the app compaction coordinator reads is wired', () => {
+  const coordinatorSource = readRepoFile('renderer/shell/renderer-settings-compaction-section.js');
+  const compositionSource = readRepoFile('renderer/app/renderer-app-controller-composition.js');
+  const ctxKeys = extractControllerCompositionCtxKeys(readRepoFile('renderer/app.js'));
+  assert.ok(ctxKeys, 'app.js should call createControllerComposition({...}) with a balanced ctx object');
+
+  const body = coordinatorSource.slice(
+    coordinatorSource.indexOf('function createAppCompactionCoordinator'),
+    coordinatorSource.indexOf('const PROMPT_ADAPTER_ID'),
+  );
+  const readNames = new Set([...body.matchAll(/\bctx\.(\w+)/g)].map((match) => match[1]));
+  assert.ok(readNames.has('renderComposerState') && readNames.has('refreshSessionSummaries'));
+
+  const overlayStart = compositionSource.indexOf('createAppCompactionCoordinator?.(Object.assign(Object.create(ctx), {');
+  const overlay = overlayStart >= 0 ? compositionSource.slice(overlayStart, compositionSource.indexOf('}))', overlayStart)) : '';
+  const overlayKeys = new Set([...overlay.matchAll(/^\s*(\w+)\s*:/gm)].map((match) => match[1]));
+
+  for (const name of readNames) {
+    assert.ok(ctxKeys.has(name) || overlayKeys.has(name),
+      `ctx.${name} is read by createAppCompactionCoordinator but is neither an app.js ctx key nor in the composition overlay`);
+  }
+});

@@ -98,6 +98,8 @@
     let debounceTimer = null;
     let diskRevisionPath = '';
     let diskRevision = 0;
+    // The text the body currently shows for a path: an unchanged buffer is not re-rendered.
+    let shown = { path: '', text: null };
     // One pending render report for a workspace_present open(): settled by the
     // next render of that exact path (or replaced by a newer open()).
     let renderReport = null;
@@ -185,6 +187,14 @@
     function disposeFrame() {
       frameHandle?.dispose?.();
       frameHandle = null;
+      shown = { path: '', text: null };
+    }
+
+    // UTF-8 is at most 3 bytes per UTF-16 code unit and at least 1, so only text
+    // between those bounds is encoded to measure it.
+    function exceedsPreviewBytes(text) {
+      if (text.length * 3 <= MAX_PREVIEW_BYTES) return false;
+      return text.length > MAX_PREVIEW_BYTES || previewUtf8Encoder.encode(text).length > MAX_PREVIEW_BYTES;
     }
 
     function renderBar(path, kind, note) {
@@ -334,7 +344,7 @@
         return;
       }
       const text = source.text;
-      if (previewUtf8Encoder.encode(text).length > MAX_PREVIEW_BYTES) {
+      if (exceedsPreviewBytes(text)) {
         completeRequest(requestSignature);
         renderState(path, 'too-large', jt('ide.previewStage.tooLarge', '“{path}” is too large to preview safely.', { path }));
         return;
@@ -356,7 +366,8 @@
         return;
       }
       completeRequest(requestSignature, source.signature || requestSignature);
-      if (!bodyEl) {
+      // A pending workspace_present report always gets a fresh render.
+      if (!bodyEl || (shown.path === path && shown.text === text && renderReport?.path !== path)) {
         return;
       }
       if (kind === 'markdown') {
@@ -365,6 +376,7 @@
         bodyEl.innerHTML = `<div class="ide-preview-content">${buildMarkdownHtml(path, text)}</div>`;
         // The chat's lazy mermaid pass (single shared runtime).
         markdownUtils.renderInlineMermaidBlocks?.(bodyEl.firstElementChild, { isStreaming: false });
+        shown = { path, text };
         settleRenderReport(path, { render: 'loaded' });
         return;
       }
@@ -379,6 +391,7 @@
         return;
       }
       const externalResources = renderReport?.path === path ? countExternalResources(text) : {};
+      shown = { path, text };
       frameHandle = frameUtils.createHtmlArtifactFrame(frameHost, text, {
         requestKey: path,
         sizing: 'fill',
@@ -534,13 +547,14 @@
       handleExternalChange,
       handleModelChange,
       handleWorkspaceRootCommitted,
-      isPreviewablePath,
       open,
       sync,
     };
   }
 
   return {
+    HTML_EXTENSIONS,
+    MARKDOWN_EXTENSIONS,
     MAX_PREVIEW_BYTES,
     SELF_CONTAINED_NOTE,
     SUPPORTED_LABEL,

@@ -13,11 +13,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from sidecar.ai.tools.builtins.edit_matching import (
-    _dominant_newline,
-    _fold_edits,
-    _FoldContext,
-    _normalize_newlines,
-    _render_with_newlines,
+    FoldContext,
+    dominant_newline,
+    fold_edits,
+    match_span,
+    normalize_newlines,
+    render_preserving_newlines,
 )
 
 # propose_facts is the base module (path keys, derived facts); this one re-exports
@@ -183,6 +184,11 @@ def _overlap_message(entry_id: str) -> str:
 
 
 def _regions_intersect(content: str, other: str, start: int, end: int) -> bool:
+    if other not in content:
+        # No exact occurrence: locate it the way edit_file would match it
+        # (whitespace/typography/indentation fallbacks), uniquely or not at all.
+        span = match_span(content, other)
+        return span is not None and span[0] < end and start < span[1]
     position = content.find(other)
     scanned = 0
     while position != -1 and scanned < MAX_OVERLAP_SCAN:
@@ -200,26 +206,34 @@ def overlap_refusal(  # noqa: PLR0913 - explicit region context.
     relative_path: str,
     revises: str | None,
     content: str = "",
-    old_string: str = "",
+    span: tuple[int, int] | None = None,
 ) -> str | None:
     """Refuse a change whose region intersects a live suggestion it does not revise.
 
-    Matching runs on LF-normalized text, as edit_file matches. A live suggestion
-    whose text no longer occurs in the file has no region and never overlaps.
+    ``span`` is the region ``match_replace`` matched in the LF-normalized
+    ``content`` (exact or fallback match). A live suggestion whose text no
+    longer matches the file has no region and never overlaps.
     """
     key = path_key(relative_path)
-    content, old_string = _normalize_newlines(content), _normalize_newlines(old_string)
-    start = content.find(old_string) if kind == "replace" else -1
-    end = start + len(old_string)
+    content = normalize_newlines(content)
     for entry in context.live:
         if entry.id == revises or entry.kind != kind or path_key(entry.path) != key:
             continue
         if kind == "create":
             return _overlap_message(entry.id)
-        other = _normalize_newlines(entry.old_string)
-        if other and start >= 0 and _regions_intersect(content, other, start, end):
+        other = normalize_newlines(entry.old_string)
+        if other and span is not None and _regions_intersect(content, other, *span):
             return _overlap_message(entry.id)
     return None
+
+
+@dataclass(frozen=True)
+class MatchedReplace:
+    """A validated replace: the rendered new file text and the matched region."""
+
+    new_text: str
+    # (start, end) of the matched old text in the LF-normalized file text.
+    span: tuple[int, int]
 
 
 def match_replace(
@@ -229,23 +243,28 @@ def match_replace(
     *,
     relative_path: str,
     max_bytes: int,
-) -> str | ToolHandlerResult:
-    """Return the rendered new file text, or edit_file's failure in suggestion wording."""
-    newline_style = _dominant_newline(file_text)
-    folded = _fold_edits(
+) -> MatchedReplace | ToolHandlerResult:
+    """Return the rendered new text and matched span, or edit_file's failure in
+    suggestion wording."""
+    newline_style = dominant_newline(file_text)
+    spans: list[tuple[int, int]] = []
+    folded = fold_edits(
         ((old_string, new_string, False),),
-        content=_normalize_newlines(file_text),
-        context=_FoldContext(
+        content=normalize_newlines(file_text),
+        context=FoldContext(
             relative_path=relative_path,
             newline_style=newline_style,
             max_final_bytes=max_bytes,
             name_failures=False,
             suggestion_mode=True,
         ),
+        matched_spans=spans,
     )
     if isinstance(folded, ToolHandlerResult):
         return folded
-    return _render_with_newlines(folded[0], newline_style)
+    return MatchedReplace(
+        render_preserving_newlines(file_text, folded[0], newline_style), spans[0]
+    )
 
 
 def build_suggestion_record(  # noqa: PLR0913 - one explicit field per record key.
@@ -278,7 +297,7 @@ def build_suggestion_record(  # noqa: PLR0913 - one explicit field per record ke
         "group": group,
         "depends_on": list(dict.fromkeys(depends_on)),
         "facts": list(facts or []),
-        "base_hash": None if created else sha256_text(_normalize_newlines(old_text)),
+        "base_hash": None if created else sha256_text(normalize_newlines(old_text)),
         "diff": compute_structured_diff(
             relative_path,
             old_text,
@@ -301,6 +320,7 @@ __all__ = (
     "TOO_LARGE_TEXT",
     "LiveContext",
     "LiveSuggestion",
+    "MatchedReplace",
     "batch_refusal",
     "build_suggestion_record",
     "derive_import_facts",

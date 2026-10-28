@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, fields
 from typing import Any
 
@@ -16,6 +17,8 @@ from sidecar.ai.routing.tool_resource_deferral import (
     ToolLoopSuspended,
     _freeze_loop_quota,
     build_before_tool_dispatch_continuation,
+    canonical_json_bytes,
+    extend_continuation,
 )
 
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
@@ -83,14 +86,77 @@ class BeforeDependencyWaitContinuation(BeforeToolDispatchContinuation):
         BeforeToolDispatchContinuation.__post_init__(self)
 
 
+def child_refs(
+    outcomes: Iterable[Any],
+    *,
+    spawns: Iterable[CompletedSpawnRef] = (),
+    waits: Iterable[CompletedSpawnRef] = (),
+) -> tuple[tuple[CompletedSpawnRef, ...], tuple[CompletedSpawnRef, ...]]:
+    """Strictly validate child spawn/wait receipts and hash each canonical body.
+
+    ``spawns``/``waits`` seed refs proven by a predecessor checkpoint; a wait
+    receipt must name a child spawned by a seeded or earlier current spawn.
+    """
+
+    spawn_refs = list(spawns)
+    wait_refs = list(waits)
+    for outcome in outcomes:
+        if outcome.tool_name not in {"session_spawn", "session_wait"}:
+            continue
+        if outcome.success is not True:
+            raise ValueError("mixed_child_outcome_uncertain")
+        receipt = json.loads(outcome.output)
+        spawn = outcome.tool_name == "session_spawn"
+        expected = (
+            {"root_run_id", "child_work_id", "session_id", "turn_id"}
+            if spawn
+            else {"child_work_id", "session_id", "turn_id", "status", "result", "truncated"}
+        )
+        if (
+            not isinstance(receipt, dict)
+            or set(receipt) != expected
+            or any(
+                not isinstance(receipt[key], str) or not _ID.fullmatch(receipt[key])
+                for key in ("child_work_id", "session_id", "turn_id")
+            )
+            or (
+                spawn
+                and (
+                    not isinstance(receipt["root_run_id"], str)
+                    or not _ID.fullmatch(receipt["root_run_id"])
+                )
+            )
+            or (
+                not spawn
+                and (
+                    receipt["status"] not in {"completed", "failed", "cancelled"}
+                    or type(receipt["truncated"]) is not bool
+                    or not isinstance(receipt["result"], str)
+                    or len(receipt["result"].encode()) > MAX_RESULT_BYTES
+                    or receipt["child_work_id"] not in {ref.child_work_id for ref in spawn_refs}
+                )
+            )
+        ):
+            raise ValueError("mixed_child_receipt_invalid")
+        body = json.dumps(
+            receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+        ).encode()
+        (spawn_refs if spawn else wait_refs).append(
+            CompletedSpawnRef(
+                outcome.call_id, receipt["child_work_id"], hashlib.sha256(body).hexdigest()
+            )
+        )
+    return tuple(spawn_refs), tuple(wait_refs)
+
+
 def completed_effects(
     loop: Any,
 ) -> tuple[tuple[CompletedSpawnRef, ...], tuple[CompletedSpawnRef, ...]]:
     runtime = loop.runtime
     records = list(runtime.emitted_tool_calls.values())
     previous = (runtime.dependency_resume or {}).get("checkpoint", {})
-    spawns = [CompletedSpawnRef(**ref) for ref in previous.get("completed_spawn_refs", [])]
-    waits = [CompletedSpawnRef(**ref) for ref in previous.get("completed_wait_refs", [])]
+    prior_spawns = [CompletedSpawnRef(**ref) for ref in previous.get("completed_spawn_refs", [])]
+    prior_waits = [CompletedSpawnRef(**ref) for ref in previous.get("completed_wait_refs", [])]
     if (
         not records
         or len(records) != len(loop.outcomes)
@@ -111,43 +177,17 @@ def completed_effects(
             or record.get("arguments") != outcome.tool_input
         ):
             return (), ()
-        try:
-            receipt = json.loads(outcome.output)
-            if not isinstance(receipt, dict):
-                raise ValueError("invalid_dependency_result")
-            if tool == "session_spawn":
-                if set(receipt) != {"root_run_id", "child_work_id", "session_id", "turn_id"} or any(
-                    not isinstance(value, str) or not _ID.fullmatch(value)
-                    for value in receipt.values()
-                ):
-                    raise ValueError("invalid_dependency_result")
-            elif (
-                set(receipt)
-                != {"child_work_id", "session_id", "turn_id", "status", "result", "truncated"}
-                or receipt["status"] not in {"completed", "failed", "cancelled"}
-                or not isinstance(receipt["truncated"], bool)
-                or not isinstance(receipt["result"], str)
-                or len(receipt["result"].encode()) > MAX_RESULT_BYTES
-                or receipt["child_work_id"] not in {ref.child_work_id for ref in spawns}
-            ):
-                raise ValueError("invalid_dependency_result")
-            body = json.dumps(
-                receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-            ).encode()
-        except (ValueError, TypeError):
-            return (), ()
-        (spawns if tool == "session_spawn" else waits).append(
-            CompletedSpawnRef(
-                record["call_id"], receipt["child_work_id"], hashlib.sha256(body).hexdigest()
-            )
-        )
+    try:
+        spawns, waits = child_refs(loop.outcomes, spawns=prior_spawns, waits=prior_waits)
+    except (ValueError, TypeError):
+        return (), ()
     if previous and (
         not waits
         or waits[len(previous.get("completed_wait_refs", []))].call_id
         != previous["pending_call"]["call_id"]
     ):
         return (), ()
-    return tuple(spawns), tuple(waits)
+    return spawns, waits
 
 
 def probe_dependency_wait(
@@ -199,6 +239,7 @@ def probe_dependency_wait(
         not refs
         or (mixed is None and runtime.tool_calls_consumed != len(refs) + len(waits) + 1)
         or len(refs) + len(waits) > MAX_SPAWNS
+        or not isinstance(ordered_calls[0].arguments.get("child_work_id"), str)
         or ordered_calls[0].arguments.get("child_work_id")
         not in {ref.child_work_id for ref in refs}
     ):
@@ -237,19 +278,15 @@ def probe_dependency_wait(
         checkpoint = probe(build_mixed_dependency(base, loop, mixed))
         runtime.raise_if_interrupted()
         raise ToolLoopSuspended(checkpoint)
-    values = {item.name: getattr(base, item.name) for item in fields(base)}
-    values["tool_calls_consumed"] = runtime.tool_calls_consumed
     resume = runtime.dependency_resume
     previous = resume["checkpoint"] if resume else {}
-    continuation = BeforeDependencyWaitContinuation(
-        **values,
+    continuation = extend_continuation(
+        base,
+        BeforeDependencyWaitContinuation,
+        tool_calls_consumed=runtime.tool_calls_consumed,
         completed_spawn_refs=refs,
         completed_wait_refs=waits,
-        prior_checkpoint_json=json.dumps(
-            resume["reference"], sort_keys=True, separators=(",", ":")
-        ).encode()
-        if resume
-        else None,
+        prior_checkpoint_json=canonical_json_bytes(resume["reference"]) if resume else None,
         prior_effect_count=len(previous.get("completed_spawn_refs", []))
         + len(previous.get("completed_wait_refs", [])),
     )

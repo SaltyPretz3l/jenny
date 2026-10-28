@@ -26,7 +26,17 @@ MAX_QUERY_TERMS = 8
 SEMANTIC_LIMIT = 8
 SEMANTIC_TIMEOUT_SECONDS = 1.5
 RRF_K = 60
+# The exact-word list ranks by a cruder signal than the embedding, so it counts
+# half as much in the fusion.
+LEXICAL_RRF_WEIGHT = 0.5
+MIN_QUERY_TERM_CHARS = 4
 _TERM_RE = re.compile(r"\w{3,}")
+_STOPWORDS = frozenset({
+    "about", "after", "also", "been", "does", "each", "from", "have", "into", "just",
+    "like", "more", "most", "much", "only", "over", "some", "such", "than", "that",
+    "their", "them", "then", "there", "these", "they", "this", "what", "when", "where",
+    "which", "while", "will", "with", "would", "your",
+})
 
 NOTE_OFF = "Search by meaning is off, so this matched the query's words."
 NOTE_UNAVAILABLE = "Search by meaning is unavailable right now, so this matched the query's words."
@@ -84,13 +94,17 @@ def compile_search_pattern(arguments: dict[str, object]) -> tuple[re.Pattern[str
 
 
 def query_terms_pattern(query: str) -> str:
-    """An alternation of the query's distinct words (3+ characters) for the grep fallback."""
-    terms: list[str] = []
-    for term in _TERM_RE.findall(query.lower()):
-        if term not in terms:
-            terms.append(term)
-        if len(terms) >= MAX_QUERY_TERMS:
-            break
+    """An alternation of the query's distinct content words for the grep fallback.
+
+    Stopwords and words under four characters are dropped so "the" or "how" do
+    not match every file; a query made only of those keeps its 3+ character words.
+    """
+    words = list(dict.fromkeys(_TERM_RE.findall(query.lower())))
+    content = [
+        word for word in words
+        if len(word) >= MIN_QUERY_TERM_CHARS and word not in _STOPWORDS
+    ]
+    terms = (content or words)[:MAX_QUERY_TERMS]
     if not terms:
         return re.escape(query.strip()[:200])
     return "|".join(re.escape(term) for term in terms)
@@ -199,20 +213,36 @@ def _source_statuses(
     return statuses
 
 
+def rank_lexical(
+    exact: Sequence[tuple[str, str]],
+    strength: Mapping[str, tuple[int, int]],
+) -> list[tuple[str, str]]:
+    """Exact-word hits best first: most distinct terms matched, then most matches.
+
+    The grep walk yields files in path order, which is not a ranking; ties keep it.
+    """
+    return sorted(
+        exact,
+        key=lambda entry: tuple(-value for value in strength.get(entry[0], (0, 0))),
+    )
+
+
 def fuse_entries(
     exact: Sequence[tuple[str, str]],
     passages: Sequence[Passage],
+    strength: Mapping[str, tuple[int, int]] | None = None,
 ) -> list[tuple[str, str]]:
     """Reciprocal-rank fusion over files: ``[(display path, snippet)]``, best first.
 
     A file found by both lists ranks above either alone; its snippet comes from
-    the passage, which is the part that matched by meaning.
+    the passage, which is the part that matched by meaning. ``strength`` maps a
+    lexical hit to ``(distinct terms, match count)`` for :func:`rank_lexical`.
     """
     scores: dict[str, float] = {}
     snippets: dict[str, str] = {}
-    for rank, (path, snippet) in enumerate(exact, start=1):
+    for rank, (path, snippet) in enumerate(rank_lexical(exact, strength or {}), start=1):
         if path not in scores:
-            scores[path] = 1.0 / (RRF_K + rank)
+            scores[path] = LEXICAL_RRF_WEIGHT / (RRF_K + rank)
             snippets[path] = snippet
     seen: set[str] = set()
     for rank, passage in enumerate(passages, start=1):
@@ -238,18 +268,21 @@ def attach_identities(
     lexical-only source gets a fresh ``source_hash`` plus its ``locator_kind``,
     hashed for at most ``limit`` sources per call; later ones stay unpinned.
     """
-    identities = {passage.path: passage for passage in passages}
+    identities: dict[str, Passage] = {}
+    for hit in passages:  # the first (best) passage per file, as in fuse_entries
+        identities.setdefault(hit.path, hit)
     hashed = 0
     truncated = False
     for source in sources:
         path = str(source.get("path"))
         passage = identities.get(path)
         if passage is not None:
-            if passage.source_hash:
-                source["source_hash"] = passage.source_hash
             if passage.extraction:
                 source["extraction"] = passage.extraction
-            continue
+            if passage.source_hash:
+                source["source_hash"] = passage.source_hash
+                continue
+            # A hashless passage still gets the lexical identity below.
         entry = lexical.get(path)
         if entry is None:
             continue

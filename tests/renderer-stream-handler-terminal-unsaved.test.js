@@ -33,3 +33,26 @@ test('unsaved question batches remain inert until a durable retry rehydrates the
   assert.deepEqual(summaryPatches, []);
   assert.equal(harness.multiStreamController.getStreamIdForSession('session-1'), null);
 });
+
+test('a user-denied terminal logs stream.handle_error at INFO, a failure at ERROR', async (t) => {
+  const logs = [];
+  const harness = createHarness({
+    callbackOverrides: {
+      appendClientLog: (level, event, details) => logs.push({ level, event, details }),
+    },
+  });
+  t.after(() => harness.restore());
+
+  await harness.emit({ type: 'started', sessionId: 'session-1', streamId: 'stream-denied' });
+  await harness.emit({
+    type: 'error', sessionId: 'session-1', streamId: 'stream-denied',
+    message: 'User rejected approval for write_file', terminal_status: 'denied',
+  });
+  await harness.emit({ type: 'started', sessionId: 'session-1', streamId: 'stream-failed' });
+  await harness.emit({ type: 'error', sessionId: 'session-1', streamId: 'stream-failed', message: 'boom' });
+
+  const entries = logs.filter((entry) => entry.event === 'stream.handle_error');
+  assert.deepEqual(entries.map((entry) => [entry.details.streamId, entry.level, entry.details.terminalStatus]), [
+    ['stream-denied', 'INFO', 'denied'], ['stream-failed', 'ERROR', undefined],
+  ]);
+});

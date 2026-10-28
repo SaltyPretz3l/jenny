@@ -33,7 +33,7 @@ function harness({ grant = null, supported = true, authorize = null, replay = nu
     runtime_inference_admission_version: 1, chat_workspace_version: 1,
     chat_workspace_capabilities: { schema_version: 1, producer_tools: [], context_kinds: ['session_message'], session_messages: supported },
   });
-  const calls = { prepare: [], send: [], cancel: [], read: [], targets: [] };
+  const calls = { prepare: [], send: [], cancel: [], read: [], targets: [], inbox: [] };
   const prepared = { ok: true, operation_id: OPERATION_ID, envelope_sha256: HASH, state: 'prepared', grant, destination: DESTINATION,
     ...(replay ? { created: false, state: replay } : {}) };
   const service = {
@@ -44,6 +44,8 @@ function harness({ grant = null, supported = true, authorize = null, replay = nu
       async agentSend(args) { calls.send.push(args); return { ok: true, operation: { state: 'delivered', envelope: { private: true } } }; },
       async agentCancel(args) { calls.cancel.push(args); return { ok: true }; },
       async agentRead(args) { calls.read.push(args); return { ok: true, envelope: { body: 'included' } }; },
+      async agentListInbox(args) { calls.inbox.push(args); return { ok: true, messages: [{ message_id: 'm', preview: 'p' }],
+        counts: { unread: 1 }, truncated: false, private: 'dropped' }; },
       async listAgentTargets(args) { calls.targets.push(args); return { ok: true, targets: [{ ...DESTINATION,
         free_form_allowed: true, purpose: 'private purpose', grant: { grant_id: 'grant', purpose: 'private purpose',
           consent_event_id: 'private consent', expires_at: '2026-10-22T00:00:00.000Z', remaining_sends: 3 } }] }; },
@@ -64,11 +66,24 @@ test('session_message rejects unknown actions and extra keys before service work
   for (const input of [{ action: 'unknown' }, { action: 'list_targets', body: 'extra' },
     { action: 'send', destination_session_id: 'dest', body: 'hello', grant_id: 'forged' },
     { action: 'send', destination_session_id: 'dest' }, { action: 'read' },
+    { action: 'list_inbox', limit: 0 }, { action: 'list_inbox', limit: 51 }, { action: 'list_inbox', limit: '5' },
+    { action: 'list_inbox', message_id: 'x' }, { action: 'list_targets', limit: 5 },
     { action: 'read', message_id: 'message', extra: true }, sendInput('é'.repeat(8193)), sendInput('bad\u0000body')]) {
     const result = await tool.execute(input, {});
     assert.deepEqual(JSON.parse(result.content), { ok: false, reason: 'invalid_request' });
     assert.equal(result.isError, false);
   }
+});
+
+test('session_message summaries label only known actions', async () => {
+  const flood = 'x'.repeat(10000);
+  assert.equal(tool.summarize({ action: flood }), 'Session message: invalid request');
+  assert.equal(tool.summarize({ action: { toString: () => 'send' } }), 'Session message: invalid request');
+  assert.equal(tool.summarize({ action: 'constructor' }), 'Session message: invalid request');
+  assert.equal(tool.summarize({ action: 'send' }), 'Session message: send');
+  const refused = await tool.execute({ action: flood }, {});
+  assert.equal(refused.summary, 'Session message: invalid request');
+  assert.equal(refused.isError, false);
 });
 
 test('list_targets hides purpose, grant identity and consent while retaining bounds', async () => {
@@ -86,6 +101,16 @@ test('read delegates to the included-inbox reader and preserves its refusal', as
   assert.deepEqual(calls.read, [{ sourceSessionId: 'source', sourceIncarnation: 'incarnation', messageId: 'included' }]);
   service.chatMessages.agentRead = async () => ({ ok: false, reason: 'not_found' });
   assert.equal(output(await tool.execute({ action: 'read', message_id: 'queued' }, context)).reason, 'not_found');
+});
+
+test('list_inbox reads only the bound chat inbox with a bounded limit and a closed result', async () => {
+  const { context, calls } = harness();
+  assert.deepEqual(output(await tool.execute({ action: 'list_inbox' }, context)),
+    { ok: true, messages: [{ message_id: 'm', preview: 'p' }], counts: { unread: 1 }, truncated: false });
+  await tool.execute({ action: 'list_inbox', limit: 50 }, context);
+  assert.deepEqual(calls.inbox, [{ sourceSessionId: 'source', sourceIncarnation: 'incarnation', limit: 20 },
+    { sourceSessionId: 'source', sourceIncarnation: 'incarnation', limit: 50 }]);
+  assert.equal(tool.summarize({ action: 'list_inbox' }), 'Session message: list_inbox');
 });
 
 test('a prepared live grant sends once without authorization', async () => {
@@ -149,10 +174,10 @@ test('unnegotiated and unbound calls do no service work', async () => {
 
 test('Plan/read-only preflight allows list_targets and read, blocks send and undeclared actions', () => {
   const { context, service } = harness();
-  for (const action of ['list_targets', 'read', 'send', 'unknown']) {
+  for (const action of ['list_targets', 'read', 'list_inbox', 'send', 'unknown']) {
     const verdict = service.toolExecutor._preflightTool({ toolName: 'session_message', callId: 'call', input: { action } },
       { ...context, readOnly: true, planMode: true }, { preApproved: true });
-    assert.equal(Boolean(verdict.tool), ['list_targets', 'read'].includes(action));
+    assert.equal(Boolean(verdict.tool), ['list_targets', 'read', 'list_inbox'].includes(action));
   }
 });
 

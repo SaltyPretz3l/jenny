@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import codecs
+import io
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, Callable
 
@@ -49,15 +51,15 @@ from sidecar.ai.tools.builtins.file_state import (
     validate_current_snapshot,
 )
 from sidecar.ai.tools.builtins.filesystem_content import is_supported_media_path, read_media_file
-from sidecar.ai.tools.builtins.filesystem_rich import RICH_FILE_SUFFIXES, read_rich_file
+from sidecar.ai.tools.builtins.filesystem_rich import (
+    RICH_FILE_SUFFIXES,
+    read_rich_file,
+    rich_paging_hint,
+)
 from sidecar.ai.tools.builtins.filesystem_settings import (
     _FILESYSTEM_SETTINGS,
-)
-from sidecar.ai.tools.builtins.filesystem_settings import (
-    DEFAULT_MAX_EDIT_FILE_BYTES as _DEFAULT_MAX_EDIT_FILE_BYTES,
-)
-from sidecar.ai.tools.builtins.filesystem_settings import (
-    configure_filesystem_tools as _configure_filesystem_tools,
+    DEFAULT_MAX_EDIT_FILE_BYTES,  # noqa: F401 - re-export
+    configure_filesystem_tools,  # noqa: F401 - re-export
 )
 from sidecar.ai.tools.contracts import (
     ToolExecutionFailure,
@@ -69,18 +71,17 @@ from sidecar.ai.tools.workspace import WorkspaceGuard
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_EDIT_FILE_BYTES = _DEFAULT_MAX_EDIT_FILE_BYTES
-configure_filesystem_tools = _configure_filesystem_tools
-
 MAX_READ_BYTES = 200_000
 MAX_PAGINATED_OUTPUT_BYTES = MAX_READ_BYTES
 # The paginated "fast path" reads the whole file into memory to slice a window out
-# of it, so it must stay bounded by the same cap the streaming path enforces on its
-# *output* (MAX_PAGINATED_OUTPUT_BYTES) rather than a separate, much larger ceiling —
-# otherwise a bounded-limit request against a merely-under-10MB file would still pull
-# the entire file into memory unbounded before any per-line truncation ever applies.
+# of it, so it stays bounded by the streaming path's *output* cap rather than a
+# separate, much larger ceiling that would buffer a big file before any truncation.
 READ_WINDOW_FAST_PATH_MAX_BYTES = MAX_PAGINATED_OUTPUT_BYTES
 READ_WINDOW_CHUNK_BYTES = 512 * 1024
+# The streaming window stops scanning here and reports totals_known=False.
+READ_WINDOW_MAX_SCAN_BYTES = 256 * 1024 * 1024
+# Line breaks are \r\n, \r or \n: the same rule as the fast path and grep_search.
+_LINE_BREAK = re.compile(rb"\r\n|\r|\n")
 SEARCH_IGNORE_DIRS = frozenset(
     {
         ".bzr",
@@ -205,7 +206,8 @@ def read_file_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> T
     if headings_requested and resolved.suffix.lower() not in {".md", ".markdown", ".mdown"}:
         raise ToolExecutionFailure(
             code=CMP_TOOL_INVALID_PATH,
-            message="tool argument 'headings' is only supported for Markdown files",
+            message="tool argument 'headings' is only supported for Markdown files; "
+            + rich_paging_hint(resolved.suffix),
             retryable=False,
         )
     if hosted_file_io_enabled() and (
@@ -221,18 +223,10 @@ def read_file_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> T
             relative_path=relative_path,
             pages_argument=arguments.get("pages"),
             cursor_argument=arguments.get("cursor"),
+            authorized_root=workspace.require_root(),
         )
     rich_file_kind = RICH_FILE_SUFFIXES.get(resolved.suffix.lower())
     if _FILESYSTEM_SETTINGS["rich_files_enabled"] and rich_file_kind is not None:
-        if "offset" in arguments or "limit" in arguments:
-            raise ToolExecutionFailure(
-                code=CMP_TOOL_INVALID_PATH,
-                message=(
-                    "tool arguments 'offset' and 'limit' are unsupported "
-                    "for rich-file suffixes"
-                ),
-                retryable=False,
-            )
         return read_rich_file(
             kind=rich_file_kind,
             arguments=arguments,
@@ -253,12 +247,12 @@ def read_file_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> T
             relative_path=relative_path,
             offset=offset,
             limit=limit,
+            root=workspace.require_root(),
         )
     workspace.check_file_size(resolved, MAX_READ_BYTES)
     stat_result, raw_bytes, content, encoding = _read_decoded_file(
-        resolved,
-        relative_path=relative_path,
-        max_bytes=MAX_READ_BYTES,
+        resolved, relative_path=relative_path, max_bytes=MAX_READ_BYTES,
+        root=workspace.require_root(),
     )
     if headings_requested:
         section_read = extract_markdown_sections(
@@ -307,6 +301,7 @@ def _read_file_window(
     relative_path: str,
     offset: int,
     limit: int | None,
+    root: Path,
 ) -> ToolHandlerResult:
     stat_result = _stat_file(resolved)
     file_size = stat_result.st_size
@@ -316,6 +311,7 @@ def _read_file_window(
             relative_path=relative_path,
             offset=offset,
             limit=limit,
+            root=root,
         )
     return _read_file_window_streaming(
         resolved=resolved,
@@ -323,6 +319,7 @@ def _read_file_window(
         stat_result=stat_result,
         offset=offset,
         limit=limit,
+        root=root,
     )
 
 
@@ -342,6 +339,7 @@ def _read_decoded_file(
     *,
     relative_path: str,
     max_bytes: int,
+    root: Path | None,
 ) -> tuple[os.stat_result, bytes, str, str]:
     """Read a file's raw bytes — re-stat'd from the open handle so size/mtime stay
     coherent with the bytes that get hashed — plus its decoded text. Shared by the
@@ -349,9 +347,7 @@ def _read_decoded_file(
     full read snapshots. The read itself is capped and identity-checked (see
     ``read_capped_bytes``) instead of an unbounded ``fh.read()``."""
     stat_result, raw_bytes = read_capped_bytes(
-        resolved,
-        max_bytes=max_bytes,
-        relative_path=relative_path,
+        resolved, max_bytes=max_bytes, relative_path=relative_path, authorized_root=root,
     )
     decoded = decode_text_state_strict(raw_bytes, relative_path=relative_path)
     return stat_result, raw_bytes, decoded.text, decoded.encoding
@@ -363,18 +359,16 @@ def _read_file_window_fast(
     relative_path: str,
     offset: int,
     limit: int | None,
+    root: Path,
 ) -> ToolHandlerResult:
-    # Read the whole file as bytes (re-stat'd from the open handle via _read_decoded_file)
-    # so a window that turns out to cover it can be promoted to a full read_snapshot whose
-    # sha256/size/mtime match the unpaginated full-read path exactly. The dispatcher only
-    # routes here when the file is <= MAX_PAGINATED_OUTPUT_BYTES (READ_WINDOW_FAST_PATH_MAX_BYTES),
-    # so the capped read below is bounded to that same ceiling rather than growing unbounded.
+    # Whole-file read (re-stat'd from the open handle) so a window that covers the file
+    # is promoted to a full read_snapshot matching the unpaginated path; the dispatcher
+    # only routes files <= READ_WINDOW_FAST_PATH_MAX_BYTES here, so the read is bounded.
     stat_result, raw_bytes, content, encoding = _read_decoded_file(
-        resolved,
-        relative_path=relative_path,
-        max_bytes=MAX_PAGINATED_OUTPUT_BYTES,
+        resolved, relative_path=relative_path, max_bytes=MAX_PAGINATED_OUTPUT_BYTES, root=root,
     )
-    lines = content.splitlines(keepends=True)
+    # Not str.splitlines: it also breaks on \x0c, \x1c-\x1e, \x85 and U+2028/9.
+    lines = io.StringIO(content, newline="").readlines()
     selected_lines: list[str] = []
     selected_bytes = 0
     end_line = None if limit is None else offset + limit
@@ -406,17 +400,11 @@ def _read_file_window_fast(
 
 
 def _find_line_break(data: bytes, start: int) -> tuple[int, int] | None:
-    newline_index = data.find(b"\n", start)
-    carriage_index = data.find(b"\r", start)
-    if newline_index == -1 and carriage_index == -1:
+    match = _LINE_BREAK.search(data, start)
+    # A lone \r ending the chunk may be half of a CRLF: defer it to the next chunk.
+    if match is None or (match.start() == len(data) - 1 and data.endswith(b"\r")):
         return None
-    if carriage_index != -1 and (newline_index == -1 or carriage_index < newline_index):
-        if carriage_index == len(data) - 1:
-            return None
-        if data[carriage_index + 1 : carriage_index + 2] == b"\n":
-            return carriage_index, 2
-        return carriage_index, 1
-    return newline_index, 1
+    return match.start(), match.end() - match.start()
 
 
 def _read_file_window_streaming(
@@ -426,9 +414,11 @@ def _read_file_window_streaming(
     stat_result: os.stat_result,
     offset: int,
     limit: int | None,
+    root: Path,
 ) -> ToolHandlerResult:
     selected_line_bytes: list[bytes] = []
     selected_bytes = 0
+    scanned_bytes = 0
     total_lines = 0
     truncated_by_bytes = False
     end_line = None if limit is None else offset + limit
@@ -444,12 +434,15 @@ def _read_file_window_streaming(
         return end_line is None or line_index < end_line
 
     try:
-        root = resolved.parents[len(Path(relative_path).parts) - 1]
         with open_regular_file(resolved, "rb", authorized_root=root) as handle:
             while True:
+                if scanned_bytes >= READ_WINDOW_MAX_SCAN_BYTES and handle.read(1):
+                    has_unscanned_content = True
+                    break
                 chunk = handle.read(READ_WINDOW_CHUNK_BYTES)
                 if not chunk:
                     break
+                scanned_bytes += len(chunk)
                 first_chunk = total_lines == 0 and not buffer and not selected_line_bytes
                 if first_chunk and chunk.startswith(codecs.BOM_UTF8):
                     has_utf8_bom = True
@@ -882,7 +875,9 @@ def _write_file_locked(
         expected_bytes = existing_state.raw_bytes
         diff_status = "modified"
         if journal is not None:
-            checkpoint_plan = plan_checkpoint(resolved, workspace.require_root())
+            checkpoint_plan = plan_checkpoint(
+                resolved, workspace.require_root(), data=existing_state.raw_bytes
+            )
         else:
             checkpoint = create_checkpoint(
                 resolved,

@@ -2,10 +2,10 @@
 /**
  * What is waiting on the person, across every session, opened or not.
  *
- * The two sources are the ones the renderer already holds: the global
+ * The sources are the ones the renderer already holds: the global
  * approval map (`state.pendingToolApprovals`, keyed by call id across
- * sessions, so an approval can be answered without opening its chat) and the
- * session summaries' `pending_question_batch`. Nothing here reads a runtime
+ * sessions, so an approval can be answered without opening its chat), the
+ * session summaries' `pending_question_batch` and `failed_delivery_count`. Nothing here reads a runtime
  * snapshot, a clock or a timestamp -- the data carries none, so the rows never
  * claim how long anything has waited.
  *
@@ -17,6 +17,9 @@
  *   - an approval whose session is no longer listed is dropped rather than
  *     rendered against a title the model would have to invent;
  *   - a plan review is a row to OPEN, never one to approve in one line;
+ *   - a cross-chat message that failed to deliver is a row to OPEN: Retry
+ *     and Cancel send live in the sending chat (on the send's own row, or
+ *     its composer strip for a send with no row);
  *   - a send the runtime cannot start is listed only when its last reply's
  *     cleanup is unconfirmed (renderer-stuck-send.js): every other wait ends
  *     by itself, and the queue strip already says why.
@@ -31,6 +34,7 @@
   'use strict';
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  var jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
 
   var PLAN_REVIEW_TOOL = 'exit_plan_mode';
   var INTRO_MAX_CHARS = 120;
@@ -39,8 +43,8 @@
    * hid, in the card's own words, so a long payload never becomes a 40 KB
    * tooltip re-serialized into the render signature on every chrome pass. */
   var PREVIEW_MAX_CHARS = 240;
-  /* Approvals first, then plan reviews, question batches, stuck sends. */
-  var KIND_ORDER = { approval: 0, plan_review: 1, question: 2, stuck_send: 3 };
+  /* Approvals first, then plan reviews, question batches, failed deliveries, stuck sends. */
+  var KIND_ORDER = { approval: 0, plan_review: 1, question: 2, delivery_failed: 3, stuck_send: 4 };
   /* One muted line, joined the way the Chats panel joins facts. */
   var LINE_SEPARATOR = ' · ';
 
@@ -98,6 +102,14 @@
     });
   }
 
+  function sessionStopTitle(value) {
+    var target = value && typeof value === 'object' && value.schema_version === 1 ? value.target : null;
+    var title = target && typeof target === 'object' ? text(target.title).replace(/\s+/g, ' ') : '';
+    if (!title || title === 'New Chat') return '';
+    var characters = Array.from(title);
+    return characters.length > PREVIEW_MAX_CHARS ? characters.slice(0, PREVIEW_MAX_CHARS - 1).join('') + '\u2026' : title;
+  }
+
   function buildApprovalRows(options) {
     var rows = [];
     var seenCallIds = new Set();
@@ -122,7 +134,12 @@
         toolName: toolName,
       };
       if (!isPlanReview) {
-        row.preview = previewFor(options.facts, toolName, entry.input);
+        // A stop names the app's own target (row 69 Q11); its raw id is never the preview.
+        var stopTitle = toolName === 'session_stop' ? sessionStopTitle(entry.sessionStopApproval) : '';
+        row.preview = toolName === 'session_stop'
+          ? (stopTitle ? jt('approval.block.sessionStopSubject', 'Stop {title}', { title: stopTitle })
+            : jt('chat.attentionInbox.stopAnotherChat', 'Stop another chat'))
+          : previewFor(options.facts, toolName, entry.input);
         row.facts = Object.freeze(factsFor(options.facts, toolName, entry.input));
         // The backend's own scope and consequence for this call, as raw
         // backend strings; the view translates them exactly as the transcript
@@ -208,6 +225,38 @@
     return rows;
   }
 
+  // One row per chat whose sent messages could not be delivered (the summary's derived count).
+  function buildDeliveryFailedRows(options) {
+    var rows = [];
+    options.sessionIndex.forEach(function addDeliveryFailedRow(summary, sessionId) {
+      var failedCount = summary && summary.failed_delivery_count;
+      if (!Number.isSafeInteger(failedCount) || failedCount <= 0) return;
+      rows.push({
+        key: 'delivery_failed:' + sessionId,
+        kind: 'delivery_failed',
+        sessionId: sessionId,
+        sessionTitle: sessionTitleFor(summary),
+        failedCount: failedCount,
+      });
+    });
+    return rows;
+  }
+
+  /* The muted line under a row that is not an approval (approvals use policyLine). */
+  function rowNote(row) {
+    if (row.kind === 'stuck_send') {
+      return jt('chat.attentionInbox.stuckSend', "Message waiting to start · last reply's cleanup unconfirmed");
+    }
+    if (row.kind === 'plan_review') return jt('chat.attentionInbox.planReady', 'Plan ready for review');
+    if (row.kind === 'delivery_failed') {
+      return jtn('chat.attentionInbox.deliveryFailed', row.failedCount, { count: String(row.failedCount) },
+        "Couldn't deliver a message", "Couldn't deliver {count} messages");
+    }
+    var waiting = jtn('chat.attentionInbox.questionsWaiting', row.questionCount, { count: String(row.questionCount) },
+      '{count} question waiting', '{count} questions waiting');
+    return row.introText ? waiting + LINE_SEPARATOR + row.introText : waiting;
+  }
+
   /**
    * Build the frozen "Needs you" view.
    *
@@ -225,7 +274,8 @@
     var currentSessionId = text(input.currentSessionId);
     var context = { sessionIndex: sessionIndex, facts: input.facts, pendingToolApprovals: input.pendingToolApprovals,
       stuckSends: input.stuckSends };
-    var rows = buildApprovalRows(context).concat(buildQuestionRows(context), buildStuckSendRows(context));
+    var rows = buildApprovalRows(context).concat(buildQuestionRows(context), buildDeliveryFailedRows(context),
+      buildStuckSendRows(context));
     // Stable sort: kind first, then the conversation on screen last within its
     // kind (the person is looking elsewhere in the app, so the waits they
     // cannot see come first), then the order the sources produced them in --
@@ -252,6 +302,7 @@
         approvals: countOf('approval'),
         planReviews: countOf('plan_review'),
         questions: countOf('question'),
+        deliveryFailures: countOf('delivery_failed'),
         stuckSends: countOf('stuck_send'),
         answerable: rows.length,
       }),
@@ -259,5 +310,5 @@
     });
   }
 
-  return { buildAttentionInbox: buildAttentionInbox, policyLine: policyLine, PLAN_REVIEW_TOOL: PLAN_REVIEW_TOOL };
+  return { buildAttentionInbox: buildAttentionInbox, policyLine: policyLine, rowNote: rowNote, PLAN_REVIEW_TOOL: PLAN_REVIEW_TOOL };
 });

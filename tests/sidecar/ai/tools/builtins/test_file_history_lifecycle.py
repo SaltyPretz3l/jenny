@@ -20,13 +20,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from sidecar.ai.error_codes import CMP_TOOL_CAP_EXCEEDED
 from sidecar.ai.tools.builtins import file_history as file_history_module
 from sidecar.ai.tools.builtins import filesystem as filesystem_module
 from sidecar.ai.tools.workspace import WorkspaceGuard
 from sidecar.ai.tools.workspace_store import GuardedWorkspaceStore, WorkspaceStoreKind
 from tests._concurrency import join_all_or_fail
-
-_NS_PER_DAY = 24 * 60 * 60 * 1_000_000_000
 
 
 def _backups_dir(root: Path) -> Path:
@@ -341,10 +340,7 @@ def test_wall_clock_age_alone_never_evicts_backups(tmp_path: Path) -> None:
     snapshots = sorted(_backups_dir(tmp_path).glob("*@v*.bak"))
     assert len(snapshots) == 3
 
-    injected_now = time.time_ns() + 60 * _NS_PER_DAY
-    file_history_module._apply_backup_retention(
-        GuardedWorkspaceStore(tmp_path), now_ns=injected_now
-    )
+    file_history_module._apply_backup_retention(GuardedWorkspaceStore(tmp_path))
 
     remaining = list(_backups_dir(tmp_path).glob("*@v*.bak"))
     assert len(remaining) == 3, "wall time alone never makes backups eligible"
@@ -366,7 +362,7 @@ def test_active_use_eligibility_evicts_only_under_quota_pressure(
 ) -> None:
     """WO-26: age is driven entirely by the injected source, never mtime,
     whenever one is supplied. All three snapshots here are WALL-clock-fresh
-    (mtimes seconds old, nowhere near ``MAX_BACKUP_AGE_DAYS``); eviction here
+    (mtimes seconds old); eviction here
     can only be explained by the injected source."""
     infos = []
     for index in range(3):
@@ -423,15 +419,90 @@ def test_retention_never_evicts_the_newest_snapshot(tmp_path: Path) -> None:
     assert info.created is True
 
     # Every quota is violated for this one snapshot; it must still survive.
-    injected_now = time.time_ns() + (file_history_module.MAX_BACKUP_AGE_DAYS + 10) * _NS_PER_DAY
     store = GuardedWorkspaceStore(tmp_path)
     file_history_module._apply_backup_retention(
         store,
-        now_ns=injected_now,
         active_use_age_source=_AllEligibleAgeSource(),
     )
 
     assert _snapshot_path(tmp_path, info).exists() is True
+
+
+def test_retention_removes_metadata_and_locks_of_fully_evicted_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = []
+    for index in range(5):
+        path = tmp_path / f"many-{index}.txt"
+        path.write_text(f"content {index}\n", encoding="utf-8")
+        info = file_history_module.create_checkpoint(path, tmp_path, apply_retention=False)
+        assert info.created is True
+        now = time.time()
+        os.utime(_snapshot_path(tmp_path, info), (now - 50 + index * 10, now - 50 + index * 10))
+        files.append(path)
+    hashes = [file_history_module.checkpoint_paths_for(path, tmp_path).file_hash for path in files]
+    backups = _backups_dir(tmp_path)
+    old = time.time() - 3_600
+    for file_hash in hashes[:3]:
+        os.utime(backups / f"{file_hash}.lock", (old, old))
+    # A recently touched lock of an already-orphaned file stays for a later
+    # pass: it may belong to a checkpoint about to write its first snapshot.
+    (backups / f"{hashes[3]}.json").unlink()
+
+    monkeypatch.setattr(file_history_module, "MAX_BACKUP_SNAPSHOTS", 1)
+    file_history_module._apply_backup_retention(
+        GuardedWorkspaceStore(tmp_path),
+        active_use_age_source=_AllEligibleAgeSource(),
+    )
+
+    newest = hashes[-1]
+    assert {p.name for p in backups.glob("*@v*.bak")} == {f"{newest}@v1.bak"}
+    assert {p.name for p in backups.glob("*.json")} == {f"{newest}.json"}
+    assert {p.name for p in backups.glob("*.lock")} == {
+        f"{hashes[3]}.lock",
+        f"{newest}.lock",
+    }, "evicted files' locks are swept; a fresh orphan lock waits for a later pass"
+    # A fully evicted file checkpoints again from a clean slate.
+    assert file_history_module.create_checkpoint(files[0], tmp_path).created is True
+
+
+def test_next_version_trusts_metadata_without_listing_backups(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "hot.txt"
+    target.write_text("one", encoding="utf-8")
+    assert file_history_module.create_checkpoint(target, tmp_path).version == 1
+    target.write_text("two", encoding="utf-8")
+    listed: list[object] = []
+    real_list_entries = GuardedWorkspaceStore.list_entries
+
+    def _counting_list_entries(self, parent, **kwargs):  # type: ignore[no-untyped-def]
+        listed.append(parent)
+        return real_list_entries(self, parent, **kwargs)
+
+    monkeypatch.setattr(GuardedWorkspaceStore, "list_entries", _counting_list_entries)
+    info = file_history_module.create_checkpoint(target, tmp_path, apply_retention=False)
+
+    assert info.version == 2
+    assert listed == [], "valid latest_version metadata needs no backups listing"
+
+
+def test_checkpoint_survives_a_retention_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise file_history_module.ToolExecutionFailure(
+            code=CMP_TOOL_CAP_EXCEEDED, message="list exceeds entry limit", retryable=False
+        )
+
+    monkeypatch.setattr(file_history_module, "_apply_backup_retention", _boom)
+    target = tmp_path / "keep.txt"
+    target.write_text("payload", encoding="utf-8")
+
+    info = file_history_module.create_checkpoint(target, tmp_path)
+
+    assert info.created is True
+    assert _snapshot_path(tmp_path, info).read_text(encoding="utf-8") == "payload"
 
 
 # ── restore roundtrip ────────────────────────────────────────────────────────

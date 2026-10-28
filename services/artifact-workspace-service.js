@@ -25,6 +25,7 @@ const { resolveRealPath, assertRealPathInside, assertSessionScratchDirUnredirect
 const { deleteSessionArtifactsForScope, prepareSessionArtifactDeletion } = require('./artifact-session-cleanup');
 const { removeFile } = require('./fs-remove-no-follow');
 const { removeTree } = require('./fs-remove-no-follow');
+const { isExternalOpenAllowed } = require('./shared/external-open-policy');
 
 const MAX_EDITABLE_BYTES = 512 * 1024;
 const RASTER_IMAGE_MIMES = new Map([['.png', 'image/png'], ['.jpg', 'image/jpeg'], ['.jpeg', 'image/jpeg'], ['.webp', 'image/webp'], ['.gif', 'image/gif'], ['.bmp', 'image/bmp']]);
@@ -40,35 +41,6 @@ const IMAGE_PREVIEW_DATA_URL_MIME_TYPES = new Set([
   'image/webp',
 ]);
 const EXTENSION_PATTERN = /^\.[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
-const DANGEROUS_ARTIFACT_EXTENSIONS = new Set([
-  '.app',
-  '.bat',
-  '.cmd',
-  '.com',
-  '.cpl',
-  '.deb',
-  '.dll',
-  '.docm',
-  '.exe',
-  '.hta',
-  '.jar',
-  '.js',
-  '.jse',
-  '.lnk',
-  '.msi',
-  '.msp',
-  '.pptm',
-  '.ps1',
-  '.psm1',
-  '.reg',
-  '.scr',
-  '.url',
-  '.vbe',
-  '.vbs',
-  '.wsh',
-  '.wsf',
-  '.xlsm',
-]);
 
 function slugify(value, fallback = 'artifact') {
   const normalized = String(value || '')
@@ -112,22 +84,6 @@ function normalizeExtension(value) {
     );
   }
   return candidate;
-}
-
-function extensionFromValue(value, pathImpl = path) {
-  const token = String(value || '').trim().toLowerCase();
-  if (!token) {
-    return '';
-  }
-  const extension = pathImpl.extname(token).toLowerCase();
-  if (extension) {
-    return extension;
-  }
-  return token.startsWith('.') ? token : `.${token}`;
-}
-
-function isDangerousArtifactExtension(value, pathImpl = path) {
-  return DANGEROUS_ARTIFACT_EXTENSIONS.has(extensionFromValue(value, pathImpl));
 }
 
 function isRedactedArtifactPath(value) {
@@ -747,8 +703,14 @@ class ArtifactWorkspaceService {
         'Artifact file is unavailable.'
       );
     }
+    // Reveal only selects the file in the OS file manager and runs nothing, so
+    // it stays available for code artifacts. Open hands the path to the OS
+    // opener: the shared allowlist (services/shared/external-open-policy.js)
+    // applies to both the recorded name and the path actually passed.
+    if (actionName !== 'opened') return;
     if ((artifact.artifact_kind === 'image' && RASTER_IMAGE_MIMES.get(this._path.extname(artifact.absolute_path).toLowerCase()) !== artifact.mime_type)
-      || isDangerousArtifactExtension(artifact.file_name || artifact.absolute_path, this._path)) {
+      || !isExternalOpenAllowed(artifact.absolute_path)
+      || (artifact.file_name && !isExternalOpenAllowed(artifact.file_name))) {
       throw artifactError(
         ARTIFACT_ERROR_CODES.DANGEROUS_EXTENSION,
         `Artifact extension is dangerous and cannot be ${actionName} externally.`
@@ -1004,11 +966,9 @@ class ArtifactWorkspaceService {
 }
 
 module.exports = {
-  DANGEROUS_ARTIFACT_EXTENSIONS,
   MAX_BINARY_ARTIFACT_BYTES, RASTER_IMAGE_MIMES,
   MAX_BRANCH_CLONE_TOTAL_BYTES,
   MAX_EDITABLE_BYTES,
   SESSION_ARTIFACT_ROOT,
   ArtifactWorkspaceService,
-  isDangerousArtifactExtension,
 };

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,9 +20,32 @@ from typing import TYPE_CHECKING, Any
 
 from sidecar.ai.tools.contracts import canonicalize_tool_arguments
 from sidecar.ai.tools.tool_actions import effective_side_effecting
+from sidecar.runtime.diagnostics import log_event
 
 if TYPE_CHECKING:
     from sidecar.runtime.operation_ledger import OperationLedger
+
+logger = logging.getLogger(__name__)
+
+
+def _warn_unsettled(operation_id: str, status: str, result: dict[str, object]) -> bool:
+    """Log a refused settle; return whether the receipt actually settled."""
+    if result.get("ok"):
+        return True
+    log_event(
+        logger,
+        logging.WARNING,
+        component="runtime.operation_ledger",
+        event="runtime.operation_ledger.settle_refused",
+        message="Operation receipt was not settled; it stays pending",
+        status="degraded",
+        data={
+            "operation_id": operation_id,
+            "status": status,
+            "reason": str(result.get("reason") or "unknown"),
+        },
+    )
+    return False
 
 
 @dataclass
@@ -33,17 +58,22 @@ class OperationLedgerCall:
     def settle_failure(self, tool_name: str, error_data: dict[str, str], error: object) -> None:
         if self.ledger is None or not self.key:
             return
-        status = self.ledger.settle_failure(
+        status, result = self.ledger.settle_failure(
             operation_id=self.key, effects=str(error_data.get("effects") or ""),
             now_iso=operation_timestamp(), evidence=self.evidence, rollback_status=None,
         )
-        if status == "indeterminate":
+        # An unsettled receipt stays pending: the effects are unknown even when
+        # the tool asserted none.
+        if not _warn_unsettled(self.key, status, result) or status == "indeterminate":
             error_data["effects"] = "unknown"
 
     def settle_unexpected(self) -> None:
         if self.ledger is not None and self.key:
             now_iso = operation_timestamp()
-            self.ledger.settle(operation_id=self.key, status="indeterminate", now_iso=now_iso)
+            result = self.ledger.settle(
+                operation_id=self.key, status="indeterminate", now_iso=now_iso
+            )
+            _warn_unsettled(self.key, "indeterminate", result)
 
     def settle_result(
         self, *, tool_name: str, success: bool, output_text: str,
@@ -69,6 +99,12 @@ class OperationLedgerCall:
             }.get(status, "unknown")
 
 
+def workspace_evidence_marker(root: Path) -> str:
+    """Opaque identity of the workspace a content-addressed receipt was written in."""
+    canonical = os.path.normcase(str(root.expanduser().resolve(strict=True)))
+    return hashlib.sha256(canonical.encode("utf-8", "surrogatepass")).hexdigest()[:32]
+
+
 def reconcile_content_addressed_pending(receipt: dict, *, workspace_root: Path) -> str:
     """Prove a content-addressed pending write committed, or stay uncertain."""
     try:
@@ -80,6 +116,11 @@ def reconcile_content_addressed_pending(receipt: dict, *, workspace_root: Path) 
         if not isinstance(relative_path, str) or not relative_path or not isinstance(expected, str):
             return "indeterminate"
         root = workspace_root.expanduser().resolve(strict=True)
+        marker = evidence.get("workspace_sha256")
+        # A receipt written in another workspace is never proven by this one's
+        # bytes (legacy receipts carry no marker and keep the old behaviour).
+        if marker is not None and marker != workspace_evidence_marker(root):
+            return "indeterminate"
         candidate = (root / relative_path).resolve(strict=True)
         candidate.relative_to(root)
         digest = hashlib.sha256(candidate.read_text(encoding="utf-8").encode("utf-8")).hexdigest()

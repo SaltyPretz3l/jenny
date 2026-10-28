@@ -468,6 +468,9 @@
     var o = opts || {};
     var severity = o.severity === 'calm' ? 'calm' : 'danger';
     var superseded = o.superseded === true;
+    /* A turn only the app can rerun (a New session preparation turn): like a
+     * superseded card it keeps navigation but offers no retry-like action. */
+    var retryUnavailable = o.retryUnavailable === true;
     var errorCode = String(o.errorCode || '').trim();
     var message = normalizeActionText(o.message);
     /* Hint/retry heuristics inspect the backend's English text; the translated
@@ -534,7 +537,7 @@
     );
     /* A superseded card keeps navigation (logs, settings, diagnostics) but no
      * retry-like action (live gate F9 recheck, 2026-10-05). */
-    if (superseded) {
+    if (superseded || retryUnavailable) {
       backendActions = backendActions.filter(function keepSettledAction(action) {
         return SUPERSEDED_ACTION_IDS[action.id] !== true;
       });
@@ -598,7 +601,7 @@
 
     /* Local action synthesis only applies to danger cards — calm cards
      * render backend-supplied actions verbatim (W4 adds Regenerate). */
-    if (severity === 'danger' && !isLockdownRefusal && !superseded) {
+    if (severity === 'danger' && !isLockdownRefusal && !superseded && !retryUnavailable) {
       if (!actions.length && (errorClass === 'transport' || errorClass === 'loop' || retryable)) {
         actions.push(buildActionButton({ id: 'retry', label: applyPrimaryLabel('Retry'), icon: 'retry', title: jt('chat.errorRecovery.retryRequest', 'Retry this request') }, {
           callId: callId,
@@ -661,7 +664,7 @@
     var hasRetryLikeAction = actionIds.some(function isRetryLike(id) {
       return id === 'retry' || id === 'retry_turn' || id === 'retry-tool';
     });
-    if (messageId && !hasRetryLikeAction && !superseded && (retryable || errorClass === 'provider')) {
+    if (messageId && !hasRetryLikeAction && !superseded && !retryUnavailable && (retryable || errorClass === 'provider')) {
       var universalRetry = buildActionButton({
         id: 'retry',
         label: severity === 'calm' ? jt('chat.errorRecovery.regenerateResponse', 'Regenerate response') : jt('common.retry', 'Retry'),
@@ -852,6 +855,7 @@
       recoveryActions: m.recoveryActions || m.recovery_actions,
       suppressedErrors: Array.isArray(m.suppressedErrors) ? m.suppressedErrors : options.suppressedErrors,
       superseded: m.superseded === true || options.superseded === true,
+      retryUnavailable: m.retryUnavailable === true || options.retryUnavailable === true,
     });
   }
 

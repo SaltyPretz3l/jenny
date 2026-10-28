@@ -2,8 +2,8 @@
  * IDE: a package.json npm-script picker + a language-keyed "Run this file"
  * (node/python/bash/…). Built PANEL-FREE - no new rail panel: the entry points
  * are two Monaco editor actions (jenny.run-file + jenny.run-script, both visible
- * in the F1 command palette + the right-click "jenny" group), a self-contained
- * script-picker overlay (cloning renderer-ide-quick-open's overlay pattern), and
+ * in the F1 command palette + the right-click "jenny" group), a script picker on
+ * the shared renderer-ide-picker-overlay (quick-open chrome), and
  * a statusbar running indicator + one-click kill (wired by the controller). Run
  * OUTPUT lands in the bottom panel's existing "run" view slot (renderRunPanel()).
  *
@@ -47,11 +47,10 @@
   // UIUX-014 pre-ready buffer: main wires the child's output forwarding
   // synchronously inside start(), before its IPC reply is sent, so onData/
   // onExit can cross the bridge BEFORE the renderer learns its own taskId.
-  // Events heard while a dispatch is in flight are held here and replayed
-  // through the SAME exact-match apply paths once the taskId is known.
-  // Bounded per the W1-D PTY precedent: oldest-entry eviction + a dropped counter.
-  const PRE_READY_BUFFER_MAX_EVENTS = 64;
-  const PRE_READY_BUFFER_MAX_BYTES = 64 * 1024; // mirrors the service's MAX_CHUNK_BYTES
+  // Events heard while a dispatch is in flight are held in the shared bounded
+  // buffer (terminal-stream-utils' default caps: 64 events / 64 KiB, oldest
+  // evicted, dropped counter) and replayed through the SAME exact-match apply
+  // paths once the taskId is known.
   // UIUX-035 follow-up: ANSI/OSC stripping goes through the shared incremental
   // stateful parser (renderer/shared/ansi-stream-utils.js) - a stateless regex
   // has no BEL/ST terminator awareness and would swallow real output after it.
@@ -152,26 +151,22 @@
     const startTimeoutMs = Number.isFinite(options.runStartTimeoutMs)
       ? options.runStartTimeoutMs
       : DEFAULT_START_TIMEOUT_MS;
-    // Frame scheduling for the coalesced paint (mirrors the legacy terminal
-    // panel): injectable for deterministic tests, real rAF in the app, and a
-    // synchronous fallback where no rAF exists (jsdom/node test contexts).
-    const requestFrame = typeof options.requestAnimationFrameImpl === 'function'
-      ? options.requestAnimationFrameImpl
-      : (typeof globalRef.requestAnimationFrame === 'function'
-          ? globalRef.requestAnimationFrame.bind(globalRef)
-          : (callback) => { callback(0); return null; });
-    const cancelFrame = typeof options.cancelAnimationFrameImpl === 'function'
-      ? options.cancelAnimationFrameImpl
-      : (typeof globalRef.cancelAnimationFrame === 'function'
-          ? globalRef.cancelAnimationFrame.bind(globalRef)
-          : noop);
     const actionButton = resolveModule('inventoryActionButton', '../inventory/action-button');
-    const textField = resolveModule('inventoryTextField', '../inventory/text-field');
     const ansiStreamUtils = resolveModule('rendererAnsiStreamUtils', '../shared/ansi-stream-utils');
     const ansiStripper = typeof ansiStreamUtils?.createAnsiStreamStripper === 'function'
       ? ansiStreamUtils.createAnsiStreamStripper()
       : { push: (text) => String(text || ''), reset: noop };
     const terminalStreamUtils = resolveModule('rendererTerminalStreamUtils', '../shared/terminal-stream-utils');
+    // R1: file:line references in process output paint as link buttons (rootPath = the task cwd).
+    const outputLinks = resolveModule('rendererIdeOutputLinks', './renderer-ide-output-links');
+    // R2: tsc / eslint / pytest / traceback / node-stack lines become Problems (owner `task`).
+    const taskProblems = resolveModule('rendererIdeTaskProblems', './renderer-ide-task-problems').createIdeTaskProblems?.({ editorHost, appendClientLog }) || null;
+    const windowRef = options.windowRef || globalRef.window || globalRef;
+    let outputRoot = '';
+    let unbindLinks = null;
+    // Frame scheduling for the coalesced paint: injectable for deterministic
+    // tests, real rAF in the app, a synchronous fallback in jsdom/node.
+    const { requestFrame, cancelFrame } = terminalStreamUtils.resolveFrameScheduler(options, globalRef);
 
     // The Run view's own host (row 40 W3: the workbench injects it); guarded by isActivePanel().
     function getMountEl() {
@@ -192,6 +187,9 @@
     // after the local timeout/dispose already gave up on it can still be told
     // apart from the current in-flight dispatch.
     let dispatchGeneration = 0;
+    // The dispatch generation whose run the row currently shows (0: none). A
+    // late kill answer may only mark the row it still owns.
+    let rowOwner = 0;
     // UIUX-035 follow-up: output is stored CLEANED (ANSI stripped
     // incrementally per chunk via the shared stateful parser) as a bounded
     // chunk list — never a raw buffer regex-re-scanned in full every render.
@@ -206,6 +204,9 @@
       cancelFrame,
       maxChars: MAX_OUTPUT_CHARS,
       getScrollbackEl: () => getScrollbackEl(),
+      linkify: typeof actionButton === 'function' && typeof outputLinks.createLinkedFragment === 'function'
+        ? (doc, text) => outputLinks.createLinkedFragment(doc, text, { rootPath: outputRoot, actionButton, escapeHtml })
+        : undefined,
       applyDroppedMarkers: (pre, dropped) => { pre.dataset.runDroppedChars = String(dropped); },
     });
     let unsubData = null;
@@ -213,13 +214,11 @@
     let boundMount = null;
     let startTimer = null; // armed while api.start() is in flight (hung-bridge net)
     let disposed = false;
-    // Pre-ready buffering (see PRE_READY_BUFFER_MAX_* above). `dispatching`
+    // Pre-ready buffering (see the UIUX-014 note above). `dispatching`
     // is true from just before api.start() is invoked until that dispatch
     // settles (success, failure, timeout, dispose, or supersession).
     let dispatching = false;
     const preReadyEvents = terminalStreamUtils.createPreReadyEventBuffer({
-      maxEvents: PRE_READY_BUFFER_MAX_EVENTS,
-      maxBytes: PRE_READY_BUFFER_MAX_BYTES,
       sizeOf: (kind, payload) => (kind === 'data' ? String(payload?.chunk || '').length : 0),
       onDrop: (stats) => appendClientLog('WARN', 'ide.run.preready_buffer_dropped', stats),
     });
@@ -307,7 +306,9 @@
     }
 
     function appendProcessOutput(chunk) {
-      appendCleanText(ansiStripper.push(chunk).replace(/\r(?!\n)/g, ''));
+      const text = ansiStripper.push(chunk).replace(/\r(?!\n)/g, '');
+      taskProblems?.push(text);
+      appendCleanText(text);
     }
 
     // Full reset: a new dispatch REPLACES the previous run's output, and the
@@ -347,7 +348,7 @@
         mount.innerHTML = buildPanelMarkup();
         mount.__jennyIdeRailMarkup = RUN_MARKUP_SENTINEL;
       }
-      painter.sync(); // collapse any pending frame so the DOM is current
+      painter.syncIfPending(); // collapse any pending frame so the DOM is current
       syncStatus();
       taskFooter.render(mount.querySelector('[data-ide-run-footer]'));
     }
@@ -376,6 +377,7 @@
       taskFooter.finish({ exitCode: payload && !payload.errorCode ? payload.code : null, stopped: payload?.status === 'killed', startFailed: Boolean(payload?.errorCode) });
       running = false;
       activeTaskId = '';
+      taskProblems?.endRun();
       // The dead process can never finish an escape sequence it left open.
       ansiStripper.reset();
       appendCleanText(friendlyExitNote(payload));
@@ -414,13 +416,7 @@
     // taskId settles the run mid-replay (clearing activeTaskId, so any data
     // buffered after it is correctly dropped - the task already ended).
     function replayPreReadyBuffer() {
-      for (const entry of preReadyEvents.drain()) {
-        if (entry.kind === 'data') {
-          applyDataEvent(entry.payload);
-        } else if (entry.kind === 'exit') {
-          applyExitEvent(entry.payload);
-        }
-      }
+      preReadyEvents.replay({ data: applyDataEvent, exit: applyExitEvent });
     }
 
     function handleData(payload) {
@@ -452,6 +448,14 @@
       }
     }
 
+    // A failed start: the footer says so, and the script's previous problems go with it
+    // (they belong to a run that is no longer the latest one).
+    function markStartFailed(label) {
+      taskFooter.finish({ startFailed: true });
+      taskProblems?.beginRun(label);
+      taskProblems?.endRun();
+    }
+
     async function dispatch(commandString, label, filePath = '', target = '') {
       if (disposed) {
         return;
@@ -469,7 +473,9 @@
       openRunPanel(target);
       dispatchGeneration += 1;
       const generation = dispatchGeneration;
+      rowOwner = generation;
       resetRunOutput();
+      outputRoot = '';
       taskFooter.begin({ script: label, command: commandString, path: filePath });
       appendCleanText('> ' + label + '\n');
       running = true;
@@ -486,7 +492,7 @@
           return;
         }
         timedOut = true;
-        taskFooter.finish({ startFailed: true });
+        markStartFailed(label);
         running = false;
         dispatching = false;
         discardPreReadyBuffer(); // a dead dispatch's events must never replay later
@@ -507,7 +513,7 @@
         if (disposed || timedOut || generation !== dispatchGeneration) {
           return;
         }
-        taskFooter.finish({ startFailed: true });
+        markStartFailed(label);
         running = false;
         appendCleanText('\n[run] ' + messageOf(error));
         emitRunStateChange();
@@ -524,14 +530,15 @@
       }
       if (disposed || timedOut || generation !== dispatchGeneration) {
         // If main spawned a task after timeout, disposal, or supersession, kill it
-        // by its returned taskId so it cannot continue invisibly.
+        // by its returned taskId so it cannot continue invisibly; an unconfirmed
+        // kill marks the row only while no newer run owns it.
         if (result && result.ok && result.taskId) {
-          Promise.resolve(api.kill({ taskId: result.taskId })).catch(() => { /* main owns refusal logging */ });
+          settleKill(api.kill({ taskId: result.taskId }), generation);
         }
         return;
       }
       if (!result || result.ok === false) {
-        taskFooter.finish({ startFailed: true });
+        markStartFailed(label);
         running = false;
         discardPreReadyBuffer();
       const message = (result && result.message) || jt('ide.runScripts.startFailed', 'Could not start the task.');
@@ -542,8 +549,11 @@
         return;
       }
       activeTaskId = String(result.taskId || '');
+      outputRoot = String(result.cwd || '');
+      // The same script's previous problems clear once its new run has started.
+      if (activeTaskId) taskProblems?.beginRun(label, { rootPath: outputRoot });
       if (!activeTaskId) {
-        taskFooter.finish({ startFailed: true });
+        markStartFailed(label);
         running = false;
         discardPreReadyBuffer();
         appendCleanText(jt('ide.runScripts.missingTaskIdOutput', '\n[run] could not start the task (no task id)'));
@@ -559,6 +569,26 @@
       appendClientLog('INFO', 'ide.run.dispatched', {});
     }
 
+    // main reports whether the process TREE was confirmed dead
+    // (workspace-run-task-runner.js: terminationConfirmed). Throwing that answer
+    // away made a failed kill look identical to a clean stop; a rejected request
+    // is unconfirmed too, while { killed:false } alone means the task was
+    // already gone (Stop racing a natural exit). Only the row's own run may be
+    // marked: a newer run owning the row fences the late answer out.
+    function settleKill(request, owner) {
+      Promise.resolve(request)
+        .then(terminalStreamUtils.killOutcomeConfirmed, () => false)
+        .then((confirmed) => {
+          if (confirmed || disposed || rowOwner !== owner) {
+            return;
+          }
+          killUnconfirmed = true;
+          appendCleanText(jt('ide.runScripts.stopUnconfirmedOutput', '\n[run] stop unconfirmed \u2014 the process tree may still be running'));
+          emitRunStateChange();
+          appendClientLog('WARN', 'ide.run.kill_unconfirmed', {});
+        });
+    }
+
     // One-click kill: main owns the taskId, so this always targets the actual
     // running child process tree regardless of what the renderer's `running`
     // flag shows - there is no text-derived state for a malicious script to
@@ -569,28 +599,11 @@
       }
       clearStartTimer();
       dispatchGeneration += 1; // a pending start() in flight is now stale too
-      const killGeneration = dispatchGeneration;
       dispatching = false;
       discardPreReadyBuffer(); // a killed dispatch's buffered events never replay
       const api = getWorkspaceRunTaskApi();
       if (activeTaskId && api && typeof api.kill === 'function') {
-        // main reports whether the process TREE was confirmed dead
-        // (workspace-run-task-runner.js: terminationConfirmed). Throwing that
-        // answer away is what made a failed kill look identical to a clean
-        // stop. A rejected request is not a confirmed death either, so both
-        // paths fold into the same boolean.
-        Promise.resolve(api.kill({ taskId: activeTaskId }))
-          .then((outcome) => outcome && outcome.terminationConfirmed === true)
-          .catch(() => false)
-          .then((confirmed) => {
-            if (confirmed || disposed || dispatchGeneration !== killGeneration) {
-              return; // confirmed dead, gone, or a newer run already owns the row
-            }
-            killUnconfirmed = true;
-            appendCleanText(jt('ide.runScripts.stopUnconfirmedOutput', '\n[run] stop unconfirmed \u2014 the process tree may still be running'));
-            emitRunStateChange();
-            appendClientLog('WARN', 'ide.run.kill_unconfirmed', {});
-          });
+        settleKill(api.kill({ taskId: activeTaskId }), rowOwner);
       }
       if (running || activeTaskId) {
         taskFooter.finish({ stopped: true });
@@ -700,60 +713,27 @@
       }
     }
 
-    async function pickAndRunScript() {
+    // preferBuild: Tasks > Run Build Task runs the package's `build` script directly.
+    async function pickAndRunScript(preferBuild = false) {
       const target = getRunTarget();
       const { scripts, error } = await detectScripts();
       if (!scripts.length) {
         toast(scriptUnavailableMessage(error));
-        return;
+        return undefined;
       }
-      openScriptPicker(scripts, target);
+      if (preferBuild === true && scripts.some((script) => script.name === 'build')) return runScript('build', target);
+      return openScriptPicker(scripts, target);
     }
 
-    /* ---- script picker overlay (clones the quick-open overlay pattern) --- */
+    // Tasks: Run Build Task - the package.json `build` script when present, else the picker.
+    const runBuildTask = () => pickAndRunScript(true);
 
-    let pickerEl = null;
-    let pickerInput = null;
-    let pickerResults = null;
+    /* ---- script picker (the shared picker overlay, quick-open chrome) ----- */
+
     let pickerScripts = [];
     let pickerTarget = '';
-    let pickerRows = [];
-    let pickerSelected = 0;
 
-    // Combobox pattern (same as the shared picker overlay): DOM focus stays in
-    // the text control, so the selected row reaches assistive technology
-    // through aria-activedescendant rather than focus.
-    function syncActiveOption(control, list) {
-      if (!control || !list) {
-        return;
-      }
-      let activeId = '';
-      list.querySelectorAll('[role="option"]').forEach((row, index) => {
-        row.id = `${list.id}-option-${index}`;
-        if (row.getAttribute('aria-selected') === 'true') {
-          activeId = row.id;
-        }
-      });
-      if (activeId) {
-        control.setAttribute('aria-activedescendant', activeId);
-      } else {
-        control.removeAttribute('aria-activedescendant');
-      }
-    }
-
-    function markCombobox(control, list) {
-      if (!control || !list) {
-        return;
-      }
-      control.setAttribute('role', 'combobox');
-      control.setAttribute('aria-autocomplete', 'list');
-      control.setAttribute('aria-haspopup', 'listbox');
-      control.setAttribute('aria-controls', list.id);
-      control.setAttribute('aria-expanded', 'false');
-    }
-
-    function buildPickerRow(script, index) {
-      const selected = index === pickerSelected;
+    function buildPickerRow(script, index, selected) {
       return `<div class="ide-picker-row ide-quick-open-row${selected ? ' ide-picker-row--selected ide-quick-open-row--selected' : ''}"`
         + ` role="option" aria-selected="${selected ? 'true' : 'false'}"`
         + ` data-ide-run-script="${escapeHtml(script.name)}" title="${escapeHtml(script.command)}">`
@@ -762,137 +742,50 @@
         + '</div>';
     }
 
-    function refreshPicker() {
-      if (!pickerResults) {
-        return;
-      }
-      const query = String(pickerInput?.value || '').trim().toLowerCase();
-      pickerRows = (query
-        ? pickerScripts.filter((s) => s.name.toLowerCase().includes(query)
-          || s.command.toLowerCase().includes(query))
-        : pickerScripts.slice()
+    function matchScripts(query) {
+      const needle = String(query || '').toLowerCase();
+      return (needle
+        ? pickerScripts.filter((s) => s.name.toLowerCase().includes(needle) || s.command.toLowerCase().includes(needle))
+        : pickerScripts
       ).slice(0, MAX_PICKER_ROWS);
-      pickerSelected = Math.max(0, Math.min(pickerSelected, pickerRows.length - 1));
-      pickerResults.innerHTML = pickerRows.length
-        ? pickerRows.map((script, index) => buildPickerRow(script, index)).join('')
-        : '<div class="ide-picker-status ide-quick-open-status">' + escapeHtml(jt('ide.runScripts.noMatchingScripts', 'No matching scripts.')) + '</div>';
-      syncActiveOption(pickerInput, pickerResults);
-      const selected = pickerResults.querySelector('.ide-quick-open-row--selected');
-      selected?.scrollIntoView?.({ block: 'nearest' });
     }
 
-    function movePickerSelection(delta) {
-      if (!pickerRows.length) {
-        return;
-      }
-      pickerSelected = (pickerSelected + delta + pickerRows.length) % pickerRows.length;
-      refreshPicker();
-    }
-
-    function runSelectedScript() {
-      const script = pickerRows[pickerSelected] || pickerRows[0] || null;
-      closePicker();
-      if (script) {
-        runScript(script.name, pickerTarget);
-      }
-    }
-
-    function handlePickerKeydown(event) {
-      switch (event.key) {
-        case 'ArrowDown':
-          event.preventDefault();
-          movePickerSelection(1);
-          break;
-        case 'ArrowUp':
-          event.preventDefault();
-          movePickerSelection(-1);
-          break;
-        case 'Enter':
-          event.preventDefault();
-          runSelectedScript();
-          break;
-        case 'Escape':
-          event.preventDefault();
-          event.stopPropagation();
-          closePicker();
-          break;
-        default:
-          break;
-      }
-    }
-
-    function handlePickerInput() {
-      pickerSelected = 0;
-      refreshPicker();
-    }
-
-    function handlePickerClick(event) {
-      const row = event.target?.closest?.('[data-ide-run-script]');
-      if (row) {
-        const name = row.dataset.ideRunScript || '';
-        closePicker();
-        runScript(name, pickerTarget);
-        return;
-      }
-      if (!event.target?.closest?.('.ide-quick-open-panel')) {
-        closePicker();
-      }
-    }
-
-    function ensurePicker() {
-      if (pickerEl) {
-        return pickerEl;
-      }
-      const stage = getDom().ideEditorStage || getDom().ideView || null;
-      const documentRef = stage?.ownerDocument || null;
-      if (!stage || !documentRef || typeof textField !== 'function') {
-        return null;
-      }
-      pickerEl = documentRef.createElement('div');
-      pickerEl.className = 'ide-picker-overlay ide-quick-open hidden';
-      pickerEl.innerHTML = '<div class="ide-picker-panel ide-quick-open-panel">'
-        + textField({
-          className: 'ide-picker-field ide-quick-open-field',
-          placeholder: jt('ide.runScripts.runNpmScriptEllipsis', 'Run npm script…'),
-          ariaLabel: jt('ide.runScripts.runNpmScript', 'Run npm script'),
-          dataset: { 'ide-run-picker-input': '1' },
-        })
-        + '<div class="ide-picker-results ide-quick-open-results" id="ideRunScriptPickerListbox" role="listbox" aria-label="' + escapeHtml(jt('ide.runScripts.npmScriptsLabel', 'npm scripts')) + '"></div>'
-        + '</div>';
-      stage.appendChild(pickerEl);
-      pickerInput = pickerEl.querySelector('[data-ide-run-picker-input]')
-        || pickerEl.querySelector('.inv-text-field-control')
-        || null;
-      pickerResults = pickerEl.querySelector('.ide-quick-open-results');
-      markCombobox(pickerInput, pickerResults);
-      pickerEl.addEventListener('click', handlePickerClick);
-      pickerInput?.addEventListener('keydown', handlePickerKeydown);
-      pickerInput?.addEventListener('input', handlePickerInput);
-      return pickerEl;
-    }
+    const picker = resolveModule('rendererIdePickerOverlay', './renderer-ide-picker-overlay').createIdePickerOverlay?.({
+      getDom,
+      overlayClass: 'ide-quick-open',
+      panelClass: 'ide-quick-open-panel',
+      fieldClass: 'ide-quick-open-field',
+      resultsClass: 'ide-quick-open-results',
+      placeholder: jt('ide.runScripts.runNpmScriptEllipsis', 'Run npm script…'),
+      ariaLabel: jt('ide.runScripts.runNpmScript', 'Run npm script'),
+      resultsAriaLabel: escapeHtml(jt('ide.runScripts.npmScriptsLabel', 'npm scripts')),
+      inputDataset: { 'ide-run-picker-input': '1' },
+      inputSelector: '[data-ide-run-picker-input]',
+      rowSelector: '[data-ide-run-script]',
+      selectedRowSelector: '.ide-quick-open-row--selected',
+      callbacks: {
+        computeMatches: matchScripts,
+        buildRowMarkup: buildPickerRow,
+        isLoading: () => false,
+        renderEmptyStatus: () => '<div class="ide-picker-status ide-quick-open-status">' + escapeHtml(jt('ide.runScripts.noMatchingScripts', 'No matching scripts.')) + '</div>',
+        onSubmit: (script, { close }) => {
+          close();
+          if (script) runScript(script.name, pickerTarget);
+        },
+        onRowClick: (rowEl, { close }) => {
+          close();
+          runScript(rowEl.dataset.ideRunScript || '', pickerTarget);
+        },
+        onClosed: () => editorHost?.focus?.(),
+      },
+    }) || null;
 
     function openScriptPicker(scripts, target = '') {
       pickerScripts = Array.isArray(scripts) ? scripts.slice() : [];
       pickerTarget = target;
-      if (!ensurePicker()) {
+      if (!picker || !picker.open()) {
         toast(jt('ide.runScripts.pickerUnavailable', 'The script picker is unavailable in this view.'));
-        return;
       }
-      pickerEl.classList.remove('hidden');
-      pickerInput?.setAttribute('aria-expanded', 'true');
-      if (pickerInput) {
-        pickerInput.value = '';
-      }
-      pickerSelected = 0;
-      refreshPicker();
-      pickerInput?.focus?.();
-    }
-
-    function closePicker() {
-      pickerEl?.classList.add('hidden');
-      pickerInput?.setAttribute('aria-expanded', 'false');
-      pickerInput?.removeAttribute('aria-activedescendant');
-      editorHost?.focus?.();
     }
 
     /* ---- registration / lifecycle --------------------------------------- */
@@ -944,9 +837,30 @@
       // on the persistent host (not its churned children) keeps the listener alive
       // across innerHTML repaints, and the isActivePanel guard scopes it.
       if (mount && mount !== boundMount) {
+        unbindLinks?.();
         boundMount = mount;
         mount.addEventListener('click', handleRunClick);
+        unbindLinks = outputLinks.bindOutputLinkClicks?.(mount, { windowRef, appendClientLog }) || null;
       }
+    }
+
+    // Root switch: main tears the old root's task down; the row must not keep
+    // describing it. Every in-flight dispatch / late answer is fenced out, and
+    // the output, running flag and unconfirmed warning reset with the footer.
+    function resetForRoot() {
+      if (disposed) return;
+      dispatchGeneration += 1;
+      rowOwner = 0;
+      clearStartTimer();
+      running = false;
+      activeTaskId = '';
+      dispatching = false;
+      killUnconfirmed = false;
+      discardPreReadyBuffer();
+      resetRunOutput();
+      taskProblems?.clearAll();
+      taskFooter.resetForRoot();
+      emitRunStateChange();
     }
 
     function dispose() {
@@ -962,6 +876,8 @@
         boundMount.removeEventListener('click', handleRunClick);
         boundMount = null;
       }
+      unbindLinks?.();
+      unbindLinks = null;
       try {
         unsubData?.();
       } catch (_error) { /* already gone */ }
@@ -970,15 +886,8 @@
         unsubExit?.();
       } catch (_error) { /* already gone */ }
       unsubExit = null;
-      if (pickerEl) {
-        pickerInput?.removeEventListener('keydown', handlePickerKeydown);
-        pickerInput?.removeEventListener('input', handlePickerInput);
-        pickerEl.removeEventListener('click', handlePickerClick);
-        pickerEl.remove?.();
-        pickerEl = null;
-        pickerInput = null;
-        pickerResults = null;
-      }
+      picker?.dispose();
+      taskProblems?.dispose();
       // The task is main-process-owned; leaving the view does not kill it - main
       // also participates in root-switch/shutdown teardown (workspace-root-
       // runtime.js / runtime-shutdown.js), so a still-running task is never
@@ -991,14 +900,16 @@
       dispose,
       getLastRun: () => taskFooter.getLastRun(),
       getRunLabel: () => taskFooter.getRunLabel(),
+      getTaskProblems: () => taskProblems,
       isRunning,
       kill,
       openScriptPicker,
       pickAndRunScript,
       registerActions,
       renderRunPanel,
-      resetForRoot: () => { taskFooter.resetForRoot(); renderRunPanel(); },
+      resetForRoot,
       runActiveFile,
+      runBuildTask,
       runScript,
     };
   }

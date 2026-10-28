@@ -508,6 +508,25 @@ test('session picker keyboard navigation selects through the workspace callback'
   assert.equal(dom.window.document.activeElement, header.querySelector('[data-ide-chatdock-session-trigger]'));
 });
 
+test('session picker leaves Enter to an IME composition in the search field', async () => {
+  const sessions = [
+    { id: 'session-1', title: 'First', session_type: 'chat' },
+    { id: 'session-2', title: 'Second', session_type: 'chat' },
+  ];
+  const fixture = setupDock({ sessions, currentSessionId: 'session-2' });
+  const { dom, calls } = fixture;
+  const header = openSessionPicker(fixture);
+  const input = header.querySelector('[data-ide-chatdock-session-search]');
+  const composing = new dom.window.KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true });
+  input.dispatchEvent(composing);
+  const legacy = new dom.window.KeyboardEvent('keydown', { key: 'Enter', keyCode: 229, bubbles: true, cancelable: true });
+  input.dispatchEvent(legacy);
+  await nextTurn();
+  assert.equal(composing.defaultPrevented, false);
+  assert.equal(legacy.defaultPrevented, false);
+  assert.deepEqual(calls.selectSession || [], [], 'committing a composition picks nothing');
+});
+
 test('session picker no-ops the active choice, rejects duplicate switches, and reports failures', async () => {
   const sessions = [
     { id: 'session-1', title: 'First', session_type: 'chat' },
@@ -619,7 +638,6 @@ test('the dock composer uses the one-line fit toolbar and keeps its control size
     assert.equal(findDockRuleBody(`.ide-chat-dock-body .composer-${control}`), '');
   }
   assert.match(findDockRuleBody('.ide-chat-dock-body .composer'), /--composer-primary-control-size:\s*32px;/);
-  assert.match(findDockRuleBody('.ide-chat-dock-body #composerTerminalShortcut'), /display:\s*none;/);
   assert.match(findDockRuleBody('.ide-chat-dock-body .composer-input'), /max-height:\s*120px;/);
 });
 
@@ -675,11 +693,11 @@ test('chat-active mirror reveals the moved thread shell (transcript visibility, 
   assert.ok(block.includes('pointer-events: auto'), 'shell interactive when active');
 });
 
-test('simplified-dock suppression: sprite and terminal shortcut hidden (§7 + §17.1)', () => {
+test('simplified-dock suppression: sprite hidden (§7; row 63 folded the Commands button into the + menu)', () => {
   assert.match(DOCK_CSS, /\.ide-chat-dock-body \.chat-sprite-layer \{\s*display: none;/);
   assert.ok(DOCK_CSS.includes('--chat-sprite-size: 0px'), 'sprite size zeroed');
   assert.ok(DOCK_CSS.includes('--chat-sprite-rail-offset: 0px'), 'thread column rail offset zeroed');
-  assert.match(DOCK_CSS, /\.ide-chat-dock-body #composerTerminalShortcut \{\s*display: none;/);
+  assert.doesNotMatch(DOCK_CSS, /composerTerminalShortcut/, 'the retired Commands button has no dead CSS');
   assert.doesNotMatch(DOCK_CSS, /composer-mode-chip-research/, 'retired research chip has no dead CSS');
 });
 

@@ -405,6 +405,7 @@ function createRuntimeServicesWithDeps({
     getMainWindow,
     notificationFactory: (options) => new (require('electron').Notification)(options),
     isSupported: () => require('electron').Notification.isSupported(),
+    isEnabled: () => buildEffectiveFeatureFlags().desktop_notifications === true,
     sendBridgeEvent,
     log,
   });
@@ -444,7 +445,8 @@ function createRuntimeServicesWithDeps({
     logger: log,
   });
   const toolPermissionStore = new ToolPermissionStore(
-    path.join(userDataPath, 'tool-permissions.json')
+    path.join(userDataPath, 'tool-permissions.json'),
+    { logger: log }
   );
   // Preserve a retired per-type inspect deny by disabling the folded capability.
   if (toolPermissionStore.consumeRetiredInspectDenyNotice()) {
@@ -473,6 +475,8 @@ function createRuntimeServicesWithDeps({
     toolsTaskBoardEnabled = buildEffectiveFeatureFlags().tools_task_board_enabled === true,
     toolsProjectNotesEnabled = buildEffectiveFeatureFlags().tools_project_notes_enabled === true,
     toolsConversationsEnabled = buildEffectiveFeatureFlags().memory_v2_enabled === true,
+    // Row 69: declared in feature-flags.js, default on; JENNY_ENABLE_TOOLS_SESSION_DIRECTORY_ENABLED=0 turns it off.
+    toolsSessionDirectoryEnabled = buildEffectiveFeatureFlags().tools_session_directory_enabled !== false,
   } = {}) {
     return createDefaultRegistry({
       toolsWorktreeEnabled,
@@ -485,6 +489,7 @@ function createRuntimeServicesWithDeps({
       toolsTaskBoardEnabled,
       toolsProjectNotesEnabled,
       toolsConversationsEnabled,
+      toolsSessionDirectoryEnabled,
     });
   }
 
@@ -495,6 +500,19 @@ function createRuntimeServicesWithDeps({
     logger: log,
   });
 
+  // The session directory reads the backend's stores, so it is built on first tool use (row 69).
+  let sessionDirectory = null;
+  const createSessionDirectory = () => require('../session-directory-service').createSessionDirectoryService({
+    sessionStore: () => getBackendService()?.sessionStore, projectService: () => getBackendService()?.projectService,
+    runtime: () => getBackendService()?.runtimeApplicationService, configService: () => shellConfigService,
+    projectNotesService: () => getBackendService()?.projectNotesService,
+    chatWorkspaceService: () => getBackendService()?.chatWorkspace,
+    pendingApprovals: () => getBackendService()?.pendingToolApprovals,
+    visibleChat: () => require('../backend/memory-reflection-eligibility').visibleChatPredicate(getBackendService()),
+    cancelChatStream: (streamId, reason) => getBackendService()?.cancelChatStream?.(streamId, reason) === true,
+    primaryChatEnabled: () => require('../backend/primary-session').primaryChatEnabled(buildEffectiveFeatureFlags()),
+    log,
+  });
   const toolRegistry = createToolRegistryForCurrentConfig();
   toolExecutor = new ToolExecutor({
     registry: toolRegistry,
@@ -511,6 +529,7 @@ function createRuntimeServicesWithDeps({
     // live getter, the same reason refreshManagedConfig below uses one.
     homeAssistantService: () => getBackendService()?.homeAssistantService || null,
     projectNotesService: () => getBackendService()?.projectNotesService || null,
+    sessionDirectoryService: () => (sessionDirectory ||= createSessionDirectory()),
     configService: shellConfigService,
     refreshManagedConfig: async (reason) => {
       const backendService = getBackendService();
@@ -535,26 +554,7 @@ function createRuntimeServicesWithDeps({
     if (!toolExecutor) {
       return;
     }
-    const toolsWorktreeEnabled = isWorktreeToolEnabledFromConfig();
-    const toolsAutomationsEnabled = buildEffectiveFeatureFlags().tools_automations_enabled === true;
-    const toolsWorkspacePresentEnabled = buildEffectiveFeatureFlags().tools_workspace_present_enabled === true;
-    const toolsPreviewTestEnabled = buildEffectiveFeatureFlags().tools_preview_test_enabled === true;
-    const toolsVerifyEnabled = buildEffectiveFeatureFlags().tools_verify_enabled === true;
-    const toolsImageGenerateEnabled = buildEffectiveFeatureFlags().tools_image_generate_enabled === true;
-    const toolsHomeEnabled = buildEffectiveFeatureFlags().tools_home_enabled === true;
-    const toolsTaskBoardEnabled = buildEffectiveFeatureFlags().tools_task_board_enabled === true;
-    const toolsProjectNotesEnabled = buildEffectiveFeatureFlags().tools_project_notes_enabled === true;
-    toolExecutor.registry = createToolRegistryForCurrentConfig({
-      toolsWorktreeEnabled,
-      toolsAutomationsEnabled,
-      toolsWorkspacePresentEnabled,
-      toolsPreviewTestEnabled,
-      toolsVerifyEnabled,
-      toolsImageGenerateEnabled,
-      toolsHomeEnabled,
-      toolsTaskBoardEnabled,
-      toolsProjectNotesEnabled,
-    });
+    toolExecutor.registry = createToolRegistryForCurrentConfig();
   }
 
   return {

@@ -21,8 +21,8 @@ from sidecar.ai.mcp.tool_surface import (
 ])
 def test_digest_covers_execution_policy(change: dict) -> None:
     original = {"name": "lookup", "description": "Search", "inputSchema": {"type": "object"}}
-    before, _ = summarize_tools([original])
-    after, _ = summarize_tools([{**original, **change}])
+    before = summarize_tools([original])
+    after = summarize_tools([{**original, **change}])
     assert tools_digest(before) != tools_digest(after)
 
 
@@ -38,8 +38,14 @@ def test_incomplete_surface_is_rejected(tools: list) -> None:
         summarize_tools(tools)
 
 
+def test_summarize_returns_only_rows() -> None:
+    # A malformed tool raises instead of being skipped, so there is no count slot.
+    rows = summarize_tools([{"name": "b"}, {"name": "a"}])
+    assert [row["name"] for row in rows] == ["a", "b"]
+
+
 def test_digest_version_invalidates_existing_approvals() -> None:
-    tools, _ = summarize_tools([{"name": "lookup"}])
+    tools = summarize_tools([{"name": "lookup"}])
     legacy = [{"name": "lookup", "description": "", "schema_digest": hashlib.sha256(b"{}").hexdigest()}]
     old_digest = hashlib.sha256(json.dumps(legacy, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     assert tools_digest(tools) != old_digest
@@ -59,7 +65,7 @@ def _nested(depth: int) -> object:
 
 
 def test_measured_rea_surface_is_admitted() -> None:
-    rows, _ = summarize_tools([
+    rows = summarize_tools([
         {"name": "inspect_binary_layout", "description": "d" * 1177},
         {"name": "compare_web_captures", "inputSchema": _nested(19)},
     ])
@@ -106,7 +112,7 @@ def test_surface_level_violations_report_bounded_detail() -> None:
 
 
 def test_tools_digest_is_stable_across_the_admission_change() -> None:
-    rows, _ = summarize_tools([
+    rows = summarize_tools([
         {"name": "lookup", "description": "Search docs", "inputSchema": {
             "type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"]}},
         {"name": "write_note", "side_effecting": True, "actions": {"read": {"side_effecting": False}}},
@@ -134,7 +140,7 @@ def test_surface_without_a_read_only_claim_keeps_its_digest(annotations: dict | 
         {"name": "write_note", "side_effecting": True, "actions": {"read": {"side_effecting": False}}},
     ]
     tools[0]["annotations"] = annotations
-    rows, _ = summarize_tools(tools)
+    rows = summarize_tools(tools)
     assert all("read_only_claim" not in row for row in rows)
     assert tools_digest(rows) == "a24a27d7927804a3d23e6a3d6fa283eef15636b86c0962ce01e8b1bbbc13b853"
 
@@ -144,7 +150,7 @@ def test_surface_without_a_read_only_claim_keeps_its_digest(annotations: dict | 
     {"readOnlyHint": True, "openWorldHint": False, "destructiveHint": False},
 ])
 def test_a_qualifying_read_only_claim_is_recorded_in_the_row(annotations: dict) -> None:
-    rows, _ = summarize_tools([{"name": "list_unknowns", "annotations": annotations}, {"name": "open_binary"}])
+    rows = summarize_tools([{"name": "list_unknowns", "annotations": annotations}, {"name": "open_binary"}])
     claims = {row["name"]: row.get("read_only_claim") for row in rows}
     assert claims == {"list_unknowns": True, "open_binary": None}
     assert rows[0]["side_effecting"] is True
@@ -155,16 +161,16 @@ def test_a_claim_is_display_only_until_the_row_opts_in() -> None:
     # switch is off) keeps its digest; only an opted-in row hashes the claim.
     plain = {"name": "list_unknowns", "description": "List"}
     claiming = {**plain, "annotations": _READ_ONLY}
-    assert tools_digest(summarize_tools([claiming])[0]) == tools_digest(summarize_tools([plain])[0])
-    assert tools_digest(summarize_tools([claiming])[0], read_only_claims=True) != tools_digest(
-        summarize_tools([plain])[0], read_only_claims=True
+    assert tools_digest(summarize_tools([claiming])) == tools_digest(summarize_tools([plain]))
+    assert tools_digest(summarize_tools([claiming]), read_only_claims=True) != tools_digest(
+        summarize_tools([plain]), read_only_claims=True
     )
 
 
 def test_adding_or_dropping_a_read_only_claim_changes_the_digest() -> None:
     plain = {"name": "list_unknowns", "description": "List"}
     claiming = {**plain, "annotations": _READ_ONLY}
-    digests = [tools_digest(summarize_tools([tool])[0], read_only_claims=True) for tool in (
+    digests = [tools_digest(summarize_tools([tool]), read_only_claims=True) for tool in (
         plain,
         claiming,
         {**plain, "annotations": {**_READ_ONLY, "destructiveHint": True}},

@@ -62,18 +62,19 @@
 
   function createIdeExplorerWiring(ctx) {
     const {
-      getDom, escapeHtml, getIde, getWorkspaceFsApi, openFile,
+      escapeHtml, getIde, getWorkspaceFsApi, openFile,
       getFileLifecycle, getChooseWorkspaceRoot, buildFileContextMenuItems,
       getSearchPanel, buildPathUtilityMenuItems, schedulePersist,
       getCloseOrchestrator, getConfirmDialog, getWorkspaceRootApi,
       showShellErrorToast, showToastMessage, appendClientLog, getGitFeature, getFeatureFlags, panelDeps,
       getAttachmentsApi, getTerminalPanel, getBottomPanel,
-      getProjectSwitcher, peekProjectSwitcher,
+      getProjectSwitcher, peekProjectSwitcher, getEditorHost, getEditorGroups, getProblemsPanel, getRunScripts,
     } = ctx || {};
     const treeUtils = resolveModule('rendererIdeTree', './renderer-ide-tree');
     const treeDndUtils = resolveModule('rendererIdeTreeDnd', './renderer-ide-tree-dnd');
     const treeImportUtils = resolveModule('rendererIdeTreeImport', './renderer-ide-tree-import');
     const treeMarkup = resolveModule('rendererIdeTreeMarkup', './renderer-ide-tree-markup');
+    const gitClientUtils = resolveModule('rendererWorkspaceGitClient', './renderer-workspace-git-client');
     const ideStateUtils = resolveModule('rendererIdeState', './renderer-ide-state');
     const explorerPanelDeps = typeof panelDeps === 'function' ? panelDeps('explorer') : {};
     let operationGeneration = 0;
@@ -86,7 +87,13 @@
       const rootPath = String(context?.rootPath ?? context?.root_path ?? '');
       if (!rootPath || (context?.phase && context.phase !== 'ready')) return false;
       getBottomPanel?.()?.open?.('terminal');
-      return getTerminalPanel?.()?.sendCommand?.((shell) => (
+      // Row 82 T2: a new terminal that starts in the folder; at the four-terminal
+      // cap the main terminal cds there instead. Main contains the folder in the root.
+      const terminals = getTerminalPanel?.();
+      if (relPath && terminals?.canAdd?.() === true && typeof terminals.newTerminal === 'function') {
+        return Boolean(terminals.newTerminal({ start: true, cwd: String(relPath) }));
+      }
+      return terminals?.sendCommand?.((shell) => (
         buildTerminalCdCommand(shell, rootPath, relPath)
       ));
     }
@@ -133,8 +140,31 @@
         appendClientLog?.('WARN', 'ide.explorer.project_nudge_failed', { projectId: id, message: String(error?.message || error) });
       });
     }
+    // Open to the Side: open in the focused group, then move that file into a
+    // new group on the right (a no-op split at the four-group limit leaves the
+    // file open where it opened).
+    async function openToSide(path) {
+      const opened = await openFile(path);
+      if (opened === false || disposed) return;
+      getEditorGroups?.()?.splitActive?.('right');
+    }
+    function withOpenToSide(path, items) {
+      if (!getEditorGroups?.()) return items;
+      const index = items.findIndex((item) => item.label === jt('ide.controller.openInNewTab', 'Open in New Tab'));
+      const row = { label: jt('ide.explorer.openToSide', 'Open to the Side'), shortcutHint: 'Ctrl+Enter', action: () => openToSide(path) };
+      return index === -1 ? [row, ...items] : [...items.slice(0, index + 1), row, ...items.slice(index + 1)];
+    }
+    // Git client is built lazily per call so a late bridge works; checkIgnored
+    // resolves to bridge_unavailable until the client exposes the verb.
+    let gitClient = null;
+    function checkIgnored(payload) {
+      gitClient = gitClient || gitClientUtils.createWorkspaceGitClient?.({ windowRef: globalRef.window || globalRef }) || null;
+      return typeof gitClient?.checkIgnored === 'function'
+        ? gitClient.checkIgnored(payload)
+        : Promise.resolve({ ok: false, reason: 'bridge_unavailable' });
+    }
     const treeDeps = {
-      getDom, escapeHtml, getIde: () => getIde(), getWorkspaceFsApi,
+      escapeHtml, getIde: () => getIde(), getWorkspaceFsApi,
       onOpenFile: (path, options) => openFile(path, options),
       onEntryDeleted: (path, kind, meta) => getFileLifecycle()?.handleTreeEntryDeleted(path, kind, meta),
       onEntryRenamed: (fromPath, toPath, kind, meta) => getFileLifecycle()?.handleTreeEntryRenamed(fromPath, toPath, kind, meta),
@@ -147,7 +177,17 @@
       }),
       getProjectNudge: hasProjectSwitcher ? getProjectNudge : null,
       onOpenProjectNudge: (projectId) => openNudgeProject(projectId),
-      buildFileContextMenuItems: (path) => buildFileContextMenuItems(path),
+      buildFileContextMenuItems: (path) => withOpenToSide(path, buildFileContextMenuItems(path)),
+      onOpenToSide: (path) => openToSide(path),
+      getEditorHost: () => getEditorHost?.() || null,
+      checkIgnored,
+      // Tree badges (row 82 cleanup T4-T6, T9): the Problems panel's one marker snapshot
+      // (editor + Tasks), Run-output problems in closed files, git status changes, and
+      // Refresh re-checking only expanded folders.
+      getMarkers: () => getProblemsPanel?.()?.getMarkerSnapshot?.() ?? null,
+      getTaskProblems: () => getRunScripts?.()?.getTaskProblems?.() || null,
+      subscribeGitStatus: (fn) => getGitFeature?.()?.getStore?.()?.subscribe?.(fn) || (() => {}),
+      isDirectoryExpanded: (dir) => getIde().expandedDirs?.has(dir) === true,
       buildDirectoryContextMenuItems: (path, options = {}) => [
         { label: jt('ide.explorer.findInFolder', 'Find in Folder'), action: () => getSearchPanel()?.beginScopedSearch?.(path) },
         ...(canOpenInTerminal() && options.includeTerminal !== false
@@ -237,10 +277,9 @@
       });
     }
     const dnd = treeDndUtils.createIdeTreeDnd?.({
-      getDom, getIde: () => getIde(), ...explorerPanelDeps,
-      selection: tree?.selection, moveEntry: tree?.moveEntry,
+      ...explorerPanelDeps,
+      selection: tree?.selection, moveEntry: tree?.moveEntry, copyEntry: tree?.copyEntry,
       getRootEpoch: tree?.getRootEpoch,
-      getApi: getWorkspaceFsApi, getMutationContext: treeDeps.getMutationContext,
       refreshDirectory: tree?.refreshDirectory,
       showError: treeDeps.showError, showToast, showUndoToast,
       expandDirForDrag: tree?.expandDirForDrag,
@@ -250,7 +289,7 @@
       nameOf: treeMarkup.nameOf,
     }) || null;
     const treeImport = treeImportUtils.createIdeTreeImport?.({
-      getDom, getIde: () => getIde(), ...explorerPanelDeps,
+      ...explorerPanelDeps,
       getAttachmentsApi: typeof getAttachmentsApi === 'function'
         ? getAttachmentsApi
         : () => globalRef.window?.jennyShell?.attachments || globalRef.jennyShell?.attachments || null,

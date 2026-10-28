@@ -10,6 +10,7 @@ from typing import Iterable
 
 from sidecar.ai.tools.distill.filters.base import (
     OutputFilter,
+    command_selects_program,
     normalize_command,
 )
 from sidecar.ai.tools.distill.filters.build_output import BuildOutputFilter
@@ -24,6 +25,26 @@ _FILTERS: tuple[OutputFilter, ...] = (
     LintOutputFilter(),
 )
 
+# Commands that print a file or history verbatim. Their output is someone
+# else's text (`cat notes.md` mentioning "2 passed"), so only an explicit
+# command match may select a filter for them, never the content sniff.
+_READ_COMMANDS = (
+    "cat",
+    "type",
+    "head",
+    "tail",
+    "less",
+    "more",
+    "sed",
+    "grep",
+    "rg",
+    "git show",
+    "git diff",
+    "git log",
+    "get-content",
+    "gc",
+)
+
 __all__ = ["normalize_command", "select_filter"]
 
 
@@ -36,8 +57,12 @@ def select_filter(
     """Return the first filter that recognizes *command*/*content*, or ``None``.
 
     Matching is by normalized command token OR content sniff (each filter owns
-    its heuristics). ``disabled`` names filters to skip.
+    its heuristics). ``disabled`` names filters to skip. A read-style command
+    (``cat``, ``git show``, ``Get-Content``, ...) never falls back to the
+    content sniff.
     """
+    if content and command_selects_program(normalize_command(command), _READ_COMMANDS):
+        content = ""
     disabled_set = set(disabled)
     for output_filter in _FILTERS:
         if output_filter.name in disabled_set:

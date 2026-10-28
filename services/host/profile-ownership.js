@@ -10,6 +10,12 @@ const { TextDecoder } = require('node:util');
 const { readJson, writeJson } = require('./durable-json');
 
 const MARKER = 'profile-owner.json';
+// Every host mode that may own a profile. The desktop never opens a `cli` or
+// `server` profile and neither of those opens the desktop's (decision 5 of the
+// CLI plan); history moves between them only by explicit import.
+const HOST_MODES = Object.freeze(['desktop', 'server', 'cli']);
+const CLI_LOCK_FILE = '.cli.lock';
+const CLI_CONFIG_FILE = 'cli.json';
 const OWNER_TEMP_PATTERN = /^\.profile-owner-[a-f0-9]{32}\.tmp$/u;
 const STRICT_UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
 
@@ -81,7 +87,7 @@ function recoverLinkedOwnerMarker(directory, markerPath, originalError) {
     if (!value || typeof value !== 'object' || Array.isArray(value)
       || Object.keys(value).length !== 2
       || !Object.hasOwn(value, 'schema_version') || !Object.hasOwn(value, 'host_mode')
-      || value.schema_version !== 1 || !['desktop', 'server'].includes(value.host_mode)) {
+      || value.schema_version !== 1 || !HOST_MODES.includes(value.host_mode)) {
       throw ownershipError('Profile ownership marker is ambiguous.');
     }
   } finally {
@@ -183,9 +189,27 @@ function assertDesktopProfile(userDataPath) {
   }
   const markerPath = path.join(userDataPath, MARKER);
   const marker = readOwnerMarker(path.dirname(markerPath), markerPath);
+  if (marker && marker.schema_version === 1 && marker.host_mode === 'cli') {
+    throw ownershipError('This profile belongs to the Jenny CLI.');
+  }
   if (marker && (marker.schema_version !== 1 || marker.host_mode !== 'desktop')) {
     throw ownershipError('Hosted profiles must be opened by the Jenny server.');
   }
+}
+
+// A CLI claim adopts an empty directory or its own marker, never another
+// host's data: an unmarked directory with content is someone's profile.
+function readCliProfile(directory) {
+  const markerPath = path.join(directory, MARKER);
+  const marker = readOwnerMarker(directory, markerPath);
+  if (marker && (marker.schema_version !== 1 || marker.host_mode !== 'cli')) {
+    throw ownershipError('Profile ownership does not match this host.');
+  }
+  if (!marker && fs.existsSync(directory) && fs.readdirSync(directory)
+    .some((name) => name !== CLI_LOCK_FILE && name !== CLI_CONFIG_FILE && !OWNER_TEMP_PATTERN.test(name))) {
+    throw ownershipError('cli_profile_requires_import');
+  }
+  return marker;
 }
 
 function readHostedProfile(directory) {
@@ -224,10 +248,14 @@ function claimDesktopMarker(directory, markerPath) {
 }
 
 function claimProfileOwner(userDataPath, mode) {
-  if (!['desktop', 'server'].includes(mode) || !path.isAbsolute(userDataPath)) throw new Error('invalid_profile_owner');
+  if (!HOST_MODES.includes(mode) || !path.isAbsolute(userDataPath)) throw new Error('invalid_profile_owner');
   if (mode === 'server') readHostedProfile(userDataPath);
+  if (mode === 'cli') readCliProfile(userDataPath);
   fs.mkdirSync(userDataPath, { recursive: true, mode: 0o700 });
-  const directory = fs.realpathSync(userDataPath);
+  // The CLI identifies a profile by the kernel's spelling of its real path
+  // (on Windows the non-native form keeps the caller's letter case), so two
+  // spellings of one directory share one lock.
+  const directory = mode === 'cli' ? fs.realpathSync.native(userDataPath) : fs.realpathSync(userDataPath);
   const markerPath = path.join(directory, MARKER);
   const marker = mode === 'desktop'
     ? claimDesktopMarker(directory, markerPath)
@@ -242,6 +270,10 @@ function claimProfileOwner(userDataPath, mode) {
 
 function claimDesktopProfile(userDataPath) {
   return claimProfileOwner(userDataPath, 'desktop');
+}
+
+function claimCliProfile(userDataPath) {
+  return claimProfileOwner(userDataPath, 'cli');
 }
 
 function acquireProfile({ userDataPath, pythonExecutable }) {
@@ -276,4 +308,4 @@ function acquireProfile({ userDataPath, pythonExecutable }) {
   }
 }
 
-module.exports = { acquireProfile, assertDesktopProfile, claimDesktopProfile, claimProfileOwner };
+module.exports = { acquireProfile, assertDesktopProfile, claimCliProfile, claimDesktopProfile, claimProfileOwner };

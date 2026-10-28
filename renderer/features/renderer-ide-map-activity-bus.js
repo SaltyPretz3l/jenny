@@ -359,7 +359,6 @@
       clearAll,
       subscribe,
       dispose,
-      _internals: { sessions, TRAIL_CAP, HEAT_CAP, SESSION_CAP },
     };
   }
 

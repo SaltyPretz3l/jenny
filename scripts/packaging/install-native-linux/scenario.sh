@@ -58,8 +58,8 @@ manifest_hash() { # manifest file, asset name
     awk -v name="$2" '$2 == name {count++; hash=tolower($1)} END {if (count != 1 || length(hash) != 64) exit 1; print hash}' "$1"
 }
 
-# Wait up to 90 s for a successful window.ready (source renderer-ready or a
-# renderer-ready combination) and backend.managed_sidecar_initialized from ONE run
+# Wait up to 90 s for a successful window.ready (source ready-to-show or
+# did-finish-load; renderer-ready forms from earlier builds) and backend.managed_sidecar_initialized from ONE run
 # among the shell.log lines written after line offset $1 (markers.sh decides).
 # Sets boot_ms and run_id; a failed renderer start fails immediately.
 markers=$(dirname "$0")/markers.sh

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import subprocess
-import sys
 
 import pytest
 
@@ -10,18 +9,15 @@ from sidecar.ai.tools.builtins.filesystem import read_file_tool
 from sidecar.ai.tools.models import GenerationResult, ToolCallRequest
 from sidecar.ai.tools.workspace import WorkspaceGuard
 from sidecar.protocol import API_VERSION
+from tests.sidecar._platform_skips import make_dir_link, windows_only
 
-
-def _git_available() -> bool:
-    return (
-        subprocess.run(
-            ["git", "--version"],
-            capture_output=True,
-            text=True,
-            check=False,
-        ).returncode
-        == 0
-    )
+# 2026-10-25 security-boundary review: the no-multiplexer chat.send route has no
+# approval channel, so a gated tool now fails closed. Tests of the tools' own
+# behaviour opt them in with an explicit AUTO policy, which that route honours.
+_AUTO_SIDE_EFFECT_POLICY = {
+    "version": 1,
+    "legacy_policies": {"write_file": "auto", "edit_file": "auto", "run_command": "auto"},
+}
 
 
 def test_process_message_chat_send_tool_execution_streams_tool_events(tmp_path) -> None:
@@ -380,19 +376,7 @@ def test_process_message_chat_send_rejects_symlink_escape(tmp_path) -> None:
     (outside_dir / "secret.txt").write_text("secret", encoding="utf-8")
 
     symlink_path = workspace_root / "escape_link"
-    try:
-        symlink_path.symlink_to(outside_dir, target_is_directory=True)
-    except (NotImplementedError, OSError):
-        if (
-            subprocess.run(
-                ["cmd", "/c", "mklink", "/J", str(symlink_path), str(outside_dir)],
-                capture_output=True,
-                text=True,
-                check=False,
-            ).returncode
-            != 0
-        ):
-            pytest.skip("symlink/junction creation unavailable in this environment")
+    make_dir_link(symlink_path, outside_dir)
 
     initialize = {
         "jsonrpc": "2.0",
@@ -674,10 +658,7 @@ def test_process_message_chat_send_blocks_shell_tool_by_default(tmp_path) -> Non
     assert outcome.notifications[-1]["method"] == "chat.done"
 
 
-@pytest.mark.skipif(
-    sys.platform != "win32",
-    reason="drives a real 'cmd /c exit 3' through the shell tool; cmd only exists on Windows",
-)
+@windows_only("drives a real 'cmd /c exit 3' through the shell tool")
 def test_process_message_chat_send_reports_non_zero_shell_exit_as_failed_result(tmp_path) -> None:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
@@ -692,6 +673,7 @@ def test_process_message_chat_send_reports_non_zero_shell_exit_as_failed_result(
                 "tools_workspace_root": str(workspace_root),
                 "tools_confirm_side_effects": False,
                 "tools_shell_enabled": True,
+                "tool_policy_snapshot": _AUTO_SIDE_EFFECT_POLICY,
             },
         },
     }
@@ -734,6 +716,7 @@ def test_process_message_chat_send_supports_quoted_paths_for_write_and_read(tmp_
             "config": {
                 "tools_workspace_root": str(workspace_root),
                 "tools_confirm_side_effects": False,
+                "tool_policy_snapshot": _AUTO_SIDE_EFFECT_POLICY,
             },
         },
     }
@@ -796,7 +779,10 @@ def test_process_message_chat_send_runs_edit_tool_and_emits_checkpoint_metadata(
         "method": "initialize",
         "params": {
             "accept_version": API_VERSION,
-            "config": {"tools_workspace_root": str(workspace_root)},
+            "config": {
+                "tools_workspace_root": str(workspace_root),
+                "tool_policy_snapshot": _AUTO_SIDE_EFFECT_POLICY,
+            },
         },
     }
     server.process_message(initialize, initialized=False)
@@ -843,7 +829,10 @@ def test_process_message_chat_send_reports_edit_ambiguity_as_failed_tool_result(
         "method": "initialize",
         "params": {
             "accept_version": API_VERSION,
-            "config": {"tools_workspace_root": str(workspace_root)},
+            "config": {
+                "tools_workspace_root": str(workspace_root),
+                "tool_policy_snapshot": _AUTO_SIDE_EFFECT_POLICY,
+            },
         },
     }
     server.process_message(initialize, initialized=False)
@@ -887,7 +876,10 @@ def test_process_message_chat_send_auto_injects_snapshot_for_existing_write(tmp_
         "method": "initialize",
         "params": {
             "accept_version": API_VERSION,
-            "config": {"tools_workspace_root": str(workspace_root)},
+            "config": {
+                "tools_workspace_root": str(workspace_root),
+                "tool_policy_snapshot": _AUTO_SIDE_EFFECT_POLICY,
+            },
         },
     }
     server.process_message(initialize, initialized=False)
@@ -936,7 +928,10 @@ def test_process_message_chat_send_auto_injects_snapshot_for_full_coverage_pagin
         "method": "initialize",
         "params": {
             "accept_version": API_VERSION,
-            "config": {"tools_workspace_root": str(workspace_root)},
+            "config": {
+                "tools_workspace_root": str(workspace_root),
+                "tool_policy_snapshot": _AUTO_SIDE_EFFECT_POLICY,
+            },
         },
     }
     server.process_message(initialize, initialized=False)
@@ -990,7 +985,10 @@ def test_process_message_chat_send_applies_edit_without_snapshot_via_content_anc
         "method": "initialize",
         "params": {
             "accept_version": API_VERSION,
-            "config": {"tools_workspace_root": str(workspace_root)},
+            "config": {
+                "tools_workspace_root": str(workspace_root),
+                "tool_policy_snapshot": _AUTO_SIDE_EFFECT_POLICY,
+            },
         },
     }
     server.process_message(initialize, initialized=False)
@@ -1025,9 +1023,6 @@ def test_process_message_chat_send_applies_edit_without_snapshot_via_content_anc
 
 
 def test_process_message_chat_send_supports_quoted_git_cwd(tmp_path) -> None:
-    if not _git_available():
-        pytest.skip("git is unavailable in this environment")
-
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
     git_repo = workspace_root / "repo with spaces"
@@ -1118,9 +1113,6 @@ def test_run_chat_send_with_optional_approval_denies_when_approval_times_out(
 
 
 def test_process_message_chat_send_runs_git_status_tool(tmp_path) -> None:
-    if not _git_available():
-        pytest.skip("git is unavailable in this environment")
-
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
     subprocess.run(["git", "init"], cwd=workspace_root, capture_output=True, text=True, check=True)
@@ -1185,9 +1177,6 @@ def _canonical_read_messages(
 
 
 def test_process_message_chat_send_runs_git_diff_tool(tmp_path) -> None:
-    if not _git_available():
-        pytest.skip("git is unavailable in this environment")
-
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
     subprocess.run(["git", "init"], cwd=workspace_root, capture_output=True, text=True, check=True)
@@ -1286,12 +1275,9 @@ def test_process_message_chat_send_blocks_dangerous_shell_pattern(tmp_path) -> N
 
     outcome = server.process_message(message, initialized=True)
 
-    # Turn-survival: the destructive command is still blocked by the security
-    # classifier (it never executes) while the turn completes with a failed
-    # tool result the model can react to.
+    # 2026-10-25 security-boundary review: with no approval channel the gated
+    # command is denied before dispatch (was: pre-granted, then classifier-blocked).
     assert outcome.response is not None
-    assert outcome.response["result"]["status"] == "completed"
-    tool_result = next(item for item in outcome.notifications if item["method"] == "tool.result")
-    assert tool_result["params"]["success"] is False
-    assert tool_result["params"]["error_code"] == "CMP-TOOL-0007"
-    assert outcome.notifications[-1]["method"] == "chat.done"
+    assert outcome.response["result"]["status"] == "denied"
+    assert outcome.response["result"]["terminal_subcode"] == "policy_dangerous_tool"
+    assert not any(item["method"] == "tool.result" for item in outcome.notifications)

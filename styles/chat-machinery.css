@@ -61,8 +61,13 @@
   flex: none;
 }
 
+/* Content-sized, capped: a 50% basis reserved half the header for a short
+   path and pushed the status cluster and caret to mid-row on file rows. */
 .tool-call-row--minimal .tool-path-chip {
-  flex: 0 1 50%;
+  /* Shrinks ahead of the toggle so a narrow row ellipsizes the path before
+     the tool name. */
+  flex: 0 4 auto;
+  max-width: 40%;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -144,6 +149,17 @@
   min-width: 0;
   align-items: baseline;
   column-gap: var(--space-3);
+}
+
+/* Narrow rows: 40% of a squeezed main cut short names to "E…"; keep a
+   floor for the name and clip at the main so it never runs under the
+   status cluster. */
+.tool-call-row--minimal .tool-call-main {
+  overflow: hidden;
+}
+
+.tool-call-row--minimal .tool-call-name {
+  max-width: max(40%, 6em);
 }
 
 /* A failed row's own failure text: one bounded line beside the summary, in
@@ -239,6 +255,14 @@
 [data-tool-status="running"] .tool-call-status-label {
   animation: tool-call-running-breathe var(--motion-duration-pulse) var(--motion-ease-standard) infinite alternate;
 }
+/* Row throbber: every running row's leading dot breathes, the activity row's
+   own throbber, so any tool (artifact, script, command) reads as working.
+   Child combinators keep a nested row's dot out of its parent's state. */
+.tool-call-row--minimal:is([data-tool-status="running"], [data-tool-status="executing"]) > .tool-call-row-header > .tool-call-row-toggle > .status-dot,
+.tool-call-block:is([data-tool-status="running"], [data-tool-status="executing"]) > .tool-call-header > .status-dot,
+.tool-run-row[data-tool-run-state="live"] > .tool-run-toggle > .status-dot {
+  animation: tool-call-running-breathe var(--motion-duration-pulse) var(--motion-ease-standard) infinite alternate;
+}
 .tool-call-file-operation {
   transition:
     opacity var(--motion-duration-fast) var(--motion-ease-standard),
@@ -275,6 +299,9 @@
     transition: none;
   }
   [data-tool-status="running"] .tool-call-status-label,
+  .tool-call-row--minimal:is([data-tool-status="running"], [data-tool-status="executing"]) > .tool-call-row-header > .tool-call-row-toggle > .status-dot,
+  .tool-call-block:is([data-tool-status="running"], [data-tool-status="executing"]) > .tool-call-header > .status-dot,
+  .tool-run-row[data-tool-run-state="live"] > .tool-run-toggle > .status-dot,
   .tool-call-file-composing .tool-call-file-icon {
     animation: none;
   }
@@ -291,7 +318,9 @@
   width: 7px;
   height: 7px;
   margin-block: 0 2px;
-  margin-inline-start: 0;
+  /* The rotated chevron overhangs its 7px box, so the cluster gap alone
+     left only ~3px between a status word and the caret. */
+  margin-inline-start: var(--space-1);
   margin-inline-end: var(--space-1);
   border-right: 1.5px solid var(--text-muted); /* rtl:physical */
   border-bottom: 1.5px solid var(--text-muted);

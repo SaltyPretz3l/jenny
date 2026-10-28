@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,6 +28,11 @@ _REQUIRED_FIELDS = frozenset({
 })
 _OPTIONAL_FIELDS = frozenset({"skills_config"})
 _MAX_KNOWLEDGE_ROOTS = 32
+# One journal store per (recovery root, workspace root): its commit hook is bound
+# to that workspace, so a store is never shared across project roots.
+_JOURNAL_STORES: dict[tuple[str, str], Any] = {}
+_JOURNAL_STORES_LOCK = threading.Lock()
+_MAX_JOURNAL_STORES = 32
 
 
 def _invalid() -> _contracts.ToolExecutionFailure:
@@ -55,14 +61,20 @@ class BuiltinRequestScope:
     _stack: ExitStack = field(default_factory=ExitStack, init=False, repr=False)
 
     def __enter__(self) -> "BuiltinRequestScope":
-        self._stack.enter_context(scoped_knowledge_tools(self.knowledge_roots))
-        self._stack.enter_context(scoped_skill_tool(self.skills_config))
-        self._stack.enter_context(_hosted_file_io.scoped_hosted_file_io(
-            str(self.workspace.root) if self.workspace.root is not None else None,
-            enabled=self.hosted,
-            expected_device_id=self.workspace_device_id,
-            expected_inode=self.workspace_inode,
-        ))
+        try:
+            self._stack.enter_context(scoped_knowledge_tools(self.knowledge_roots))
+            self._stack.enter_context(scoped_skill_tool(self.skills_config))
+            self._stack.enter_context(_hosted_file_io.scoped_hosted_file_io(
+                str(self.workspace.root) if self.workspace.root is not None else None,
+                enabled=self.hosted,
+                expected_device_id=self.workspace_device_id,
+                expected_inode=self.workspace_inode,
+            ))
+        except BaseException:
+            # A failed enter never reaches __exit__, so the ContextVars already
+            # pushed would leak into the next request (tool review C6 #4).
+            self._stack.close()
+            raise
         return self
 
     def __exit__(
@@ -143,14 +155,28 @@ def _attach_recovery_owner(workspace: WorkspaceGuard, host_config: Any) -> None:
     recovery_root = host_config.get("workspace_recovery_root")
     if not isinstance(recovery_root, str) or not recovery_root.strip():
         return
-    store = _workspace_mutation_journal_store.WorkspaceMutationJournalStore.from_version_root(
-        recovery_root
-    )
     root = workspace.root
-    store.on_commit = lambda *_ids: _workspace_retention.run_recovery_maintenance(store, root)
+    store = _journal_store(recovery_root, root)
     # A reusable process can interleave live turns across project roots. Never
     # reconcile on call admission: that would interrupt another active journal.
     workspace.mutation_journal = MutationChangeSetLifecycle(store, root)
+
+
+def _journal_store(recovery_root: str, root: Path) -> Any:
+    """Reuse the store for this recovery/workspace root pair (built on first use)."""
+    key = (recovery_root, str(root))
+    with _JOURNAL_STORES_LOCK:
+        store = _JOURNAL_STORES.get(key)
+        if store is not None:
+            return store
+    store = _workspace_mutation_journal_store.WorkspaceMutationJournalStore.from_version_root(
+        recovery_root
+    )
+    store.on_commit = lambda *_ids: _workspace_retention.run_recovery_maintenance(store, root)
+    with _JOURNAL_STORES_LOCK:
+        if len(_JOURNAL_STORES) >= _MAX_JOURNAL_STORES:
+            _JOURNAL_STORES.clear()
+        return _JOURNAL_STORES.setdefault(key, store)
 
 
 def builtin_request_scope(

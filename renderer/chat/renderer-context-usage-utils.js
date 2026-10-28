@@ -4,16 +4,19 @@
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./renderer-context-usage-model'));
+    module.exports = factory(require('./renderer-context-usage-model'), require('./renderer-context-preview'));
     return;
   }
-  root.rendererContextUsageUtils = factory(root.rendererContextUsageModel);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (model) {
+  root.rendererContextUsageUtils = factory(root.rendererContextUsageModel, root.rendererContextPreview);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (model, preview) {
   'use strict';
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   if (!model || typeof model.createContextUsageStore !== 'function') {
     throw new Error('renderer-context-usage-utils requires renderer-context-usage-model');
+  }
+  if (!preview || typeof preview.latest !== 'function') {
+    throw new Error('renderer-context-usage-utils requires renderer-context-preview');
   }
 
   var store = model.createContextUsageStore();
@@ -66,6 +69,7 @@
   function clearUsage(sessionId) {
     var key = String(sessionId || '').trim();
     store.clearUsage(key);
+    preview.forget(key);
     lastRingUsage.delete(key);
   }
 
@@ -99,14 +103,9 @@
     return Math.min(100, Math.round(raw));
   }
 
+  // The Session summary rail formats with the same rule (renderer-context-preview).
   function formatContextPercent(usedTokens, denominatorTokens) {
-    var limit = Number(denominatorTokens || 0);
-    var used = Number(usedTokens || 0);
-    if (!(limit > 0) || !(used >= 0)) return '';
-    var raw = (used / limit) * 100;
-    if (!Number.isFinite(raw) || raw < 0) return '';
-    if (raw > 0 && raw < 1) return '<1%';
-    return Math.min(100, Math.round(raw)) + '%';
+    return preview.formatPercent(usedTokens, denominatorTokens);
   }
 
   function isRenderableUsageData(data, options) {
@@ -128,10 +127,45 @@
     return !active || !storedModel || storedModel === active;
   }
 
+  /* The shared next-send estimate (row 63) as a usage record, the local draft included, so
+   * the ring and the Session summary read one number. */
+  function previewRecord(sessionId, opts) {
+    var entry = preview.latest(sessionId);
+    if (!entry) return null;
+    var data = preview.withDraft(entry.data, opts.draftText, opts.draftAttachments);
+    var projection = preview.project(data);
+    if (!(projection.used > 0)) return null;
+    return {
+      usedTokens: projection.used,
+      contextLimit: projection.capacity || 0,
+      compactThresholdTokens: projection.compactAt || 0,
+      model: '',
+      usageSource: 'next_send',
+      phase: 'terminal',
+      updatedAt: entry.at,
+      preview: data,
+    };
+  }
+
+  function isLiveTurnRecord(record, opts) {
+    return opts.turnActive === true && Boolean(record && record.phase && record.phase !== 'terminal');
+  }
+
+  /* Order: the live reading while a reply runs; else the next-send estimate (also before a
+   * reply's first live reading) unless a terminal reading (a finished reply, a compaction)
+   * landed after it was sampled; else the recorded and estimated fallbacks below. */
   function resolveRenderUsage(sessionId, options) {
     var opts = options || {};
     var stored = store.getUsage(sessionId);
     var fallbackEstimate = opts.fallbackEstimate || null;
+    var storedUsable = isRenderableUsageData(stored, opts)
+      && (isAuthoritativeUsageSource(stored.usageSource) || stored.usageSource === 'compaction')
+      && storedMatchesActiveModel(stored, opts.activeModel);
+    if (storedUsable && isLiveTurnRecord(stored, opts)) return stored;
+    var next = previewRecord(sessionId, opts);
+    if (isRenderableUsageData(next, opts) && !(storedUsable && Number(stored.updatedAt || 0) > next.updatedAt)) {
+      return next;
+    }
     if (
       isRenderableUsageData(stored, opts)
       && isAuthoritativeUsageSource(stored.usageSource)
@@ -163,6 +197,7 @@
     if (source === 'provider') return jt('chat.contextUsage.lastRequest', 'last request');
     if (source === 'context') return jt('chat.contextUsage.estimatedLastRequest', 'est. last request');
     if (source === 'compaction') return jt('chat.contextUsage.estimatedCompactedHistory', 'est. compacted history');
+    if (source === 'next_send') return jt('chat.contextUsage.estimatedNextSend', 'est. next send');
     return 'est. context';
   }
 
@@ -187,6 +222,8 @@
       // The full window, when the target is the auto-compact threshold: the
       // detail text names both so "x of 38k" is not read as the window.
       contextLimit: model.normalizePositiveInteger(data.contextLimit),
+      preview: data.preview || null,
+      live: isLiveTurnRecord(data, opts),
     };
   }
 
@@ -242,6 +279,47 @@
       + html.slice(closeStart);
   }
 
+  /* The details popover: the Session summary's headline and breakdown (shared markup), from the
+   * next-send estimate when it is the reading, else from the reading alone (no categories). */
+  function detailsProjection(summary) {
+    if (summary.preview && !summary.live) return preview.project(summary.preview);
+    var capacity = summary.contextLimit > summary.limit ? summary.contextLimit : summary.limit;
+    return {
+      used: summary.used,
+      capacity: capacity,
+      compactAt: summary.targetType === 'auto_compact' && capacity > summary.limit ? summary.limit : null,
+      target: summary.limit,
+      breakdown: null,
+    };
+  }
+
+  function detailsBodyHtml(summary) {
+    var projection = detailsProjection(summary);
+    var title = summary.targetType === 'auto_compact'
+      ? jt('chat.contextUsage.untilAutoCompact', 'until auto-compact')
+      : jt('chat.contextUsage.ofContextWindow', 'of the context window');
+    return '<div class="inv-context-details-head"><span class="inv-context-details-percent">'
+      + escapeHtml(summary.percentLabel) + '</span><span class="inv-context-details-title">' + escapeHtml(title) + '</span></div>'
+      + '<p class="inv-context-details-line">' + escapeHtml(preview.describeLine(projection)) + '</p>'
+      + preview.breakdownHtml(projection)
+      + '<p class="inv-context-details-scope" data-next-turn-context-summary hidden></p>';
+  }
+
+  function detailsNote(sessionId, summary) {
+    if (summary.live) return jt('chat.contextUsage.liveNote', 'This reply so far. The breakdown updates when it ends.');
+    if (summary.source !== 'next_send') {
+      return jt('chat.contextUsage.readingNote', 'Reading: {source}.', { source: summary.sourceLabel });
+    }
+    var note = jt('chat.contextUsage.nextSendNote', 'Next send, estimated.');
+    var last = store.getUsage(sessionId);
+    if (last && last.phase === 'terminal' && last.usageSource !== 'compaction' && model.normalizePositiveInteger(last.usedTokens) > 0) {
+      note += ' ' + (last.usageSource === 'provider'
+        ? jt('chat.contextUsage.lastReplyMeasured', 'Last reply measured {count}.', { count: formatTokenCount(last.usedTokens) })
+        : jt('chat.contextUsage.lastReplyEstimated', 'Last reply estimated {count}.', { count: formatTokenCount(last.usedTokens) }));
+    }
+    return note;
+  }
+
   function renderContextUsage(sessionId, options) {
     var opts = options || {};
     var summary = describeContextUsage(sessionId, opts);
@@ -293,21 +371,20 @@
         domId: 'composerContextDetailsPopover',
         ariaLabel: jt('chat.contextUsage.detailsAriaLabel', 'Context details'),
         className: 'inv-context-details-popover',
-        trustedHtml: '<h3>' + escapeHtml(jt('chat.contextUsage.nextTurnSummary', 'Next turn context summary')) + '</h3>'
-          + '<p data-next-turn-context-summary>' + escapeHtml(jt('chat.contextUsage.openToCalculate', 'Open to calculate from the canonical session.')) + '</p>'
-          + '<h3>' + escapeHtml(jt('chat.contextUsage.lastCompletedRequest', 'Last completed request')) + '</h3>'
-          + '<p>' + escapeHtml(buildDetailText(summary)).replace(/\n/g, '<br>') + '</p>'
+        trustedHtml: detailsBodyHtml(summary)
+          + '<div class="inv-context-details-actions"><span class="inv-context-details-note">'
+          + escapeHtml(detailsNote(sessionId, summary)) + '</span>'
           + (opts.manualCompactionEnabled === true
-            ? '<div class="inv-context-details-actions">' + actionButton({
+            ? actionButton({
               id: 'context-meter-compact',
               label: opts.compactionActivity?.pending ? jt('chat.contextUsage.compacting', 'Compacting…') : jt('chat.contextUsage.compactNow', 'Compact now'),
               variant: 'secondary',
               disabled: opts.compactionActivity?.pending === true,
               title: jt('chat.contextUsage.compactTitle', 'Compact the conversation now to free context'),
-            }) + '</div>'
+            })
             : '')
-          + '<p class="inv-context-details-status" aria-live="polite">'
-          + escapeHtml(opts.compactionActivity?.message || '') + '</p>',
+          // The compaction outcome is told by the inline row, the divider or a toast.
+          + '</div>',
       }) : '')
       + '</div>';
   }

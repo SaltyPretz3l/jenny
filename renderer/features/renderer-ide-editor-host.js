@@ -102,9 +102,10 @@
     // Problems-panel diagnostics listeners (fanned out from ensureEditor on boot).
     const markerListeners = new Set(); let markerSubscription = null;
     let fallbackBound = false; let fallbackInputHandler = null;
-    let applyingValue = false;
     let wordWrapMode = 'off';
     let minimapEnabled = IDE_EDITOR_OPTIONS.minimap.enabled;
+    // The full editor options: the applied preferences (so a large-file restore keeps them) plus the session wrap + minimap.
+    const baseEditorOptions = () => ({ ...IDE_EDITOR_OPTIONS, ...editorLevelOptions, wordWrap: wordWrapMode, minimap: { enabled: minimapEnabled } });
     // The editor-level preferences last applied (font size, line numbers, whitespace):
     // a group editor created later starts from them, not from the shared code size.
     let editorLevelOptions = {};
@@ -124,7 +125,8 @@
     // createGroupEditor over the same models; the value holds its font
     // unregister, its action registrations (id -> disposable) and getPath.
     const groupEditors = new Map();
-    const groupDiffs = (globalRef.rendererIdeEditorHostGroupDiff || require('./renderer-ide-editor-host-group-diff')).createGroupDiffHost({
+    const groupDiffUtils = globalRef.rendererIdeEditorHostGroupDiff || require('./renderer-ide-editor-host-group-diff');
+    const groupDiffs = groupDiffUtils.createGroupDiffHost({
       getMonaco: () => monacoApi, getDoc: (id) => getDoc(id), isDisposed: () => disposalFence.isDisposed(), fonts,
       getOptions: () => ({ ...monacoUtils.IDE_DIFF_EDITOR_OPTIONS, ...editorLevelOptions, wordWrap: wordWrapMode }),
       registerFont: monacoUtils.registerMonacoFontConsumer,
@@ -174,11 +176,7 @@
       if (!monacoEditor) {
         // Thread the session toggles (wrap + minimap) into creation so a
         // recreate honors them rather than snapping back to the frozen defaults.
-        const createdEditor = monacoApi.editor.create(host, fonts.withFont({
-          ...IDE_EDITOR_OPTIONS,
-          wordWrap: wordWrapMode,
-          minimap: { enabled: minimapEnabled },
-        }, host?.ownerDocument));
+        const createdEditor = monacoApi.editor.create(host, fonts.withFont(baseEditorOptions(), host?.ownerDocument));
         if (disposalFence.isDisposed() || !editorGate.isCurrent(editorToken)) { createdEditor.dispose?.(); return false; }
         monacoEditor = createdEditor;
         fonts.register(monacoEditor, host?.ownerDocument);
@@ -190,7 +188,7 @@
           () => onSaveRequest()
         );
         monacoEditor.onDidChangeModelContent(() => {
-          if (applyingValue || documents.isApplyingValue() || !activePath) {
+          if (documents.isApplyingValue() || !activePath) {
             return;
           }
           syncDirty(activePath);
@@ -229,9 +227,7 @@
     function createGroupEditor(el, { onSave, onFocus, getPath } = {}) {
       if (!monacoApi || !el || disposalFence.isDisposed()) return null;
       const doc = el.ownerDocument;
-      const editor = monacoApi.editor.create(el, fonts.withFont({
-        ...IDE_EDITOR_OPTIONS, wordWrap: wordWrapMode, minimap: { enabled: minimapEnabled },
-      }, doc));
+      const editor = monacoApi.editor.create(el, fonts.withFont(baseEditorOptions(), doc));
       // The shared font binding only releases everything at once, so register
       // per editor here: a closed group must leave the typography observer.
       const unregisterFont = typeof monacoUtils.registerMonacoFontConsumer === 'function'
@@ -263,7 +259,7 @@
     // A group editor changed a model: same bookkeeping as the primary's content listener.
     function noteModelEdited(path) {
       const normalizedPath = String(path || '');
-      if (applyingValue || documents.isApplyingValue() || !hasDocument(normalizedPath)) return;
+      if (documents.isApplyingValue() || !hasDocument(normalizedPath)) return;
       syncDirty(normalizedPath);
       onModelChange(normalizedPath);
     }
@@ -330,20 +326,7 @@
     // activation, so later recomputes never yank the view back.
     function revealFirstDiffChange() {
       diffRevealSubscription?.dispose?.();
-      diffRevealSubscription = null;
-      if (typeof diffEditor?.onDidUpdateDiff !== 'function') return;
-      diffRevealSubscription = diffEditor.onDidUpdateDiff(() => {
-        diffRevealSubscription?.dispose?.();
-        diffRevealSubscription = null;
-        const change = (diffEditor.getLineChanges?.() || [])[0];
-        if (!change) return;
-        const chars = change.charChanges?.[0];
-        // The modified pane alone: Monaco syncs the original pane's scroll to
-        // it, so a second reveal there would be undone (a minified side renders
-        // inline instead, see activateDiffDocument).
-        const lineNumber = chars?.modifiedStartLineNumber || change.modifiedStartLineNumber || 1;
-        diffEditor.getModifiedEditor?.()?.revealPositionInCenter?.({ lineNumber, column: chars?.modifiedStartColumn || 1 });
-      });
+      diffRevealSubscription = groupDiffUtils.revealFirstChangeOnce(diffEditor);
     }
 
     function setDiffPaneVisible(visible) {
@@ -361,7 +344,7 @@
       }
       fallbackBound = true;
       fallbackInputHandler = () => {
-        if (applyingValue || documents.isApplyingValue() || !activePath) {
+        if (documents.isApplyingValue() || !activePath) {
           return;
         }
         const doc = getDoc(activePath);
@@ -377,9 +360,9 @@
 
     // Loads (or refreshes) a document. Content comes from workspaceFs.readFile;
     // the document store owns the buffer from here until closeDocument.
-    async function openDocument({ path, content, mtimeMs, eol, shouldApply = null, onApplied = null }) {
+    async function openDocument({ path, content, mtimeMs, eol, encoding, shouldApply = null, onApplied = null }) {
       const hasMonaco = await ensureEditor(); if (disposalFence.isDisposed() || (typeof shouldApply === 'function' && shouldApply() !== true)) return null;
-      const doc = documents.openFile({ path, content, mtimeMs, eol, monacoApi: hasMonaco ? monacoApi : null });
+      const doc = documents.openFile({ path, content, mtimeMs, eol, encoding, monacoApi: hasMonaco ? monacoApi : null });
       if (typeof onApplied === 'function') onApplied();
       return doc;
     }
@@ -414,6 +397,10 @@
     }
     function getDocumentBytes(path) { return panes ? panes.getDocumentBytes(path) : Promise.resolve(null); }
     function getDocumentFormat(path) { return panes?.getDocumentFormat(path) || ''; }
+    // PDF reading position (tab restore) and reading context (chat); row 65.
+    const getPdfViewPosition = (path) => panes?.callPdfPane(path, 'getViewPosition') || null;
+    const restorePdfView = (path, position) => panes?.callPdfPane(path, 'restoreViewPosition', position) === true;
+    const getPdfReadingContext = (path, options) => panes?.callPdfPane(path, 'getReadingContext', options) || null;
 
     function activateDiffDocument(normalizedId, doc) {
       activePath = normalizedId;
@@ -439,13 +426,10 @@
       }
       const textarea = ensureFallbackBinding();
       if (textarea) {
-        applyingValue = true;
-        try {
+        documents.runApplying(() => {
           textarea.value = monacoUtils.composeFallbackDiffText(doc);
           textarea.readOnly = true;
-        } finally {
-          applyingValue = false;
-        }
+        });
         setFallbackVisible(true);
       }
       return true;
@@ -453,7 +437,7 @@
 
     // Install the active-file accessor and dispatch only after activePath updates; dispatchEvent is optional in bare Node tests.
     function dispatchActiveFileChanged(path) {
-      globalRef.rendererIdeActiveEditorReader = { getActivePath: getFocusedPath, getCursorInfo: getFocusedCursorInfo, getValue, getActiveLanguageId: getFocusedLanguageId, getDocumentKind, getWorkspaceId: () => deps?.getDocumentWorkspaceId?.(getFocusedPath()) || '', isLargeFile: () => getDoc(getFocusedPath())?.largeFile === true };
+      globalRef.rendererIdeActiveEditorReader = { getActivePath: getFocusedPath, getCursorInfo: getFocusedCursorInfo, getValue, getModel: (path) => getDoc(path)?.model || null, getActiveLanguageId: getFocusedLanguageId, getDocumentKind, getPdfReadingContext, getWorkspaceId: () => deps?.getDocumentWorkspaceId?.(getFocusedPath()) || '', isLargeFile: () => getDoc(getFocusedPath())?.largeFile === true };
       globalRef.dispatchEvent?.(new globalRef.CustomEvent('ide:active-file-changed', { detail: { path: String(path || '') } }));
       return true;
     }
@@ -484,15 +468,12 @@
       activePath = normalizedPath;
       setDiffPaneVisible(false);
       if (monacoEditor && doc.model) {
-        applyingValue = true;
-        try {
+        documents.runApplying(() => {
           monacoEditor.setModel(doc.model);
           if (doc.viewState) {
             monacoEditor.restoreViewState(doc.viewState);
           }
-        } finally {
-          applyingValue = false;
-        }
+        });
         setFallbackVisible(false);
         const nextLargeFile = doc.largeFile === true;
         // Always re-apply for a large file (preserves the re-degrade + notice on
@@ -500,20 +481,17 @@
         // for a normal file skip the idempotent full-option re-spread when the
         // previous activation was already normal (the common tab-switch case).
         if (nextLargeFile || lastAppliedLargeFile !== false) {
-          monacoUtils.applyLargeFileEditorMode?.(monacoEditor, getDom().ideEditorHost, nextLargeFile, { ...IDE_EDITOR_OPTIONS, wordWrap: wordWrapMode, minimap: { enabled: minimapEnabled } });
+          monacoUtils.applyLargeFileEditorMode?.(monacoEditor, getDom().ideEditorHost, nextLargeFile, baseEditorOptions());
           lastAppliedLargeFile = nextLargeFile;
         }
         return dispatchActiveFileChanged(normalizedPath);
       }
       const textarea = ensureFallbackBinding();
       if (textarea) {
-        applyingValue = true;
-        try {
+        documents.runApplying(() => {
           textarea.value = doc.buffer;
           textarea.readOnly = false;
-        } finally {
-          applyingValue = false;
-        }
+        });
         setFallbackVisible(true);
       }
       return dispatchActiveFileChanged(normalizedPath);
@@ -666,11 +644,7 @@
     }
 
     function setWordWrap(mode) {
-      wordWrapMode = mode === 'on' ? 'on' : 'off';
-      diffPlaceholderEl?.classList.toggle('nowrap', wordWrapMode === 'off'); monacoEditor?.updateOptions?.({ wordWrap: wordWrapMode });
-      diffEditor?.updateOptions?.({ wordWrap: wordWrapMode });
-      groupDiffs.updateOptions({ wordWrap: wordWrapMode });
-      for (const editor of groupEditors.keys()) editor.updateOptions?.({ wordWrap: wordWrapMode });
+      setEditorOptions({ wordWrap: mode === 'on' ? 'on' : 'off' });
     }
     // Applies editor-LEVEL options live (fontSize, lineNumbers, renderWhitespace,
     // minimap, wordWrap). Per-MODEL
@@ -836,7 +810,7 @@
     }
 
     function getViewLines(path) {
-      if (!getDoc(path) || !isTextDocument(path)) return null;
+      if (!isTextDocument(path)) return null;
       const view = editorShowing(path)?.saveViewState?.() || getViewState(path);
       return { line: view?.cursorState?.[0]?.position?.lineNumber || (activePath === path ? getCursorInfo()?.lineNumber : 1) || 1,
         top: view?.viewState?.firstPosition?.lineNumber || 1 };
@@ -882,8 +856,19 @@
       if (!(next > 0)) {
         return false;
       }
-      getDoc(String(path || '') || getFocusedPath())?.model?.updateOptions?.({ tabSize: next, insertSpaces: true });
+      const doc = getDoc(String(path || '') || getFocusedPath());
+      // Keep the file's own spaces/tabs choice (an explicit pick, or Monaco's detection).
+      doc?.model?.updateOptions?.({ tabSize: next, insertSpaces: (doc.indent ? doc.indent.insertSpaces : doc.model.getOptions?.()?.insertSpaces) !== false });
+      if (doc?.indent) doc.indent.tabSize = next;
       return true;
+    }
+
+    const pathOrFocused = (path) => String(path || '') || getFocusedPath();
+    // Runs Monaco's convert-indentation action on the editor showing `path`, then records the result.
+    function convertIndentation(path, to) {
+      const target = pathOrFocused(path);
+      const action = editorShowing(target)?.getAction?.(to === 'tabs' ? 'editor.action.indentationToTabs' : 'editor.action.indentationToSpaces');
+      return action && typeof action.run === 'function' ? Promise.resolve(action.run()).then(() => documents.syncIndent(target)) : Promise.resolve(false);
     }
 
     function setEol(path, eol) {
@@ -943,6 +928,9 @@
       getDocumentBytes,
       getDocumentFormat,
       getDocumentKind,
+      getPdfReadingContext,
+      getPdfViewPosition,
+      restorePdfView,
       getEol,
       getMarkers,
       getViewState,
@@ -962,7 +950,7 @@
       isLargeFile: (path) => getDoc(path)?.largeFile === true,
       formatActive: () => runFormat(monacoEditor),
       formatPath: (path) => runFormat(editorShowing(path)),
-      showsPath: (path) => Boolean(editorShowing(path)),
+      showsPath: (path) => Boolean(editorShowing(path)), editorFor: (path) => editorShowing(path), // editorFor: row 82 G2 peek + blame
       hasDocument,
       isDirty,
       isUsingMonaco,
@@ -981,6 +969,13 @@
       setEol,
       setGutterDecorations,
       setTabSize,
+      // Status-bar pickers: session-only per-tab language / indentation / encoding info.
+      setLanguage: (path, id) => documents.setLanguage(pathOrFocused(path), id, monacoApi),
+      setIndent: (path, indent) => documents.setIndent(pathOrFocused(path), indent),
+      detectIndentation: (path, defaults) => documents.detectIndentation(pathOrFocused(path), defaults?.insertSpaces !== false, Number(defaults?.tabSize) || IDE_EDITOR_OPTIONS.tabSize),
+      convertIndentation,
+      getIndentInfo: (path) => documents.getIndentInfo(pathOrFocused(path), IDE_EDITOR_OPTIONS.tabSize),
+      getEncodingInfo: (path) => ({ encoding: 'utf-8', bom: getDoc(pathOrFocused(path))?.bom === true }),
       setWordWrap,
       showEmpty,
       triggerGoToLine,

@@ -73,3 +73,15 @@ test('an app-shutdown cancellation keeps its own reason and counts as expected l
   assert.equal(isExpectedLifecycleCancellation(payload), true);
   assert.equal(isExpectedLifecycleCancellation({ category: 'cancelled', cancel_reason: 'user_cancel' }), false);
 });
+
+// 2026-10-27: the New session preparation deadline cancelled with reason 'deadline', which is not
+// a known cancel reason, so it normalized to user_cancel and the card read like the user's Stop.
+test('a handoff-deadline cancellation keeps its own reason', () => {
+  const { normalizeCancelReason, CANCEL_REASON_USER } = require('../services/backend/chat-stream-terminal-utils');
+  assert.equal(normalizeCancelReason('handoff_deadline', CANCEL_REASON_USER), 'handoff_deadline');
+  const error = new Error('Stream cancelled.');
+  error.category = 'cancelled';
+  error.cancel_reason = 'handoff_deadline';
+  const payload = buildTerminalErrorPayload(error, 'managed_sidecar');
+  assert.deepEqual([payload.terminal_subcode, payload.cancel_reason], ['handoff_deadline', 'handoff_deadline']);
+});

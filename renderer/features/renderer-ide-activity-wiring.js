@@ -20,7 +20,7 @@
       onOutputChange:id=>{const runId=testRunnerWiring.getLastRunOutput(id)?.runId,ticket=tickets.get(runId);tickets.delete(runId);
         if(ticket&&ticket===follow&&String(output?.configId)===String(id)){output=null;follow=null;}if(state.ui?.activeView==='ide')deps.requestRender();}});
     const testOutputPanel=outputs.createIdeTestOutputPanel({...panel('test-output'),actionButton:deps.actionButton,
-      escapeHtml:deps.escapeHtml,onAskJenny:deps.onAskJenny,getSelection:()=>configId?{configId}:null,
+      escapeHtml:deps.escapeHtml,onAskJenny:deps.onAskJenny,getRootPath:()=>state.workspaceRoot?.path||'',getSelection:()=>configId?{configId}:null,
       getRunOutput:id=>output?.record||testRunnerWiring.getLastRunOutput(id),
       getConfigLabel:id=>output?.label||testRunnerWiring.getConfigLabel(id)||id,
       canRunAgain:()=>!output||output.rootId===state.workspaceRoot?.rootId,

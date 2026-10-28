@@ -62,7 +62,7 @@ test('two concurrent reads share one in-flight workspace listing', async () => {
   assert.deepEqual(first.files, ['a.js']);
 });
 
-test('a complete create and delete batch patches the cached list without re-fetching', async () => {
+test('a delete and a known-file change patch the cached list without re-fetching', async () => {
   let calls = 0;
   const inventory = buildInventory(async () => {
     calls += 1;
@@ -72,16 +72,54 @@ test('a complete create and delete batch patches the cached list without re-fetc
   const first = await inventory.getFiles();
   inventory.handleExternalChanges([
     { relPath: 'a.js', kind: 'deleted' },
-    { relPath: 'c.js', kind: 'changed' },
+    { relPath: 'b.js', kind: 'changed' },
   ], { truncated: false });
   const second = await inventory.getFiles();
 
   assert.equal(calls, 1);
   assert.strictEqual(second, first);
-  assert.deepEqual(second.files, ['b.js', 'c.js']);
+  assert.deepEqual(second.files, ['b.js']);
 });
 
-test('a complete batch arriving during a fetch is merged into its result', async () => {
+test('an unknown changed path (a new file or a folder) re-lists instead of guessing', async () => {
+  const listings = [['a.js'], ['a.js', 'newdir/x.js']];
+  let calls = 0;
+  const inventory = buildInventory(async () => ({ files: listings[calls++] }));
+
+  await inventory.getFiles();
+  inventory.handleExternalChanges([{ relPath: 'newdir', kind: 'changed' }]);
+  const refreshed = await inventory.getFiles();
+
+  assert.equal(calls, 2);
+  assert.deepEqual(refreshed.files, ['a.js', 'newdir/x.js']);
+  assert.equal(refreshed.files.includes('newdir'), false, 'a directory never becomes a file row');
+});
+
+test('a deleted folder drops every file under it', async () => {
+  const inventory = buildInventory(async () => ({ files: ['src/a.js', 'src/deep/b.js', 'srcx.js', 'top.js'] }));
+
+  await inventory.getFiles();
+  inventory.handleExternalChanges([{ relPath: 'src', kind: 'deleted' }]);
+
+  assert.deepEqual((await inventory.getFiles()).files, ['srcx.js', 'top.js']);
+});
+
+test('one batch of folder and file deletes is applied in a single pass', async () => {
+  const inventory = buildInventory(async () => ({
+    files: ['a/b/c.js', 'a/bc.js', 'd/e.js', 'd/f/g.js', 'h.js', 'keep/x.js'],
+  }));
+
+  await inventory.getFiles();
+  inventory.handleExternalChanges([
+    { relPath: 'a/b', kind: 'deleted' },
+    { relPath: 'd', kind: 'deleted' },
+    { relPath: 'h.js', kind: 'deleted' },
+  ]);
+
+  assert.deepEqual((await inventory.getFiles()).files, ['a/bc.js', 'keep/x.js']);
+});
+
+test('a batch arriving during a fetch is merged into its result', async () => {
   const listing = deferred();
   let calls = 0;
   const inventory = buildInventory(() => {
@@ -94,9 +132,39 @@ test('a complete batch arriving during a fetch is merged into its result', async
     { relPath: 'a.js', kind: 'deleted' },
     { relPath: 'b.js', kind: 'changed' },
   ]);
-  listing.resolve({ files: ['a.js'] });
+  listing.resolve({ files: ['a.js', 'b.js'] });
 
   assert.deepEqual((await resultPromise).files, ['b.js']);
+  assert.equal(calls, 1);
+});
+
+test('an unknown change during a fetch answers that read but re-lists the next one', async () => {
+  const listing = deferred();
+  let calls = 0;
+  const inventory = buildInventory(() => {
+    calls += 1;
+    return calls === 1 ? listing.promise : { files: ['a.js', 'b.js'] };
+  });
+
+  const resultPromise = inventory.getFiles();
+  inventory.handleExternalChanges([{ relPath: 'b.js', kind: 'changed' }]);
+  listing.resolve({ files: ['a.js'] });
+
+  assert.deepEqual((await resultPromise).files, ['a.js']);
+  assert.deepEqual((await inventory.getFiles()).files, ['a.js', 'b.js']);
+  assert.equal(calls, 2);
+});
+
+test('changes with no cached listing and no load in flight are dropped', async () => {
+  let calls = 0;
+  const inventory = buildInventory(async () => {
+    calls += 1;
+    return { files: ['fresh.js'] };
+  });
+
+  inventory.handleExternalChanges([{ relPath: 'fresh.js', kind: 'deleted' }]);
+
+  assert.deepEqual((await inventory.getFiles()).files, ['fresh.js']);
   assert.equal(calls, 1);
 });
 

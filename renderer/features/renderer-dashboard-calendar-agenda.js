@@ -26,6 +26,11 @@
   // here (renderer-dashboard-calendar-reminders.js owns every placement rule).
   // Resolved lazily so a harness that assigns the global after this factory
   // runs still gets the real module.
+  function resolveGridModule() {
+    return windowRef.rendererDashboardCalendarGrid
+      || (typeof require === 'function' ? require('./renderer-dashboard-calendar-grid') : null);
+  }
+
   function resolveRemindersModule() {
     return windowRef.rendererDashboardCalendarReminders
       || (typeof require === 'function' ? require('./renderer-dashboard-calendar-reminders') : null);
@@ -104,43 +109,14 @@
     return `${pad2(Math.floor(clamped / 60))}:${pad2(clamped % 60)}`;
   }
 
-  // Whole-day overlap test on the local-naive instance strings.
-  function instanceOnDay(instance, dayStartMs, dayEndMs) {
-    const start = parseLocalDateTime(instance.start);
-    const end = parseLocalDateTime(instance.end);
-    if (!start || !end) {
-      return false;
-    }
-    return end.getTime() > dayStartMs && start.getTime() < dayEndMs;
-  }
-
   function categoryClass(instance) {
-    const categoryId = /^[a-z][a-z0-9-]*$/.test(String(instance.categoryId || ''))
-      ? instance.categoryId
-      : 'default';
-    return `cal-event--${categoryId}`;
+    return resolveGridModule().categoryClass(instance);
   }
 
-  // ---- agenda relative-time text ("in 35m" / "now") ----
-
-  // The "up next" label for today's first future event. Returns '' beyond a day
-  // out (the label is only ever attached to a same-day event, so that never
-  // happens in practice, but the bound keeps it honest).
+  // The "up next" label ("in 35m" / "now"); one copy, owned by the grid module,
+  // so the rail's up-next and the 30s refresh tick never disagree.
   function formatRelative(now, start) {
-    const ms = start.getTime() - now.getTime();
-    if (ms <= 0) {
-      return 'now';
-    }
-    const mins = Math.round(ms / MS_PER_MINUTE);
-    if (mins < 60) {
-      return `in ${mins}m`;
-    }
-    const hrs = Math.floor(mins / 60);
-    const rem = mins % 60;
-    if (hrs < 24) {
-      return rem ? `in ${hrs}h ${rem}m` : `in ${hrs}h`;
-    }
-    return '';
+    return resolveGridModule().formatRelative(now, start);
   }
 
   function formatAgendaDayLabel(day, now) {
@@ -223,22 +199,13 @@
       });
     }
     const readonly = instance.readonly === true;
-    const title = String(instance.title || '').trim() || jt('dashboard.calendar.agenda.noTitle', '(no title)');
+    const title = resolveGridModule().instanceTitle(instance);
     const undoEntry = journalEntryFor(journalByEntity, 'calendar_event', instance.eventId);
     const start = parseLocalDateTime(instance.start);
     const timeLabel = instance.allDay
       ? jt('dashboard.calendar.agenda.allDay', 'All day')
       : (start ? formatTimeShort(start) : '');
-    const dataset = { 'cal-instance': '1' };
-    if (instance.instanceId) {
-      dataset['cal-instance-id'] = String(instance.instanceId);
-    }
-    if (!readonly && instance.eventId) {
-      dataset['cal-event-id'] = String(instance.eventId);
-    }
-    if (readonly) {
-      dataset['cal-readonly'] = '1';
-    }
+    const dataset = resolveGridModule().eventDataset(instance);
     // Timed rows carry their end so the controller's 30s tick can dim them once
     // they're over (past-ness isn't in the render-key, so it can't wait for a
     // rebuild). "Up next" and currently-running events keep full emphasis.
@@ -312,17 +279,6 @@
       + '</li>';
   }
 
-  function compareForAgenda(a, b) {
-    // All-day events lead the day; then by start string, then title.
-    if ((a.allDay === true) !== (b.allDay === true)) {
-      return a.allDay === true ? -1 : 1;
-    }
-    if (String(a.start) !== String(b.start)) {
-      return String(a.start) < String(b.start) ? -1 : 1;
-    }
-    return String(a.title || '') < String(b.title || '') ? -1 : 1;
-  }
-
   /**
    * Renders all seven grouped days, each ending with one open-slot row; there is no whole-week empty state.
    * @param {Object} opts
@@ -348,7 +304,8 @@
     const nowDate = now instanceof Date ? now : new Date();
     const todayKey = formatLocalDate(nowDate);
     const nowMs = nowDate.getTime();
-    const days = Array.from({ length: 7 }, (_, index) => addLocalDays(weekStart, index));
+    const grid = resolveGridModule();
+    const days = grid.listWeekDays(weekStart);
 
     const remindersModule = resolveRemindersModule();
     const safeReminders = Array.isArray(reminders) ? reminders : [];
@@ -366,9 +323,9 @@
       // Reminder pseudo-instances join the day's events BEFORE the sort, so a
       // reminder lands in clock order among them rather than in a side list.
       const dayInstances = safeInstances
-        .filter((instance) => instanceOnDay(instance, dayStartMs, dayEndMs))
+        .filter((instance) => grid.instanceOverlapsRange(instance, dayStartMs, dayEndMs))
         .concat(remindersModule?.remindersForDay?.(safeReminders, day) || [])
-        .sort(compareForAgenda);
+        .sort(grid.compareInstances);
       const distinctCategories = new Set(dayInstances
         .filter((instance) => instance.kind !== 'reminder')
         .map((instance) => String(instance.categoryId || 'default')));
@@ -637,7 +594,7 @@
       }
       if (iEnd.getTime() > startMs && iStart.getTime() < endMs) {
         conflicts.push({
-          title: String(instance.title || '').trim() || jt('dashboard.calendar.agenda.noTitle', '(no title)'),
+          title: resolveGridModule().instanceTitle(instance),
           timeLabel: formatTimeShort(iStart),
         });
       }
@@ -721,10 +678,7 @@
   return {
     buildAgendaMarkup,
     buildQuickAddMarkup,
-    buildConflictNote,
     findConflicts,
-    formatAgendaDayLabel,
-    formatDuration,
     formatRelative,
     parseQuickAdd,
   };

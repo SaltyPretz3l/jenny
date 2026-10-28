@@ -159,6 +159,72 @@ def test_clean_tracked_file_touched_after_baseline_remains_preexisting(tmp_path:
     assert delta["preexisting_and_touched"] == ["tracked.txt"]
 
 
+def _lock_free_from_another_thread() -> bool:
+    import threading
+
+    acquired: list[bool] = []
+
+    def probe() -> None:
+        got = tracking._LOCK.acquire(timeout=2)
+        acquired.append(got)
+        if got:
+            tracking._LOCK.release()
+
+    thread = threading.Thread(target=probe)
+    thread.start()
+    thread.join()
+    return acquired == [True]
+
+
+def test_delta_head_lookup_runs_outside_the_global_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, guard = _repo(tmp_path)
+    baseline_id = _baseline(guard)
+    (repo / "external.txt").write_text("outside a tool\n", encoding="utf-8")
+    real_paths_at_ref = tracking._paths_at_ref
+    lock_free: list[bool] = []
+
+    def observed_paths_at_ref(*args, **kwargs):
+        lock_free.append(_lock_free_from_another_thread())
+        return real_paths_at_ref(*args, **kwargs)
+
+    monkeypatch.setattr(tracking, "_paths_at_ref", observed_paths_at_ref)
+
+    delta = _delta(guard, baseline_id)
+
+    assert lock_free == [True]
+    assert delta["appeared_externally"] == ["external.txt"]
+
+
+def test_delta_looks_up_a_path_added_while_the_lock_was_released(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, guard = _repo(tmp_path)
+    baseline_id = _baseline(guard)
+    (repo / "external.txt").write_text("outside a tool\n", encoding="utf-8")
+    real_paths_at_ref = tracking._paths_at_ref
+    lookups: list[list[str]] = []
+
+    def racing_paths_at_ref(repo_root, ref, paths, **kwargs):
+        paths = list(paths)
+        lookups.append(paths)
+        if len(lookups) == 1:
+            # A concurrent mutation observation records a session path meanwhile.
+            with tracking._LOCK:
+                tracking._BASELINES[baseline_id].session_paths.add("tracked.txt")
+        return real_paths_at_ref(repo_root, ref, paths, **kwargs)
+
+    monkeypatch.setattr(tracking, "_paths_at_ref", racing_paths_at_ref)
+
+    delta = _delta(guard, baseline_id)
+
+    assert lookups == [["external.txt"], ["tracked.txt"]]
+    # tracked.txt exists at the baseline HEAD, so the late path is preexisting.
+    assert delta["preexisting_and_touched"] == []
+    assert delta["resolved_preexisting"] == ["tracked.txt"]
+
+
 def test_external_and_background_changes_are_never_session_attributed(tmp_path: Path) -> None:
     repo, guard = _repo(tmp_path)
     baseline_id = _baseline(guard)

@@ -404,10 +404,10 @@ test('ask line: Enter appends below an existing draft, switches view, and clears
   assert.deepEqual(views, ['chat', 'chat'], 'Shift+Enter never navigates');
 
   // W13: Ctrl+Enter is the review path - it hands the text to the composer, it
-  // just never fires the send. Without the ask-config module the manager
-  // degrades to prefill-and-navigate for BOTH keys, so here Enter and
+  // just never fires the send. Without a handleCreateSession callback the
+  // manager degrades to prefill-and-navigate for BOTH keys, so here Enter and
   // Ctrl+Enter look alike; the send/no-send split is pinned in
-  // tests/renderer-home-ask-config.test.js against the real launcher.
+  // tests/renderer-home-ask-launcher.test.js.
   pill.value = 'draft';
   const drafted = press('Enter', { ctrlKey: true });
   assert.equal(drafted.defaultPrevented, true);
@@ -416,8 +416,8 @@ test('ask line: Enter appends below an existing draft, switches view, and clears
   assert.deepEqual(views, ['chat', 'chat', 'chat']);
 
   /* F3: Escape used to run `target.value = ''` unconditionally, so dismissing
-   * the settings panel while the field had focus destroyed the draft with no
-   * undo. It blurs now, and NEVER clears. */
+   * the field destroyed the draft with no undo. It blurs now, and NEVER
+   * clears. */
   pill.value = 'abandoned';
   pill.focus();
   assert.equal(dom.documentRef.activeElement, pill);

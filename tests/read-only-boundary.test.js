@@ -5,12 +5,10 @@ const assert = require('node:assert/strict');
 const { createDefaultRegistry, ToolRegistry } = require('../services/tools');
 const { ToolExecutor } = require('../services/tools/tool-executor');
 
-test('exit_plan_mode is structurally limited to Plan Mode schemas', () => {
-  const registry = createDefaultRegistry();
-  const normal = registry.getToolSchemas({ planMode: false }).map((entry) => entry.function.name);
-  const planning = registry.getToolSchemas({ planMode: true }).map((entry) => entry.function.name);
-  assert.equal(normal.includes('exit_plan_mode'), false);
-  assert.equal(planning.includes('exit_plan_mode'), true);
+test('exit_plan_mode is structurally limited to Plan Mode', () => {
+  const tool = createDefaultRegistry().getTool('exit_plan_mode');
+  assert.equal(tool.planModeOnly, true);
+  assert.equal(tool.readOnly, true);
 });
 
 test('read-only boundary blocks mutating tools even when execution was pre-approved', async () => {

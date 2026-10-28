@@ -14,6 +14,20 @@
       updateComposerSafeOffset,
     } = deps || {};
 
+    // The predicted height when text prediction is on and can answer, else null.
+    function predictedInputHeight() {
+      const _pretextUtils = typeof rendererPretextUtils !== 'undefined' ? rendererPretextUtils : null;
+      if (!_pretextUtils || !_pretextUtils.isEnabled(state)) return null;
+      const pretextFont = _pretextUtils.resolveFontString(chatInput);
+      const pretextWidth = chatInput.clientWidth;
+      if (!pretextFont || !(pretextWidth > 0)) return null;
+      const predicted = _pretextUtils.predictTextHeight(
+        'composer', chatInput.value, pretextFont, pretextWidth, 15 * 1.55,
+        { whiteSpace: 'pre-wrap' }
+      );
+      return predicted ? Math.ceil(predicted.height) : null;
+    }
+
     function syncComposerInputHeight() {
       if (!chatInput) {
         return;
@@ -23,39 +37,19 @@
       // CSS can cap the dock below maxHeight, and text predictions can be low.
       // Let the browser decide when the rendered box needs a scrollbar.
       chatInput.style.overflowY = 'auto';
-      const _pretextUtils = typeof rendererPretextUtils !== 'undefined' ? rendererPretextUtils : null;
-      if (_pretextUtils && _pretextUtils.isEnabled(state)) {
-        const pretextFont = _pretextUtils.resolveFontString(chatInput);
-        const pretextWidth = chatInput.clientWidth;
-        if (pretextFont && pretextWidth > 0) {
-          const predicted = _pretextUtils.predictTextHeight(
-            'composer', chatInput.value, pretextFont, pretextWidth, 15 * 1.55,
-            { whiteSpace: 'pre-wrap' }
-          );
-          if (predicted) {
-            const predictedHeight = Math.min(Math.max(Math.ceil(predicted.height), minHeight), maxHeight);
-            chatInput.style.height = predictedHeight + 'px';
-            if (typeof updateComposerSafeOffset === 'function') {
-              updateComposerSafeOffset({ force: true, syncViewport: true });
-            }
-            return;
-          }
-        }
+      let height = predictedInputHeight();
+      if (height === null) {
+        // Measure while collapsed so deleting text can shrink the composer.
+        chatInput.style.height = '0px';
+        height = chatInput.scrollHeight;
       }
-      chatInput.style.height = '0px';
-      // Measure while collapsed so deleting text can shrink the composer.
-      const rawHeight = chatInput.scrollHeight;
-      const nextHeight = Math.min(Math.max(rawHeight, minHeight), maxHeight);
-      chatInput.style.height = `${nextHeight}px`;
+      chatInput.style.height = `${Math.min(Math.max(height, minHeight), maxHeight)}px`;
       if (typeof updateComposerSafeOffset === 'function') {
-        updateComposerSafeOffset({
-          force: true,
-          syncViewport: true,
-        });
+        updateComposerSafeOffset({ force: true, syncViewport: true });
       }
     }
 
-    function doMeasureInlineTextWidth(element, text) {
+    function measureInlineTextWidth(element, text) {
       if (!element) return 0;
       const label = String(text || '').trim();
       if (!label) return 0;
@@ -77,7 +71,7 @@
 
     return {
       syncComposerInputHeight,
-      measureInlineTextWidth: doMeasureInlineTextWidth,
+      measureInlineTextWidth,
     };
   }
 

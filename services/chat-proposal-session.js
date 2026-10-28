@@ -12,6 +12,7 @@ const flow = require('./chat-proposal-session-flow');
 const grants = require('./chat-proposal-launch-grants');
 const sc = require('./chat-proposal-session-contract');
 const S = require('./backend/chat-proposal-session-records');
+const { LAUNCH_GRANT_TTL_MS } = require('./backend/session-coordination-records');
 const { fail, isPlainObject, succeed } = require('./chat-proposal-contract');
 
 const MAX_DESTINATIONS = 256;
@@ -19,6 +20,55 @@ const MAX_MODELS = 512;
 const MAX_EFFORTS = 16;
 
 // ---------- publish ----------
+
+const STANDING_PREFIX = 'standing.';
+const MAX_STANDING_GRANT_ROWS = 32;
+
+// Minted audit rows are bounded by count as well as by the 30-day prune: the newest rows stay.
+function capStandingRows(list) {
+  const standing = list.filter((grant) => grant.source_user_message_id.startsWith(STANDING_PREFIX));
+  if (standing.length <= MAX_STANDING_GRANT_ROWS) return list;
+  const dropped = new Set(standing.sort((a, b) => a.created_at.localeCompare(b.created_at)).slice(0, standing.length - MAX_STANDING_GRANT_ROWS));
+  return list.filter((grant) => !dropped.has(grant));
+}
+
+// A spent v1 grant that records one use of the primary's standing launch permission (row 76 D5), or
+// null when no live permission covers this destination and run mode, or the turn is at its cap. The
+// record shape is the ordinary grant's: remaining 0, so it is never live and only leaves an audit row.
+function mintStandingGrant(svc, stored, {
+  sessionId, sessionIncarnation, turnId, destination, runMode, restrictions, now,
+}) {
+  // A message from another chat grants nothing: a wake turn (row 70) never spends the permission, and a
+  // port that cannot say fails closed.
+  let standing;
+  try {
+    if (svc._ports.isWakeTurn?.(sessionId, turnId) !== false) return null;
+    standing = svc._ports.matchLaunchPermission?.({ sessionId, destinationProjectId: destination, runMode }) ?? null;
+  } catch {
+    standing = null;
+  }
+  if (!standing || typeof standing.permission_id !== 'string' || !Number.isInteger(standing.max_children_per_turn)) return null;
+  const used = stored.filter((grant) => grant.source_turn_id === turnId
+    && grant.source_session_incarnation === sessionIncarnation
+    && grant.source_user_message_id.startsWith(STANDING_PREFIX)).length;
+  if (used >= standing.max_children_per_turn) return null;
+  const created = new Date(now).toISOString();
+  return {
+    schema_version: 1,
+    authorization_ref: svc._createId(),
+    source_session_incarnation: sessionIncarnation,
+    source_user_message_id: `${STANDING_PREFIX}${standing.permission_id}`,
+    source_turn_id: turnId,
+    action_id: svc._createId(),
+    destination_project_ids: [destination],
+    restrictions: { ...restrictions },
+    created_at: created,
+    expires_at: new Date(Date.parse(created) + LAUNCH_GRANT_TTL_MS).toISOString(),
+    max_children: 1,
+    remaining: 0,
+    revoked_at: null,
+  };
+}
 
 function publish(svc, {
   sessionId, sessionIncarnation, turnId, toolCallId, input, binding,
@@ -35,8 +85,12 @@ function publish(svc, {
     return fail('invalid_request');
   }
   const asked = input.initiation === 'user_asked';
+  // Row 76: only the trusted primary may name the destination project; any other caller's id is ignored.
+  const chosenProject = typeof input.project_id === 'string' && input.project_id
+    && svc._ports.allowsProjectChoice?.(sessionId) === true && svc._ports.projectExists?.(input.project_id) === true
+    ? input.project_id : null;
   const options = S.defaultOptions({
-    sourceProjectId: binding.source_project_id,
+    sourceProjectId: chosenProject ?? binding.source_project_id,
     model: binding.model,
     effort: binding.effort,
     planMode: binding.restrictions?.plan_mode === true,
@@ -83,6 +137,20 @@ function publish(svc, {
       if (accepted) {
         record = accepted;
         nextGrants = grants.consumeGrant(stored, grant.authorization_ref);
+      }
+    } else if (canLaunch && input.authorization_ref == null) {
+      const minted = mintStandingGrant(svc, stored, {
+        sessionId, sessionIncarnation, turnId, destination: options.destination_project_id,
+        runMode: binding.session.source_run_mode, restrictions: current, now: nowDate,
+      });
+      const granted = minted
+        && build({ effective_initiation: 'user_asked', authorization_required: false, launch_grant_ref: minted.authorization_ref });
+      const accepted = granted?.ok
+        ? S.acceptFromGrant(granted.record, { grantRef: minted.authorization_ref, now: nowDate, attemptId: svc._createId() }) : null;
+      if (accepted) {
+        record = accepted;
+        // Minted rows are audit rows: keep them bounded by the same 30-day prune the grant writer uses.
+        nextGrants = capStandingRows([...S.pruneLaunchGrants(stored, live, nowDate), minted]);
       }
     }
     return { records: [...rec.pruneFinalized(live, nowDate), record], ...(nextGrants ? { launch_grants: nextGrants } : {}) };
@@ -254,6 +322,7 @@ async function setOptions(svc, raw) {
 }
 
 module.exports = {
+  MAX_STANDING_GRANT_ROWS,
   authorizeLaunch: grants.authorizeLaunch,
   decide,
   getCapabilities,

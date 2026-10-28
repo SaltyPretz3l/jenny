@@ -6,15 +6,21 @@ import hashlib
 import json
 import os
 import re
+import stat as stat_module
 import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
-from uuid import uuid4
 
-from sidecar.runtime.runtime_ids import GuardedRuntimeDirectory, RuntimePathError
+from sidecar.runtime.advisory_file_lock import advisory_file_lock
+from sidecar.runtime.runtime_ids import (
+    GuardedRuntimeDirectory,
+    RuntimeFileChangedError,
+    RuntimeFileRead,
+    RuntimePathError,
+)
 
 LEDGER_OPERATIONS_DIR = "operations"
 PENDING_RETAIN_UNTIL = "9999-12-31T23:59:59Z"
@@ -33,7 +39,6 @@ _REQUIRED_STRING_FIELDS = (
 _MAX_RECEIPT_BYTES = 256 * 1024
 _LOCK_TIMEOUT_SECONDS = 5.0
 _LOCK_POLL_SECONDS = 0.05
-_STALE_LOCK_SECONDS = 30.0
 _TIMESTAMP_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$"
 )
@@ -71,6 +76,15 @@ class OperationLedger:
     def root(self) -> Path:
         return self._root.path
 
+    def still_bound(self) -> bool:
+        """Whether both captured directories are still the same plain directories."""
+        try:
+            self._root.validate()
+            self._operations.validate()
+        except RuntimePathError:
+            return False
+        return True
+
     def create_pending(
         self, *, operation_id: str, request_fingerprint: str, generation_id: str, now_iso: str,
         evidence: dict[str, str] | None = None,
@@ -100,7 +114,7 @@ class OperationLedger:
                     return self._refusal("invalid_receipt")
                 self._write_receipt(operation_id, candidate)
                 return {"ok": True, "outcome": "created", "receipt": candidate}
-        except (OSError, RuntimePathError, TimeoutError):
+        except (OSError, RuntimePathError, TimeoutError, ValueError):
             return self._refusal("operation_ledger_unavailable")
 
     def settle(  # noqa: PLR0911
@@ -142,13 +156,14 @@ class OperationLedger:
                     return self._refusal("invalid_receipt")
                 self._write_receipt(operation_id, updated)
                 return {"ok": True, "outcome": "settled", "receipt": updated}
-        except (OSError, RuntimePathError, TimeoutError):
+        except (OSError, RuntimePathError, TimeoutError, ValueError):
             return self._refusal("operation_ledger_unavailable")
 
     def settle_failure(
         self, *, operation_id: str, effects: str, now_iso: str, evidence: dict[str, str],
         rollback_status: object = None,
-    ) -> str:
+    ) -> tuple[str, dict[str, object]]:
+        """Settle a failed call; return the chosen status and the settle result."""
         status = (
             ledger_status_for_rollback(rollback_status)
             if rollback_status is not None
@@ -157,13 +172,13 @@ class OperationLedger:
         settled_evidence = dict(evidence)
         if status == "failed" and effects == "none":
             settled_evidence["effects"] = "none"
-        self.settle(
+        result = self.settle(
             operation_id=operation_id,
             status=status,
             now_iso=now_iso,
             evidence=settled_evidence,
         )
-        return status
+        return status, result
 
     def settle_result(  # noqa: PLR0913
         self, *, operation_id: str, success: bool, output_text: str,
@@ -185,7 +200,9 @@ class OperationLedger:
         result = self.settle(
             operation_id=operation_id,
             status=status,
-            terminal_result_digest="sha256:" + hashlib.sha256(output_text.encode()).hexdigest(),
+            terminal_result_digest="sha256:" + hashlib.sha256(
+                output_text.encode("utf-8", "surrogatepass")
+            ).hexdigest(),
             now_iso=now_iso,
             evidence=settled_evidence,
         )
@@ -294,8 +311,12 @@ class OperationLedger:
     ) -> dict[str, int]:
         pending_count = 0
         corrupt_count = 0
+        corrupt_removed_count = 0
         expired_removed_count = 0
+        cap_evicted_count = 0
+        failed: list[Path] = []
         terminals: list[dict] = []
+        now = _parse_iso(now_iso)
         try:
             with self._locked():
                 for path in self._operations.path.glob("*.json"):
@@ -303,14 +324,15 @@ class OperationLedger:
                     existing = self._get_receipt(operation_id)
                     if existing["corrupted"]:
                         corrupt_count += 1
+                        if _corrupt_receipt_aged_out(path, now) and _unlink(path, failed):
+                            corrupt_removed_count += 1
                         continue
                     receipt = existing.get("receipt")
                     if not isinstance(receipt, dict):
                         continue
                     if receipt["status"] in _TERMINAL_STATUSES:
                         if _is_expired(receipt, now_iso):
-                            path.unlink()
-                            expired_removed_count += 1
+                            expired_removed_count += int(_unlink(path, failed))
                         else:
                             terminals.append(receipt)
                     else:
@@ -322,20 +344,21 @@ class OperationLedger:
                         str(item["operation_id"]),
                     )
                 )
-                cap_evicted_count = 0
                 valid_cap = isinstance(max_terminal, int) and not isinstance(max_terminal, bool)
                 if valid_cap and max_terminal >= 0:
                     overflow = max(0, len(terminals) - max_terminal)
                     for receipt in terminals[:overflow]:
-                        self._receipt_path(str(receipt["operation_id"])).unlink()
-                        cap_evicted_count += 1
+                        target = self._receipt_path(str(receipt["operation_id"]))
+                        cap_evicted_count += int(_unlink(target, failed))
         except (OSError, RuntimePathError, TimeoutError):
-            cap_evicted_count = 0
+            pass
         return {
             "pending_count": pending_count,
             "corrupt_count": corrupt_count,
+            "corrupt_removed_count": corrupt_removed_count,
             "cap_evicted_count": cap_evicted_count,
             "expired_removed_count": expired_removed_count,
+            "unlink_failed_count": len(failed),
         }
 
     @staticmethod
@@ -348,14 +371,18 @@ class OperationLedger:
     def _receipt_path(self, operation_id: str) -> Path:
         return self._operations.validate_file_target(f"{operation_id}.json")
 
+    def _read_receipt_bytes(self, name: str) -> RuntimeFileRead | None:
+        try:
+            return self._operations.read_bytes(name, max_bytes=_MAX_RECEIPT_BYTES, missing_ok=True)
+        except RuntimeFileChangedError:
+            # A lock-free read that raced an atomic replace saw the old file
+            # identity and then the new one; the replacement is complete now.
+            return self._operations.read_bytes(name, max_bytes=_MAX_RECEIPT_BYTES, missing_ok=True)
+
     def _get_receipt(self, operation_id: str) -> dict[str, object]:
         name = f"{operation_id}.json"
         try:
-            read = self._operations.read_bytes(
-                name,
-                max_bytes=_MAX_RECEIPT_BYTES,
-                missing_ok=True,
-            )
+            read = self._read_receipt_bytes(name)
         except RuntimePathError:
             return {"found": False, "corrupted": True}
         if read is None:
@@ -399,7 +426,7 @@ class OperationLedger:
     def _write_receipt(self, operation_id: str, receipt: dict[str, object]) -> None:
         payload = json.dumps(
             receipt,
-            ensure_ascii=False,
+            ensure_ascii=True,
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
@@ -419,50 +446,41 @@ class OperationLedger:
 
     @contextmanager
     def _locked(self) -> Iterator[None]:
+        # An OS advisory lock: the kernel drops it when the holder dies, so a
+        # slow or crashed writer never needs an age-based takeover that could
+        # let two writers in at once.
         self._operations.validate()
-        lock_path = self._operations.path / ".lock"
         deadline = time.monotonic() + _LOCK_TIMEOUT_SECONDS
-        lock_fd: int | None = None
-        lock_token = uuid4().hex
-        while lock_fd is None:
-            try:
-                lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
-            except FileExistsError:
-                try:
-                    age_seconds = time.time() - lock_path.stat().st_mtime
-                    if age_seconds >= _STALE_LOCK_SECONDS:
-                        lock_path.unlink()
-                        continue
-                except FileNotFoundError:
-                    continue
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(
-                        "timed out waiting for operation ledger lock"
-                    ) from None
-                time.sleep(_LOCK_POLL_SECONDS)
-            except PermissionError:
-                # Windows refuses to create a file another process is still
-                # deleting: the previous holder is releasing the lock.
-                if os.name != "nt" or time.monotonic() >= deadline:
-                    raise
-                time.sleep(_LOCK_POLL_SECONDS)
-        try:
-            written = os.write(lock_fd, lock_token.encode("ascii"))
-            if written != len(lock_token):
-                raise OSError("failed to write operation ledger lock token")
-            os.fsync(lock_fd)
-        except OSError:
-            os.close(lock_fd)
-            try:
-                lock_path.unlink()
-            except FileNotFoundError:
-                pass
-            raise
-        os.close(lock_fd)
-        try:
+        with advisory_file_lock(
+            self._operations.path / ".lock", deadline, poll_seconds=_LOCK_POLL_SECONDS
+        ):
             yield
-        finally:
-            _release_lock_if_owned(lock_path, lock_token)
+
+
+def _unlink(path: Path, failed: list[Path]) -> bool:
+    """Remove one receipt; a locked file is recorded and never aborts a sweep."""
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        failed.append(path)
+        return False
+    return True
+
+
+def _corrupt_receipt_aged_out(path: Path, now: datetime | None) -> bool:
+    """A corrupt plain receipt file untouched for the full retention window."""
+    if now is None:
+        return False
+    try:
+        value = path.lstat()
+    except OSError:
+        return False
+    if not stat_module.S_ISREG(value.st_mode):
+        return False
+    modified = datetime.fromtimestamp(value.st_mtime, tz=timezone.utc)
+    return now - modified >= timedelta(days=_DEFAULT_RETENTION_DAYS)
 
 
 def _scan_stamp(entry: os.DirEntry[str]) -> tuple[int, int] | None:
@@ -485,19 +503,6 @@ def ledger_status_for_rollback(status: object) -> str:
         "partial": "indeterminate",
         "failed": "indeterminate",
     }.get(str(status), "indeterminate")
-
-
-def _release_lock_if_owned(lock_path: Path, lock_token: str) -> None:
-    try:
-        current_token = lock_path.read_text(encoding="ascii")
-    except (OSError, UnicodeDecodeError):
-        return
-    if current_token != lock_token:
-        return
-    try:
-        lock_path.unlink()
-    except FileNotFoundError:
-        pass
 
 
 def _parse_iso(value: object) -> datetime | None:
@@ -526,9 +531,8 @@ def _default_retain_until(now_iso: str) -> str | None:
     return deadline.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-# Stable re-exports: the call-side helpers moved to operation_ledger_calls to
-# keep this store under the 600-line ratchet; every consumer imports them from
-# here.
+# Stable re-exports: the call-side helpers live in operation_ledger_calls so
+# this module stays the store alone; every consumer imports them from here.
 from sidecar.runtime.operation_ledger_calls import (  # noqa: E402, F401
     OperationLedgerCall,
     derive_idempotency_key,
@@ -538,4 +542,5 @@ from sidecar.runtime.operation_ledger_calls import (  # noqa: E402, F401
     reconcile_content_addressed_pending,
     recorded_operation_outcome,
     render_operation_status,
+    workspace_evidence_marker,
 )

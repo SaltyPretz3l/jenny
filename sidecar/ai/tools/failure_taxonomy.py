@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 
 from sidecar.ai import error_codes
@@ -53,6 +54,7 @@ TAXONOMY: Mapping[str, str] = {
     error_codes.CMP_TOOL_MERMAID_VALIDATION: "bad_arguments",
     error_codes.CMP_TOOL_MERMAID_UNSUPPORTED_TYPE: "bad_arguments",
     error_codes.CMP_TOOL_MERMAID_FORMAT: "bad_arguments",
+    error_codes.CMP_TOOL_REVIEW_FINDINGS_INVALID: "bad_arguments",
     error_codes.CMP_TOOL_APPLY_PATCH_PARSE_FAILED: "bad_arguments",
     error_codes.CMP_TOOL_SUBAGENT_INVALID_PROMPT: "bad_arguments",
     error_codes.CMP_TOOL_SUBAGENT_INVALID_GRANTS: "bad_arguments",
@@ -66,6 +68,7 @@ TAXONOMY: Mapping[str, str] = {
     error_codes.CMP_CHAT_INVALID_PARAMS: "bad_arguments",
     error_codes.CMP_BACKGROUND_INVALID_PARAMS: "bad_arguments",
     error_codes.CMP_WEB_INVALID_URL: "bad_arguments",
+    error_codes.CMP_WEB_INVALID_QUERY: "bad_arguments",
     error_codes.CMP_TSRCH_INVALID_QUERY: "bad_arguments",
     # Required prior state is absent.
     error_codes.CMP_TOOL_READ_SNAPSHOT_REQUIRED: "precondition_unmet",
@@ -189,6 +192,11 @@ TAXONOMY: Mapping[str, str] = {
     error_codes.CMP_CATALOG_INVALID_PARAMS: "bad_arguments",
     error_codes.CMP_CATALOG_CAPACITY_REACHED: "limit_exceeded",
     error_codes.CMP_CATALOG_EMBEDDER_INVALID_PAYLOAD: "internal_error",
+    # Push-to-talk dictation (row 84): wire-only codes on speech.prepare/transcribe.
+    error_codes.CMP_SPEECH_MODEL_INVALID: "unavailable",
+    error_codes.CMP_SPEECH_INVALID_AUDIO: "bad_arguments",
+    error_codes.CMP_SPEECH_ENGINE_FAILED: "transient",
+    error_codes.CMP_SPEECH_PACKAGE_UNAVAILABLE: "unavailable",
     error_codes.CMP_MCP_RESOURCE_INVALID: "internal_error",
     error_codes.CMP_MCP_TOOL_SURFACE_CHANGED: "internal_error",
     error_codes.CMP_LOOP_MAX_ITERATIONS: "internal_error",
@@ -211,22 +219,50 @@ TAXONOMY: Mapping[str, str] = {
 }
 
 
+# The call itself asked for something wrong (a missing heading, a bad argument, an over-limit read):
+# the model gets the reason and retries with changed arguments. Nothing in Jenny or the tool failed,
+# so the log sites record these at INFO; a WARN there reads as an app fault (owner run 2026-10-27:
+# one missed Markdown heading wrote three warnings).
+MODEL_INPUT_FAILURE_CLASSES: frozenset[str] = frozenset(
+    {"bad_arguments", "not_found", "precondition_unmet", "limit_exceeded"}
+)
+
+
+def failure_log_level(
+    error_code: str | None,
+    *,
+    retryable: bool | None = None,
+    error_details: Mapping[str, object] | None = None,
+) -> int:
+    """INFO for a failure the model caused with its arguments, WARNING for everything else."""
+    failure_class = classify(error_code, retryable=retryable, error_details=error_details)
+    return logging.INFO if failure_class in MODEL_INPUT_FAILURE_CLASSES else logging.WARNING
+
+
 def classify(
     error_code: str | None,
     *,
-    retryable: bool = False,
+    retryable: bool | None = None,
     error_details: Mapping[str, object] | None = None,
 ) -> str:
-    """Return the closed failure class for an error without raising."""
+    """Return the closed failure class for an error without raising.
+
+    ``retryable`` is the failing call's own flag when known (``None`` = unknown).
+    An unknown code falls back on it; a known "transient" code the call itself
+    marked non-retryable (a CMP-TOOL IO_FAILED permission error, say) becomes
+    ``precondition_unmet`` so the envelope never invites a same-args retry loop.
+    """
     try:
         if isinstance(error_details, Mapping):
             override = error_details.get("failure_class")
             if isinstance(override, str) and override in FAILURE_CLASSES:
                 return override
         normalized_code = error_code.strip() if isinstance(error_code, str) else ""
-        return TAXONOMY.get(
-            normalized_code,
-            "transient" if retryable else "internal_error",
-        )
+        failure_class = TAXONOMY.get(normalized_code)
+        if failure_class is None:
+            return "transient" if retryable else "internal_error"
+        if failure_class == "transient" and retryable is False:
+            return "precondition_unmet"
+        return failure_class
     except Exception:  # noqa: BLE001  # fail-soft
         return "transient" if retryable else "internal_error"

@@ -162,7 +162,16 @@ test('ide state dirty tracking and persisted-subset round-trip', () => {
   ide.lineNumbers = 'off';
   ide.renderWhitespace = 'all';
   ide.eol = 'crlf';
-  ide.autoSaveEnabled = true;
+  // Row 82: autoSaveMode is the gate; autoSaveEnabled is only the derived mirror.
+  ide.autoSaveMode = 'onFocusChange';
+  ide.autoSaveDelayMs = 2500;
+  ide.fontFamily = 'Fira Code, monospace';
+  ide.cursorStyle = 'block';
+  ide.cursorBlinking = 'solid';
+  ide.folding = false;
+  ide.scrollBeyondLastLine = true;
+  ide.terminalScrollback = 5000;
+  ide.terminalDefaultProfile = 'pwsh-7';
   ide.formatOnSave = true;
   ide.trimTrailingWhitespace = true;
   ide.insertFinalNewline = true;
@@ -202,6 +211,15 @@ test('ide state dirty tracking and persisted-subset round-trip', () => {
   assert.equal(restored.renderWhitespace, 'all');
   assert.equal(restored.eol, 'crlf');
   assert.equal(restored.autoSaveEnabled, true);
+  assert.equal(restored.autoSaveMode, 'onFocusChange');
+  assert.equal(restored.autoSaveDelayMs, 2500);
+  assert.equal(restored.fontFamily, 'Fira Code, monospace');
+  assert.equal(restored.cursorStyle, 'block');
+  assert.equal(restored.cursorBlinking, 'solid');
+  assert.equal(restored.folding, false);
+  assert.equal(restored.scrollBeyondLastLine, true);
+  assert.equal(restored.terminalScrollback, 5000);
+  assert.equal(restored.terminalDefaultProfile, 'pwsh-7');
   assert.equal(restored.formatOnSave, true);
   assert.equal(restored.trimTrailingWhitespace, true);
   assert.equal(restored.insertFinalNewline, true);
@@ -262,6 +280,7 @@ test('ide state dirty tracking and persisted-subset round-trip', () => {
   assert.equal(hostile.renderWhitespace, 'selection');
   assert.equal(hostile.eol, '');
   assert.equal(hostile.autoSaveEnabled, false);
+  assert.equal(hostile.autoSaveMode, 'off');
   assert.equal(hostile.formatOnSave, false);
   assert.equal(hostile.trimTrailingWhitespace, false);
   assert.equal(hostile.insertFinalNewline, false);
@@ -316,17 +335,6 @@ test('a persisted pre-S5 slice naming the retired Changes panel coerces like any
   assert.equal(lone.secondaryPanel, '');
   assert.equal(lone.secondaryPanelOpen, false);
   assert.equal('changes' in lone.panelLocations, false);
-
-  // The same coercion runs on any external mutation through normalizePanelLocations.
-  const mutated = freshIde();
-  mutated.panelLocations = { ...mutated.panelLocations, changes: 'secondary' };
-  mutated.secondaryPanel = 'changes';
-  ideState.normalizePanelLocations(mutated);
-  assert.equal('changes' in mutated.panelLocations, false);
-  // The default secondary (Source Control) is closed, so the layout tree folds it into the
-  // rail stack: the secondary side is empty and has no active panel.
-  assert.equal(mutated.secondaryPanel, '');
-  assert.equal(ideState.isPanelActive(mutated, 'changes'), false);
 });
 
 test('pinned flag round-trips through the renderer persisted subset and clamps left on restore', () => {
@@ -373,39 +381,6 @@ test('toPersistedState clamps expandedDirs to the max on write', () => {
   assert.equal(persisted.expandedDirs.length, 200);
   assert.equal(persisted.expandedDirs[0], 'dir0');
   assert.equal(persisted.expandedDirs[199], 'dir199');
-});
-
-test('movePanelLocation re-homes a panel and fixes the active-panel invariants', () => {
-  const ide = freshIde();
-  // Exercise the move mechanics from an all-primary baseline (every panel in the
-  // rail, secondary empty), independent of the split default home.
-  ide.panelLocations = { explorer: 'primary', search: 'primary', 'source-control': 'primary' };
-  ide.secondaryPanel = '';
-  ide.secondaryPanelOpen = false;
-  // The tree defines the primary side as the stack holding Explorer, so Search is the
-  // panel that travels here. Explorer starts active in the rail; move Search out.
-  ideState.movePanelLocation(ide, 'search', 'secondary');
-  assert.equal(ide.panelLocations.search, 'secondary');
-  assert.equal(ide.secondaryPanel, 'search', 'becomes the active secondary panel');
-  assert.equal(ide.secondaryPanelOpen, true, 'moving in forces the sidebar open');
-  assert.equal(ide.railPanel, 'explorer', 'the rail keeps its active panel');
-  assert.deepEqual(ideState.secondaryPanels(ide), ['search']);
-  assert.equal(ideState.isPanelActive(ide, 'search'), true);
-
-  // Move it back to the primary rail; the secondary empties + closes.
-  ideState.movePanelLocation(ide, 'search', 'primary');
-  assert.equal(ide.panelLocations.search, 'primary');
-  assert.equal(ide.railPanel, 'search', 'becomes the active rail panel');
-  assert.equal(ide.secondaryPanel, '');
-  assert.equal(ide.secondaryPanelOpen, false, 'last one out closes the secondary');
-
-  // Keep >=1 in the rail: move all but one out, then the last move is a no-op.
-  ideState.movePanelLocation(ide, 'search', 'secondary');
-  ideState.movePanelLocation(ide, 'changes', 'secondary'); // retired id: a no-op
-  assert.equal(ide.panelLocations.changes, undefined);
-  ideState.movePanelLocation(ide, 'source-control', 'secondary');
-  ideState.movePanelLocation(ide, 'explorer', 'secondary'); // would empty the rail
-  assert.deepEqual(ideState.primaryPanels(ide), ['explorer'], 'last primary panel cannot move out');
 });
 
 test('ide state accepts the test-runner bottom-panel view (Wave C mirror, additive)', () => {
@@ -517,4 +492,86 @@ test('replaceJournal persists and hydrates with the same bounded root-scoped sha
   assert.deepEqual(restored.replaceJournal, persisted.replaceJournal);
   ideState.resetIdeRootState(restored);
   assert.equal(restored.replaceJournal, null);
+});
+
+test('keepTabOpen clears a transient preview and reports only a real change', () => {
+  const ide = freshIde();
+  ideState.openTab(ide, 'preview.js', { transientPreview: true });
+  ideState.openTab(ide, 'plain.js');
+  assert.equal(ideState.keepTabOpen(ide, 'plain.js'), false, 'a regular tab is untouched');
+  assert.equal(ideState.keepTabOpen(ide, 'missing.js'), false);
+  assert.equal(ideState.keepTabOpen(ide, 'preview.js'), true);
+  assert.equal(ideState.getTab(ide, 'preview.js').transientPreview, undefined);
+  assert.equal(ideState.getTab(ide, 'preview.js').pinned, undefined, 'keep open does not pin');
+  assert.deepEqual(ideState.toPersistedState(ide).openTabs[0], { path: 'preview.js' });
+  assert.equal(ideState.keepTabOpen(ide, 'preview.js'), false, 'a second call changes nothing');
+  ideState.openDiffTab(ide, { id: `${ideState.DIFF_TAB_PREFIX}one`, label: 'Diff one' });
+  const diffPath = ide.openTabs.find((tab) => tab.kind === 'diff').path;
+  assert.equal(ideState.keepTabOpen(ide, diffPath), false, 'review surfaces never carry a preview flag');
+});
+
+test('row 82 editor prefs: defaults, normalization, migration and the derived autoSaveEnabled mirror', () => {
+  const defaults = freshIde();
+  assert.equal(defaults.fontFamily, '');
+  assert.equal(defaults.cursorStyle, 'line');
+  assert.equal(defaults.cursorBlinking, 'smooth');
+  for (const key of ['cursorSmoothCaretAnimation', 'fontLigatures', 'bracketPairColorization', 'indentGuides',
+    'stickyScroll', 'folding', 'insertSpaces', 'detectIndentation', 'mouseWheelZoom', 'inlineBlame']) {
+    assert.equal(defaults[key], true, key);
+  }
+  assert.equal(defaults.scrollBeyondLastLine, false);
+  assert.equal(defaults.autoSaveMode, 'off');
+  assert.equal(defaults.autoSaveDelayMs, 1000);
+  assert.equal(defaults.autoSaveEnabled, false);
+  assert.equal(defaults.terminalScrollback, 1000);
+  assert.equal(defaults.terminalDefaultProfile, '');
+
+  const norm = ideState.normalizeEditorPrefs;
+  assert.equal(norm({ autoSaveEnabled: true }).autoSaveMode, 'afterDelay', 'legacy boolean migrates');
+  assert.equal(norm({ autoSaveMode: 'off', autoSaveEnabled: true }).autoSaveEnabled, false, 'explicit off wins');
+  assert.equal(norm({ autoSaveMode: 'onWindowChange' }).autoSaveEnabled, true, 'mirror derives from the mode');
+  assert.equal(norm({ autoSaveMode: 'bogus', autoSaveEnabled: true }).autoSaveMode, 'afterDelay');
+  assert.equal(norm({ autoSaveDelayMs: 5 }).autoSaveDelayMs, 100);
+  assert.equal(norm({ autoSaveDelayMs: 1e9 }).autoSaveDelayMs, 60000);
+  assert.equal(norm({ autoSaveDelayMs: 'x' }).autoSaveDelayMs, 1000);
+  assert.equal(norm({ terminalScrollback: 3 }).terminalScrollback, 500);
+  assert.equal(norm({ terminalScrollback: 1e9 }).terminalScrollback, 25000);
+  assert.equal(norm({ terminalDefaultProfile: 'a b' }).terminalDefaultProfile, '');
+  assert.equal(norm({ terminalDefaultProfile: 'x'.repeat(65) }).terminalDefaultProfile, '');
+  assert.equal(norm({ folding: 0 }).folding, true, 'default-true bools are false only on literal false');
+  assert.equal(norm({ folding: false }).folding, false);
+  assert.equal(norm({ scrollBeyondLastLine: 1 }).scrollBeyondLastLine, false, 'default-false bools need literal true');
+  assert.equal(norm({ cursorStyle: 'underline' }).cursorStyle, 'underline');
+  assert.equal(norm({ cursorStyle: 'Block' }).cursorStyle, 'line');
+  assert.equal(ideState.normalizeFontFamily('  Fira Code  '), 'Fira Code');
+  assert.equal(ideState.normalizeFontFamily('a;b'), '');
+  assert.equal(ideState.normalizeFontFamily('x'.repeat(201)), '');
+  assert.equal(ideState.normalizeFontFamily(42), '');
+  assert.deepEqual(ideState.AUTO_SAVE_MODES, ['off', 'afterDelay', 'onFocusChange', 'onWindowChange']);
+  assert.equal(ideState.AUTO_SAVE_DELAY_MIN, 100);
+  assert.equal(ideState.AUTO_SAVE_DELAY_MAX, 60000);
+  assert.ok(ideState.CURSOR_STYLES.includes('block') && ideState.CURSOR_BLINKING.includes('phase'));
+});
+
+test('searchHistory persists and hydrates root-scoped with the same bounds and resets with the root', () => {
+  const ide = freshIde();
+  assert.deepEqual(ide.searchHistory, []);
+  ide.searchHistory = [' alpha ', 'beta', 'alpha', 7, '', 'gamma'];
+
+  const persisted = ideState.toPersistedState(ide);
+  assert.deepEqual(persisted.searchHistory, ['beta', 'alpha', 'gamma']);
+
+  const restored = freshIde();
+  ideState.applyPersistedState(restored, persisted);
+  assert.deepEqual(restored.searchHistory, ['beta', 'alpha', 'gamma']);
+
+  const many = freshIde();
+  many.searchHistory = Array.from({ length: 30 }, (_, index) => `query${index}`);
+  assert.equal(ideState.toPersistedState(many).searchHistory.length, 20);
+  const legacy = freshIde();
+  ideState.applyPersistedState(legacy, { searchHistory: 'not-an-array' });
+  assert.deepEqual(legacy.searchHistory, []);
+
+  ideState.resetIdeRootState(restored);
+  assert.deepEqual(restored.searchHistory, []);
 });

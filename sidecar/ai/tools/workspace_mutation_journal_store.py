@@ -35,6 +35,7 @@ from sidecar.ai.tools.workspace_mutation_journal_contract import (
     workspace_identity,
 )
 from sidecar.ai.tools.workspace_mutation_live_owner import reconcile_abandoned_journal
+from sidecar.runtime.diagnostics import log_event
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,8 @@ MAX_RECOVERY_OBJECT_BYTES_PER_WORKSPACE = 768 * 1024 * 1024
 MAX_JOURNAL_RECEIPT_BYTES_PER_WORKSPACE = 16 * 1024 * 1024
 MAX_RECEIPT_BYTES = 8 * 1024
 MAX_SCAN_CHANGE_SETS = 10_000
+# Workspaces whose usage index a store keeps (least recently scanned evicted).
+MAX_INDEXED_WORKSPACES = 64
 LOCK_TIMEOUT_SECONDS = 15.0
 ACTIVE_RETENTION_SECONDS = 30 * 24 * 60 * 60
 TEMP_CLEANUP_MIN_AGE_SECONDS = 300
@@ -107,6 +110,10 @@ class WorkspaceMutationJournalStore:
         self.on_evict = on_evict
         self.on_commit = on_commit
         self.now_provider = now_provider or (lambda: datetime.now(UTC))
+        # Per-workspace usage index: each set's validated record keyed by its
+        # journal file's (mtime_ns, size, file id); dropped on every write here.
+        # Most recently scanned workspace last; bounded by MAX_INDEXED_WORKSPACES.
+        self._scan_cache: dict[str, dict[str, tuple[tuple[int, int, int], _StoredSet]]] = {}
         self._cleanup_orphan_temps()
 
     @classmethod
@@ -167,17 +174,13 @@ class WorkspaceMutationJournalStore:
                 and item.record["turn_id"] == turn_id
             ]
         except (OSError, ValueError) as error:
-            return _store_failure(
-                "journal_lookup_failed",
-                "Workspace recovery turn lookup failed.",
-                (type(error).__name__,),
-            )
+            return _store_failure("journal_lookup_failed", "Workspace recovery turn lookup failed.",
+                                  (type(error).__name__,))
         if len(matches) > 1:
-            return _store_failure(
-                "journal_turn_ambiguous",
-                "Multiple open workspace recovery sets matched one turn.",
-            )
-        return StoreResult(ok=True, record=matches[0] if matches else None)
+            return _store_failure("journal_turn_ambiguous",
+                                  "Multiple open workspace recovery sets matched one turn.")
+        # Scanned records are shared with the usage index: hand out a copy.
+        return StoreResult(ok=True, record=copy.deepcopy(matches[0]) if matches else None)
 
     def reserve(self, record: Mapping[str, Any]) -> StoreResult:
         """Reserve hard quotas, evicting only oldest eligible sets."""
@@ -194,11 +197,9 @@ class WorkspaceMutationJournalStore:
         except Timeout:
             return _store_failure("journal_lock_timeout", "Workspace journal lock timed out.")
         except (OSError, ValueError) as error:
-            return _store_failure(
-                "journal_reservation_failed",
-                "Workspace recovery quota could not be reserved.",
-                (type(error).__name__,),
-            )
+            return _store_failure("journal_reservation_failed",
+                                  "Workspace recovery quota could not be reserved.",
+                                  (type(error).__name__,))
 
     def write_transition(
         self,
@@ -234,11 +235,8 @@ class WorkspaceMutationJournalStore:
                         "journal_retention_update_invalid",
                         "Workspace retention update changed immutable journal data.",
                     )
-                previous_state = (
-                    previous.record["state"]
-                    if previous.ok and previous.record
-                    else None
-                )
+                previous_state = (previous.record["state"]
+                                  if previous.ok and previous.record else None)
                 result = self._write_transition_locked(
                     sealed, data, workspace_root, transfer_commit_pin=not retention_only
                 )
@@ -251,15 +249,11 @@ class WorkspaceMutationJournalStore:
         except Timeout:
             return _store_failure("journal_lock_timeout", "Workspace journal lock timed out.")
         except (OSError, ValueError) as error:
-            logger.warning(
-                "workspace_mutation_journal_write_failed",
-                extra={"reason": type(error).__name__},
-            )
-            result = _store_failure(
-                "journal_write_failed",
-                "Workspace journal could not be written durably.",
-                (type(error).__name__,),
-            )
+            logger.warning("workspace_mutation_journal_write_failed",
+                           extra={"reason": type(error).__name__})
+            result = _store_failure("journal_write_failed",
+                                    "Workspace journal could not be written durably.",
+                                    (type(error).__name__,))
             notify_commit = False
         if notify_commit:
             self._notify_commit(workspace_id, change_set_id)
@@ -279,6 +273,7 @@ class WorkspaceMutationJournalStore:
         if not reservation.ok:
             return reservation
         journal_path = self.journal_path(workspace_id, change_set_id)
+        self._forget(workspace_id, change_set_id)
         _write_bytes_durable(journal_path, data, through_directory=self.version_root)
         verification = self.load(workspace_id, change_set_id)
         if not verification.ok:
@@ -314,13 +309,9 @@ class WorkspaceMutationJournalStore:
         try:
             identity = workspace_identity(workspace_root)
         except (OSError, ValueError) as error:
-            return (
-                _store_failure(
-                    "workspace_identity_unavailable",
-                    "Workspace identity could not be verified.",
-                    (type(error).__name__,),
-                ),
-            )
+            return (_store_failure("workspace_identity_unavailable",
+                                   "Workspace identity could not be verified.",
+                                   (type(error).__name__,)),)
         results: list[StoreResult] = []
         try:
             with self._lock(identity.workspace_id):
@@ -333,17 +324,12 @@ class WorkspaceMutationJournalStore:
                         if result is not None:
                             results.append(result)
         except Timeout:
-            results.append(
-                _store_failure("journal_lock_timeout", "Workspace journal lock timed out.")
-            )
+            results.append(_store_failure("journal_lock_timeout",
+                                          "Workspace journal lock timed out."))
         except (OSError, ValueError) as error:
-            results.append(
-                _store_failure(
-                    "journal_reconciliation_failed",
-                    "Workspace journal reconciliation failed.",
-                    (type(error).__name__,),
-                )
-            )
+            results.append(_store_failure("journal_reconciliation_failed",
+                                          "Workspace journal reconciliation failed.",
+                                          (type(error).__name__,)))
         return tuple(results)
 
     def complete_no_effect_rollback(
@@ -369,11 +355,8 @@ class WorkspaceMutationJournalStore:
         except Timeout:
             return _store_failure("journal_lock_timeout", "Workspace journal lock timed out.")
         except (OSError, ValueError) as error:
-            return _store_failure(
-                "journal_rollback_failed",
-                "Workspace no-effect rollback failed.",
-                (type(error).__name__,),
-            )
+            return _store_failure("journal_rollback_failed", "Workspace no-effect rollback failed.",
+                                  (type(error).__name__,))
 
     def _complete_no_effect_rollback_locked(
         self,
@@ -457,15 +440,10 @@ class WorkspaceMutationJournalStore:
                 None,
             )
             if candidate is None:
-                return StoreResult(
-                    ok=False,
-                    failure=ContractFailure(
-                        code=CMP_TOOL_OUTSIDE_WORKSPACE,
-                        reason="journal_quota_exceeded",
-                        message="Workspace recovery quota cannot be reserved safely.",
-                    ),
-                    evicted_change_set_ids=(),
-                )
+                return StoreResult(ok=False, failure=ContractFailure(
+                    code=CMP_TOOL_OUTSIDE_WORKSPACE, reason="journal_quota_exceeded",
+                    message="Workspace recovery quota cannot be reserved safely.",
+                ), evicted_change_set_ids=())
             stored_sets.remove(candidate)
             eviction_plan.append(candidate)
         for candidate in eviction_plan:
@@ -479,6 +457,7 @@ class WorkspaceMutationJournalStore:
         workspace_path = self.version_root / workspace_id
         if not workspace_path.is_dir() or workspace_path.is_symlink():
             return []
+        cache = self._index_for(workspace_id)
         records: list[_StoredSet] = []
         scanned = 0
         for child in sorted(workspace_path.iterdir(), key=lambda item: item.name):
@@ -489,29 +468,57 @@ class WorkspaceMutationJournalStore:
                 logger.warning("workspace_mutation_journal_scan_bounded")
                 break
             scanned += 1
-            journal_path = child / "journal.json"
             try:
-                journal_bytes = journal_path.stat().st_size
+                journal_stat = (child / "journal.json").stat()
             except OSError:
                 continue
-            loaded = self.load(workspace_id, child.name)
-            if not loaded.ok or loaded.record is None:
-                logger.warning(
-                    "workspace_mutation_journal_ignored",
-                    extra={"change_set_id": child.name},
-                )
-                continue
-            wall_time = cast(dict[str, Any], loaded.record["wall_time"])
-            records.append(
-                _StoredSet(
-                    change_set_id=child.name,
-                    path=child,
-                    record=loaded.record,
-                    journal_bytes=journal_bytes,
-                    sort_key=(cast(str, wall_time["prepared_at"]), child.name),
-                )
-            )
+            # An unchanged journal file reuses its validated record; a cold or
+            # changed one is read, schema-checked and re-indexed exactly as before.
+            key = (journal_stat.st_mtime_ns, journal_stat.st_size, journal_stat.st_ino)
+            cached = cache.get(child.name)
+            stored = (cached[1] if cached is not None and cached[0] == key
+                      else self._load_stored(workspace_id, child, journal_stat.st_size))
+            if stored is not None:
+                cache[child.name] = (key, stored)
+                records.append(stored)
+        for name in set(cache).difference(item.change_set_id for item in records):
+            cache.pop(name, None)  # set(cache) copies atomically: a scan may run on any thread
         return sorted(records, key=lambda item: item.sort_key)
+
+    def _load_stored(self, workspace_id: str, child: Path, journal_bytes: int) -> _StoredSet | None:
+        loaded = self.load(workspace_id, child.name)
+        record = loaded.record if loaded.ok else None
+        if record is None:
+            logger.warning("workspace_mutation_journal_ignored",
+                           extra={"change_set_id": child.name})
+            return None
+        if (record["change_set_id"] != child.name
+                or record["workspace"]["workspace_id"] != workspace_id):
+            # A journal copied under another set or workspace directory: eviction
+            # would refuse to remove it, failing every later transition.
+            log_event(logger, logging.WARNING, component="ai.tools.workspace_mutation_journal",
+                      event="ai.tools.workspace_mutation_journal.misplaced_ignored",
+                      message="Ignored a workspace journal whose ids differ from its directory",
+                      status="degraded", data={"change_set_id": child.name})
+            return None
+        prepared_at = cast(str, cast(dict[str, Any], record["wall_time"])["prepared_at"])
+        return _StoredSet(child.name, child, record, journal_bytes, (prepared_at, child.name))
+
+    def _index_for(self, workspace_id: str) -> dict[str, tuple[tuple[int, int, int], _StoredSet]]:
+        cache = self._scan_cache.pop(workspace_id, {})
+        self._scan_cache[workspace_id] = cache
+        while len(self._scan_cache) > MAX_INDEXED_WORKSPACES:
+            try:
+                oldest = next(iter(self._scan_cache))
+            except (RuntimeError, StopIteration):  # resized by another thread's scan
+                break
+            if oldest == workspace_id:
+                break
+            self._scan_cache.pop(oldest, None)
+        return cache
+
+    def _forget(self, workspace_id: str, change_set_id: str) -> None:
+        self._scan_cache.get(workspace_id, {}).pop(change_set_id, None)
 
     def _scan_all_records(self, workspace_id: str | None) -> list[_StoredSet]:
         if workspace_id is not None:
@@ -530,6 +537,7 @@ class WorkspaceMutationJournalStore:
             raise ValueError("journal eviction target escaped its workspace recovery root")
         if stored.path.is_symlink() or _is_junction(stored.path):
             raise ValueError("journal eviction target is an unsafe link")
+        self._forget(expected_parent.name, stored.change_set_id)
         shutil.rmtree(stored.path)
         _fsync_directory(expected_parent)
         if self.on_evict is not None:
@@ -554,6 +562,7 @@ class WorkspaceMutationJournalStore:
             data = canonical_json_bytes(seal_record(updated))
             with self._lock(workspace_id, stored.change_set_id):
                 journal_path = stored.path / "journal.json"
+                self._forget(workspace_id, stored.change_set_id)
                 _write_bytes_durable(journal_path, data, through_directory=self.version_root)
                 verified = self.load(workspace_id, stored.change_set_id)
                 if not verified.ok:

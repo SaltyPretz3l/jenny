@@ -69,6 +69,7 @@ PYINSTALLER_EXCLUDED_MODULES: tuple[str, ...] = (
     "fitz",
     "huggingface_hub",
     "numpy",
+    "onnx_asr",
     "onnxruntime",
     "PIL",
     "pymupdf",

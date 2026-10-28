@@ -9,6 +9,8 @@ const actionButton = require('../renderer/inventory/action-button');
 const textField = require('../renderer/inventory/text-field');
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+// Row actions are injected on a row's first hover or focus (cleanup G6): reveal every row's.
+const revealRows = (root) => root.querySelectorAll('.ide-scm-row').forEach((row) => row.dispatchEvent(new row.ownerDocument.defaultView.Event('focusin', { bubbles: true })));
 
 // Fresh snapshot per test (mutated by the fake onCommit to model the store
 // refresh that drops staged files after a successful commit).
@@ -73,6 +75,7 @@ function setup(snapshot, opts = {}) {
   const panel = createIdeSourceControlPanel(deps);
   panel.bindEvents();
   panel.renderSourceControlPanel();
+  revealRows(panelEl);
   return { dom, doc, panelEl, panel, calls };
 }
 

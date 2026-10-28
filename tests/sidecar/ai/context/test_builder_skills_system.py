@@ -20,6 +20,7 @@ from sidecar.ai.context.builder_shared import (
     MAX_WORKSPACE_CONTEXT_PROMPT_BYTES,
     _extract_frontmatter,
 )
+from tests.sidecar._platform_skips import requires_file_symlinks
 
 
 @pytest.mark.parametrize(
@@ -318,19 +319,14 @@ def test_legacy_workspace_skill_is_rendered_inline_without_unloadable_scope(tmp_
     assert 'scope="workspace"' not in prompt
 
 
+@requires_file_symlinks()
 def test_skill_loader_rejects_link_escape(tmp_path) -> None:
     scope_root = tmp_path / "project"
     linked_dir = scope_root / "linked"
     outside = tmp_path / "outside.md"
     linked_dir.mkdir(parents=True)
     outside.write_text("---\nname: Escaped Secret\n---\nSECRET\n", encoding="utf-8")
-    try:
-        (linked_dir / "SKILL.md").symlink_to(outside)
-    except OSError as error:
-        # Unprivileged Windows cannot create symlinks. Keep this skip narrow: it
-        # used to also gate the oversized-file assertion now in the test below,
-        # which left the size guard with NO coverage on the platform we ship on.
-        pytest.skip(f"symlink creation unavailable: {error}")
+    (linked_dir / "SKILL.md").symlink_to(outside)
 
     prompt = ContextBuilder(
         tmp_path / "workspace",
@@ -446,17 +442,15 @@ def test_skill_discovery_honors_depth_and_monotonic_deadline(monkeypatch, tmp_pa
     assert "time_budget" in discovery.truncation_reasons
 
 
+@requires_file_symlinks()
 def test_workspace_prompt_files_refuse_symlink_escape(tmp_path) -> None:
     workspace = tmp_path / "workspace"
     bootstrap = workspace / "BOOTSTRAP"
     bootstrap.mkdir(parents=True)
     outside = tmp_path / "outside.md"
     outside.write_text("TOP SECRET BOOTSTRAP", encoding="utf-8")
-    try:
-        (bootstrap / "IDENTITY.md").symlink_to(outside)
-        (workspace / "agentj.md").symlink_to(outside)
-    except OSError as error:
-        pytest.skip(f"symlink creation unavailable: {error}")
+    (bootstrap / "IDENTITY.md").symlink_to(outside)
+    (workspace / "agentj.md").symlink_to(outside)
 
     prompt = ContextBuilder(workspace).build_system_prompt("Base")
 

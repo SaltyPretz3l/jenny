@@ -53,9 +53,9 @@
 
   // The Chats list's relative time ("5m", "3h", "Sep 3"): one age vocabulary.
   function resolveFormatSessionTime() {
-    const panel = (typeof globalThis !== 'undefined' && globalThis.rendererChatsPanel)
-      || (typeof require === 'function' ? require('./renderer-chats-panel') : null);
-    return panel && typeof panel.formatSessionTime === 'function' ? panel.formatSessionTime : () => '';
+    const tree = (typeof globalThis !== 'undefined' && globalThis.rendererChatsPanelTree)
+      || (typeof require === 'function' ? require('./renderer-chats-panel-tree') : null);
+    return tree && typeof tree.formatSessionTime === 'function' ? tree.formatSessionTime : () => '';
   }
 
   // Accepts the backend row (root_path, authority_key, folder_exists,
@@ -413,7 +413,8 @@
       host.dataset.runtimeLoading = pending ? 'true' : 'false';
       let html = ''
         + '<div class="settings-card-header">'
-        + '<h3 data-i18n="settings.sections.projects.title">' + escapeHtml(jt('settings.sections.projects.title', 'Projects')) + '</h3>'
+        // tabindex: the nav moves focus to the active page's heading.
+        + '<h3 tabindex="-1" data-i18n="settings.sections.projects.title">' + escapeHtml(jt('settings.sections.projects.title', 'Projects')) + '</h3>'
         + button({ id: 'projects-new-folder', label: jt('settings.projects.newFromFolderAction', 'New project from folder'), variant: 'primary',
           ariaLabel: jt('settings.projects.newFromFolderAction', 'New project from folder'), disabled: locked || !canCreate })
         + '</div>'
@@ -465,15 +466,13 @@
       refreshQueued = false;
       applyQueued = false;
       const generation = ++requestGeneration;
-      pending = true;
-      render();
       if (!api || typeof api.list !== 'function') {
-        if (!disposed && generation === requestGeneration) {
-          pending = false;
-          setStatus(unavailableMessage(), 'danger');
-        }
+        pending = false;
+        setStatus(unavailableMessage(), 'danger');
         return [];
       }
+      pending = true;
+      render();
       try {
         const result = await api.list();
         if (disposed || generation !== requestGeneration) return projects.slice();

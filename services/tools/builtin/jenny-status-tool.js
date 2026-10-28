@@ -2,6 +2,7 @@
 
 const { TOOL_ERROR_CODES } = require('../../backend/error-codes');
 const { normalizeText: normalizeString } = require('../../shared/normalize');
+const { manifestSchema } = require('./tool-result');
 
 const MAX_RECENT_LOG_LIMIT = 50;
 
@@ -13,35 +14,38 @@ function normalizePositiveInteger(value, max) {
   return Math.min(numeric, max);
 }
 
-function normalizeBooleanOption(source, snakeName, camelName) {
-  if (source[snakeName] === true || source[camelName] === true) {
-    return true;
-  }
-  if (source[snakeName] === false || source[camelName] === false) {
-    return false;
-  }
-  return undefined;
-}
-
-function normalizeStatusOptions(input = {}) {
+// The session is the calling chat's, from the trusted context; a model-supplied
+// session_id is ignored so one chat cannot read another's cost details. The
+// harness facet (the whole tools/memories/skills inspection) is opt-in: most
+// status questions never need it and composing it costs a sidecar round-trip.
+function normalizeStatusOptions(input, context) {
   const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const options = {};
-  const sessionId = normalizeString(source.session_id || source.sessionId);
+  const options = { include_harness: source.include_harness === true };
+  const sessionId = normalizeString(context.sessionId);
   if (sessionId) {
     options.session_id = sessionId;
   }
-  const recentLogLimit = normalizePositiveInteger(
-    source.recent_log_limit ?? source.recentLogLimit,
-    MAX_RECENT_LOG_LIMIT
-  );
+  const recentLogLimit = normalizePositiveInteger(source.recent_log_limit, MAX_RECENT_LOG_LIMIT);
   if (recentLogLimit != null) {
     options.recent_log_limit = recentLogLimit;
   }
-  const includeHarness = normalizeBooleanOption(source, 'include_harness', 'includeHarness');
-  if (includeHarness != null) {
-    options.include_harness = includeHarness;
+  if (context.executionAuthority) {
+    options.executionAuthority = context.executionAuthority;
   }
   return options;
+}
+
+// Usage history is global; its per-turn rows are narrowed to the calling chat.
+function scopeUsageToSession(status, sessionId) {
+  const usage = status?.usage;
+  if (!usage || !Array.isArray(usage.recent_turns)) return status;
+  return {
+    ...status,
+    usage: {
+      ...usage,
+      recent_turns: sessionId ? usage.recent_turns.filter((row) => row?.session_id === sessionId) : [],
+    },
+  };
 }
 
 function summarizeStatusPayload(status) {
@@ -67,48 +71,27 @@ function unavailableResult(message) {
 
 module.exports = {
   name: 'jenny_status',
-  description: 'Returns a read-only Jenny status snapshot across backend, runtime, harness, logs, cost, schemas, and budget posture.',
+  ...manifestSchema('jenny_status'),
   category: 'diagnostics',
   readOnly: true,
   workspaceRequired: false,
-  parameters: {
-    type: 'object',
-    properties: {
-      session_id: {
-        type: 'string',
-        description: 'Optional session id for session-scoped cost details.',
-      },
-      recent_log_limit: {
-        type: 'integer',
-        minimum: 1,
-        maximum: MAX_RECENT_LOG_LIMIT,
-        description: 'Maximum number of recent log entries and warning/error samples to include.',
-      },
-      include_harness: {
-        type: 'boolean',
-        description: 'Whether to include the harness inspection facet. Defaults to true.',
-      },
-    },
-    additionalProperties: false,
-  },
 
   summarize() {
     return 'Jenny status';
   },
 
-  async execute(input, context) {
+  async execute(input, context = {}) {
     const backendService = context?.backendService;
     if (!backendService || typeof backendService.getJennyStatus !== 'function') {
       return unavailableResult('Jenny status is unavailable: backend service is not attached.');
     }
 
     try {
-      const options = normalizeStatusOptions(input);
-      if (context.executionAuthority) options.executionAuthority = context.executionAuthority;
-      if (!options.session_id && context.sessionId) options.session_id = context.sessionId;
-      const status = await backendService.getJennyStatus(options);
+      const options = normalizeStatusOptions(input, context);
+      const status = scopeUsageToSession(await backendService.getJennyStatus(options), options.session_id || '');
       return {
-        content: JSON.stringify(status, null, 2),
+        // Compact: the model reads JSON fine and indentation only spends tokens.
+        content: JSON.stringify(status),
         summary: summarizeStatusPayload(status),
         isError: false,
         metadata: {

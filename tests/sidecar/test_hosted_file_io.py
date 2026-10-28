@@ -25,6 +25,9 @@ from sidecar.ai.tools.hosted_file_io import (
     write_hosted_bytes_atomic,
 )
 from sidecar.ai.tools.workspace import WorkspaceGuard
+from tests.sidecar._platform_skips import posix_only
+
+_HOSTED_POSIX = posix_only("hosted descriptor qualification: dir_fd, mkfifo, AF_UNIX")
 
 
 @pytest.fixture(autouse=True)
@@ -99,7 +102,7 @@ def test_existing_mutation_read_stays_bounded_if_file_grows_after_open(
     assert caught.value.code == "CMP-TOOL-0006"
 
 
-@pytest.mark.skipif(os.name != "posix", reason="Linux hosted descriptor qualification")
+@_HOSTED_POSIX
 def test_host_rejects_hardlink_fifo_socket_and_symlink(tmp_path: Path):
     root = tmp_path / "workspace"
     root.mkdir()
@@ -120,7 +123,7 @@ def test_host_rejects_hardlink_fifo_socket_and_symlink(tmp_path: Path):
         endpoint.close()
 
 
-@pytest.mark.skipif(os.name != "posix", reason="Linux hosted descriptor qualification")
+@_HOSTED_POSIX
 def test_scoped_host_root_fd_must_match_captured_identity(tmp_path: Path) -> None:
     root = tmp_path / "workspace"
     root.mkdir()
@@ -134,7 +137,7 @@ def test_scoped_host_root_fd_must_match_captured_identity(tmp_path: Path) -> Non
         pytest.fail("mismatched hosted root descriptor was admitted")
 
 
-@pytest.mark.skipif(os.name != "posix", reason="Linux hosted descriptor qualification")
+@_HOSTED_POSIX
 def test_atomic_write_stays_at_pinned_parent_during_symlink_swap(tmp_path: Path, monkeypatch):
     root = tmp_path / "workspace"
     directory = root / "dir"
@@ -160,7 +163,7 @@ def test_atomic_write_stays_at_pinned_parent_during_symlink_swap(tmp_path: Path,
     assert (root / "moved" / "file.txt").read_bytes() == b"new"
 
 
-@pytest.mark.skipif(os.name != "posix", reason="Linux hosted descriptor qualification")
+@_HOSTED_POSIX
 def test_conditional_replacement_preserves_changed_content(tmp_path: Path):
     root = tmp_path / "workspace"
     root.mkdir()
@@ -206,7 +209,7 @@ def test_real_mutation_preserves_change_during_checkpoint(tmp_path: Path, monkey
     assert target.read_bytes() == b"external change"
 
 
-@pytest.mark.skipif(os.name != "posix", reason="Linux hosted descriptor qualification")
+@_HOSTED_POSIX
 def test_expected_read_does_not_reopen_replaced_parent(tmp_path: Path, monkeypatch):
     root = tmp_path / "workspace"
     directory = root / "dir"
@@ -233,7 +236,7 @@ def test_expected_read_does_not_reopen_replaced_parent(tmp_path: Path, monkeypat
     assert target.read_bytes() == b"expected"
 
 
-@pytest.mark.skipif(os.name != "posix", reason="Linux hosted descriptor qualification")
+@_HOSTED_POSIX
 @pytest.mark.parametrize("race", ["temporary", "chmod", "rewrite"])
 def test_replacement_refuses_observed_identity_changes(tmp_path: Path, monkeypatch, race):
 
@@ -273,7 +276,7 @@ def test_replacement_refuses_observed_identity_changes(tmp_path: Path, monkeypat
     assert target.read_bytes() == (b"bad" if race == "rewrite" else b"old")
 
 
-@pytest.mark.skipif(os.name != "posix", reason="Linux hosted descriptor qualification")
+@_HOSTED_POSIX
 def test_post_replace_fsync_error_reports_applied_effect(tmp_path: Path, monkeypatch):
 
     root = tmp_path / "workspace"
@@ -322,7 +325,7 @@ def test_list_dir_selects_descriptor_path_when_hosted(tmp_path: Path, monkeypatc
     assert caught.value is sentinel
 
 
-@pytest.mark.skipif(os.name != "posix", reason="Linux hosted descriptor qualification")
+@_HOSTED_POSIX
 def test_hosted_list_dir_matches_desktop_output(tmp_path: Path) -> None:
     root = tmp_path.resolve() / "workspace"
     (root / "sub").mkdir(parents=True)
@@ -335,7 +338,7 @@ def test_hosted_list_dir_matches_desktop_output(tmp_path: Path) -> None:
     assert actual == expected
 
 
-@pytest.mark.skipif(os.name != "posix", reason="Linux hosted descriptor qualification")
+@_HOSTED_POSIX
 def test_hosted_list_dir_rejects_directory_swapped_for_symlink(tmp_path: Path) -> None:
     root = tmp_path.resolve() / "workspace"
     (root / "dir").mkdir(parents=True)

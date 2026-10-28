@@ -7,18 +7,20 @@
   root.rendererChatShellControllerUtils = factory(root.rendererSlashCommandRegistryUtils || {}, root.rendererPaneSessionContext, root.rendererMcpPromptSlashCommands);
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (slashCommandUtils, paneSessionContextUtils, promptSlashUtils) {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  // Split view W1-4b: the ONE pane session context every surface below acts on (renderer-pane-session-context.js).
-  // W1-4c injects a pane-bound one; `paneId` alone builds that pane's default, built inline until the module is tagged.
+  // Split view W1-4b: the ONE pane session context every surface below acts on (renderer-pane-session-context.js,
+  // loaded before this file). W1-4c injects a pane-bound one; `paneId` alone builds that pane's default.
   function resolvePaneSessionContext({ state, sessionContext: injected, paneId }) {
-    if (injected && ['getSessionId', 'setSessionId', 'isCurrent'].every((key) => typeof injected[key] === 'function')) return injected;
-    if (injected) throw new TypeError('createChatShellController: sessionContext needs getSessionId, setSessionId and isCurrent.');
-    const owner = paneSessionContextUtils || globalThis.rendererPaneSessionContext;
-    if (typeof owner?.createPaneSessionContext === 'function') return owner.createPaneSessionContext({ state, paneId });
-    const pane = paneId ?? 0, norm = (id) => String(id || '').trim();
-    if (!Number.isInteger(pane) || pane < 0) throw new TypeError('createChatShellController: paneId must be a non-negative integer.');
-    const read = () => globalThis.rendererPaneVisibilityUtils?.resolvePaneSessionId?.(state, pane) ?? (pane === 0 ? norm(state?.currentSessionId) : '');
-    return Object.freeze({ paneId: pane, getSessionId: read, setSessionId: (id) => { if (pane === 0) state.currentSessionId = norm(id); }, isCurrent: (id) => read() === norm(id) });
+    if (!injected) {
+      const owner = paneSessionContextUtils || globalThis.rendererPaneSessionContext;
+      if (typeof owner?.createPaneSessionContext !== 'function') {
+        throw new Error('renderer/chat/renderer-pane-session-context.js must load before renderer/chat/renderer-chat-shell-controller.js');
+      }
+      return owner.createPaneSessionContext({ state, paneId });
+    }
+    if (['getSessionId', 'setSessionId', 'isCurrent'].every((key) => typeof injected[key] === 'function')) return injected;
+    throw new TypeError('createChatShellController: sessionContext needs getSessionId, setSessionId and isCurrent.');
   }
+  const { isPrimarySessionId = () => false } = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)) || {};
   function createChatShellController(deps) {
     const { state, slashDependencies, compactionCoordinator } = deps;
     const sessionContext = resolvePaneSessionContext(deps);
@@ -46,6 +48,17 @@
     const buildCommandInsertion = factories.buildCommandInsertion
       || slashCommandUtils.buildCommandInsertion || (() => ({ ok: false, code: 'unavailable' }));
     const createContextCommand = factories.createContextCommand || (() => async function noopContextCommand() {});
+    // Late-bound forwarders: each entry looks the callback up at CALL time, so
+    // a callbacks bag filled after construction (and sparse test bags) work.
+    const forward = (names) => Object.fromEntries(names.map((name) => [name, (...args) => callbacks[name](...args)]));
+    const forwardOptional = (names) => Object.fromEntries(names.map((name) => [name, (...args) => callbacks[name]?.(...args)]));
+    // A callback with a fallback used when the host supplies none.
+    const callbackOr = (name, fallback) => (...args) => (typeof callbacks[name] === 'function' ? callbacks[name] : fallback)(...args);
+    const log = (...args) => callbacks.appendClientLog?.(...args);
+    const toast = (...args) => callbacks.showToastMessage?.(...args);
+    const noop = () => {};
+    const noopAsync = async () => {};
+    const documentRef = typeof document !== 'undefined' ? document : windowRef.document || null;
     let _optimisticAppend = function noopOptimisticAppend() { return {}; };
     let _flushBufferedStreamEvents = async function noopFlushBufferedStreamEvents() {
       return { flushedCount: 0, terminal: false };
@@ -73,20 +86,32 @@
     });
     const createNoteCommandHandler = factories.createNoteCommandHandler
       || windowRef.rendererSlashNoteCommand?.createNoteCommandHandler
-      || (() => () => callbacks.showToastMessage?.(jt('chat.shell.scratchpadUnavailable', 'Scratchpad is unavailable.'), { title: jt('chat.shell.scratchpadTitle', 'Scratchpad'), tone: 'warning' }));
+      || (() => () => toast(jt('chat.shell.scratchpadUnavailable', 'Scratchpad is unavailable.'), { title: jt('chat.shell.scratchpadTitle', 'Scratchpad'), tone: 'warning' }));
     const noteHandler = createNoteCommandHandler({
       captureToScratchpad: slashDependencies && slashDependencies.captureToScratchpad,
-      showToastMessage: (...a) => callbacks.showToastMessage?.(...a), appendClientLog: (...a) => callbacks.appendClientLog?.(...a),
+      showToastMessage: toast, appendClientLog: log,
     });
     const linkedHandler = (factories.createLinkedCommandHandler || windowRef.rendererSlashLinkedCommand?.createLinkedCommandHandler)?.({
       state, getStartPromptSend: () => startPromptSend, getSessionProposals: () => windowRef.jennyShell?.sessionProposals,
       setNotice: (text) => callbacks.setComposerStatusNotice?.(text, { owner: 'slash:linked', tone: 'warning' }),
-      appendClientLog: (...a) => callbacks.appendClientLog?.(...a) });
+      appendClientLog: log });
+    const handoffHandler = (factories.createHandoffCommandHandler || windowRef.rendererSlashHandoffCommand?.createHandoffCommandHandler)?.({
+      state, documentRef: windowRef.document, getStartPromptSend: () => startPromptSend,
+      createSession: (options) => callbacks.handleCreateSession(options),
+      getHandoffApi: () => windowRef.jennyShell?.handoff,
+      setNotice: (text, tone) => callbacks.setComposerStatusNotice?.(text, { owner: 'slash:handoff', tone: tone || 'warning' }),
+      clearComposer: () => { if (dom.chatInput) { dom.chatInput.value = ''; callbacks.syncComposerInputHeight(); callbacks.syncComposerVisualState(); } },
+      setComposerDraft: (text) => { if (!dom.chatInput) return false; dom.chatInput.value = String(text || ''); callbacks.syncComposerInputHeight(); callbacks.syncComposerVisualState(); return true; },
+      isSessionCurrent: (sessionId) => sessionContext.isCurrent(sessionId),
+      getComposerController: () => windowRef.rendererComposerSessionStateController || globalThis.rendererComposerSessionStateController || null,
+      appendClientLog: log });
     const memoryHandlers = (factories.createMemoryCommandHandlers || windowRef.rendererSlashMemoryCommands?.createMemoryCommandHandlers)?.({ state, getMemoryApi: slashDependencies?.getMemoryApi,
-      injectOutput: (...a) => slashCommandRegistry.injectOutput(...a), showToastMessage: (...a) => callbacks.showToastMessage?.(...a), appendClientLog: (...a) => callbacks.appendClientLog?.(...a) }) || {};
+      injectOutput: (...a) => slashCommandRegistry.injectOutput(...a), showToastMessage: toast, appendClientLog: log }) || {};
+    const activityHandler = (factories.createActivityCommandHandler || windowRef.rendererSlashActivityCommand?.createActivityCommandHandler)?.({ state, showToast: toast,
+      open: (args) => state.features?.featureFlags?.primary_activity_log !== false && windowRef.rendererPrimaryActivity?.getDefaultPrimaryActivity?.({ documentRef: windowRef.document, stepModal: windowRef.inventoryStepModal, state, getBridge: () => windowRef.jennyShell?.primaryChat || null, appendClientLog: log }).open(args) });
     registerBuiltInSlashCommands({
-      registry: slashCommandRegistry, contextHandler, noteHandler, linkedHandler, ...memoryHandlers, compact: (sessionId) => compactionCoordinator?.invoke?.(sessionId, { source: 'slash' }),
-      showToastMessage: (...args) => callbacks.showToastMessage?.(...args),
+      registry: slashCommandRegistry, contextHandler, noteHandler, linkedHandler, handoffHandler, activityHandler, ...memoryHandlers, compact: (sessionId) => compactionCoordinator?.invoke?.(sessionId, { source: 'slash' }),
+      showToastMessage: toast,
     });
     const promptCommands = promptSlashUtils?.createMcpPromptSlashCommands?.({
       registry: slashCommandRegistry, state, sessionContext, chatInput: dom.chatInput,
@@ -120,10 +145,6 @@
       dom.chatInput.focus?.();
       return true;
     }
-    function selectSlashCommand(name) {
-      // Composer menus only insert; the global palette has its own execute seam.
-      return insertSlashCommand(name);
-    }
     var selectionController = null;
     function activateWorkspaceSession(...args) {
       selectionController?.onSessionSwitch?.(args[0]);
@@ -140,7 +161,6 @@
       multiStreamController: controllers.multiStreamController,
       thinkingIndicator: controllers.thinkingIndicator, compactionCoordinator,
       constants: {
-        MESSAGE_STATUS: constants.MESSAGE_STATUS,
         INTERACTIVE_GUARDRAIL_PROMPT: constants.INTERACTIVE_GUARDRAIL_PROMPT,
         INTERACTIVE_SEQUENCE_IDLE: constants.INTERACTIVE_SEQUENCE_IDLE,
         INTERACTIVE_SEQUENCE_STRUCTURED_ACTIVE: constants.INTERACTIVE_SEQUENCE_STRUCTURED_ACTIVE,
@@ -149,89 +169,51 @@
         MAX_INTERACTIVE_ROUNDS: constants.MAX_INTERACTIVE_ROUNDS,
       },
       callbacks: {
-        getActiveSession: (...args) => callbacks.getActiveSession(...args),
-        getPendingQuestionBatch: (...args) => callbacks.getPendingQuestionBatch(...args),
-        normalizePendingQuestionBatch: (...args) => callbacks.normalizePendingQuestionBatch(...args),
-        shouldForceInteractiveGuardrail: (...args) => callbacks.shouldForceInteractiveGuardrail(...args),
-        getInteractiveSequenceState: (...args) => callbacks.getInteractiveSequenceState(...args),
-        clearInteractiveDraft: (...args) => callbacks.clearInteractiveDraft(...args),
-        patchSessionSummary: (...args) => callbacks.patchSessionSummary(...args),
-        getCurrentRuntimePreferences: (...args) => callbacks.getCurrentRuntimePreferences(...args), getRuntimePreferencesFromSession: callbacks.getRuntimePreferencesFromSession,
-        getCurrentVisibleMessages: (...args) => callbacks.getCurrentVisibleMessages(...args),
-        getCurrentSessionMessages: (...args) => callbacks.getCurrentSessionMessages(...args), getSessionTurnEventState: (...args) => callbacks.getSessionTurnEventState?.(...args),
-        getSessionMessages: (...args) => callbacks.getSessionMessages(...args),
-        setSessionMessages: (...args) => callbacks.setSessionMessages(...args),
-        createNormalizedMessage: (...args) => callbacks.createNormalizedMessage(...args),
-        resolveSessionId: (...args) => callbacks.resolveSessionId(...args),
-        buildAttachmentBudget: (...args) => callbacks.buildAttachmentBudget(...args),
-        resetAttachmentQueue: (...args) => callbacks.resetAttachmentQueue(...args),
-        showToastMessage: (...args) => callbacks.showToastMessage(...args),
-        setComposerStatusNotice: (...args) => callbacks.setComposerStatusNotice(...args),
-        clearComposerStatusNotice: (...args) => callbacks.clearComposerStatusNotice(...args),
-        isSendPreflightPending: (...args) => callbacks.isSendPreflightPending(...args),
-        showComposerActionError: (...args) => callbacks.showComposerActionError(...args),
-        renderComposerState: (...args) => callbacks.renderComposerState(...args),
-        renderAll: (...args) => callbacks.renderAll(...args),
-        renderMessages: (...args) => callbacks.renderMessages(...args),
-        renderSessions: (...args) => callbacks.renderSessions(...args),
-        renderHeader: (...args) => callbacks.renderHeader(...args),
-        syncComposerInputHeight: (...args) => callbacks.syncComposerInputHeight(...args),
-        syncComposerVisualState: (...args) => callbacks.syncComposerVisualState(...args),
-        handleSlashCommandSelection: selectSlashCommand,
-        setFollowLatest: (...args) => callbacks.setFollowLatest(...args),
-        loadSessions: (...args) => callbacks.loadSessions(...args),
+        ...forward([
+          'getActiveSession', 'getPendingQuestionBatch', 'normalizePendingQuestionBatch', 'shouldForceInteractiveGuardrail',
+          'getInteractiveSequenceState', 'clearInteractiveDraft', 'patchSessionSummary', 'getCurrentRuntimePreferences',
+          'getCurrentVisibleMessages', 'getCurrentSessionMessages', 'getSessionMessages', 'setSessionMessages',
+          'createNormalizedMessage', 'resolveSessionId', 'buildAttachmentBudget', 'resetAttachmentQueue', 'showToastMessage',
+          'setComposerStatusNotice', 'clearComposerStatusNotice', 'showComposerActionError', 'renderComposerState',
+          'renderAll', 'renderMessages', 'renderSessions', 'renderHeader', 'syncComposerInputHeight', 'syncComposerVisualState',
+          'setFollowLatest', 'refreshSessionSummaries', 'isSessionStreaming', 'hasPendingToolApprovalForSession',
+          'getCurrentMessageById', 'getElaboratePrompt', 'getLatestReplyAssistantMessageId', 'resolveRegenerateRequest',
+          'showCopyFeedback', 'upsertSessionSummary', 'rekeySessionState', 'attachPendingOriginToSession', 'rekeySessionOrigin',
+          'appendClientLog', 'getToolPreferences', 'setChatSendLifecycle', 'clearChatSendLifecycle', 'moveChatSendLifecycle',
+        ]),
+        ...forwardOptional(['clearProjectionContextCacheForSession', 'publishCancelImpulse']),
+        getRuntimePreferencesFromSession: callbacks.getRuntimePreferencesFromSession,
+        // Composer menus only insert; the global palette has its own execute seam.
+        handleSlashCommandSelection: insertSlashCommand,
         activateWorkspaceSession,
-        refreshSessionSummaries: (...args) => callbacks.refreshSessionSummaries(...args),
         thinkingController: controllers.thinkingController,
         flushBufferedStreamEvents: (...args) => _flushBufferedStreamEvents(...args),
         dropBufferedStreamEvents: (...args) => _dropBufferedStreamEvents(...args),
-        isSendBusy: (...args) => callbacks.isSendBusy(...args),
-        isAnySendBusy: (...args) => callbacks.isAnySendBusy(...args),
-        isSessionStreaming: (...args) => callbacks.isSessionStreaming(...args),
-        hasPendingToolApprovalForSession: (...args) => callbacks.hasPendingToolApprovalForSession(...args),
-        getCurrentMessageById: (...args) => callbacks.getCurrentMessageById(...args),
-        getElaboratePrompt: (...args) => callbacks.getElaboratePrompt(...args),
-        getLatestReplyAssistantMessageId: (...args) => callbacks.getLatestReplyAssistantMessageId(...args),
-        resolveRegenerateRequest: (...args) => callbacks.resolveRegenerateRequest(...args),
-        showCopyFeedback: (...args) => callbacks.showCopyFeedback(...args),
-        upsertSessionSummary: (...args) => callbacks.upsertSessionSummary(...args),
-        removeSessionState: (...args) => callbacks.removeSessionState(...args),
-        rekeySessionState: (...args) => callbacks.rekeySessionState(...args),
-        attachPendingOriginToSession: (...args) => callbacks.attachPendingOriginToSession(...args),
-        rekeySessionOrigin: (...args) => callbacks.rekeySessionOrigin(...args),
-        appendClientLog: (...args) => callbacks.appendClientLog(...args),
         optimisticAppend: (...args) => _optimisticAppend(...args),
         onUserSendStarted: notifyUserSendStarted,
-        getToolPreferences: (...args) => callbacks.getToolPreferences(...args),
-        setChatSendLifecycle: (...args) => callbacks.setChatSendLifecycle(...args),
-        clearChatSendLifecycle: (...args) => callbacks.clearChatSendLifecycle(...args),
-        moveChatSendLifecycle: (...args) => callbacks.moveChatSendLifecycle(...args),
-        clearProjectionContextCacheForSession: (...args) => callbacks.clearProjectionContextCacheForSession?.(...args),
-        publishCancelImpulse: (...args) => callbacks.publishCancelImpulse?.(...args),
       },
     }) || null;
     const {
-      startPromptSend = async function noopStartPromptSend() {},
-      handleStopActiveStream = async function noopHandleStopActiveStream() {},
-      getQueuedSend = function noopGetQueuedSend() { return null; },
-      clearQueuedSendForSession = function noopClearQueuedSendForSession() {},
-      restoreQueuedSendDraft = function noopRestoreQueuedSendDraft() { return null; },
-      dispatchQueuedSendForSession = async function noopDispatchQueuedSendForSession() {},
-      handleElaborateMessage = async function noopHandleElaborateMessage() {},
-      handleRegenerateMessage = async function noopHandleRegenerateMessage() {},
-      handleCopyMessage = async function noopHandleCopyMessage() {},
-      retryFailedPayload = async function noopRetryFailedPayload() {},
-      getFailedPayloadRetryAvailability = function noopGetFailedPayloadRetryAvailability() {
-        return { available: false, reason: jt('chat.shell.failedPayloadUnavailable', 'The original failed payload is unavailable.') };
-      },
-      dismissFailedPayload = function noopDismissFailedPayload() { return false; },
+      startPromptSend = noopAsync,
+      handleStopActiveStream = noopAsync,
+      getQueuedSend = () => null,
+      restoreQueuedSendDraft = () => null,
+      dispatchQueuedSendForSession = noopAsync,
+      handleElaborateMessage = noopAsync,
+      handleRegenerateMessage = noopAsync,
+      handleCopyMessage = noopAsync,
+      retryFailedPayload = noopAsync,
+      getFailedPayloadRetryAvailability = () => (
+        { available: false, reason: jt('chat.shell.failedPayloadUnavailable', 'The original failed payload is unavailable.') }
+      ),
+      dismissFailedPayload = () => false,
     } = sendController || {};
     const resolveOutboxAction = (entry) => {
       const current = state.sendOutboxController?.list?.(entry?.sessionId)
         .find((item) => item.id === entry?.id);
       return current && ['capturing_context', 'ready', 'waiting_for_turn', 'failed', 'needs_review'].includes(current.status) ? current : null;
     };
-    if (sendController && controllers && typeof controllers === 'object') {
+    if (sendController) {
       const rerenderOutbox = () => {
         callbacks.renderComposerState();
         callbacks.renderSessions();
@@ -283,157 +265,81 @@
       });
     }
 
-    // F2: message-edit controller wires the inline edit affordance against
-    // the send pipeline so commit() can call startPromptSend right after
-    // the backend truncate succeeds. Reuses the same gates as regenerate
-    // via resolveFollowUpActionBlock indirectly through showComposerActionError
-    // + multiStreamController checks inside the controller.
-    var messageEditController = null;
-    var messageEditUtilsApi = typeof globalThis !== 'undefined'
-      ? globalThis.rendererChatMessageEditUtils
-      : null;
-    if (messageEditUtilsApi && typeof messageEditUtilsApi.createMessageEditController === 'function') {
+    // Sub-controllers are best-effort: a missing module or a construction
+    // throw (jsdom edge case) leaves that affordance off; the chat keeps working.
+    const jennyShell = windowRef.jennyShell || {};
+    const buildController = (api, factoryName, logEvent, buildOptions) => {
+      if (typeof api?.[factoryName] !== 'function') return null;
       try {
-        messageEditController = messageEditUtilsApi.createMessageEditController({
-          state: state,
-          document: typeof document !== 'undefined' ? document : (windowRef && windowRef.document) || null,
-          jennyShellSessions: (windowRef && windowRef.jennyShell && windowRef.jennyShell.sessions) || null,
-          getCurrentSessionMessages: (...args) => callbacks.getCurrentSessionMessages(...args),
-          getCurrentSessionId: () => sessionContext.getSessionId(),
-          startPromptSend: (...args) => startPromptSend(...args),
-          renderAll: (...args) => callbacks.renderAll(...args),
-          appendClientLog: (...args) => callbacks.appendClientLog(...args),
-          showComposerActionError: (...args) => callbacks.showComposerActionError(...args),
-          resolveFollowUpActionBlock: () => {
-            // Reuse the same busy gate the send controller publishes. The
-            // controller itself does not export resolveFollowUpActionBlock,
-            // so duplicate the boolean shape here.
-            const currentSessionId = sessionContext.getSessionId();
-            const isBusy = typeof callbacks.isSessionStreaming === 'function'
-              && callbacks.isSessionStreaming(currentSessionId);
-            const hasApproval = typeof callbacks.hasPendingToolApprovalForSession === 'function'
-              && callbacks.hasPendingToolApprovalForSession(currentSessionId);
-            if (isBusy || hasApproval) {
-              return { blocked: true, reason: jt('chat.edit.waitForCurrentResponse', 'Wait for the current response to finish before editing.') };
-            }
-            return { blocked: false };
-          },
-          clearProjectionContextCacheForSession: (...args) => {
-            const fn = callbacks.clearProjectionContextCacheForSession;
-            if (typeof fn === 'function') return fn(...args);
-            // Fallback: call directly via window if exposed there.
-            if (typeof globalThis !== 'undefined'
-              && typeof globalThis.clearProjectionContextCacheForSession === 'function') {
-              return globalThis.clearProjectionContextCacheForSession(...args);
-            }
-            return null;
-          },
-          buildReplayableImageAttachments: (...args) => {
-            const fn = callbacks.buildReplayableImageAttachments;
-            if (typeof fn === 'function') return fn(...args);
-            const utils = typeof globalThis !== 'undefined'
-              ? globalThis.chatBubbleActionUtils
-              : null;
-            if (utils && typeof utils.buildReplayableImageAttachments === 'function') {
-              return utils.buildReplayableImageAttachments(...args);
-            }
-            return [];
-          },
-          hasTextAttachmentMetadata: (...args) => {
-            const fn = callbacks.hasTextAttachmentMetadata;
-            if (typeof fn === 'function') return fn(...args);
-            const utils = typeof globalThis !== 'undefined'
-              ? globalThis.chatBubbleActionUtils
-              : null;
-            if (utils && typeof utils.hasTextAttachmentMetadata === 'function') {
-              return utils.hasTextAttachmentMetadata(...args);
-            }
-            return false;
-          },
-          showToastMessage: (...args) => callbacks.showToastMessage(...args),
-        });
-        // Expose so the keyboard controller / renderer can reach it through the
-        // controllers bag that's already plumbed through.
-        if (controllers && typeof controllers === 'object') {
-          controllers.messageEditController = messageEditController;
-        }
+        return api[factoryName](buildOptions()) || null;
       } catch (error) {
-        // Best-effort: if the controller fails to construct (missing window,
-        // jsdom edge case), F2 simply no-ops — the existing surface keeps
-        // working. Log once for diagnosis.
-        try {
-          callbacks.appendClientLog('WARN', 'chat.edit_controller_init_failed', {
-            message: error && error.message ? error.message : String(error),
-          });
-        } catch (_) { /* ignore */ }
+        log('WARN', logEvent, { message: error?.message || String(error) });
+        return null;
       }
-    }
+    };
+    const clearProjectionContextCacheForSession = (...args) => callbacks.clearProjectionContextCacheForSession?.(...args);
+    const isSessionBusyForEdit = (sessionId) => {
+      // Mirrors the send controller's follow-up gate: a send still in
+      // preflight/outbox dispatch counts as busy, not only a live stream.
+      const multiStream = controllers.multiStreamController;
+      if (typeof multiStream?.isSessionSendBusy === 'function') return multiStream.isSessionSendBusy(sessionId);
+      return callbacks.isSessionStreaming?.(sessionId) === true;
+    };
 
-    // F3: message branch controller uses the existing Electron
-    // sessions.forkSession IPC seam and then activates the new workspace tab.
-    var messageBranchController = null;
-    var messageBranchUtilsApi = typeof globalThis !== 'undefined'
-      ? globalThis.rendererChatBranchUtils
-      : null;
-    if (messageBranchUtilsApi && typeof messageBranchUtilsApi.createMessageBranchController === 'function') {
-      try {
-        messageBranchController = messageBranchUtilsApi.createMessageBranchController({
-          state: state, sessionContext,
-          jennyShellSessions: (windowRef && windowRef.jennyShell && windowRef.jennyShell.sessions) || null,
-          getCurrentSessionMessages: (...args) => callbacks.getCurrentSessionMessages(...args),
-          getCurrentSessionId: () => sessionContext.getSessionId(),
-          loadSessions: (...args) => callbacks.loadSessions(...args),
-          activateWorkspaceSession,
-          upsertSessionSummary: (...args) => callbacks.upsertSessionSummary(...args),
-          renderAll: (...args) => callbacks.renderAll(...args),
-          appendClientLog: (...args) => callbacks.appendClientLog(...args),
-          showComposerActionError: (...args) => callbacks.showComposerActionError(...args),
-          showToastMessage: (...args) => callbacks.showToastMessage(...args),
-          isSessionStreaming: (...args) => callbacks.isSessionStreaming(...args),
-          hasPendingToolApprovalForSession: (...args) => callbacks.hasPendingToolApprovalForSession(...args),
-        });
-        if (controllers && typeof controllers === 'object') {
-          controllers.messageBranchController = messageBranchController;
+    // F2: inline message edit; commit() calls startPromptSend after the
+    // backend truncate succeeds.
+    const messageEditController = buildController(globalThis.rendererChatMessageEditUtils, 'createMessageEditController', 'chat.edit_controller_init_failed', () => ({
+      state,
+      document: documentRef,
+      jennyShellSessions: jennyShell.sessions || null,
+      getCurrentSessionId: () => sessionContext.getSessionId(),
+      isPrimarySession: (id) => isPrimarySessionId(state.sessions, id),
+      startPromptSend: (...args) => startPromptSend(...args),
+      ...forward(['getCurrentSessionMessages', 'renderAll', 'appendClientLog', 'showComposerActionError', 'showToastMessage']),
+      resolveFollowUpActionBlock: () => {
+        const currentSessionId = sessionContext.getSessionId();
+        if (isSessionBusyForEdit(currentSessionId) || callbacks.hasPendingToolApprovalForSession?.(currentSessionId)) {
+          return { blocked: true, reason: jt('chat.edit.waitForCurrentResponse', 'Wait for the current response to finish before editing.') };
         }
-      } catch (error) {
-        try {
-          callbacks.appendClientLog('WARN', 'chat.branch_controller_init_failed', {
-            message: error && error.message ? error.message : String(error),
-          });
-        } catch (_) { /* ignore */ }
-      }
-    }
+        return { blocked: false };
+      },
+      clearProjectionContextCacheForSession,
+      buildReplayableImageAttachments: callbackOr('buildReplayableImageAttachments',
+        (...args) => globalThis.chatBubbleActionUtils?.buildReplayableImageAttachments?.(...args) ?? []),
+      hasTextAttachmentMetadata: callbackOr('hasTextAttachmentMetadata',
+        (...args) => globalThis.chatBubbleActionUtils?.hasTextAttachmentMetadata?.(...args) ?? false),
+    }));
+    controllers.messageEditController = messageEditController;
 
-    // F4/F5/F6: selection controller + bulk-actions controller. The selection
-    // controller owns state.ui.selectionModePaneId + per-session selected sets +
-    // Esc-to-exit. The bulk-actions controller wraps the format builders +
-    // jennyShell.dialog.saveFile + jennyShell.clipboard.writeText + the
-    // existing F2 truncate path (sessions.editAndTruncate with empty patch).
-    var bulkActionsController = null;
-    var selectionUtilsApi = typeof globalThis !== 'undefined'
-      ? globalThis.rendererChatSelectionUtils
-      : null;
-    var bulkActionsUtilsApi = typeof globalThis !== 'undefined'
-      ? globalThis.rendererChatBulkActionsUtils
-      : null;
-    var bulkDeleteConfirmDialog = null;
-    var confirmDialogFactory = windowRef?.rendererIdeConfirmDialog?.createIdeConfirmDialog;
-    var helpOverlayFactory = windowRef?.inventoryHelpOverlay?.createHelpOverlay;
-    if (typeof confirmDialogFactory === 'function' && typeof helpOverlayFactory === 'function') {
-      bulkDeleteConfirmDialog = confirmDialogFactory({
-        document: typeof document !== 'undefined' ? document : windowRef?.document,
-        actionButton: windowRef?.inventoryActionButton,
+    // F3: branch via the sessions.forkSession IPC seam, then activate the new tab.
+    const messageBranchController = buildController(globalThis.rendererChatBranchUtils, 'createMessageBranchController', 'chat.branch_controller_init_failed', () => ({
+      state, sessionContext,
+      jennyShellSessions: jennyShell.sessions || null,
+      getCurrentSessionId: () => sessionContext.getSessionId(),
+      activateWorkspaceSession,
+      ...forward([
+        'getCurrentSessionMessages', 'loadSessions', 'upsertSessionSummary', 'renderAll', 'appendClientLog',
+        'showComposerActionError', 'showToastMessage', 'isSessionStreaming', 'hasPendingToolApprovalForSession',
+      ]),
+    }));
+    controllers.messageBranchController = messageBranchController;
+
+    // F4/F5/F6: the selection controller owns selection mode + per-session
+    // selected sets; bulk actions wrap the format builders, save/clipboard
+    // and the F2 truncate path.
+    const confirmDialogFactory = windowRef.rendererIdeConfirmDialog?.createIdeConfirmDialog;
+    const helpOverlayFactory = windowRef.inventoryHelpOverlay?.createHelpOverlay;
+    const bulkDeleteConfirmDialog = typeof confirmDialogFactory === 'function' && typeof helpOverlayFactory === 'function'
+      ? confirmDialogFactory({
+        document: documentRef,
+        actionButton: windowRef.inventoryActionButton,
         helpOverlayFactory,
         hostId: 'chatBulkDeleteConfirmOverlay',
-      });
-    }
+      })
+      : null;
     function confirmBulkDelete(promptText) {
-      if (typeof callbacks.confirmBulkDelete === 'function') {
-        return callbacks.confirmBulkDelete(promptText);
-      }
-      if (typeof bulkDeleteConfirmDialog?.confirm !== 'function') {
-        return Promise.resolve(false);
-      }
+      if (typeof callbacks.confirmBulkDelete === 'function') return callbacks.confirmBulkDelete(promptText);
+      if (typeof bulkDeleteConfirmDialog?.confirm !== 'function') return Promise.resolve(false);
       return bulkDeleteConfirmDialog.confirm({
         title: jt('chat.shell.deleteFromHere', 'Delete from here?'),
         message: promptText,
@@ -442,141 +348,55 @@
         variant: 'danger',
       });
     }
-    if (selectionUtilsApi && typeof selectionUtilsApi.createSelectionController === 'function') {
-      try {
-        selectionController = selectionUtilsApi.createSelectionController({
-          state: state,
-          document: typeof document !== 'undefined' ? document : (windowRef && windowRef.document) || null,
-          getCurrentSessionMessages: (...args) => callbacks.getCurrentSessionMessages(...args),
-          getCurrentSessionId: () => sessionContext.getSessionId(), paneId: sessionContext.paneId,
-          renderAll: (...args) => callbacks.renderAll(...args),
-          appendClientLog: (...args) => callbacks.appendClientLog(...args),
-          focusEntryByMessageId: (...args) => {
-            const fn = callbacks.focusEntryByMessageId;
-            if (typeof fn === 'function') return fn(...args);
-            return null;
-          },
-        });
-        if (controllers && typeof controllers === 'object') {
-          controllers.selectionController = selectionController;
-        }
-      } catch (error) {
-        try {
-          callbacks.appendClientLog('WARN', 'chat.selection_controller_init_failed', {
-            message: error && error.message ? error.message : String(error),
-          });
-        } catch (_) { /* ignore */ }
-      }
-    }
-    if (
-      selectionController
-      && bulkActionsUtilsApi
-      && typeof bulkActionsUtilsApi.createBulkActionsController === 'function'
-    ) {
-      try {
-        bulkActionsController = bulkActionsUtilsApi.createBulkActionsController({
-          state: state,
-          jennyShellSessions: (windowRef && windowRef.jennyShell && windowRef.jennyShell.sessions) || null,
-          jennyShellDialog: (windowRef && windowRef.jennyShell && windowRef.jennyShell.dialog) || null,
-          jennyShellClipboard: (windowRef && windowRef.jennyShell && windowRef.jennyShell.clipboard) || null,
-          getCurrentSessionId: () => sessionContext.getSessionId(),
-          getCurrentSessionMessages: (...args) => callbacks.getCurrentSessionMessages(...args),
-          getCurrentSessionTurnEvents: (...args) => {
-            const fn = callbacks.getCurrentSessionTurnEvents;
-            if (typeof fn === 'function') return fn(...args);
-            return [];
-          },
-          getCurrentSessionMeta: (...args) => {
-            const fn = callbacks.getCurrentSessionMeta;
-            if (typeof fn === 'function') return fn(...args);
-            return {};
-          },
-          selectionController: selectionController,
-          conversationFormatUtils: typeof globalThis !== 'undefined'
-            ? globalThis.conversationFormatUtils
-            : null,
-          renderAll: (...args) => callbacks.renderAll(...args),
-          appendClientLog: (...args) => callbacks.appendClientLog(...args),
-          showToastMessage: (...args) => callbacks.showToastMessage(...args),
-          clearProjectionContextCacheForSession: (...args) => {
-            const fn = callbacks.clearProjectionContextCacheForSession;
-            if (typeof fn === 'function') return fn(...args);
-            if (typeof globalThis !== 'undefined'
-              && typeof globalThis.clearProjectionContextCacheForSession === 'function') {
-              return globalThis.clearProjectionContextCacheForSession(...args);
-            }
-            return null;
-          },
-          confirmDelete: confirmBulkDelete,
-        });
-        if (controllers && typeof controllers === 'object') {
-          controllers.bulkActionsController = bulkActionsController;
-        }
-      } catch (error) {
-        try {
-          callbacks.appendClientLog('WARN', 'chat.bulk_actions_controller_init_failed', {
-            message: error && error.message ? error.message : String(error),
-          });
-        } catch (_) { /* ignore */ }
-      }
-    }
+    selectionController = buildController(globalThis.rendererChatSelectionUtils, 'createSelectionController', 'chat.selection_controller_init_failed', () => ({
+      state,
+      document: documentRef,
+      getCurrentSessionId: () => sessionContext.getSessionId(), paneId: sessionContext.paneId,
+      ...forward(['getCurrentSessionMessages', 'renderAll', 'appendClientLog']),
+      focusEntryByMessageId: callbackOr('focusEntryByMessageId', () => null),
+    }));
+    controllers.selectionController = selectionController;
+    const bulkActionsController = selectionController && buildController(globalThis.rendererChatBulkActionsUtils, 'createBulkActionsController', 'chat.bulk_actions_controller_init_failed', () => ({
+      state,
+      jennyShellSessions: jennyShell.sessions || null,
+      jennyShellDialog: jennyShell.dialog || null,
+      jennyShellClipboard: jennyShell.clipboard || null,
+      getCurrentSessionId: () => sessionContext.getSessionId(),
+      ...forward(['getCurrentSessionMessages', 'renderAll', 'appendClientLog', 'showToastMessage']),
+      getCurrentSessionTurnEvents: callbackOr('getCurrentSessionTurnEvents', () => []),
+      getCurrentSessionMeta: callbackOr('getCurrentSessionMeta', () => ({})),
+      selectionController,
+      conversationFormatUtils: globalThis.conversationFormatUtils || null,
+      clearProjectionContextCacheForSession,
+      confirmDelete: confirmBulkDelete,
+    }));
+    controllers.bulkActionsController = bulkActionsController;
 
     // F10: first-unread orientation is renderer-only state. The stream
     // handler notifies this controller when a visible assistant/tool row is
     // appended, while keyboard/accessibility wiring owns the affordance mount.
-    var unreadOrientationController = null;
-    var unreadOrientationUtilsApi = typeof globalThis !== 'undefined'
-      ? globalThis.rendererChatUnreadOrientationUtils
-      : null;
-    if (unreadOrientationUtilsApi && typeof unreadOrientationUtilsApi.createUnreadOrientationController === 'function') {
-      try {
-        unreadOrientationController = unreadOrientationUtilsApi.createUnreadOrientationController({
-          state: state,
-          document: typeof document !== 'undefined' ? document : (windowRef && windowRef.document) || null,
-          chatTimeline: dom.chatTimeline,
-          chatThreadScroll: dom.chatThreadScroll,
-          getCurrentSessionId: () => sessionContext.getSessionId(),
-          getCurrentSessionMessages: (...args) => callbacks.getCurrentSessionMessages(...args),
-          getScrollMetrics: (...args) => {
-            const fn = callbacks.getScrollMetrics;
-            if (typeof fn === 'function') return fn(...args);
-            return {
-              scrollTop: Number(dom.chatThreadScroll?.scrollTop || 0),
-              scrollHeight: Number(dom.chatThreadScroll?.scrollHeight || 0),
-              clientHeight: Number(dom.chatThreadScroll?.clientHeight || 0),
-            };
-          },
-          scrollMessageIntoView: (...args) => {
-            const fn = callbacks.scrollMessageIntoView;
-            if (typeof fn === 'function') return fn(...args);
-            return false;
-          },
-          viewportReveal: callbacks.viewportReveal || null,
-          focusEntryByMessageId: (...args) => {
-            const fn = callbacks.focusEntryByMessageId;
-            if (typeof fn === 'function') return fn(...args);
-            return false;
-          },
-          timelineVirtualizer: controllers.timelineVirtualizer,
-          appendClientLog: (...args) => callbacks.appendClientLog(...args),
-          onStateChange: typeof callbacks.onUnreadOrientationStateChange === 'function'
-            ? (...args) => callbacks.onUnreadOrientationStateChange(...args)
-            : undefined,
-        });
-        if (controllers && typeof controllers === 'object') {
-          controllers.unreadOrientationController = unreadOrientationController;
-        }
-        if (typeof callbacks.setUnreadOrientationController === 'function') {
-          callbacks.setUnreadOrientationController(unreadOrientationController);
-        }
-      } catch (error) {
-        try {
-          callbacks.appendClientLog('WARN', 'chat.unread_orientation_controller_init_failed', {
-            message: error && error.message ? error.message : String(error),
-          });
-        } catch (_) { /* ignore */ }
-      }
-    }
+    const unreadOrientationController = buildController(globalThis.rendererChatUnreadOrientationUtils, 'createUnreadOrientationController', 'chat.unread_orientation_controller_init_failed', () => ({
+      state,
+      document: documentRef,
+      chatTimeline: dom.chatTimeline,
+      chatThreadScroll: dom.chatThreadScroll,
+      getCurrentSessionId: () => sessionContext.getSessionId(),
+      ...forward(['getCurrentSessionMessages', 'appendClientLog']),
+      getScrollMetrics: callbackOr('getScrollMetrics', () => ({
+        scrollTop: Number(dom.chatThreadScroll?.scrollTop || 0),
+        scrollHeight: Number(dom.chatThreadScroll?.scrollHeight || 0),
+        clientHeight: Number(dom.chatThreadScroll?.clientHeight || 0),
+      })),
+      scrollMessageIntoView: callbackOr('scrollMessageIntoView', () => false),
+      viewportReveal: callbacks.viewportReveal || null,
+      focusEntryByMessageId: callbackOr('focusEntryByMessageId', () => false),
+      timelineVirtualizer: controllers.timelineVirtualizer,
+      onStateChange: typeof callbacks.onUnreadOrientationStateChange === 'function'
+        ? (...args) => callbacks.onUnreadOrientationStateChange(...args)
+        : undefined,
+    }));
+    controllers.unreadOrientationController = unreadOrientationController;
+    if (unreadOrientationController) callbacks.setUnreadOrientationController?.(unreadOrientationController);
 
     const composerFlowController = composerFlowUtils.createComposerV2FlowController({
       INTERACTIVE_GUARDRAIL_PROMPT: constants.INTERACTIVE_GUARDRAIL_PROMPT,
@@ -610,17 +430,17 @@
     });
 
     const {
-      handleInteractiveOptionSelect = function noopHandleInteractiveOptionSelect() {},
-      handleInteractiveOtherConfirm = function noopHandleInteractiveOtherConfirm() {},
-      handleInteractiveOtherInputChange = function noopHandleInteractiveOtherInputChange() {},
-      handleInteractiveSkip = function noopHandleInteractiveSkip() {},
-      handleInteractiveSkipQuestion = function noopHandleInteractiveSkipQuestion() {},
-      handleInteractiveSkipAll = function noopHandleInteractiveSkipAll() {},
-      handleInteractiveSubmit = function noopHandleInteractiveSubmit() {},
-      handleComposerPaste = function noopHandleComposerPaste() {},
-      handleSend = function noopHandleSend() {},
-      persistInteractiveFallbackRequest = function noopPersistInteractiveFallbackRequest() {},
-      requestInteractiveGuardrailAnswer = function noopRequestInteractiveGuardrailAnswer() {},
+      handleInteractiveOptionSelect = noop,
+      handleInteractiveOtherConfirm = noop,
+      handleInteractiveOtherInputChange = noop,
+      handleInteractiveSkip = noop,
+      handleInteractiveSkipQuestion = noop,
+      handleInteractiveSkipAll = noop,
+      handleInteractiveSubmit = noop,
+      handleComposerPaste = noop,
+      handleSend = noop,
+      persistInteractiveFallbackRequest = noop,
+      requestInteractiveGuardrailAnswer = noop,
     } = composerFlowController || {};
 
     const turnElapsedClock = turnElapsedClockUtils.createTurnElapsedClock?.({
@@ -648,70 +468,35 @@
         MESSAGE_STATUS: constants.MESSAGE_STATUS,
         MAX_INTERACTIVE_QUESTIONS: constants.MAX_INTERACTIVE_QUESTIONS,
         MAX_INTERACTIVE_ROUNDS: constants.MAX_INTERACTIVE_ROUNDS,
-        INTERACTIVE_SEQUENCE_IDLE: constants.INTERACTIVE_SEQUENCE_IDLE,
         INTERACTIVE_SEQUENCE_STRUCTURED_ACTIVE: constants.INTERACTIVE_SEQUENCE_STRUCTURED_ACTIVE,
         INTERACTIVE_SEQUENCE_FALLBACK_REQUESTED: constants.INTERACTIVE_SEQUENCE_FALLBACK_REQUESTED,
         TOAST_SOURCE: constants.TOAST_SOURCE,
       },
       callbacks: {
-        getActiveSendPreflight: (...args) => callbacks.getActiveSendPreflight(...args),
-        renderComposerState: (...args) => callbacks.renderComposerState(...args),
-        renderMessages: (...args) => callbacks.renderMessages(...args), renderSessionPane: callbacks.renderSessionPane,
+        ...forward([
+          'renderComposerState', 'renderMessages', 'renderHeader', 'renderAll', 'renderComposerStatusNotice', 'renderSessions',
+          'renderSettings', 'renderWorkspaceChrome', 'getSessionMessages', 'setSessionMessages', 'createNormalizedMessage',
+          'setComposerStatusNotice', 'clearComposerStatusNotice', 'normalizePendingQuestionBatch', 'getInteractiveSequenceState',
+          'clearInteractiveDraft', 'ensureInteractiveDraft', 'patchSessionSummary', 'buildInteractiveQuestionBatchVisibleText',
+          'refreshSessionSummaries', 'refreshSnapshots', 'showToastMessage', 'dismissStreamErrors', 'queueInteractiveComposerFocus',
+          'mergeMessageReasoning', 'appendClientLog', 'updateContextUsage', 'setChatSendLifecycle', 'clearChatSendLifecycle',
+          'getChatSendLifecycle',
+        ]),
+        ...forwardOptional([
+          'scheduleMessageViewportSync', 'setSessionTurnEventState', 'handlePresenceStreamEvent', 'handleWorkspaceActivityStreamEvent',
+          'dismissToast', 'getChatTimelineRowModelEnabled', 'recordChatTimelineRolloutSignal', 'publishFirstTokenImpulse',
+          'publishToolStartImpulse', 'publishCompleteImpulse', 'invalidateProjectionStateForSession',
+        ]),
+        renderSessionPane: callbacks.renderSessionPane,
         syncTurnElapsedClock,
-        scheduleMessageViewportSync: (...args) => callbacks.scheduleMessageViewportSync?.(...args),
-        renderHeader: (...args) => callbacks.renderHeader(...args),
-        renderAll: (...args) => callbacks.renderAll(...args),
-        renderComposerStatusNotice: (...args) => callbacks.renderComposerStatusNotice(...args),
-        renderLiveThinkingChip: (...args) => callbacks.renderLiveThinkingChip?.(...args),
-        renderSessions: (...args) => callbacks.renderSessions(...args),
-        renderSettings: (...args) => callbacks.renderSettings(...args),
-        renderWorkspaceChrome: (...args) => callbacks.renderWorkspaceChrome(...args),
-        getSessionMessages: (...args) => callbacks.getSessionMessages(...args),
-        setSessionMessages: (...args) => callbacks.setSessionMessages(...args),
-        setSessionTurnEventState: (...args) => callbacks.setSessionTurnEventState?.(...args),
-        createNormalizedMessage: (...args) => callbacks.createNormalizedMessage(...args),
-        setComposerStatusNotice: (...args) => callbacks.setComposerStatusNotice(...args),
-        clearComposerStatusNotice: (...args) => callbacks.clearComposerStatusNotice(...args),
-        handlePresenceStreamEvent: (...args) => callbacks.handlePresenceStreamEvent?.(...args),
-        handleWorkspaceActivityStreamEvent: (...args) => callbacks.handleWorkspaceActivityStreamEvent?.(...args),
-        normalizePendingQuestionBatch: (...args) => callbacks.normalizePendingQuestionBatch(...args),
-        getInteractiveSequenceState: (...args) => callbacks.getInteractiveSequenceState(...args),
-        clearInteractiveDraft: (...args) => callbacks.clearInteractiveDraft(...args),
-        ensureInteractiveDraft: (...args) => callbacks.ensureInteractiveDraft(...args),
-        patchSessionSummary: (...args) => callbacks.patchSessionSummary(...args),
-        buildInteractiveQuestionBatchVisibleText: (...args) => callbacks.buildInteractiveQuestionBatchVisibleText(...args),
-        loadSessions: (...args) => callbacks.loadSessions(...args),
-        refreshSessionSummaries: (...args) => callbacks.refreshSessionSummaries(...args),
-        refreshSnapshots: (...args) => callbacks.refreshSnapshots(...args),
         refreshObservability: (...args) => callbacks.refreshObservability?.(...args) ?? Promise.resolve(null),
-        showToastMessage: (...args) => callbacks.showToastMessage(...args), dismissToast: (...args) => callbacks.dismissToast?.(...args),
-        dismissStreamErrors: (...args) => callbacks.dismissStreamErrors(...args),
         getInteractiveComposerStatusNotice: (...args) => slashDependencies.getInteractiveComposerStatusNotice(...args),
         persistInteractiveFallbackRequest,
         requestInteractiveGuardrailAnswer,
-        queueInteractiveComposerFocus: (...args) => callbacks.queueInteractiveComposerFocus(...args),
-        mergeMessageReasoning: (...args) => callbacks.mergeMessageReasoning(...args),
         getQueuedSend,
-        clearQueuedSendForSession,
         restoreQueuedSendDraft,
         dispatchQueuedSendForSession,
-        appendClientLog: (...args) => callbacks.appendClientLog(...args),
-        updateContextUsage: (...args) => callbacks.updateContextUsage(...args),
-        setChatSendLifecycle: (...args) => callbacks.setChatSendLifecycle(...args),
-        clearChatSendLifecycle: (...args) => callbacks.clearChatSendLifecycle(...args),
-        getChatSendLifecycle: (...args) => callbacks.getChatSendLifecycle(...args),
-        getChatTimelineRowModelEnabled: (...args) => callbacks.getChatTimelineRowModelEnabled?.(...args),
-        recordChatTimelineRolloutSignal: (...args) => callbacks.recordChatTimelineRolloutSignal?.(...args),
-        publishFirstTokenImpulse: (...args) => callbacks.publishFirstTokenImpulse?.(...args),
-        publishToolStartImpulse: (...args) => callbacks.publishToolStartImpulse?.(...args),
-        publishCompleteImpulse: (...args) => callbacks.publishCompleteImpulse?.(...args),
-        invalidateProjectionStateForSession: (...args) => callbacks.invalidateProjectionStateForSession?.(...args),
-        noteTimelineMessageCreated: (...args) => {
-          if (unreadOrientationController && typeof unreadOrientationController.noteTimelineMessageCreated === 'function') {
-            return unreadOrientationController.noteTimelineMessageCreated(...args);
-          }
-          return false;
-        },
+        noteTimelineMessageCreated: (...args) => unreadOrientationController?.noteTimelineMessageCreated?.(...args) ?? false,
       },
     }) || null;
 
@@ -762,52 +547,42 @@
         toastViewport: dom.toastViewport,
         composerModelSelect: dom.composerModelSelect,
         composerEffortSelect: dom.composerEffortSelect,
-        composerCommandPopover: dom.composerCommandPopover, composerRunModeSlot: dom.composerRunModeSlot, // W2-2a: a pane's own rail slot
+        composerRunModeSlot: dom.composerRunModeSlot, // W2-2a: a pane's own rail slot
         artifactReviewPanel: dom.artifactReviewPanel, chatSelectionOverlayHost: dom.chatSelectionOverlayHost, // W2-3: a pane's own host
       },
       callbacks: {
-        setActivityChangeListener: (...args) => callbacks.setActivityChangeListener(...args),
-        getSessionMessages: callbacks.getSessionMessages, setSessionMessages: (...args) => { const result = callbacks.setSessionMessages(...args); callbacks.renderWorkspaceChrome?.({ runtimeOnly: true }); return result; },
-        handleActivityChange: (...args) => callbacks.handleActivityChange(...args),
-        renderHeader: (...args) => callbacks.renderHeader(...args),
-        renderSettings: (...args) => callbacks.renderSettings(...args),
-        renderAll: (...args) => callbacks.renderAll(...args),
-        setToolCallExpansion: (...args) => callbacks.setToolCallExpansion?.(...args),
-        renderLogs: (...args) => callbacks.renderLogs(...args),
-        pushIncomingLog: (...args) => callbacks.pushIncomingLog(...args),
-        syncBackendActivityFromStatus: (...args) => callbacks.syncBackendActivityFromStatus(...args),
-        appendClientLog: (...args) => callbacks.appendClientLog(...args),
-        getRendererElapsedMs: (...args) => callbacks.getRendererElapsedMs(...args),
-        loadSessions: (...args) => callbacks.loadSessions(...args),
-        refreshSnapshots: (...args) => callbacks.refreshSnapshots(...args),
-        refreshApprovedMemories: (...args) => callbacks.refreshApprovedMemories(...args),
-        refreshComposerToolToggles: (...args) => callbacks.refreshComposerToolToggles?.(...args),
-        resetArtifactsState: (...args) => callbacks.resetArtifactsState(...args), resetPanes: (...args) => callbacks.resetPanes?.(...args),
-        resetAttachmentQueue: (...args) => callbacks.resetAttachmentQueue(...args),
-        closeComposerPopover: (...args) => callbacks.closeComposerPopover(...args),
-        closeCommandPopover: (...args) => callbacks.closeCommandPopover(...args),
-        openCommandPopover: (...args) => callbacks.openCommandPopover(...args),
-        handleSlashCommandSelection: selectSlashCommand,
-        hideAssistantSprite: (...args) => callbacks.hideAssistantSprite(...args),
-        updateAssistantSpritePosition: (...args) => callbacks.updateAssistantSpritePosition?.(...args),
-        setFollowLatest: (...args) => callbacks.setFollowLatest(...args),
-        setActiveView: (...args) => callbacks.setActiveView(...args),
-        syncComposerInputHeight: (...args) => callbacks.syncComposerInputHeight(...args),
-        syncComposerVisualState: (...args) => callbacks.syncComposerVisualState(...args),
-        renderComposerState: (...args) => callbacks.renderComposerState(...args),
-        handleCreateSession: (...args) => callbacks.handleCreateSession(...args),
+        ...forward([
+          'setActivityChangeListener', 'handleActivityChange', 'renderHeader', 'renderSettings', 'renderAll', 'renderLogs',
+          'pushIncomingLog', 'syncBackendActivityFromStatus', 'appendClientLog', 'getRendererElapsedMs', 'loadSessions',
+          'refreshSnapshots', 'refreshApprovedMemories', 'resetArtifactsState', 'resetAttachmentQueue', 'closeComposerPopover',
+          'hideAssistantSprite', 'setFollowLatest', 'setActiveView', 'syncComposerInputHeight', 'syncComposerVisualState',
+          'renderComposerState', 'handleCreateSession', 'showSessionActionError', 'showComposerActionError',
+          'setComposerStatusNotice', 'clearComposerStatusNotice', 'handleJumpToTop', 'handleJumpToLastPrompt',
+          'handleJumpToBottom', 'syncThreadScrollState', 'getPendingQuestionBatch', 'toggleInteractiveRoundRecap',
+          'toggleContextCompactionDetails', 'handleFollowUpMessage', 'syncThinkingBlockNode', 'dismissToast',
+          'showShellErrorToast', 'showToastMessage', 'toErrorMessage', 'beginActivity', 'resolveActivity', 'failActivity',
+          'getRuntimePreferenceSnapshot', 'runRuntimePreferenceActivity', 'getCurrentRuntimePreferences',
+          'handleSaveProactiveSuggestionMessage', 'handleLaterProactiveSuggestionMessage', 'handleUseProactiveSuggestionMessage',
+          'handleLifecycleProgress', 'handleLifecycleBackendStatus', 'beginModelSwitch', 'updateModelSwitch', 'failModelSwitch',
+          'openSettingsSection', 'handleErrorRecoveryAction', 'handleArtifactAction', 'handleComposerToggleChange',
+          'getCurrentSessionMessages',
+        ]),
+        ...forwardOptional([
+          'setToolCallExpansion', 'refreshComposerToolToggles', 'resetPanes', 'updateAssistantSpritePosition', 'toggleThreadBranch',
+          'setReasoningPhaseExpandedPreference', 'clearChatSendLifecycle', 'adjustChatZoomPercent', 'resetChatZoomPercent',
+          'getSessionTurnEventState', 'scrollMessageIntoView', 'focusEntryByMessageId',
+        ]),
+        getSessionMessages: callbacks.getSessionMessages,
+        setSessionMessages: (...args) => {
+          const result = callbacks.setSessionMessages(...args);
+          callbacks.renderWorkspaceChrome?.({ runtimeOnly: true });
+          return result;
+        },
+        getRuntimePreferencesFromSession: callbacks.getRuntimePreferencesFromSession,
+        viewportReveal: callbacks.viewportReveal || null,
         handleStopActiveStream,
-        showSessionActionError: (...args) => callbacks.showSessionActionError(...args),
         handleSend,
-        showComposerActionError: (...args) => callbacks.showComposerActionError(...args),
-        setComposerStatusNotice: (...args) => callbacks.setComposerStatusNotice(...args),
-        clearComposerStatusNotice: (...args) => callbacks.clearComposerStatusNotice(...args),
-        handleJumpToTop: (...args) => callbacks.handleJumpToTop(...args),
-        handleJumpToLastPrompt: (...args) => callbacks.handleJumpToLastPrompt(...args),
-        handleJumpToBottom: (...args) => callbacks.handleJumpToBottom(...args),
         handleComposerPaste,
-        syncThreadScrollState: (...args) => callbacks.syncThreadScrollState(...args),
-        getPendingQuestionBatch: (...args) => callbacks.getPendingQuestionBatch(...args),
         handleInteractiveOptionSelect,
         handleInteractiveOtherConfirm,
         handleInteractiveSubmit,
@@ -815,79 +590,18 @@
         handleInteractiveSkipQuestion,
         handleInteractiveSkipAll,
         handleInteractiveOtherInputChange,
-        toggleInteractiveRoundRecap: (...args) => callbacks.toggleInteractiveRoundRecap(...args),
-        toggleContextCompactionDetails: (...args) => callbacks.toggleContextCompactionDetails(...args),
-        toggleThreadBranch: (...args) => callbacks.toggleThreadBranch?.(...args),
         handleCopyMessage,
         handleElaborateMessage,
         handleRegenerateMessage,
-        handleBranchMessage: (...args) => {
-          if (messageBranchController && typeof messageBranchController.branchFromMessage === 'function') {
-            return messageBranchController.branchFromMessage(...args);
-          }
-          return Promise.resolve(null);
-        },
-        // F2 edit handlers — wired from the locally-constructed messageEditController above.
-        handleEditMessage: (...args) => {
-          if (messageEditController && typeof messageEditController.enterEdit === 'function') {
-            return messageEditController.enterEdit(...args);
-          }
-          return false;
-        },
-        handleEditCommit: () => {
-          if (messageEditController && typeof messageEditController.commitEdit === 'function') {
-            return messageEditController.commitEdit();
-          }
-          return Promise.resolve(null);
-        },
-        handleEditCancel: () => {
-          if (messageEditController && typeof messageEditController.cancelEdit === 'function') {
-            messageEditController.cancelEdit();
-          }
-        },
-        handleFollowUpMessage: (...args) => callbacks.handleFollowUpMessage(...args),
-        setReasoningPhaseExpandedPreference: (...args) => callbacks.setReasoningPhaseExpandedPreference?.(...args),
-        syncThinkingBlockNode: (...args) => callbacks.syncThinkingBlockNode(...args),
-        dismissToast: (...args) => callbacks.dismissToast(...args),
-        showShellErrorToast: (...args) => callbacks.showShellErrorToast(...args),
-        showToastMessage: (...args) => callbacks.showToastMessage(...args),
-        reportError: (...args) => (typeof callbacks.reportError === 'function'
-          ? callbacks.reportError(...args)
-          : null),
-        guardComposerTextPaste: (...args) => (
-          typeof callbacks.guardComposerTextPaste === 'function'
-            ? callbacks.guardComposerTextPaste(...args)
-            : { allowed: true }
-        ),
-        toErrorMessage: (...args) => callbacks.toErrorMessage(...args),
-        beginActivity: (...args) => callbacks.beginActivity(...args),
-        resolveActivity: (...args) => callbacks.resolveActivity(...args),
-        failActivity: (...args) => callbacks.failActivity(...args),
-        getRuntimePreferenceSnapshot: (...args) => callbacks.getRuntimePreferenceSnapshot(...args),
-        runRuntimePreferenceActivity: (...args) => callbacks.runRuntimePreferenceActivity(...args),
-        getCurrentRuntimePreferences: (...args) => callbacks.getCurrentRuntimePreferences(...args), getRuntimePreferencesFromSession: callbacks.getRuntimePreferencesFromSession,
-        handleSaveProactiveSuggestionMessage: (...args) => callbacks.handleSaveProactiveSuggestionMessage(...args),
-        handleLaterProactiveSuggestionMessage: (...args) => callbacks.handleLaterProactiveSuggestionMessage(...args),
-        handleUseProactiveSuggestionMessage: (...args) => callbacks.handleUseProactiveSuggestionMessage(...args),
-        handleLifecycleProgress: (...args) => callbacks.handleLifecycleProgress(...args),
-        handleLifecycleBackendStatus: (...args) => callbacks.handleLifecycleBackendStatus(...args),
-        clearChatSendLifecycle: (...args) => callbacks.clearChatSendLifecycle?.(...args),
-        beginModelSwitch: (...args) => callbacks.beginModelSwitch(...args),
-        updateModelSwitch: (...args) => callbacks.updateModelSwitch(...args),
-        failModelSwitch: (...args) => callbacks.failModelSwitch(...args),
-        adjustChatZoomPercent: (...args) => callbacks.adjustChatZoomPercent?.(...args),
-        resetChatZoomPercent: (...args) => callbacks.resetChatZoomPercent?.(...args),
-        openSettingsSection: (...args) => callbacks.openSettingsSection(...args),
-        handleErrorRecoveryAction: (...args) => callbacks.handleErrorRecoveryAction(...args),
-        handleArtifactAction: (...args) => callbacks.handleArtifactAction(...args),
-        handleCodeReviewAction: (...args) => (callbacks.handleCodeReviewAction || function noopHandleCodeReviewAction() { return Promise.resolve(); })(...args),
-        handleOpenChangeDiff: (...args) => (callbacks.handleOpenChangeDiff || function noopHandleOpenChangeDiff() { return Promise.resolve(false); })(...args),
-        handleComposerToggleChange: (...args) => callbacks.handleComposerToggleChange(...args),
-        getCurrentSessionMessages: (...args) => callbacks.getCurrentSessionMessages(...args),
-        getSessionTurnEventState: (...args) => callbacks.getSessionTurnEventState?.(...args),
-        scrollMessageIntoView: (...args) => callbacks.scrollMessageIntoView?.(...args),
-        viewportReveal: callbacks.viewportReveal || null,
-        focusEntryByMessageId: (...args) => callbacks.focusEntryByMessageId?.(...args),
+        handleBranchMessage: (...args) => messageBranchController?.branchFromMessage?.(...args) ?? Promise.resolve(null),
+        // F2 edit handlers, wired from the locally-constructed messageEditController above.
+        handleEditMessage: (...args) => messageEditController?.enterEdit?.(...args) ?? false,
+        handleEditCommit: () => messageEditController?.commitEdit?.() ?? Promise.resolve(null),
+        handleEditCancel: () => { messageEditController?.cancelEdit?.(); },
+        reportError: callbackOr('reportError', () => null),
+        guardComposerTextPaste: callbackOr('guardComposerTextPaste', () => ({ allowed: true })),
+        handleCodeReviewAction: callbackOr('handleCodeReviewAction', () => Promise.resolve()),
+        handleOpenChangeDiff: callbackOr('handleOpenChangeDiff', () => Promise.resolve(false)),
       },
     });
 
@@ -907,6 +621,7 @@
       bound = true;
       promptCommands?.refresh()?.catch(() => {});
       addCleanup(() => promptCommands?.dispose());
+      addCleanup(() => handoffHandler?.dispose?.());
       addCleanup(() => sendController?.dispose?.());
       addCleanup(() => resumeTurnInteraction?.dispose?.());
       addCleanup(() => messageEditController?.dispose?.());
@@ -937,6 +652,11 @@
       addCleanup(globalThis.rendererProposalCardActions?.bindProposalCardInteractions?.(dom.chatTimeline, {
         shell: windowRef.jennyShell, appendClientLog: (...args) => callbacks.appendClientLog(...args),
         openSession: (sessionId) => activateWorkspaceSession(sessionId, { mode: 'replace' }),
+        retryChildTurn: async (sessionId, messageId) => { // F3b: the child's own Retry turn, in the child
+          await activateWorkspaceSession(sessionId, { mode: 'replace' });
+          return state.currentSessionId === sessionId ? handleRegenerateMessage(messageId, { failureRetry: true }) : null;
+        },
+        isPrimarySession: (id) => isPrimarySessionId(state.sessions, id), launchPermissionEnabled: () => state.features?.featureFlags?.primary_launch_permission !== false,
       }) || (() => {}));
       addCleanup(globalThis.rendererSessionMessageRows?.bindSessionMessageCards?.(dom.chatTimeline, {
         openSession: (sessionId) => activateWorkspaceSession(sessionId, { mode: 'replace' }),

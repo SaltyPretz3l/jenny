@@ -77,7 +77,7 @@ from sidecar.runtime.chat import (
     estimate_text_tokens,
     resume_chat_send_response_from_approval_plan,
 )
-from sidecar.runtime.chat_helpers import _decision_usage_payload
+from sidecar.runtime.chat_helpers import CHAT_INVALID_PARAMS, _decision_usage_payload
 from sidecar.runtime.chat_models import ChatRequestContext, TerminalChatStateError
 from sidecar.runtime.chat_resume import (
     _build_live_approval_system_prompt,
@@ -1013,6 +1013,33 @@ def test_chat_send_captures_subagent_preferences_on_request_context() -> None:
     preferences["chatgpt"]["defaultModel"] = "gpt-6-astra"
     assert context.subagent_routing["chatgpt"]["defaultModel"] == "gpt-6.1-sol"
     assert context.subagent_routing["chatgpt"]["defaultEffort"] == "low"
+
+
+def test_chat_send_session_role_is_primary_or_absent() -> None:
+    # Row 69: the closed enum reaches the request context; anything else is invalid params.
+    decision = ChatDecision(
+        thinking_text=None, response_text="Ready.", approval_request=None, tool_results=(),
+    )
+    seen: list[str | None] = []
+    for extra in ({}, {"session_role": "primary"}):
+        brain_container = _build_brain_container(decision)
+        build_chat_send_response(
+            "msg-role", {"request_id": "req-role", **extra,
+                         "messages": [{"role": "user", "content": "What was I working on?"}]},
+            approvals_pre_granted=True, brain_container=brain_container, invalid_params_code=-32602,
+        )
+        seen.append(brain_container.stack.router.last_kwargs["request_context"].session_role)
+    assert seen == [None, "primary"]
+    for bad in (None, "child", "PRIMARY", 1):
+        with pytest.raises(ChatRequestError) as error_info:
+            build_chat_send_response(
+                "msg-role-bad", {"request_id": "req-role-bad", "session_role": bad,
+                                 "messages": [{"role": "user", "content": "hi"}]},
+                approvals_pre_granted=True, brain_container=_build_brain_container(decision),
+                invalid_params_code=-32602,
+            )
+        assert error_info.value.code == CHAT_INVALID_PARAMS
+        assert error_info.value.rpc_code == -32602
 
 
 def test_build_chat_send_response_carries_immutable_execution_context(tmp_path) -> None:
@@ -4386,3 +4413,36 @@ def test_chat_send_normalizes_absent_and_malformed_subagent_routing(field):
         approvals_pre_granted=True, brain_container=brain_container, invalid_params_code=-32602)
     context = brain_container.stack.router.last_kwargs["request_context"]
     assert context.subagent_routing == ({} if "subagent_routing" in field else None)
+
+
+def _send_with_calibration(raw: object) -> ChatRequestContext:
+    brain_container = _build_brain_container(ChatDecision(
+        thinking_text=None, response_text="Ready.", approval_request=None, tool_results=(),
+    ))
+    build_chat_send_response(
+        "msg-calibration",
+        {"request_id": "req-calibration", "context_calibration": raw,
+         "messages": [{"role": "user", "content": "Continue"}]},
+        approvals_pre_granted=True, brain_container=brain_container, invalid_params_code=-32602,
+    )
+    return brain_container.stack.router.last_kwargs["request_context"]
+
+
+def test_chat_send_carries_a_valid_context_calibration_on_the_request_context() -> None:
+    context = _send_with_calibration({
+        "provider_tokens": 1500, "estimate_tokens": 1000, "engine": "ninfer",
+        "model": "qwen3.8", "estimator": "CharEstimationBackend",
+    })
+    assert context.context_calibration is not None
+    assert context.context_calibration.provider_tokens == 1500
+    assert context.context_calibration.estimate_tokens == 1000
+    assert context.context_calibration.engine == "ninfer"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [None, "junk", {"provider_tokens": 1500}, {"provider_tokens": 0, "estimate_tokens": 5,
+     "engine": "e", "model": "m", "estimator": "x"}],
+)
+def test_chat_send_fails_a_malformed_context_calibration_closed(raw: object) -> None:
+    assert _send_with_calibration(raw).context_calibration is None

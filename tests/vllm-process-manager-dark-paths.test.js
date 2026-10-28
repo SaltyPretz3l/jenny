@@ -576,7 +576,8 @@ test('_resolveCommand resolves to first line of stdout on success', async () => 
 
     assert.equal(command, 'C:\\Python\\Scripts\\vllm.exe', 'must return first non-empty line');
     assert.equal(calls.length, 1, 'execFile must be called exactly once');
-    assert.equal(calls[0].args[0], 'vllm', 'must search for vllm');
+    // Windows scopes where.exe to PATH so a cwd copy never wins (security review item 8).
+    assert.equal(calls[0].args[0], process.platform === 'win32' ? '$PATH:vllm' : 'vllm', 'must search for vllm');
   } finally {
     childProcess.execFile = origExecFile;
   }

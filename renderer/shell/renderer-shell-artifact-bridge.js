@@ -920,6 +920,16 @@
     // The memory chip's Undo is one document-level delegate; bind it now, so a
     // chat whose artifact surface was never built still undoes a note.
     ensureMemoryChatEntry();
+    // Row 64: the review findings list's Fix / Show in diff delegate, bound the same way.
+    try {
+      const findingsEntry = windowRef?.rendererReviewFindings?.createReviewFindingsEntry?.({
+        windowRef, getCurrentSessionId: () => String(state.currentSessionId || ''),
+        appendClientLog: (...args) => appendClientLog(...args), showToastMessage: (...args) => showToastMessage(...args),
+      });
+      if (findingsEntry) { findingsEntry.bind(); registerCleanup(() => findingsEntry.dispose()); }
+    } catch (error) {
+      appendClientLog('ERROR', 'review_findings.entry_init_failed', { message: error?.message || String(error) });
+    }
 
     // A monitor Open can arrive before anything built the artifact surface; the
     // pane controllers call this to build the rail instead of falling back to

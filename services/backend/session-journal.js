@@ -237,6 +237,43 @@ function applyOps(session, ops) {
   return next;
 }
 
+// The array lengths a record would leave, or null when any op would throw in
+// applyOp. Checking first lets replay apply a record in place: a record either
+// applies whole or leaves the working copy untouched, exactly like applyOps.
+function recordApplies(session, ops) {
+  const lengths = new Map();
+  const lengthOf = (key) => {
+    if (!lengths.has(key)) lengths.set(key, Array.isArray(session[key]) ? session[key].length : -1);
+    return lengths.get(key);
+  };
+  for (const op of ops) {
+    if (!isPlainObject(op)) return false;
+    const arrayByTruncate = ARRAYS.find((entry) => entry.truncate === op.o);
+    const arrayBySet = ARRAYS.find((entry) => entry.set === op.o);
+    if (op.o === 'set' || op.o === 'unset') {
+      if (typeof op.k !== 'string') return false;
+      if (op.o === 'set' && op.v === undefined) return false;
+      if (ARRAY_KEYS.has(op.k)) lengths.set(op.k, op.o === 'set' && Array.isArray(op.v) ? op.v.length : -1);
+    } else if (arrayByTruncate) {
+      const length = lengthOf(arrayByTruncate.key);
+      if (length < 0 || !Number.isInteger(op.n) || op.n < 0 || op.n > length) return false;
+      lengths.set(arrayByTruncate.key, op.n);
+    } else if (arrayBySet) {
+      const length = lengthOf(arrayBySet.key);
+      if (length < 0 || !Number.isInteger(op.i) || op.i < 0 || op.i > length || op.v === undefined) return false;
+      if (op.i === length) lengths.set(arrayBySet.key, length + 1);
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Replays every record into ONE working copy of the base (made on the first
+// record; arrays are copied on first touch, as in applyOps), so a journal of R
+// records over a session of K keys costs O(K + ops) instead of O(R * K): the
+// index journal holds one top-level key per chat. The base and its arrays are
+// never mutated, and the returned session equals folding applyOps record by record.
 function replayJournal(baseSession, buffer, { sessionId, epoch } = {}) {
   const mismatch = { session: baseSession, status: 'header_mismatch', validBytes: 0, records: 0, continues: false };
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) return mismatch;
@@ -247,24 +284,19 @@ function replayJournal(baseSession, buffer, { sessionId, epoch } = {}) {
   if (!isHeaderFor(header.value, sessionId, epoch)) return mismatch;
 
   let session = baseSession;
+  const owned = new Set();
   let position = header.end;
   let records = 0;
   let status = 'ok';
   while (position < buffer.length) {
     const line = readLine(buffer, position);
-    let next = null;
-    if (line && isDelta(line.value)) {
-      try {
-        next = applyOps(session, line.value.ops);
-      } catch (applyError) {
-        void applyError;
-      }
-    }
-    if (!next) {
+    const applies = Boolean(line && isDelta(line.value) && isPlainObject(session) && recordApplies(session, line.value.ops));
+    if (!applies) {
       status = hasValidLineAfter(buffer, position) ? 'corrupt' : 'torn_tail';
       break;
     }
-    session = next;
+    if (session === baseSession) session = { ...baseSession };
+    for (const op of line.value.ops) applyOp(session, op, owned);
     position = line.end;
     records += 1;
   }

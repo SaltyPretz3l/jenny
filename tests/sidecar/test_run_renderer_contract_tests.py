@@ -8,8 +8,6 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
-import pytest
-
 
 def _load_runner() -> ModuleType:
     script_path = Path(__file__).resolve().parents[2] / "scripts" / "checks" / "run_renderer_contract_tests.py"
@@ -44,8 +42,7 @@ def test_no_curated_file_is_dropped_by_parallel_only() -> None:
     the selection with the actual safe-runner logic and assert every curated
     file survives into the parallel run group."""
     node = shutil.which("node")
-    if node is None:  # pragma: no cover - node is present in the lanes that run this
-        pytest.skip("node is not available")
+    assert node is not None, "node must be on PATH"
     module = _load_runner()
     script = (
         "const s=require('./scripts/run-node-tests-safe');"

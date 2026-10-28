@@ -43,3 +43,74 @@
   clip-path: polygon(15% 0, 85% 0, 85% 100%, 50% 68%, 15% 100%);
   cursor: pointer;
 }
+
+/* Row 82 G2: the quick diff peek a click on a change bar opens
+ * (renderer-ide-hunk-peek.js), an inventory popover anchored under the change
+ * inside the editor stage; the script sets inset-block-start / inset-inline-start. */
+.ide-hunk-peek.inv-popover {
+  position: absolute;
+  z-index: 20;
+  box-sizing: border-box;
+  inline-size: min(640px, calc(100% - var(--space-4)));
+  max-block-size: min(360px, 60%);
+  overflow: auto;
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevation-2);
+}
+
+.ide-hunk-peek-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.ide-hunk-peek-title {
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.ide-hunk-peek-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.ide-hunk-peek-label,
+.ide-hunk-peek-note {
+  margin: var(--space-2) 0 var(--space-1);
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+}
+
+.ide-hunk-peek-lines {
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  overflow-x: auto;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+  background-color: color-mix(in srgb, var(--state-danger) 10%, transparent);
+  border-inline-start: 3px solid var(--state-danger);
+  border-radius: var(--radius-sm);
+}
+
+.ide-hunk-peek-line {
+  display: block;
+  white-space: pre;
+}
+
+/* Inline blame (renderer-ide-inline-blame.js): Monaco's `after` decoration text on
+ * the cursor line, muted and italic as in VS Code. */
+.ide-inline-blame {
+  margin-inline-start: 3em;
+  color: var(--text-muted) !important;
+  font-style: italic;
+  opacity: 0.85;
+  pointer-events: none;
+}

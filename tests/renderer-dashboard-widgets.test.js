@@ -506,22 +506,21 @@ test('dashboard manager registers the surviving widgets and paints the info stri
   state.tick = 7;
   now = new Date(2026, 5, 11, 15, 31);
   intervalCallbacks[0]();
-  assert.equal(
-    infoStrip.querySelector('.home-info-strip__time').textContent,
-    '3:31 PM',
-    'clock tick updates only the clock text'
-  );
-  assert.equal(calendarRenders, 1, 'clock tick does not repaint dashboard widgets');
-  assert.equal(
-    grid.querySelector('[data-widget-id="calendar"] .dashboard-card__body').textContent,
-    '0'
-  );
+  assert.equal(infoStrip.querySelector('.home-info-strip__time').textContent, '3:31 PM');
+  assert.equal(calendarRenders, 2, 'a new minute repaints the time-relative widgets');
+  assert.equal(grid.querySelector('[data-widget-id="calendar"] .dashboard-card__body').textContent, '7');
+  now = new Date(2026, 5, 11, 15, 31, 30);
+  intervalCallbacks[0]();
+  assert.equal(calendarRenders, 2, 'a tick within the same minute does no work');
+  state.ui.activeView = 'chat';
+  now = new Date(2026, 5, 11, 15, 32);
+  intervalCallbacks[0]();
+  assert.equal(calendarRenders, 2, 'no tick paint while Home is not the active view');
   manager.dispose();
 });
 
-// The manager still owns reminder persistence (upsert/remove with echo
-// verification) even though the reminders widget left Home in the Daybook cut;
-// the agenda wave becomes its caller and brings its own coverage.
+// The manager owns reminder deletion (with echo verification) for the
+// Daybook agenda's Done affordance.
 test('dashboard manager exposes reminder actions for the Daybook agenda', () => {
   const { documentRef, grid, infoStrip } = createDom();
   const manager = createDashboardManager({
@@ -532,12 +531,11 @@ test('dashboard manager exposes reminder actions for the Daybook agenda', () => 
     modules: { dashboardRegistry: dashboardRegistryModule },
     callbacks: { appendClientLog: () => {} },
   });
-  assert.equal(typeof manager.reminderActions.upsert, 'function');
   assert.equal(typeof manager.reminderActions.remove, 'function');
   manager.dispose();
 });
 
-test('reminder upsert rejects an acknowledgement that does not echo the request', async () => {
+test('reminder deletion rejects an acknowledgement that does not echo the request', async () => {
   const { documentRef, grid, infoStrip } = createDom();
   const state = {
     ui: { activeView: 'home' },
@@ -554,11 +552,8 @@ test('reminder upsert rejects an acknowledgement that does not echo the request'
     documentRef,
     shell: {
       proactive: {
-        // Drops the untouched sibling's content: a silent data loss the echo
-        // check is there to catch.
-        upsertReminder: async (reminder) => ({
-          proactive: { reminders: [{ ...reminder, createdAt: prior[0].createdAt }, { id: prior[1].id }] },
-        }),
+        // Duplicates the survivor instead of echoing it once: the echo check
+        // is there to catch that.
         deleteReminder: async () => ({ proactive: { reminders: [prior[1], prior[1]] } }),
       },
     },
@@ -567,10 +562,6 @@ test('reminder upsert rejects an acknowledgement that does not echo the request'
     callbacks: { appendClientLog: () => {} },
   });
 
-  await assert.rejects(
-    () => manager.reminderActions.upsert({ ...prior[0], label: 'Renamed' }),
-    /acknowledgement did not match/
-  );
   await assert.rejects(
     () => manager.reminderActions.remove('r1'),
     /deletion was not acknowledged/

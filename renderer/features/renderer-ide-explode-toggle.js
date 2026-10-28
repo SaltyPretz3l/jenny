@@ -24,10 +24,7 @@
     return {};
   }
 
-  const inventoryButton = resolveModule('inventoryActionButton', '../inventory/action-button');
-  const actionButton = typeof inventoryButton === 'function'
-    ? inventoryButton
-    : inventoryButton.actionButton || inventoryButton.default || null;
+  const actionButton = resolveModule('inventoryActionButton', '../inventory/action-button');
 
   // createExplodeToggle({ bar, onSelect }) — bar is #ideViewModeBar.
   function createExplodeToggle(deps) {

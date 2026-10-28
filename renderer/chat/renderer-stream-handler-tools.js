@@ -17,8 +17,29 @@
   const {
     extractToolCallId,
     normalizeGeneratedArtifact,
+    normalizeTrustedAttachmentRefs,
   } = turnNormalizationUtils;
   const { beginSegment } = streamTextCursor;
+
+  // One live turn per session (session turn actor): an approval filed under
+  // another stream of this session can no longer be answered. A runtime pause
+  // suspends it main-side, and Resume re-offers the same call id under a new
+  // approval id, so a leftover entry would answer with a dead id. Shared with
+  // the live-events handler (a new stream supersedes the same way).
+  function pruneSupersededApprovals(approvals, sessionId, liveStreamId) {
+    const session = String(sessionId || '').trim();
+    const live = String(liveStreamId || '').trim();
+    if (!approvals?.entries || !session || !live) return 0;
+    let pruned = 0;
+    for (const [key, approval] of [...approvals.entries()]) {
+      const streamId = String(approval?.streamId || '').trim();
+      if (String(approval?.sessionId || '').trim() === session && streamId && streamId !== live) {
+        approvals.delete(key);
+        pruned += 1;
+      }
+    }
+    return pruned;
+  }
 
   const STRUCTURAL_RESULT_TOOL_NAMES = new Set([
     'ask_user',
@@ -39,7 +60,13 @@
     'propose_session',
     'complete_session_handoff',
     'web_search',
+    // And the review findings list (Fix / Show in diff).
+    'report_findings',
   ]);
+
+  // A result that ran without a refusal; any other approval state (denied,
+  // timed_out, cancelled, a plan decision) re-renders the row.
+  const PATCHABLE_RESULT_APPROVAL_STATES = new Set(['auto', 'approved', 'not_required']);
 
   function markUserQuestionsStale(sessionId, questionRef, options = {}) {
     const normalizedSessionId = String(sessionId || '').trim();
@@ -140,8 +167,9 @@
       const normalizedCallId = String(callId || '').trim();
       const normalizedStreamId = String(streamId || '').trim();
       const normalizedPreferredId = String(preferredId || '').trim();
+      // Live tool messages sit at the tail of the session: scan from the end.
       if (normalizedPreferredId) {
-        const exactIndex = list.findIndex((message) => String(message?.id || '').trim() === normalizedPreferredId);
+        const exactIndex = list.findLastIndex((message) => String(message?.id || '').trim() === normalizedPreferredId);
         if (exactIndex !== -1) {
           return exactIndex;
         }
@@ -172,6 +200,13 @@
         ? payload.metadata
         : {};
       const toolName = String(payload?.toolName || payload?.tool_name || fallbackToolName).trim().toLowerCase();
+      const approvalState = String(payload?.approvalState ?? payload?.approval_state ?? '').trim().toLowerCase();
+      // A failed, refused or timed-out result gains its failure line, error
+      // chip, retry and Error section only through a render.
+      if (payload?.isError === true || payload?.is_error === true
+        || (approvalState && !PATCHABLE_RESULT_APPROVAL_STATES.has(approvalState))) {
+        return true;
+      }
       return (
         Array.isArray(payload?.generatedArtifacts) && payload.generatedArtifacts.length > 0
       ) || (
@@ -191,10 +226,15 @@
         || metadata.exitCode != null
         || metadata.exit_code != null
         || metadata.timedOut
+        || metadata.timed_out
         || metadata.killed
       );
     }
 
+    // Tool, approval and question events queue no `sessions` render: they
+    // change no summary field a sidebar row renders from (title, preview,
+    // time, unread, outbox), only a runtime dot, which the runtime chrome pass
+    // queueSessionRender adds repaints (and patches collapsed chips with).
     function queueToolSessionRender(payload, eventType, flags, options = {}) {
       let livePatchAccepted = false;
       if (options.allowLivePatch !== false) {
@@ -269,14 +309,20 @@
         publishToolStartImpulse({ sessionId: payload.sessionId, streamId: payload.streamId, timeStamp: payload.timeStamp });
       }
       const input = payload.input && typeof payload.input === 'object' ? payload.input : {};
+      // When the tool last started running: the sprite still shows a tool that settled within
+      // a frame. A reused call id that runs again gets a fresh stamp.
+      const isRunningStatus = (value) => value === 'running' || value === 'executing';
+      const ranAt = isRunningStatus(status) && !isRunningStatus(existingToolEntry?.status)
+        ? Date.now() : (existingToolEntry?.ranAt || 0);
       if (existingToolEntry) {
         existingToolEntry.toolName = String(payload.toolName || existingToolEntry.toolName || '');
         existingToolEntry.status = status;
+        existingToolEntry.ranAt = ranAt;
         existingToolEntry.input = Object.keys(input).length > 0 ? input : existingToolEntry.input;
         existingToolEntry.summary = summary || existingToolEntry.summary;
         if (boundaryAccepted) existingToolEntry.segmentBoundaryApplied = true;
       } else {
-        streamTools.push({ callId, toolName: String(payload.toolName || ''), status, input, summary, segmentBoundaryApplied: boundaryAccepted });
+        streamTools.push({ callId, toolName: String(payload.toolName || ''), status, input, summary, segmentBoundaryApplied: boundaryAccepted, ranAt });
       }
       state.toolCallsByStream.set(payload.streamId, streamTools);
       const activeMessages = [...getSessionMessages(payload.sessionId)];
@@ -364,30 +410,10 @@
         composerStatus: true,
         composer: true,
         header: true,
-        sessions: true,
       }, {
         allowLivePatch: !createdToolUseMessage,
       });
       return { buffered: false, terminal: false };
-    }
-
-    // One live turn per session (session turn actor): an approval filed under
-    // another stream of this session can no longer be answered. A runtime pause
-    // suspends it main-side, and Resume re-offers the same call id under a new
-    // approval id, so a leftover entry would answer with a dead id.
-    function pruneSupersededSessionApprovals(sessionId, liveStreamId) {
-      const session = String(sessionId || '').trim();
-      const live = String(liveStreamId || '').trim();
-      if (!session || !live) return 0;
-      let pruned = 0;
-      for (const [key, approval] of [...state.pendingToolApprovals.entries()]) {
-        const streamId = String(approval?.streamId || '').trim();
-        if (String(approval?.sessionId || '').trim() === session && streamId && streamId !== live) {
-          state.pendingToolApprovals.delete(key);
-          pruned += 1;
-        }
-      }
-      return pruned;
     }
 
     // Main suspended this approval for a runtime pause: the waiter is gone, but
@@ -397,7 +423,6 @@
       state.pendingToolApprovals.delete(normalizeApprovalId(payload, extractToolCallId(payload)));
       releaseApprovalToastSessions([payload.sessionId]);
       queueToolSessionRender(payload, 'tool_approval_withdrawn', {
-        sessions: true,
         header: true,
         composerStatus: true,
       }, { allowLivePatch: false });
@@ -417,7 +442,7 @@
       applyLiveTurnPayload(payload, {
         primaryToolMessageId: toolUseMessageId,
       });
-      if (pruneSupersededSessionApprovals(payload.sessionId, payload.streamId) > 0) {
+      if (pruneSupersededApprovals(state.pendingToolApprovals, payload.sessionId, payload.streamId) > 0) {
         releaseApprovalToastSessions([payload.sessionId]);
       }
       state.pendingToolApprovals.set(approvalId, {
@@ -432,6 +457,12 @@
         policyConsequence,
         oneOffOnly,
         ...(reason ? { reason } : {}),
+        ...(payload.session_stop_approval && typeof payload.session_stop_approval === 'object'
+          ? { sessionStopApproval: payload.session_stop_approval } : {}),
+        // Only the live request carries the exact command/write presentation; the card reads it
+        // from here (resolveApprovalCardState), so a rehydrated approval has none and no Allow.
+        ...(payload.exact_approval && typeof payload.exact_approval === 'object' && !Array.isArray(payload.exact_approval)
+          ? { exactApproval: payload.exact_approval } : {}),
       });
       const activeMessages = [...getSessionMessages(payload.sessionId)];
       const toolUseIndex = findToolMessageIndex(activeMessages, {
@@ -453,7 +484,6 @@
             ...(oneOffOnly ? { one_off_only: true } : {}),
           },
         };
-        setSessionMessages(payload.sessionId, activeMessages, `session_${payload.sessionId}`);
       } else {
         // The approval event can win the race against the tool_use commit
         // (consecutive stream events with no render between them). Without a
@@ -484,7 +514,6 @@
           status: MESSAGE_STATUS.COMPLETE,
           finalizedAt: new Date().toISOString(),
         }));
-        setSessionMessages(payload.sessionId, activeMessages, `session_${payload.sessionId}`);
       }
       if (payload.planDocument && typeof payload.planDocument === 'object') {
         const planDocument = {
@@ -510,8 +539,9 @@
         });
         if (existingPlanIndex >= 0) activeMessages[existingPlanIndex] = planMessage;
         else activeMessages.push(planMessage);
-        setSessionMessages(payload.sessionId, activeMessages, `session_${payload.sessionId}`);
       }
+      // One store write for the tool row and its plan document.
+      setSessionMessages(payload.sessionId, activeMessages, `session_${payload.sessionId}`);
       if (!isCurrentSession(payload.sessionId)) {
         showApprovalToast(payload.sessionId);
       }
@@ -526,7 +556,6 @@
         composerStatus: true,
         composer: true,
         header: true,
-        sessions: true,
       }, {
         allowLivePatch: false,
       });
@@ -548,7 +577,6 @@
       messages[index] = { ...messages[index], tool_call: { ...messages[index].tool_call, user_questions_withdrawn: true } };
       setSessionMessages(payload.sessionId, messages, `session_${payload.sessionId}`);
       queueToolSessionRender(payload, 'user_questions_withdrawn', {
-        sessions: true,
         header: true,
         composerStatus: true,
       }, { allowLivePatch: false });
@@ -620,7 +648,6 @@
         composerStatus: true,
         composer: true,
         header: true,
-        sessions: true,
       }, { allowLivePatch: false });
       return { buffered: false, terminal: false };
     }
@@ -716,17 +743,7 @@
           generated_artifacts: Array.isArray(payload.generatedArtifacts)
             ? payload.generatedArtifacts.map(normalizeGeneratedArtifact).filter(Boolean)
             : [],
-          trusted_attachment_refs: Array.isArray(payload.trustedAttachments)
-            ? payload.trustedAttachments.map((attachment) => ({
-                id: String(attachment?.id || '').trim(),
-                kind: String(attachment?.kind || '').trim(),
-                mime_type: String(attachment?.mimeType || attachment?.mime_type || '').trim(),
-                byte_length: Number(attachment?.byteLength ?? attachment?.byte_length ?? 0),
-                width: Number(attachment?.width || 0),
-                height: Number(attachment?.height || 0),
-                asset_path: String(attachment?.assetPath || attachment?.asset_path || '').trim(),
-              })).filter((attachment) => attachment.id && attachment.asset_path)
-            : [],
+          trusted_attachment_refs: normalizeTrustedAttachmentRefs(payload.trustedAttachments),
           metadata: payload.metadata && typeof payload.metadata === 'object' && !Array.isArray(payload.metadata)
             ? { ...payload.metadata } : {},
         },
@@ -795,7 +812,6 @@
         composerStatus: true,
         composer: true,
         header: true,
-        sessions: true,
       }, {
         allowLivePatch: !hasStructuralToolResultPayload(payload, fallbackToolName),
       });
@@ -811,5 +827,5 @@
     };
   }
 
-  return { createStreamToolHandlers, markUserQuestionsStale };
+  return { createStreamToolHandlers, markUserQuestionsStale, pruneSupersededApprovals };
 });

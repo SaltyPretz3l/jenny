@@ -5,16 +5,27 @@ const { supportsSessionMessageContext } = require('../../session-runtime/inferen
 const { normalizeSessionMessageResultMetadata } = require('../../backend/tool-result-diff-metadata');
 const { classify, validSessionId, isPlainObject } = require('../../chat-messaging-contract');
 const { validateBody } = require('../../backend/session-message-envelope');
+const { manifestSchema } = require('./tool-result');
 
 const ACTION_KEYS = Object.freeze({
   list_targets: ['action'], read: ['action', 'message_id'],
-  send: ['action', 'destination_session_id', 'body'],
+  send: ['action', 'destination_session_id', 'body'], list_inbox: ['action'],
 });
+const OPTIONAL_KEYS = Object.freeze({ list_inbox: ['limit'] });
+
+// Summaries name only a known action, never the model's raw string.
+function actionLabel(action) {
+  return typeof action === 'string' && Object.hasOwn(ACTION_KEYS, action) ? action : 'invalid request';
+}
 
 function validInput(input) {
   if (!isPlainObject(input) || !Object.hasOwn(ACTION_KEYS, input.action)) return false;
   const keys = ACTION_KEYS[input.action];
-  if (Object.keys(input).length !== keys.length || !keys.every(key => Object.hasOwn(input, key))) return false;
+  const optional = OPTIONAL_KEYS[input.action] || [];
+  if (!keys.every(key => Object.hasOwn(input, key))
+    || !Object.keys(input).every(key => keys.includes(key) || optional.includes(key))) return false;
+  if (input.action === 'list_inbox') return !Object.hasOwn(input, 'limit')
+    || (Number.isSafeInteger(input.limit) && input.limit >= 1 && input.limit <= 50);
   if (input.action === 'read') return typeof input.message_id === 'string' && input.message_id.length > 0
     && input.message_id.length <= 256;
   return input.action !== 'send' || (validSessionId(input.destination_session_id) && validateBody(input.body).ok);
@@ -26,7 +37,7 @@ function destinationView(value) {
 
 function result(action, value) {
   return {
-    content: JSON.stringify(value), summary: `Session message: ${action || 'invalid request'}`,
+    content: JSON.stringify(value), summary: `Session message: ${actionLabel(action)}`,
     isError: false,
     metadata: normalizeSessionMessageResultMetadata({ result_kind: 'session_message', action, ...value }) || {},
   };
@@ -88,10 +99,9 @@ async function send(input, context, service, live) {
 }
 
 module.exports = {
-  name: 'session_message', category: 'builtin', workspaceRequired: false,
-  description: 'List messaging targets, read included mail, or send an exact message to another chat.',
-  readOnly: false, sideEffecting: true, parameters: {},
-  summarize: input => `Session message: ${input?.action || 'invalid request'}`,
+  name: 'session_message', ...manifestSchema('session_message'), category: 'builtin', workspaceRequired: false,
+  readOnly: false, sideEffecting: true,
+  summarize: input => `Session message: ${actionLabel(input?.action)}`,
   async execute(input, context = {}) {
     if (!validInput(input)) return failure(input?.action, 'invalid_request');
     const action = input.action;
@@ -104,11 +114,14 @@ module.exports = {
     try {
       if (action === 'send') return await send(input, context, service, live);
       const source = { sourceSessionId: live.sessionId, sourceIncarnation: live.incarnation };
-      const response = action === 'read'
-        ? await service.agentRead({ ...source, messageId: input.message_id })
-        : await service.listAgentTargets(source);
+      const response = action === 'read' ? await service.agentRead({ ...source, messageId: input.message_id })
+        : action === 'list_inbox' ? await service.agentListInbox?.({ ...source, limit: input.limit ?? 20 })
+          : await service.listAgentTargets(source);
       if (!response?.ok) return failure(action, response?.reason || 'unavailable');
       if (action === 'read') return result(action, { ok: true, envelope: response.envelope });
+      if (action === 'list_inbox') {
+        return result(action, { ok: true, messages: response.messages, counts: response.counts, truncated: response.truncated === true });
+      }
       return result(action, { ok: true, targets: response.targets.map(target => ({
         ...destinationView(target), free_form_allowed: target.free_form_allowed === true,
         grant: target.grant ? { expires_at: target.grant.expires_at, remaining_sends: target.grant.remaining_sends } : null,

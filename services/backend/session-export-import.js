@@ -21,6 +21,7 @@ const {
   normalizeBranchOrigin,
 } = require('./session-store-migrations');
 const { GENERAL_PROJECT_ID, normalizeProjectId } = require('../projects/project-schema');
+const { PRIMARY_SESSION_ROLE, normalizeSessionRole } = require('./primary-session');
 const {
   PERSIST_ERROR_CODES,
 } = require('./error-codes');
@@ -284,6 +285,8 @@ function exportSession(sessionStore, sessionId, attachmentStore = null, options 
       conversation_mode: session.conversation_mode,
       context_preferences: session.context_preferences,
       branch_origin: normalizeBranchOrigin(session.branch_origin),
+      // Only a trusted archive restore reads it back (see importSession).
+      ...(normalizeSessionRole(session.session_role) ? { session_role: PRIMARY_SESSION_ROLE } : {}),
       messages: messagesWithAssets,
       ...(options.includeTurnEvents === true ? {
         turn_events: session.turn_events,
@@ -534,6 +537,12 @@ function importSession(sessionStore, jsonPayload, attachmentStore, options = {})
       conversation_mode: source.conversation_mode || 'chat',
       context_preferences: source.context_preferences || {},
       branch_origin: preserveIdentity ? normalizeBranchOrigin(source.branch_origin) : null,
+      // Row 69: a restored primary Jenny chat stays the primary (its transcript spans every
+      // project, so it must not come back as an ordinary General chat). Restore runs only into a
+      // fresh profile; a duplicate is demoted, oldest kept, by ensurePrimarySession at startup.
+      // A plain import is a copy and never a primary.
+      ...(preserveIdentity && normalizeSessionRole(source.session_role)
+        ? { session_role: PRIMARY_SESSION_ROLE, pinned: true } : {}),
       session_incarnation: restoredIncarnation,
       created_at: preserveIdentity ? source.created_at : new Date().toISOString(),
       updated_at: preserveIdentity ? source.updated_at : new Date().toISOString(),

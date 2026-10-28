@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import re
 from collections.abc import Callable, Sequence
@@ -10,15 +11,23 @@ from statistics import median
 from typing import Any
 
 from sidecar.ai.error_codes import CMP_TOOL_EXECUTION_FAILED
+from sidecar.ai.tools.builtins.pdf_page_cache import (
+    PDF_PAGE_CACHE,
+    CachedPdfPage,
+    cached_page,
+    pdf_page_cache_enabled,
+)
+from sidecar.ai.tools.builtins.pdf_page_selection import (
+    MAX_PDF_PAGES,
+    parse_pages_argument,  # noqa: F401 - re-export for filesystem_content
+    select_pages,
+)
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.sanitization import sanitize_tool_output_no_truncate
 
 _DOT_RUN = re.compile(r"\.{3,}")
-_CURSOR = re.compile(r"pdf:([0-9a-f]{16}):([1-9][0-9]*):([1-9][0-9]*)")
-# Pages per read_file call; three dense pages fit the response budget.
-MAX_PDF_PAGES = 3
-# `unread_pages` stays well inside every output-string clip so it remains valid syntax.
-_UNREAD_MAX_CHARS = 200
+# Page and line stay inside int()'s digit limit and far below any real document.
+_CURSOR = re.compile(r"pdf:([0-9a-f]{16}):([1-9][0-9]{0,8}):([1-9][0-9]{0,8})")
 # Model-facing guidance attached to every PDF read, OCR or not, on both read paths.
 SOURCES_NOTE = (
     'Lines are numbered per page as "<n>: <text>"; cite that n, never a row number '
@@ -276,14 +285,21 @@ def continuation_summary(pages: Sequence[dict[str, object]]) -> dict[str, object
             summary["continuation_hint"] = (
                 "A PDF line was clipped; its suffix cannot be recovered. "
                 f"To read the remaining lines, call read_file again with cursor={cursor}."
-                if incomplete else CONTINUATION_HINT.format(cursor=cursor)
+                if incomplete
+                else CONTINUATION_HINT.format(cursor=cursor)
             )
             break
     return summary
 
 
 def document_digest(raw_pdf: bytes) -> str:
-    return hashlib.sha256(raw_pdf).hexdigest()[:16]
+    return document_digest_from_sha256(hashlib.sha256(raw_pdf).hexdigest())
+
+
+def document_digest_from_sha256(sha256_hex: str) -> str:
+    """``document_digest`` of bytes whose full SHA-256 hex digest is already known."""
+
+    return sha256_hex[:16]
 
 
 def encode_cursor(*, digest: str, page: int, line: int) -> str:
@@ -300,122 +316,6 @@ def decode_cursor(value: object) -> PdfCursor:
         )
     digest, page, line = match.groups()
     return PdfCursor(digest=digest, page=int(page), line=int(line))
-
-
-def _pages_failure(message: str) -> ToolExecutionFailure:
-    return ToolExecutionFailure(code=CMP_TOOL_EXECUTION_FAILED, message=message, retryable=False)
-
-
-def _parse_page_token(token: str, *, page_count: int) -> range | list[int]:
-    """One comma-separated `pages` token: a page number or an inclusive range."""
-
-    if "-" not in token:
-        if not token.isdigit():
-            raise _pages_failure("tool argument 'pages' must contain only positive page numbers")
-        return [int(token)]
-    start_text, end_text = token.split("-", 1)
-    if not start_text.strip().isdigit() or not end_text.strip().isdigit():
-        raise _pages_failure("tool argument 'pages' must contain only positive page numbers")
-    start = int(start_text.strip())
-    end = int(end_text.strip())
-    if start <= 0 or end <= 0 or end < start:
-        raise _pages_failure("tool argument 'pages' contains an invalid range")
-    if start > page_count or end > page_count:
-        missing_page = start if start > page_count else end
-        raise _pages_failure(
-            f"tool argument 'pages' references page {missing_page}, "
-            f"but the PDF has {page_count} pages"
-        )
-    return range(start, end + 1)
-
-
-def _unread_spans(pages: range, selected: Sequence[int]) -> list[tuple[int, int]]:
-    """`pages` minus the (at most MAX_PDF_PAGES) selected ones, as inclusive spans.
-
-    Never iterates `pages`: a model can ask for 1-100000000.
-    """
-
-    spans: list[tuple[int, int]] = []
-    start = pages.start
-    for page in sorted(value for value in set(selected) if value in pages):
-        if start < page:
-            spans.append((start, page - 1))
-        start = page + 1
-    if start < pages.stop:
-        spans.append((start, pages.stop - 1))
-    return spans
-
-
-def _format_unread(spans: Sequence[tuple[int, int]]) -> str:
-    """Sorted, merged `pages` syntax, bounded so it survives output clipping intact.
-
-    Past the bound the tail collapses into one covering span: a follow-up may
-    re-read a page the model skipped, but never loses one it asked for.
-    """
-
-    merged: list[list[int]] = []
-    for start, end in sorted(spans):
-        if merged and start <= merged[-1][1] + 1:
-            merged[-1][1] = max(merged[-1][1], end)
-        else:
-            merged.append([start, end])
-    tokens: list[str] = []
-    length = 0
-    last_page = merged[-1][1] if merged else 0
-    for start, span_end in merged:
-        end = last_page if length > _UNREAD_MAX_CHARS else span_end
-        tokens.append(str(start) if start == end else f"{start}-{end}")
-        length += len(tokens[-1]) + 1
-        if end == last_page:
-            break
-    return ",".join(tokens)
-
-
-def select_pages(raw_value: object, *, page_count: int) -> tuple[list[int], str]:
-    """The pages to read (at most MAX_PDF_PAGES) and the requested rest, in `pages` syntax.
-
-    Past the cap the read proceeds with the first pages instead of failing, so a
-    model that copies a user's "pages 1-4" loses no round trip; the rest is
-    reported for a follow-up call.
-    """
-
-    if raw_value is None:
-        return list(range(1, min(page_count, MAX_PDF_PAGES) + 1)), ""
-    if not isinstance(raw_value, str) or not raw_value.strip():
-        raise _pages_failure("tool argument 'pages' must be a non-empty string like '1-3' or '2,5'")
-    selected: list[int] = []
-    unread: list[tuple[int, int]] = []
-    for chunk in raw_value.split(","):
-        token = chunk.strip()
-        if not token:
-            continue
-        pages = _parse_page_token(token, page_count=page_count)
-        if isinstance(pages, list):
-            pages = range(pages[0], pages[0] + 1)
-        if pages.start <= 0:
-            raise _pages_failure("tool argument 'pages' must contain only positive page numbers")
-        if pages.stop - 1 > page_count:
-            raise _pages_failure(
-                f"tool argument 'pages' references page {pages.stop - 1}, "
-                f"but the PDF has {page_count} pages"
-            )
-        # At most MAX_PDF_PAGES values are taken and at most MAX_PDF_PAGES skipped
-        # as duplicates, so this loop stays short whatever the range size.
-        for value in pages:
-            if len(selected) >= MAX_PDF_PAGES:
-                break
-            if value not in selected:
-                selected.append(value)
-        unread.extend(_unread_spans(pages, selected))
-    if not selected:
-        raise _pages_failure("tool argument 'pages' did not select any pages")
-    return selected, _format_unread(unread)
-
-
-def parse_pages_argument(raw_value: object, *, page_count: int) -> list[int]:
-    """Selected page numbers for `pages` (default: the first MAX_PDF_PAGES)."""
-
-    return select_pages(raw_value, page_count=page_count)[0]
 
 
 def resolve_selection(
@@ -469,7 +369,92 @@ def check_cursor_line(cursor: PdfCursor, lines: Sequence[PdfTextLine], *, page_n
         )
 
 
-def page_lines(
+def _replay_cached_page(
+    entry: CachedPdfPage,
+    *,
+    page_number: int,
+    ocr_session: Any,
+    text_less_pages: list[int],
+) -> tuple[list[PdfTextLine], bool, dict[str, object] | None]:
+    info = copy.deepcopy(entry.ocr_info)
+    if not entry.text_layer:
+        text_less_pages.append(page_number)
+        if info is not None:
+            ocr_session.record_cached_page(
+                page_number,
+                engine=str(info["engine"]),
+                attempts=entry.ocr_attempts,
+                empty=entry.ocr_empty,
+                uncertain=bool(info.get("uncertain")),
+            )
+    return list(entry.lines), entry.text_layer, info
+
+
+def page_lines(  # noqa: PLR0913
+    page: Any,
+    *,
+    page_number: int,
+    ocr_session: Any,
+    text_less_pages: list[int],
+    tool_name: str,
+    digest: str | None = None,
+    cache_hits: list[int] | None = None,
+) -> tuple[list[PdfTextLine], bool, dict[str, object] | None]:
+    """``(lines, text_layer, OCR info)`` for one page, sanitized before budgeting.
+
+    A page without a text layer is recorded in ``text_less_pages`` and its
+    words are recovered through the OCR session when available. With the
+    document ``digest`` the outcome is served from and stored in
+    ``PDF_PAGE_CACHE``; a served page is appended to ``cache_hits``.
+    """
+
+    entry = cached_page(digest, page_number)
+    # OCR's kill switch also hides OCR text recognized before it was set.
+    if entry is not None and (entry.text_layer or ocr_session.enabled):
+        if cache_hits is not None:
+            cache_hits.append(page_number)
+        return _replay_cached_page(
+            entry,
+            page_number=page_number,
+            ocr_session=ocr_session,
+            text_less_pages=text_less_pages,
+        )
+    lines, text_layer, info = _extract_page_lines(
+        page,
+        page_number=page_number,
+        ocr_session=ocr_session,
+        text_less_pages=text_less_pages,
+        tool_name=tool_name,
+    )
+    # A Tesseract reading taken only because RapidOCR failed transiently is not
+    # cached, so a later read gives RapidOCR another chance at the page.
+    rapid_retry_owed = (
+        info is not None
+        and info.get("engine") == "tesseract"
+        and bool(getattr(ocr_session, "rapid_transient_failure", False))
+    )
+    if (
+        digest is not None
+        and pdf_page_cache_enabled()
+        and (text_layer or info is not None)
+        and not rapid_retry_owed
+    ):
+        attempts, empty = ((), False) if info is None else ocr_session.page_outcome(page_number)
+        PDF_PAGE_CACHE.put(
+            digest,
+            page_number,
+            CachedPdfPage(
+                lines=tuple(lines),
+                text_layer=text_layer,
+                ocr_info=copy.deepcopy(info),
+                ocr_attempts=attempts,
+                ocr_empty=empty,
+            ),
+        )
+    return lines, text_layer, info
+
+
+def _extract_page_lines(
     page: Any,
     *,
     page_number: int,
@@ -477,16 +462,12 @@ def page_lines(
     text_less_pages: list[int],
     tool_name: str,
 ) -> tuple[list[PdfTextLine], bool, dict[str, object] | None]:
-    """``(lines, text_layer, OCR info)`` for one page, sanitized before budgeting.
-
-    A page without a text layer is recorded in ``text_less_pages`` and its
-    words are recovered through the OCR session when available.
-    """
-
-    text_layer = bool(page.get_text("text").strip())
+    # One extraction serves both the text-layer test and the line reconstruction.
+    words = page.get_text("words")
+    text_layer = any(str(word[4]).strip() for word in words)
     result = None
     if text_layer:
-        lines = reconstruct_page_lines(page)
+        lines = reconstruct_page_lines(page, words=words)
     else:
         text_less_pages.append(page_number)
         result = ocr_session.recover_words(page, page_number=page_number)

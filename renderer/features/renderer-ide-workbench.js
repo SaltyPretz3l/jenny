@@ -487,7 +487,7 @@
       if (name === 'collapse') collapseStack(stackId);
       else if (name === 'maximize') toggleMaximize(stackId);
       else if (name === 'more' || name === 'bind') openMenu((name === 'bind' && chrome.boundView(ops, currentLayout(), (rendered.idx.nodes.get(stackId) || {}).node)) || activeViewOfStackId(stackId), { el: action });
-      else if (name.indexOf('view:') === 0) chrome.runViewAction(views, activeViewOfStackId(stackId), name.slice(5));
+      else if (name.indexOf('view:') === 0) chrome.runViewAction(views, activeViewOfStackId(stackId), name.slice(5), action);
     }
 
     function onTabKeyDown(event, tab) {
@@ -525,8 +525,18 @@
     function onFocusIn(event) {
       const el = closestIn(event, '[data-wb-stack]');
       if (!el) return;
-      touch(el.getAttribute('data-wb-stack'));
-      if (el.getAttribute('data-kind') === 'editor') showEditor();
+      const stackId = el.getAttribute('data-wb-stack');
+      touch(stackId); // before showEditor's render, so its solve sees this use
+      if (el.getAttribute('data-kind') !== 'editor') return;
+      showEditor();
+      revealEditorGroup(stackId);
+    }
+
+    // An editor group in use (focused, or a tab activated in it from the tree) counts as
+    // recent; one that gave way to the primary (0 px, F11) gets its room back.
+    function revealEditorGroup(stackId) {
+      touch(stackId);
+      if (rendered && rendered.solved && rendered.solved.sizes[stackId] === 0) render();
     }
 
     // Opening or focusing a file while a panel is maximized brings the editor back.
@@ -596,6 +606,7 @@
       openMoveMenu: openMoveMenu,
       toggleMaximize: toggleMaximize,
       showEditor: showEditor,
+      revealEditorGroup: revealEditorGroup,
       dispose: dispose,
     };
   }

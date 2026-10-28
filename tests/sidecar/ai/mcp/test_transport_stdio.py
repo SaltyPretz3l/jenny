@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import logging
 import queue
+import shutil
 import sys
 import threading
 import time
@@ -665,6 +666,9 @@ def test_stdio_transport_uses_containment_spawn_kwargs(
         def __init__(self, config: MCPServerConfig) -> None:
             self.config = config
 
+        def spawn_command(self) -> str:
+            return str(self.config.command)
+
         def popen_kwargs(self) -> dict[str, Any]:
             return {
                 "cwd": str(tmp_path),
@@ -712,6 +716,9 @@ def test_stdio_transport_fails_closed_when_containment_setup_fails(
     class _FailingContainment:
         def __init__(self, config: MCPServerConfig) -> None:
             self.config = config
+
+        def spawn_command(self) -> str:
+            return str(self.config.command)
 
         def popen_kwargs(self) -> dict[str, Any]:
             return {}
@@ -849,7 +856,7 @@ def test_process_containment_resolves_bare_command_without_inheriting_full_path(
         ),
     )
     monkeypatch.setattr(
-        process_containment.shutil,
+        shutil,
         "which",
         lambda command, path=None: str(resolved_command) if command == "docs-mcp" else None,
     )
@@ -882,7 +889,7 @@ def test_process_containment_uses_resolved_bare_command_directory_as_cwd(
         lambda key, default="": str(bin_dir) if key == "PATH" else default,
     )
     monkeypatch.setattr(
-        process_containment.shutil,
+        shutil,
         "which",
         lambda command, path=None: str(resolved_command) if command == "docs-mcp" else None,
     )
@@ -947,7 +954,7 @@ def test_process_containment_adds_git_path_for_builtin_server(
         lambda key, default="": parent_path if key == "PATH" else default,
     )
     monkeypatch.setattr(
-        process_containment.shutil,
+        shutil,
         "which",
         lambda command_name, path=None: (
             str(git_executable)
@@ -1007,7 +1014,7 @@ def test_process_containment_discovers_visual_studio_git_when_parent_path_lacks_
         "read_environment_value",
         lambda key, default="": env_values.get(key, default),
     )
-    monkeypatch.setattr(process_containment.shutil, "which", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(shutil, "which", lambda *_args, **_kwargs: None)
 
     containment = MCPProcessContainment(
         MCPServerConfig(

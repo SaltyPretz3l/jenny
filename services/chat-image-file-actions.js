@@ -80,10 +80,10 @@ function createChatImageFileActions({
     return image ? action(image) : UNAVAILABLE;
   }
 
-  const copyImage = (sessionId, ref) => withImage(sessionId, ref, (image) => {
+  const copyImage = (sessionId, ref) => withImage(sessionId, ref, async (image) => {
     const native = nativeImage.createFromPath(image.path);
     if (native.isEmpty()) return { ok: false, reason: 'image_unreadable' };
-    clipboard.writeImage(native);
+    await clipboard.writeImage(native);
     return { ok: true };
   });
 

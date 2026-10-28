@@ -125,7 +125,6 @@ function createPipeline(options = {}) {
       renderComposerStatusNotice() {},
       renderToastViewport() {},
       renderComposerPopover() {},
-      renderCommandPopover() {},
       clearActivity() {},
       failActivity() {},
       beginActivity() {},

@@ -7,7 +7,7 @@ from sidecar.ai.tools.config_utils import config_value
 GIT_TIMEOUT_SECONDS = 20.0
 MAX_GIT_TIMEOUT_SECONDS = 120.0
 
-_GIT_RUNTIME_OPTIONS = {"timeout_seconds": GIT_TIMEOUT_SECONDS}
+_timeout_seconds = GIT_TIMEOUT_SECONDS
 
 
 def _configured_git_timeout_seconds(config: object | None) -> float:
@@ -18,4 +18,9 @@ def _configured_git_timeout_seconds(config: object | None) -> float:
 
 
 def configure_git_tools(config: object | None) -> None:
-    _GIT_RUNTIME_OPTIONS["timeout_seconds"] = _configured_git_timeout_seconds(config)
+    global _timeout_seconds  # noqa: PLW0603 - process-local tool setting.
+    _timeout_seconds = _configured_git_timeout_seconds(config)
+
+
+def git_timeout_seconds() -> float:
+    return _timeout_seconds

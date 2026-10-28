@@ -12,7 +12,10 @@
  */
 
 const { createChatProposalStore } = require('./backend/chat-proposal-store');
+const { createSessionMailStore } = require('./backend/session-mail-store');
+const { isPrimarySession } = require('./backend/primary-session');
 const { ChatProposalService } = require('./chat-proposal-service');
+const { scheduleSlicedStartupReconcile } = require('./time-sliced-steps');
 
 function createLazyProposalStore(backendService) {
   const unavailable = { ok: false, reason: 'unavailable' };
@@ -59,6 +62,7 @@ const protocol = () => require('./session-runtime/inference-protocol');
 function createSessionPorts(backendService) {
   const store = () => backendService.sessionStore || null;
   const runtimeStore = () => backendService.sessionRuntime?.store || null;
+  const replies = new Map(); // child report message id -> the source turn that admitted it (never changes once set)
   // The runtime work status of a turn, or null when unknown (no runtime store, or not in the first pages).
   const workStatus = (sessionId, turnId) => {
     const rt = runtimeStore();
@@ -114,10 +118,55 @@ function createSessionPorts(backendService) {
         && protocol().supportsProducerTool(client, 'complete_session_handoff') === true;
     },
     supportsProducerTool: (name) => protocol().supportsProducerTool(backendService.sidecarClient, name) === true,
+    // Row 76: only the primary chat names a destination project and holds a standing launch permission.
+    allowsProjectChoice: (sessionId) => isPrimarySession(store(), sessionId),
+    projectExists: (projectId) => Boolean(backendService.projectService?.get?.(projectId)),
+    matchLaunchPermission: (args) => backendService.primaryChatControls?.matchLaunchPermission?.(args) ?? null,
+    // A turn another chat's message or report woke (row 70 depth > 0) never spends a standing permission.
+    isWakeTurn: (_sessionId, turnId) => (backendService.chatMessages?.wakeDepth?.(turnId) ?? 0) > 0,
     createLinkedChildSession: (spec) => (typeof backendService.createLinkedChildSession === 'function'
       ? backendService.createLinkedChildSession(spec) : { ok: false, code: 'unsupported' }),
     sessionExists: (sessionId) => Boolean(store()?.peekSession?.(sessionId)),
     readSpawnedFrom: (sessionId) => store()?.peekSession?.(sessionId)?.spawned_from ?? null,
+    readChildFacts: (childId, sourceId) => readChildFacts(backendService, childId, sourceId, replies),
+  };
+}
+
+const CHILD_ROWS = 50;
+const MAX_REPLIES = 256;
+
+// F3b: what a New session card shows about its child, through cache-neutral reads (the index summary, the
+// active-turn registry, one runtime index slice, the canonical record's newest rows) and no work scan.
+// null when the store is not attached (the card keeps its plain receipt); `summary: null` when the child is gone.
+function readChildFacts(backendService, childId, sourceId, replies = new Map()) {
+  const store = backendService.sessionStore;
+  if (!store) return null;
+  const summary = store.peekSessionSummary?.(childId) || null;
+  if (!summary) return { summary: null };
+  const listed = backendService.sessionRuntime?.store?.listSummaries?.({ sessionId: childId, limit: 1 });
+  let approvalCount = 0;
+  for (const pending of backendService.pendingToolApprovals?.values?.() || []) if (pending?.sessionId === childId) approvalCount += 1;
+  return {
+    summary,
+    activeTurn: store.peekActiveTurn?.(childId) || null,
+    work: listed?.items?.[0] || null,
+    approvalCount,
+    rows: (store.peekSession?.(childId)?.messages || []).slice(-CHILD_ROWS),
+    probe: backendService.chatMessages?.autoResumeProbe?.(childId) || null,
+    projectLabel: backendService.projectService?.get?.(summary.project_id)?.name || '',
+    // The source's wake turn that admitted the child's report: the card's "See the reply".
+    readReplyTurnId: (messageId) => {
+      if (!messageId) return '';
+      if (replies.has(messageId)) return replies.get(messageId);
+      const read = createSessionMailStore(store).read(sourceId);
+      const record = read.ok ? read.mail.inbox.find((entry) => entry.envelope?.message_id === messageId) : null;
+      const turnId = record?.context?.state === 'included' ? record.context.turn_id : '';
+      if (turnId) {
+        replies.set(messageId, turnId);
+        while (replies.size > MAX_REPLIES) replies.delete(replies.keys().next().value);
+      }
+      return turnId;
+    },
   };
 }
 
@@ -171,11 +220,10 @@ function createChatProposalService({
   backendService.on?.('command-proposal-progress', (event) => service.handleCommandProgress(event));
   backendService.on?.('command-proposal-outcome', (event) => service.handleCommandOutcome(event));
   // The runtime's own restart recovery has run by the time the loop is idle.
-  const timer = setTimeout(() => service.reconcileOnStartup(), 0);
-  timer.unref?.();
+  scheduleSlicedStartupReconcile(service);
   return service;
 }
 
 module.exports = {
-  createChatProposalService, createCommandAdapter, createLazyProposalStore, createSessionPorts, turnCompleteKnown,
+  createChatProposalService, createCommandAdapter, createLazyProposalStore, createSessionPorts, readChildFacts, turnCompleteKnown,
 };

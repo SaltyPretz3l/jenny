@@ -133,7 +133,7 @@ def test_inspection_reply_omits_schemas_but_digest_covers_them(monkeypatch: Any)
     }, "confirmed_stdio": True})
     assert result["ok"] is True
     assert all("inputSchema" not in row for row in result["tools"])
-    assert result["tools_digest"] == tools_digest(summarize_tools(tools)[0])
+    assert result["tools_digest"] == tools_digest(summarize_tools(tools))
 
 
 @pytest.mark.parametrize(
@@ -259,13 +259,13 @@ def test_inspection_reply_shows_the_read_only_claims(monkeypatch: Any) -> None:
     assert rows["list_unknowns"]["read_only_claim"] is True
     assert "read_only_claim" not in rows["open_binary"]
     assert "read_only_claim" not in rows["delete_session"]
-    assert result["tools_digest"] == tools_digest(summarize_tools(tools)[0])
+    assert result["tools_digest"] == tools_digest(summarize_tools(tools))
     # An opted-in row records the claims in the digest it offers for approval.
     opted_in = inspection.inspect_server({"server": {
         "name": "rea", "transport": "stdio", "command": "npx", "args": [],
         "read_only_auto_allow": True,
     }, "confirmed_stdio": True})
-    assert opted_in["tools_digest"] == tools_digest(summarize_tools(tools)[0], read_only_claims=True)
+    assert opted_in["tools_digest"] == tools_digest(summarize_tools(tools), read_only_claims=True)
     assert opted_in["tools_digest"] != result["tools_digest"]
 
 

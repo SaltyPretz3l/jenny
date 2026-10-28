@@ -17,19 +17,6 @@
   background: none;
 }
 
-.settings-card .settings-group-heading {
-  padding-bottom: var(--space-4);
-  border-bottom: 1px solid color-mix(in srgb, var(--settings-shell-muted-border) 80%, transparent);
-  color: var(--text-muted);
-}
-
-.settings-card .settings-group-copy {
-  margin-top: var(--space-4);
-  color: var(--text-muted);
-  font-size: var(--font-size-body);
-  line-height: 1.6;
-}
-
 /* Subsections (Skills, Tips) keep their top rule but not doubled spacing. */
 .settings-card .settings-subsection {
   margin-top: var(--space-4);
@@ -120,13 +107,6 @@
   letter-spacing: 0;
   line-height: 1.4;
   text-transform: none;
-}
-
-.settings-field-row-text {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
 }
 
 .settings-field-description {

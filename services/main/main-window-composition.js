@@ -122,6 +122,7 @@ function createMainWindowWithDeps({
       windowRef,
       ipcMainRef,
       revealInactive: revealWindowInactive,
+      revealMaximized: initialWindowState.isMaximized === true,
       emitStartupAuditMark,
       logReady: (source, activeWindow) => {
         log('INFO', 'window.ready', {
@@ -206,7 +207,8 @@ function createMainWindowWithDeps({
   }
 
   windowRef.setMenuBarVisibility(false);
-  if (initialWindowState.isMaximized === true) {
+  // The startup lifecycle maximizes at reveal; the packaged smoke has no lifecycle.
+  if (initialWindowState.isMaximized === true && isPackagedSmokeEnabled()) {
     windowRef.maximize();
   }
   if (windowStateService) {

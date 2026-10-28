@@ -12,6 +12,8 @@ const {
 const MAX_AUTOMATION_LIST_ITEMS = 100;
 const MAX_AUTOMATION_RECENT_FAILURES = 10;
 const MAX_AUTOMATION_STATUS_SUMMARY_LENGTH = 400;
+// Run summaries are already capped at 2,000 chars by the scheduler registry.
+const MAX_AUTOMATION_RUN_TEXT_LENGTH = 2000;
 const ACTIVE_AUTOMATION_RUN_STATUSES = new Set(['pending', 'started', 'running']);
 
 function cloneJson(value) {
@@ -22,24 +24,38 @@ function latestRun(runs) {
   return Array.isArray(runs) && runs.length ? runs[runs.length - 1] : null;
 }
 
-function summarizeRunForList(run) {
+function sanitizeFailureSummary(value, redactionOptions, limit = MAX_AUTOMATION_STATUS_SUMMARY_LENGTH) {
+  const summary = normalizeString(value).slice(0, limit);
+  const redacted = normalizeString(redactLogValue(summary, redactionOptions));
+  return collapseRedactedPathTails(redacted, '[redacted]');
+}
+
+function summarizeRunForList(run, redactionOptions) {
   if (!run || typeof run !== 'object' || Array.isArray(run)) {
     return null;
   }
   return {
     run_id: normalizeString(run.run_id),
     status: normalizeString(run.status),
-    reason: normalizeString(run.reason),
+    reason: sanitizeFailureSummary(run.reason, redactionOptions, MAX_AUTOMATION_RUN_TEXT_LENGTH),
     started_at: normalizeString(run.started_at),
     completed_at: normalizeString(run.completed_at),
-    summary: normalizeString(run.summary),
+    summary: sanitizeFailureSummary(run.summary, redactionOptions, MAX_AUTOMATION_RUN_TEXT_LENGTH),
   };
 }
 
-function sanitizeFailureSummary(value, redactionOptions) {
-  const summary = normalizeString(value).slice(0, MAX_AUTOMATION_STATUS_SUMMARY_LENGTH);
-  const redacted = normalizeString(redactLogValue(summary, redactionOptions));
-  return collapseRedactedPathTails(redacted, '[redacted]');
+// Tool-facing run history: free text is redacted like the status summary and
+// the internal `result_ref` file path never leaves the service.
+function projectRunForTools(run, redactionOptions) {
+  if (!run || typeof run !== 'object' || Array.isArray(run)) {
+    return null;
+  }
+  const { result_ref: _resultRef, ...rest } = cloneJson(run);
+  return {
+    ...rest,
+    reason: sanitizeFailureSummary(run.reason, redactionOptions, MAX_AUTOMATION_RUN_TEXT_LENGTH),
+    summary: sanitizeFailureSummary(run.summary, redactionOptions, MAX_AUTOMATION_RUN_TEXT_LENGTH),
+  };
 }
 
 function failureTimestamp(run) {
@@ -78,7 +94,7 @@ function insertRecentFailure(failures, failure) {
   }
 }
 
-function projectAutomationSummary(task) {
+function projectAutomationSummary(task, redactionOptions) {
   const runs = Array.isArray(task.automation_runs) ? task.automation_runs : [];
   return {
     id: normalizeString(task.id),
@@ -94,16 +110,19 @@ function projectAutomationSummary(task) {
     last_result_at: normalizeString(task.last_result_at),
     last_completed_at: normalizeString(task.last_completed_at),
     run_count: runs.length,
-    latest_run: summarizeRunForList(latestRun(runs)),
+    latest_run: summarizeRunForList(latestRun(runs), redactionOptions),
   };
 }
 
-function projectAutomationDetail(task) {
+function projectAutomationDetail(task, redactionOptions) {
+  const runs = Array.isArray(task.automation_runs) ? task.automation_runs : [];
   return {
-    ...projectAutomationSummary(task),
+    ...projectAutomationSummary(task, redactionOptions),
     task_spec: normalizeString(task.input?.task_spec),
     task_spec_trust: 'user_authored_untrusted',
-    automation_runs: cloneJson(Array.isArray(task.automation_runs) ? task.automation_runs : []),
+    automation_runs: runs
+      .map((run) => projectRunForTools(run, redactionOptions))
+      .filter(Boolean),
   };
 }
 
@@ -131,9 +150,10 @@ class AutomationService {
   async listAutomations() {
     const tasks = await this._readAutomationTasks();
     const visibleTasks = tasks.slice(0, MAX_AUTOMATION_LIST_ITEMS);
+    const redactionOptions = { prefixes: this._redactionPrefixes() };
     return {
       success: true,
-      automations: visibleTasks.map(projectAutomationSummary),
+      automations: visibleTasks.map((task) => projectAutomationSummary(task, redactionOptions)),
       total_count: tasks.length,
       omitted_count: Math.max(tasks.length - visibleTasks.length, 0),
       max_items: MAX_AUTOMATION_LIST_ITEMS,
@@ -152,7 +172,7 @@ class AutomationService {
     }
     return {
       success: true,
-      automation: projectAutomationDetail(task),
+      automation: projectAutomationDetail(task, { prefixes: this._redactionPrefixes() }),
     };
   }
 

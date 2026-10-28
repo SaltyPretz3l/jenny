@@ -25,6 +25,8 @@ const {
   normalizeContextBlocksForSend,
 } = require('./chat-send-context-blocks');
 const { getTrustedExecutionBinding } = require('./session-execution-authority');
+const { isPrimaryChatTurn } = require('./chat-send-optional-fields');
+const { composeProfileOverviewContextBlock } = require('./profile-overview-block');
 
 function isAuthorizedRelativePath(value) {
   const candidate = typeof value === 'string' ? value.trim() : '';
@@ -107,7 +109,7 @@ async function assembleContextForChat(service, options) {
   );
 
   const usesMinimalSystemPrompt =
-    String(engineType || service.currentEngineType || '').trim().toLowerCase() === 'chatgpt';
+    ['chatgpt', 'api-provider'].includes(String(engineType || service.currentEngineType || '').trim().toLowerCase());
   const shouldIncludePersonality =
     !usesMinimalSystemPrompt
     && contextPreferences.include_personality !== false
@@ -143,13 +145,15 @@ async function assembleContextForChat(service, options) {
   // (activeFileContext) and the resolved @-mention contents (mentionContents)
   // on the per-turn payload, having already deduped them against each other and
   // any composer attachments.
+  // A PDF page with no text layer (scanned) or not yet extracted (pending)
+  // carries no slice: its block is a read_file pointer.
+  const active = scopedAutomaticContext.activeFileContext;
+  const activeCarriesContext = Boolean(active?.slice)
+    || (active?.kind === 'pdf' && (active.scanned === true || active.pending === true));
   const shouldIncludeActiveFileContext =
     service.featureFlags?.workspace_active_file_context === true
     && contextPreferences.include_active_file_context !== false
-    && (
-      Boolean(scopedAutomaticContext.activeFileContext?.slice)
-      || scopedAutomaticContext.mentionContents.length > 0
-    );
+    && (activeCarriesContext || scopedAutomaticContext.mentionContents.length > 0);
   // Cross-source dedupe (codebase vs active-file): when the active-file block
   // will actually carry the open file's slice, exclude that path from the
   // codebase keyword search so the same file is never grounded twice (active
@@ -157,8 +161,8 @@ async function assembleContextForChat(service, options) {
   // active file is excluded — @-mentions are out of scope. When active-file
   // context is off there is no double-send, so the exclude stays empty.
   const activeFileExcludePath =
-    shouldIncludeActiveFileContext && scopedAutomaticContext.activeFileContext?.slice
-      ? String(scopedAutomaticContext.activeFileContext.path || '').trim()
+    shouldIncludeActiveFileContext && activeCarriesContext
+      ? String(active.path || '').trim()
       : '';
   const codebaseExcludePaths = activeFileExcludePath ? [activeFileExcludePath] : [];
   const promptContributions = {};
@@ -416,6 +420,16 @@ async function assembleContextForChat(service, options) {
   if (presentationNote) {
     appendContextBlock('workspace_presentation', presentationNote);
     promptContributions.workspace_presentation_block = summarizeTextBlock(presentationNote);
+  }
+  // Row 69: the primary chat's profile overview (self-bounded at 1,500 chars,
+  // so it bypasses the trimmer); last, so it rides the trailing turn context.
+  if (isPrimaryChatTurn(service, sessionSummary)) {
+    const overview = await composeProfileOverviewContextBlock(service, resolvedSessionId);
+    trustedExecution.assertCurrent();
+    if (overview) {
+      appendContextBlock(overview.kind, overview.content);
+      promptContributions.profile_overview_block = summarizeTextBlock(overview.content);
+    }
   }
   const normalizedContextBlocks = normalizeContextBlocksForSend(contextBlocks, {
     onDrop: (info) => {

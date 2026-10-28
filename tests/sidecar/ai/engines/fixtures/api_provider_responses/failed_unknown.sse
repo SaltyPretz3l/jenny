@@ -1,0 +1,6 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_1","status":"in_progress"}}
+
+event: response.failed
+data: {"type":"response.failed","response":{"id":"resp_5","status":"failed","error":{"code":"some_new_failure","message":"details mention sk-test-0123456789abcdefXYZ"}}}
+

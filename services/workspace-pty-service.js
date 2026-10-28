@@ -27,6 +27,7 @@ const { sanitizeSpawnEnv } = require('./backend/sanitize-spawn-env');
 const { TERMINAL_ERROR_CODES } = require('./backend/error-codes');
 const { t } = require('./i18n-main');
 const { createTerminalOutputQueue } = require('./workspace-terminal-output-queue');
+const { detectProfiles, defaultProfileId, spawnCandidates, resolveContainedCwd } = require('./workspace-pty-profiles');
 
 const MAX_CHUNK_BYTES = 64 * 1024; // per onData event (matches the run-task service)
 const MAX_WRITE_BYTES = 16 * 1024; // per write() call
@@ -78,6 +79,9 @@ class WorkspacePtyService {
     setTimeoutImpl = setTimeout,
     clearTimeoutImpl = clearTimeout,
     terminationTimeoutMs = TERMINATION_TIMEOUT_MS,
+    platform = process.platform,
+    detectShellProfiles = null,
+    fsPromises = undefined,
   } = {}) {
     if (!configService) {
       throw new TypeError('WorkspacePtyService requires configService');
@@ -93,6 +97,14 @@ class WorkspacePtyService {
     this._clearTimeout = clearTimeoutImpl;
     this._terminationTimeoutMs = clampInt(terminationTimeoutMs, 1, 30_000, TERMINATION_TIMEOUT_MS);
     this._ptyModule = null; // cached loaded module
+    this._platform = platform;
+    // Shell profiles (row 82 T2): file presence only, cached per process for 60 s; the
+    // profile menu's listProfiles re-probes so a shell installed while the app runs shows
+    // up (cleanup T2). Injectable for tests.
+    this._detectShellProfiles = typeof detectShellProfiles === 'function'
+      ? detectShellProfiles
+      : (opts) => detectProfiles({ platform, env, ...opts });
+    this._fsPromises = fsPromises;
     this._sessions = new Map(); // slot -> { id, slot, pty, shell, cwd, ... }
     this._sessionCounter = 0;
     this._disposed = false;
@@ -201,7 +213,31 @@ class WorkspacePtyService {
     }
   }
 
-  async spawn({ cols, rows, slot } = {}) {
+  _profiles(opts) {
+    try {
+      const profiles = this._detectShellProfiles(opts);
+      return Array.isArray(profiles) ? profiles : [];
+    } catch (error) {
+      this._log('WARN', 'workspace_pty.profile_detect_failed', { message: String(error?.message || error || '').slice(0, 160) });
+      return [];
+    }
+  }
+
+  // The shells this machine has: [{ id, label }] plus the platform default id. Ids are
+  // the only thing the renderer may send back (spawn's profileId); paths stay in main.
+  listProfiles() {
+    const profiles = this._profiles({ refresh: true });
+    return {
+      ok: true,
+      profiles: profiles.map((profile) => ({ id: profile.id, label: profile.label })),
+      defaultId: defaultProfileId(profiles, this._platform),
+    };
+  }
+
+  // spawn({ cols, rows, slot, profileId?, cwd? }): profileId picks a detected shell
+  // (unknown or absent -> the platform default chain); cwd is a root-relative folder that
+  // must resolve inside the workspace root ('' or absent = the root itself).
+  async spawn({ cols, rows, slot, profileId, cwd: requestedCwd } = {}) {
     // A slot whose session is being killed (a terminal closed and reopened at
     // once) is waited out, so the new tab never reattaches to the dying shell.
     for (let dying = this._sessions.get(normalizeSlot(slot)); dying?.terminationPromise && !this._disposed; dying = this._sessions.get(normalizeSlot(slot))) {
@@ -217,8 +253,8 @@ class WorkspacePtyService {
       };
     }
     // 1. Root check BEFORE lazy load - a rootless spawn must not load native code.
-    const cwd = this._requireRoot();
-    if (!cwd) {
+    const root = this._requireRoot();
+    if (!root) {
       return {
         ok: false,
         available: true,
@@ -226,7 +262,27 @@ class WorkspacePtyService {
         message: t('main.workspacePty.workspaceRootRequired', 'No workspace root is configured; choose a workspace folder first.'),
       };
     }
-    // 2. One live session per slot; an occupied slot is reattached, not respawned.
+    // 2. The start folder resolves before the slot check, so no await separates that
+    // check from the spawn (two quick spawns on one slot must not both start a shell);
+    // a dispose or root switch during the await refuses the stale request.
+    let cwd = root;
+    if (typeof requestedCwd === 'string' && requestedCwd.trim() !== '') {
+      const contained = await resolveContainedCwd(root, requestedCwd, this._fsPromises ? { fs: this._fsPromises } : undefined);
+      const stale = this._disposed || this._requireRoot() !== root;
+      if (!contained.ok || stale) {
+        const reason = stale ? 'root_changed' : contained.reason;
+        this._log('WARN', 'workspace_pty.cwd_refused', { reason });
+        return {
+          ok: false,
+          available: true,
+          code: TERMINAL_ERROR_CODES.CWD_OUTSIDE_ROOT,
+          reason,
+          message: t('main.workspacePty.cwdOutsideRoot', 'The terminal can only start in a folder inside the workspace.'),
+        };
+      }
+      cwd = contained.cwd;
+    }
+    // 2b. One live session per slot; an occupied slot is reattached, not respawned.
     const safeSlot = normalizeSlot(slot);
     const existing = this._sessions.get(safeSlot);
     if (existing) {
@@ -238,6 +294,7 @@ class WorkspacePtyService {
         slot: safeSlot,
         shell: existing.shell,
         cwd: existing.cwd,
+        profileId: existing.profileId,
       };
     }
     // 3. Lazy-load the native module - fail soft.
@@ -261,18 +318,20 @@ class WorkspacePtyService {
     const spawnEnv = sanitizeSpawnEnv(this._env, { extraDeny: [/^JENNY_/i] });
     const opts = { cols: safeCols, rows: safeRows, cwd, env: spawnEnv };
 
-    // 4. Shell candidates: win32 powershell -> cmd fallback; posix bash (-i).
-    const candidates = process.platform === 'win32'
-      ? [{ shell: 'powershell.exe', args: ['-NoProfile', '-NoLogo'] }, { shell: 'cmd.exe', args: [] }]
-      : [{ shell: 'bash', args: ['-i'] }];
+    // 4. Shell candidates: the requested profile when detected, then the platform
+    // default chain (win32 Windows PowerShell -> cmd; posix bash -i). PowerShell loads
+    // the user's profile (owner pick O4) and keeps -NoLogo.
+    const candidates = spawnCandidates(this._profiles(), profileId, this._platform);
 
     let pty = null;
     let chosen = null;
+    let chosenProfileId = '';
     let lastError = null;
     for (const candidate of candidates) {
       try {
-        pty = ptyModule.spawn(candidate.shell, candidate.args, opts);
-        chosen = candidate.shell;
+        pty = ptyModule.spawn(candidate.file, candidate.args, opts);
+        chosen = candidate.file;
+        chosenProfileId = candidate.profileId;
         break;
       } catch (error) {
         lastError = error;
@@ -296,7 +355,7 @@ class WorkspacePtyService {
     let resolveExit;
     const exitPromise = new Promise((resolve) => { resolveExit = resolve; });
     const session = {
-      id, slot: safeSlot, pty, shell: chosen, cwd, settled: false, resolveExit, exitPromise,
+      id, slot: safeSlot, pty, shell: chosen, profileId: chosenProfileId, cwd, settled: false, resolveExit, exitPromise,
       cols: safeCols, rows: safeRows, // last applied size; resize() skips a no-op
       outputQueue: this._createOutputQueue(id, safeSlot),
       terminationPromise: null,
@@ -319,7 +378,7 @@ class WorkspacePtyService {
       };
     }
 
-    this._log('INFO', 'workspace_pty.started', { shell: chosen, slot: safeSlot });
+    this._log('INFO', 'workspace_pty.started', { profile: chosenProfileId, slot: safeSlot });
     return {
       ok: true,
       available: true,
@@ -327,6 +386,7 @@ class WorkspacePtyService {
       sessionId: id,
       slot: safeSlot,
       shell: chosen,
+      profileId: chosenProfileId,
       cwd,
     };
   }

@@ -294,3 +294,18 @@ test('a change on the rail\'s own buttons rechecks the fit; a context slot chang
   await settle();
   assert.equal(measures, base + 3, 'Pause mounting rechecks');
 });
+
+test('flush() settles a pending resize in the same task, so a caller can measure the result', () => {
+  const { fit, env, frames, applied, flush, observers } = createRig({ available: 800, needed: 600 });
+  flush();
+  env.available = 500;
+  observers[0].fire();
+  assert.equal(frames.length, 1, 'the resize waits for a frame');
+  fit.flush();
+  assert.equal(fit.isCompact(), true, 'flush collapsed it now');
+  assert.deepEqual(applied, [true]);
+  fit.dispose();
+  env.available = 900;
+  fit.flush();
+  assert.deepEqual(applied, [true], 'a disposed fit ignores flush');
+});

@@ -1093,9 +1093,11 @@ def test_runtime_section_provider_capabilities_unchanged(tmp_path: Path) -> None
             "openai-compatible",
             "codex-cli",
             "chatgpt",
+            "api-provider",
             "replay",
             "mock",
         }
+        assert provider_capabilities["api-provider"]["available"] is False
         for entry in provider_capabilities.values():
             assert "engine" in entry
             assert "available" in entry

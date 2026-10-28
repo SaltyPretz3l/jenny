@@ -440,3 +440,26 @@ test('focusin inside a stack records recency that steers folding', () => {
   rig.wb.render();
   assert.deepEqual(rig.state.rendered.at(-1).solved.folded, ['stack-1']);
 });
+
+test('focus entering an editor group that gave way (0 px) re-solves it into view', () => {
+  let layout = model.createDefaultLayout();
+  layout = ops.addEditorGroup(layout, 'editor-1', 'right', 480, 'editor-2');
+  layout = ops.addEditorGroup(layout, 'editor-2', 'right', 480, 'editor-3');
+  layout = ops.addEditorGroup(layout, 'editor-3', 'right', 480, 'editor-4');
+  const groupEls = {};
+  let doc = null;
+  const rig = setup({ layout, render: false, deps: { getGroupElement: (id) => (groupEls[id] ||= Object.assign(doc.createElement('div'), { tabIndex: -1 })) } });
+  doc = rig.doc;
+  rig.rootEl.getBoundingClientRect = () => ({ width: 1100, height: 500, top: 0, left: 0, right: 1100, bottom: 500 });
+  rig.wb.render();
+  assert.equal(rig.state.rendered.at(-1).solved.sizes['editor-4'], 0, 'precondition: the last group gave way');
+  const renders = rig.state.rendered.length;
+  // A file opened into that group focuses it (real-app gate 2026-10-26: it stayed 0 px wide).
+  groupEls['editor-4'].focus();
+  assert.equal(rig.state.rendered.length, renders + 1, 'the focus re-renders');
+  assert.ok(rig.state.rendered.at(-1).solved.sizes['editor-4'] > 0, 'the group just used gets its room back');
+  // Focus in a group that already has room does not re-render.
+  groupEls['editor-1'] = rig.mainEl;
+  rig.doc.getElementById('mainInput').focus();
+  assert.equal(rig.state.rendered.length, renders + 1);
+});

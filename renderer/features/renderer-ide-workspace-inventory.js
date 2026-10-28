@@ -48,16 +48,30 @@
       return cachedResult || resultShape(null);
     }
 
-    function mergeChangesIntoFiles(files, changeMap) {
+    // Watcher changes carry no file/folder kind. A delete drops the path and
+    // everything under it; a change to a path the list already knows is a file
+    // edit (no-op). A change to an unknown path may be a new file or a folder,
+    // so the list is reported incomplete instead of guessing.
+    function applyChanges(files, changeMap) {
       const set = new Set(files);
+      const deleted = new Set();
+      let complete = true;
       for (const [relPath, kind] of changeMap) {
-        if (kind === 'deleted') {
-          set.delete(relPath);
-        } else {
-          set.add(relPath);
-        }
+        if (kind === 'deleted') deleted.add(relPath);
+        else if (!set.has(relPath)) complete = false;
       }
-      return [...set];
+      if (!deleted.size) return { files: [...set], complete };
+      // One pass over the list (a batch can hold hundreds of deletes): a file
+      // goes when it or any ancestor folder was deleted.
+      const kept = [];
+      for (const path of set) {
+        let gone = deleted.has(path);
+        for (let cut = path.lastIndexOf('/'); !gone && cut > 0; cut = path.lastIndexOf('/', cut - 1)) {
+          gone = deleted.has(path.slice(0, cut));
+        }
+        if (!gone) kept.push(path);
+      }
+      return { files: kept, complete };
     }
 
     function invalidate() {
@@ -79,7 +93,8 @@
         return;
       }
       const list = Array.isArray(changes) ? changes : [];
-      if (!list.length) {
+      // Nothing cached and nothing loading: the next listing is fresh anyway.
+      if (!list.length || (!cachedResult && !loadingPromise)) {
         return;
       }
       for (const change of list) {
@@ -87,11 +102,16 @@
         if (!relPath) continue;
         pendingChanges.set(relPath, change?.kind === 'deleted' ? 'deleted' : 'changed');
       }
-      if (loadingPromise || !cachedResult) {
+      if (loadingPromise) {
         return;
       }
-      cachedResult.files = mergeChangesIntoFiles(cachedResult.files, pendingChanges);
+      const patched = applyChanges(cachedResult.files, pendingChanges);
       pendingChanges.clear();
+      if (!patched.complete) {
+        invalidate();
+        return;
+      }
+      cachedResult.files = patched.files;
     }
 
     async function fetchFiles(api, epoch) {
@@ -101,12 +121,15 @@
         const result = await api.listAllFiles();
         if (epoch !== cacheEpoch) return currentResult();
         let files = Array.isArray(result?.files) ? result.files : [];
+        let complete = true;
         if (pendingChanges.size) {
-          files = mergeChangesIntoFiles(files, pendingChanges);
+          ({ files, complete } = applyChanges(files, pendingChanges));
           pendingChanges.clear();
         }
-        cachedResult = resultShape({ ...result, files }, false);
-        return cachedResult;
+        const shaped = resultShape({ ...result, files }, false);
+        // An unknown change during the listing: answer this read, re-list the next.
+        cachedResult = complete ? shaped : null;
+        return shaped;
       } catch (error) {
         if (epoch !== cacheEpoch) return currentResult();
         cachedResult = null;

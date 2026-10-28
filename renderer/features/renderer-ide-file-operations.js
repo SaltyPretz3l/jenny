@@ -16,6 +16,8 @@
   const MAX_DOCUMENT_BYTES = 32 * 1024 * 1024;
   const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
   const MAX_PREVIEW_PATH_REVISIONS = 512;
+  // Never a real file version (main issues vf2_*): a write sent with it always conflicts.
+  const CONFLICT_PIN_VERSION = 'conflict-pinned';
   const DOCUMENT_FORMAT_BY_EXTENSION = Object.freeze({ docx: 'docx', pdf: 'pdf' });
   const DOCUMENT_MIME_BY_FORMAT = Object.freeze({
     docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -37,10 +39,6 @@
     return /^(win|windows)/i.test(String(platform || ''));
   }
 
-  function createPathKey(path, platform) {
-    const normalized = normalizePath(path);
-    return isWindowsPlatform(platform) ? normalized.toLocaleLowerCase('en-US') : normalized;
-  }
   function operationError(result, fallback) {
     const error = new Error(String(result?.message || fallback || 'Workspace file operation failed.'));
     error.code = String(result?.code || result?.error_code || 'workspace_file_operation_failed');
@@ -70,8 +68,10 @@
     let disposed = false;
     let queueTail = Promise.resolve();
 
+    // Identity key for a path: case-insensitive on Windows.
     function pathKey(path) {
-      return createPathKey(path, platform);
+      const normalized = normalizePath(path);
+      return isWindowsPlatform(platform) ? normalized.toLocaleLowerCase('en-US') : normalized;
     }
 
     function cloneToken(token) {
@@ -151,9 +151,12 @@
       return result;
     }
 
+    // Size from length and padding only. Main encodes these payloads with
+    // Buffer#toString('base64'), and the consumers' decoders reject a bad
+    // alphabet; an alphabet regex here cost ~200 ms per pass on a 32 MiB
+    // document and ran twice per open.
     function base64DecodedSize(value) {
       if (typeof value !== 'string' || value.length % 4 !== 0) return -1;
-      if (value && !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) return -1;
       const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
       return (value.length / 4) * 3 - padding;
     }
@@ -487,6 +490,16 @@
       return true;
     }
 
+    // Hot exit put edits made against an older copy onto a freshly read file: the next
+    // write must conflict ('changed on disk'), never overwrite the newer copy. A reload
+    // (Revert) replaces the token's version and ends the pin.
+    function pinConflict(path) {
+      const token = getMutable(path);
+      if (!token || token.documentKind !== 'text') return false;
+      token.fileVersion = CONFLICT_PIN_VERSION;
+      return true;
+    }
+
     function captureSave(path, { content, savedVersionId } = {}) {
       const token = getMutable(path);
       if (!token
@@ -764,7 +777,6 @@
       commitImageOpen,
       commitOpen,
       commitReload,
-      createPathKey: pathKey,
       dispose,
       getDocumentToken,
       getPreviewRequestSignature,
@@ -774,6 +786,7 @@
       noteDirty,
       noteEdit,
       noteExternalChange,
+      pinConflict,
       readDocumentForOpen,
       readDocumentForReload,
       readForPreview,
@@ -792,6 +805,5 @@
 
   return {
     createIdeFileOperations,
-    createPathKey,
   };
 });

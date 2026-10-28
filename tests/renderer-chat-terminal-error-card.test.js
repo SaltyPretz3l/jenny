@@ -23,6 +23,7 @@ const assert = require('node:assert/strict');
 const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
 const { buildFeatureFlags } = require('../services/feature-flags');
 const { waitForUiState } = require('./helpers/wait-for-ui-state');
+const { withExactApproval } = require('./helpers/exact-approval-fixtures');
 
 const PRE_TOOL_TEXT = 'Terminal error regression pre-tool text marker.';
 
@@ -249,13 +250,13 @@ test('approved-tool turn keeps its error card after a terminal error (owner repr
     input: { path: 'notes/demo.md' },
     status: 'pending_approval',
   });
-  await emit({
+  await emit(withExactApproval({
     type: 'tool_approval_needed',
     callId: `call-${streamId}`,
     approvalId: `approval-${streamId}`,
     toolName: 'write_file',
     input: { path: 'notes/demo.md' },
-  });
+  }));
   await waitForUiState(window, () => doc.getElementById('chatTimeline').querySelector('.tool-approve-btn'), {
     timeoutMs: 5000, message: 'Timeline approval block never offered an Allow button.',
   });
@@ -308,6 +309,9 @@ test('active turn deck settles instead of freezing on the live tool state', asyn
     input: { path: 'notes/demo.md' },
   });
   await waitForUi(window, 500);
+  // This approval carries no exact presentation (a rehydrated approval's shape): Deny only.
+  assert.equal(doc.getElementById('chatTimeline').querySelector('.tool-approve-btn'), null);
+  assert.ok(doc.getElementById('chatTimeline').querySelector('[data-approval-exact-unavailable="missing"]'));
   await emit(TERMINAL_ERROR);
   await waitForUi(window, 700);
 

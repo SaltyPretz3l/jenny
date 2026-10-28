@@ -39,6 +39,8 @@
    * @param {() => string[]} [deps.getBoundGroups] groups a view is bound to (W7c)
    * @param {(groupId: string) => string} [deps.getBoundText] a bound group's empty-state line
    * @param {(groupId: string) => void} [deps.unbindGroup]
+   * @param {(path: string) => string|null} [deps.getGitDecoration] a tab's git status for its tint
+   * @param {() => void} [deps.reopenClosedTab] Reopen Closed Tab (the open-tabs list)
    */
   function createIdeEditorGroupsWiring(deps) {
     const d = deps || {};
@@ -51,6 +53,9 @@
     const viewUtils = d.groupViewUtils || resolveModule('rendererIdeEditorGroupView', './renderer-ide-editor-group-view');
     const ops = d.layoutOps || resolveModule('jennyWorkbenchLayoutOps', '../shared/workbench-layout-ops');
     const contextMenu = d.contextMenu || resolveModule('inventoryContextMenu', '../inventory/context-menu');
+    const stripEvents = d.stripEvents || resolveModule('rendererIdeTabStripEvents', './renderer-ide-tab-strip-events');
+    const tabsUtils = d.tabsUtils || resolveModule('rendererIdeTabs', './renderer-ide-tabs');
+    const stateUtils = d.stateUtils || resolveModule('rendererIdeState', './renderer-ide-state');
     const schedulePersist = typeof d.schedulePersist === 'function' ? d.schedulePersist : noop;
     const requestRender = typeof d.requestRender === 'function' ? d.requestRender : noop;
     // Secondary groups hold text files and session-only diff documents.
@@ -60,6 +65,26 @@
     const loading = new Map(); // path -> its background open in flight
     let focused = ''; // '' = the primary group
     let disposed = false;
+
+    // The focused group's root carries data-ide-group-focused (the primary's is #ideMain), so
+    // the unfocused groups' active tabs can mute their underline.
+    function setMarker(el, on) {
+      // Runs on every focusin: skip the write (and its style invalidation) when unchanged.
+      if (!el?.setAttribute || el.hasAttribute?.('data-ide-group-focused') === on) return;
+      if (on) el.setAttribute('data-ide-group-focused', '');
+      else el.removeAttribute('data-ide-group-focused');
+    }
+
+    function syncFocusMarker() {
+      const primaryFocused = !focused || !views.has(focused);
+      setMarker(getDom().ideMain, primaryFocused);
+      for (const [id, view] of views) setMarker(view.el, !primaryFocused && id === focused);
+    }
+
+    function setFocused(id) {
+      focused = id;
+      syncFocusMarker();
+    }
 
     const wiring = () => call('getWorkbenchWiring') || null;
     const layoutNow = () => wiring()?.getLayout?.() || null;
@@ -72,7 +97,7 @@
     function liveGroups() {
       const used = groups.usedGroups(getIde());
       const bound = call('getBoundGroups') || [];
-      return ['editor-2', 'editor-3', 'editor-4'].filter((id) => used.includes(id) || bound.includes(id));
+      return groups.GROUP_IDS.filter((id) => used.includes(id) || bound.includes(id));
     }
 
     // Secondary editor stacks in the layout (the first editor stack is the primary).
@@ -124,7 +149,10 @@
         onActivate: (path) => activateInGroup(path),
         onClose: (path) => closeInGroup(path),
         onSave: (path) => { if (path) call('saveFile', path); },
-        onFocus: (groupId) => { focused = groupId; call('onActivated', groups.getGroupActive(getIde(), groupId)); },
+        onFocus: (groupId) => { setFocused(groupId); call('onActivated', groups.getGroupActive(getIde(), groupId)); },
+        onDoubleClick: (path) => keepOrTogglePin(path),
+        onSplit: () => { const active = groups.getGroupActive(getIde(), id); if (active) moveToNewGroup(active, 'right'); },
+        getGitDecoration: (path) => call('getGitDecoration', path),
         onContextMenu: (path, anchor) => openGroupTabMenu(id, path, anchor),
         onOverflow: (anchorEl) => openAllTabsMenu(id, anchorEl),
         onDropTab: (payload, index) => moveToGroup(payload.path, id, index),
@@ -132,6 +160,7 @@
         onCloseGroup: () => closeGroup(id),
       });
       views.set(id, view);
+      syncFocusMarker();
       return view;
     }
 
@@ -175,6 +204,7 @@
         views.delete(id);
         if (focused === id) focused = '';
       }
+      syncFocusMarker();
       used.forEach(viewFor);
       ensureDocuments();
       // Its last tab closed by keyboard: focus must not fall to <body>.
@@ -204,7 +234,8 @@
       const id = groups.groupOf(ide, path);
       if (!id) return false;
       groups.setGroupActive(ide, id, path);
-      focused = id;
+      setFocused(id);
+      wiring()?.workbench?.revealEditorGroup?.(id); // a group that gave way comes back into view
       call('onActivated', path);
       ensureDocuments();
       views.get(id)?.render();
@@ -267,7 +298,7 @@
         if (ide.activeTabPath) call('activatePrimary', ide.activeTabPath);
         else editorHost?.showEmpty?.();
       }
-      if (to) focused = to;
+      if (to) setFocused(to);
       schedulePersist();
       requestRender();
       if (to) views.get(to)?.focus();
@@ -339,7 +370,7 @@
       const order = [''].concat(liveGroups());
       if (order.length < 2) return false;
       const next = order[(order.indexOf(focused) + 1) % order.length];
-      focused = next;
+      setFocused(next);
       if (next) views.get(next)?.focus();
       else editorHost?.focus?.();
       return true;
@@ -366,19 +397,43 @@
       return items.length ? [{ separator: true }, ...items] : [];
     }
 
-    // The strip's overflow control: every tab of the group, the active one marked.
+    // The count chip and More button: every tab of the group (active one checked)
+    // plus the bulk closes and Reopen Closed Tab.
     function openAllTabsMenu(id, anchorEl) {
-      if (typeof contextMenu?.show !== 'function') return;
-      const active = groups.getGroupActive(getIde(), id);
+      if (typeof contextMenu?.show !== 'function' || typeof stripEvents?.buildOpenTabsMenuItems !== 'function') return;
+      const orchestrator = call('getCloseOrchestrator');
+      const ide = getIde();
+      const isReview = (path) => editorHost?.getDocumentKind?.(path) === 'diff';
       contextMenu.show({
         rootEl: getDom().ideView || null,
         anchorEl,
-        items: groups.tabsIn(getIde(), id).map((tab) => ({
-          label: String(tab.path).split('/').pop() || tab.path,
-          checked: tab.path === active,
-          action: () => { activateInGroup(tab.path); views.get(id)?.focus(); },
-        })),
+        items: stripEvents.buildOpenTabsMenuItems({
+          tabs: groups.tabsIn(ide, id),
+          activePath: groups.getGroupActive(ide, id),
+          isDirty: (path) => !isReview(path) && ide.dirtyByPath?.[path] === true,
+          displayName: tabsUtils?.tabDisplayName || ((tab) => String(tab.path).split('/').pop() || tab.path),
+          folderOf: (tab) => (tab.kind === 'file' ? String(tab.path).split('/').slice(0, -1).join('/') : ''),
+          onActivate: (path) => { activateInGroup(path); views.get(id)?.focus(); },
+          onCloseSaved: () => orchestrator?.requestCloseSaved(id),
+          onCloseAll: () => orchestrator?.requestCloseAll(id),
+          onReopenClosed: typeof d.reopenClosedTab === 'function' ? () => d.reopenClosedTab() : undefined,
+        }),
       });
+    }
+
+    // Double-click: a preview tab stays open, any other file tab pins. Then redraw + persist.
+    function keepOrTogglePin(path) {
+      const ide = getIde();
+      if (stateUtils?.keepTabOpen?.(ide, path) !== true && stateUtils?.toggleTabPinned?.(ide, path) !== true) return false;
+      renderViews();
+      schedulePersist();
+      return true;
+    }
+
+    function togglePinInGroup(path) {
+      if (stateUtils?.toggleTabPinned?.(getIde(), path) !== true) return;
+      renderViews();
+      schedulePersist();
     }
 
     // Close Group: its tabs close, then the group stops being bound and goes. A dirty
@@ -395,16 +450,23 @@
     function openGroupTabMenu(id, path, anchor) {
       if (typeof contextMenu?.show !== 'function') return;
       const orchestrator = call('getCloseOrchestrator');
-      const count = groups.tabsIn(getIde(), id).length;
+      const tabs = groups.tabsIn(getIde(), id);
+      const tab = tabs.find((entry) => entry.path === path);
+      const closableRight = tabs.slice(tabs.indexOf(tab) + 1).some((entry) => entry.pinned !== true);
       contextMenu.show({
         rootEl: getDom().ideView || null,
         ...anchor,
         items: [
+          ...(tab?.transientPreview === true ? [{ label: jt('ide.tabs.keepOpen', 'Keep Open'), action: () => keepOrTogglePin(path) }] : []),
           { label: jt('common.close', 'Close'), action: () => closeInGroup(path) },
-          { label: jt('ide.tabs.closeOthers', 'Close Others'), action: () => orchestrator?.requestCloseOthers(path), disabled: count < 2 },
+          { label: jt('ide.tabs.closeOthers', 'Close Others'), action: () => orchestrator?.requestCloseOthers(path), disabled: tabs.length < 2 },
+          { label: jt('ide.tabs.closeToRight', 'Close to the Right'), action: () => orchestrator?.requestCloseToRight(path), disabled: !closableRight },
           { label: jt('ide.tabs.closeSaved', 'Close Saved'), action: () => orchestrator?.requestCloseSaved(id) },
           { label: jt('ide.tabs.closeAll', 'Close All'), action: () => orchestrator?.requestCloseAll(id) },
           { label: jt('ide.groups.closeGroup', 'Close Group'), action: () => closeGroup(id) },
+          ...(tab?.kind === 'file'
+            ? [{ separator: true }, { label: tab.pinned === true ? jt('ide.tabs.unpin', 'Unpin') : jt('ide.tabs.pin', 'Pin'), action: () => togglePinInGroup(path) }]
+            : []),
           ...moveMenuItems(path),
           { separator: true },
           { label: jt('ide.tabs.revealInExplorer', 'Reveal in Explorer View'), action: () => call('revealInExplorer', path) },
@@ -414,15 +476,17 @@
 
     // ---- Focus + lifecycle ----
 
-    const onPrimaryFocus = () => { focused = ''; };
+    const onPrimaryFocus = () => setFocused('');
     let boundMain = null;
 
     function bindEvents() {
       const main = getDom().ideMain || null;
       if (!main || main === boundMain) return;
       boundMain?.removeEventListener('focusin', onPrimaryFocus);
+      setMarker(boundMain, false);
       main.addEventListener('focusin', onPrimaryFocus);
       boundMain = main;
+      syncFocusMarker(); // the primary group starts focused
     }
 
     // A root switch: the views (and their per-path view states) belong to the old root.
@@ -430,17 +494,14 @@
       for (const view of views.values()) view.dispose();
       views.clear();
       loading.clear();
-      focused = '';
-    }
-
-    function layoutEditors() {
-      for (const view of views.values()) view.layout();
+      setFocused('');
     }
 
     function dispose() {
       if (disposed) return;
       disposed = true;
       boundMain?.removeEventListener('focusin', onPrimaryFocus);
+      setMarker(boundMain, false);
       boundMain = null;
       for (const view of views.values()) view.dispose();
       views.clear();
@@ -453,9 +514,7 @@
       activateInGroup,
       moveToGroup,
       showPrimary: (path) => call('activatePrimary', path),
-      moveToNewGroup,
       splitActive,
-      closeInGroup,
       closeGroup,
       openInGroup,
       openFollowingFocus,
@@ -469,7 +528,6 @@
       getFocusedGroup: () => focused,
       bindEvents,
       resetForRoot,
-      layoutEditors,
       dispose,
     };
   }

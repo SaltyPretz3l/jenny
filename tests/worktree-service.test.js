@@ -22,6 +22,7 @@ const {
   createTrackedTempDir,
   trackDirectory,
 } = require('./helpers/resource-cleanup');
+const { linkDirectory } = require('./helpers/platform-skips');
 
 const execFileAsync = promisify(execFile);
 
@@ -115,19 +116,14 @@ describe('WorktreePathPolicy', () => {
     );
   });
 
-  test('rejects realpath escapes through linked directories', async (t) => {
+  test('rejects realpath escapes through linked directories', async () => {
     const root = createTrackedTempDir('jenny-worktree-link-policy-');
     const parent = path.join(root, 'parent');
     const outside = path.join(root, 'outside');
     const link = path.join(parent, 'link');
     await fs.mkdir(parent, { recursive: true });
     await fs.mkdir(outside, { recursive: true });
-    try {
-      await fs.symlink(outside, link, process.platform === 'win32' ? 'junction' : 'dir');
-    } catch (error) {
-      t.skip(`symlink unavailable in this environment: ${error.message}`);
-      return;
-    }
+    linkDirectory(outside, link);
 
     const policy = new WorktreePathPolicy();
     await assert.rejects(
@@ -140,17 +136,12 @@ describe('WorktreePathPolicy', () => {
     );
   });
 
-  test('rejects symlinked or junction worktree parents', async (t) => {
+  test('rejects symlinked or junction worktree parents', async () => {
     const root = createTrackedTempDir('jenny-worktree-parent-link-policy-');
     const outside = path.join(root, 'outside');
     const parent = path.join(root, 'parent-link');
     await fs.mkdir(outside, { recursive: true });
-    try {
-      await fs.symlink(outside, parent, process.platform === 'win32' ? 'junction' : 'dir');
-    } catch (error) {
-      t.skip(`symlink unavailable in this environment: ${error.message}`);
-      return;
-    }
+    linkDirectory(outside, parent);
 
     const policy = new WorktreePathPolicy();
     await assert.rejects(
@@ -356,7 +347,7 @@ describe('WorktreeService', () => {
     assert.equal(missing.reason, 'worktree_missing');
   });
 
-  test('resolveSelectableWorktree rejects registry paths that escape the worktree parent', async (t) => {
+  test('resolveSelectableWorktree rejects registry paths that escape the worktree parent', async () => {
     const repoRoot = await createGitRepo();
     const { service, registry } = createService();
     const parent = path.join(path.dirname(repoRoot), `${path.basename(repoRoot)}-worktrees`);
@@ -364,12 +355,7 @@ describe('WorktreeService', () => {
     const link = path.join(parent, 'linked-selection');
     await fs.mkdir(parent, { recursive: true });
     await fs.mkdir(outside, { recursive: true });
-    try {
-      await fs.symlink(outside, link, process.platform === 'win32' ? 'junction' : 'dir');
-    } catch (error) {
-      t.skip(`symlink unavailable in this environment: ${error.message}`);
-      return;
-    }
+    linkDirectory(outside, link);
     registry.add({
       id: 'wt_escape',
       repository_root: path.resolve(repoRoot),
@@ -654,6 +640,89 @@ describe('WorktreeService', () => {
       ignored_count: 0,
     });
     assert.equal(registry.listAll().length, 1);
+  });
+
+  test('deleteWorktree runs beforeRemove only after the dirty check and honours a veto', async () => {
+    const repoRoot = await createGitRepo();
+    const { service, registry } = createService();
+    const created = await service.createWorktree({
+      workspaceRoot: repoRoot,
+      branch: 'codex/delete-hook',
+      baseRef: 'HEAD',
+    });
+    const dirtyFile = path.join(created.worktree.worktree_path, 'scratch.txt');
+    await fs.writeFile(dirtyFile, 'dirty\n', 'utf8');
+    let hookCalls = 0;
+    const dirty = await service.deleteWorktree({
+      workspaceRoot: repoRoot,
+      worktreeId: created.worktree.id,
+      beforeRemove: async () => { hookCalls += 1; return { proceed: true }; },
+    });
+    assert.equal(dirty.reason, 'dirty_worktree');
+    assert.equal(hookCalls, 0, 'a refused delete never reaches the hook');
+
+    await fs.rm(dirtyFile);
+    let hookInput = null;
+    const vetoed = await service.deleteWorktree({
+      workspaceRoot: repoRoot,
+      worktreeId: created.worktree.id,
+      beforeRemove: async (input) => {
+        hookInput = input;
+        return { proceed: false, reason: 'root_busy', message: 'Root is busy.' };
+      },
+    });
+    assert.equal(vetoed.success, false);
+    assert.equal(vetoed.reason, 'root_busy');
+    assert.equal(vetoed.result_kind, 'worktree_delete');
+    assert.equal(hookInput.worktree.id, created.worktree.id);
+    assert.equal(hookInput.worktree_path, path.resolve(created.worktree.worktree_path));
+    assert.equal(registry.listAll().length, 1);
+    assert.equal((await fs.stat(created.worktree.worktree_path)).isDirectory(), true);
+
+    const thrown = await service.deleteWorktree({
+      workspaceRoot: repoRoot,
+      worktreeId: created.worktree.id,
+      beforeRemove: async () => { throw new Error('transition failed'); },
+    });
+    assert.equal(thrown.reason, 'before_remove_failed');
+    assert.equal(registry.listAll().length, 1);
+  });
+
+  test('select and delete reuse the captured worktree list instead of respawning git', async () => {
+    const repoRoot = await createGitRepo();
+    const { service } = createService();
+    const created = await service.createWorktree({
+      workspaceRoot: repoRoot,
+      branch: 'codex/spawn-count',
+      baseRef: 'HEAD',
+    });
+    const spawned = [];
+    const runGit = service._runGit.bind(service);
+    service._runGit = (cwd, args, options) => {
+      spawned.push(args.slice(0, 2).join(' '));
+      return runGit(cwd, args, options);
+    };
+
+    const selected = await service.resolveSelectableWorktree({
+      workspaceRoot: repoRoot,
+      worktreeId: created.worktree.id,
+    });
+    assert.equal(selected.success, true);
+    assert.deepEqual(spawned, ['rev-parse --show-toplevel', 'worktree list']);
+
+    spawned.length = 0;
+    const deleted = await service.deleteWorktree({
+      workspaceRoot: repoRoot,
+      worktreeId: created.worktree.id,
+      beforeRemove: async () => ({ proceed: true }),
+    });
+    assert.equal(deleted.success, true);
+    assert.deepEqual(spawned, [
+      'rev-parse --show-toplevel',
+      'worktree list',
+      'status --porcelain=v1',
+      'worktree remove',
+    ]);
   });
 
   test('createWorktree reports a committed effect when registry persistence fails', async () => {

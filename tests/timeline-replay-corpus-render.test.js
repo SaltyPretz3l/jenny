@@ -214,6 +214,14 @@ const DIVERGENCE_LEDGER = [
   // Scenario 29 exhibits the same half-closed tool_result family as 07/18 —
   // the plan_document row itself renders in lockstep.
   'data-source-message-ids @ 29-plan-approval-document/tool_result',
+  // 2026-10-25 row-order invariant: data-source-event-id names the event a row
+  // was sorted by. Diagnostic only, no chrome: these rows' first event is the
+  // reducer's live event until hydration swaps in its canonical twin, so the
+  // settle patches the attribute in place.
+  'data-source-event-id @ 24-settled-tool-no-assistant-text/approval_gap',
+  'data-source-event-id @ 28-reasoning-replay-after-text/assistant_text',
+  'data-source-event-id @ 28-reasoning-replay-after-text/reasoning',
+  'data-source-event-id @ 29-plan-approval-document/plan_document',
 ];
 
 const LEDGER_ATTRIBUTES = new Set(DIVERGENCE_LEDGER.map((site) => site.split(' @ ')[0]));

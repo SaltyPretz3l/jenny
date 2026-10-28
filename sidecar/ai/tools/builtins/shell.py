@@ -25,6 +25,9 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_IO_FAILED,
 )
 from sidecar.ai.tools.builtins import cancellation, output_chunk_slot, shell_harness
+from sidecar.ai.tools.builtins.executable_lookup import (
+    which_on_explicit_path as _which_on_explicit_path,
+)
 from sidecar.ai.tools.builtins.git_tracking import detect_git_operations
 from sidecar.ai.tools.builtins.owned_process import (
     OwnedProcessCapacityError,
@@ -39,16 +42,12 @@ from sidecar.ai.tools.builtins.shell_background import (
     start_background_job,
     stop_background_job,
 )
-from sidecar.ai.tools.builtins.shell_background_status import (
-    BACKGROUND_JOB_CANCELLED_ERROR,
-)
 from sidecar.ai.tools.builtins.shell_command_split import (
     cmd_exe_multiline_refusal,
     split_compound_command,
 )
 from sidecar.ai.tools.builtins.shell_harness import powershell_directory as _powershell_directory
 from sidecar.ai.tools.builtins.shell_security import (
-    CommandVerdict,
     classify_command,
     find_blocked_pattern,
 )
@@ -87,6 +86,8 @@ MAX_OUTPUT_CHARS = 20_000
 MAX_FAILURE_STREAM_CHARS = 6_000
 MAX_EXPECTED_EXIT_CODES = 16
 _MIN_COMPOUND_SEGMENTS = 2
+# Background-job states a check_background_job poll reports as a successful read.
+_READABLE_JOB_STATES = frozenset({"running", "completed", "failed"})
 
 # Semantic exit-code overrides: command prefix -> {exit_code: explanation}.
 SEMANTIC_EXIT_OVERRIDES: dict[str, dict[int, str]] = {
@@ -276,21 +277,6 @@ def _shell_environment() -> dict[str, str] | None:
     return shell_harness.shell_environment(_powershell_directory() if os.name == "nt" else None)
 
 
-def _which_on_explicit_path(name: str, *, path: str) -> str | None:
-    """Ignore cwd fallback and relative/empty PATH entries on every Python version."""
-    if Path(name).is_absolute():
-        return shutil.which(name, path=path)
-    for raw in path.split(os.pathsep):
-        directory = Path(raw.strip('"'))
-        if not raw or not directory.is_absolute():
-            continue
-        resolved = shutil.which(name, path=str(directory))
-        if resolved is not None and os.path.normcase(str(Path(resolved).absolute().parent)) == (
-                os.path.normcase(str(directory.absolute()))):
-            return resolved
-    return None
-
-
 def _shell_argv(command: str) -> list[str]:
     """Resolve the advertised platform shell before starting the owned process."""
     if os.name == "nt":
@@ -321,6 +307,9 @@ _UNRESOLVED_COMMAND_RE = re.compile(
     r"|The term ['\"]([^'\"]+)['\"] is not recognized as (?:the |a )?name of a cmdlet",
     re.IGNORECASE,
 )
+# The name comes from command output (untrusted) and is echoed into the
+# trusted-looking ``hint``: only a short bare program name qualifies.
+_HINT_COMMAND_NAME_RE = re.compile(r"[A-Za-z0-9_.\-]{1,64}")
 
 
 def _unresolved_command_hint(stderr: str) -> str | None:
@@ -332,7 +321,7 @@ def _unresolved_command_hint(stderr: str) -> str | None:
     match = _UNRESOLVED_COMMAND_RE.search(stderr or "")
     if match is None or not (
         name := (match.group(1) or match.group(2) or match.group(3) or "").strip()
-    ):
+    ) or _HINT_COMMAND_NAME_RE.fullmatch(name) is None:
         return None
     powershell_error = match.group(3) is not None
     resolved = shutil.which(name)
@@ -399,15 +388,31 @@ def _resource_cleanup_metadata(completed: object) -> dict[str, object]:
     return verdict.metadata()
 
 
+def _redacted_streams(raw_stdout: str, raw_stderr: str) -> tuple[str, str]:
+    """Run the full redaction pipeline once per stream for every consumer."""
+    return (
+        sanitize_tool_output_no_truncate(raw_stdout, tool_name="run_command"),
+        sanitize_tool_output_no_truncate(raw_stderr, tool_name="run_command"),
+    )
+
+
 def _persist_large_output(
     workspace: WorkspaceGuard,
     output: str,
     job_id: str,
     *,
     force: bool = False,
+    redacted: bool = False,
 ) -> StoredObject | None:
-    """Write only redacted output when it exceeds ``MAX_OUTPUT_CHARS``."""
-    safe_output = sanitize_tool_output_no_truncate(output, tool_name="run_command")
+    """Write only redacted output when it exceeds ``MAX_OUTPUT_CHARS``.
+
+    ``redacted=True`` means *output* already passed the redaction pipeline.
+    The size check stays after redaction: a replacement marker can lengthen
+    the text past the threshold.
+    """
+    safe_output = (
+        output if redacted else sanitize_tool_output_no_truncate(output, tool_name="run_command")
+    )
     if not force and len(safe_output) <= MAX_OUTPUT_CHARS:
         return None
     store = GuardedWorkspaceStore(workspace.require_root())
@@ -424,31 +429,33 @@ def _persist_large_output(
         return None
 
 
-def _maybe_distill_output(
+def _maybe_distill_output(  # noqa: PLR0913 - keyword-only shared-redaction seam.
     workspace: WorkspaceGuard,
     command: str,
     raw_stdout: str,
     raw_stderr: str,
     output_id: str,
+    *,
+    redacted: tuple[str, str] | None = None,
 ) -> tuple[str, str, bool]:
     """Errors-first distillation of stdout/stderr when ``tools_distill_enabled``.
 
     Distillation runs on already-redacted bytes (``sanitize_tool_output_no_truncate``)
-    so the omission store never holds an un-redacted secret. The distilled result is
-    used ONLY when a filter actually collapsed something; otherwise the raw streams
-    fall through to today's path (byte-identical to flag-off). Any failure — store
-    construction, filter, or redaction — falls back to the raw streams, losing nothing.
+    so the omission store never holds an un-redacted secret; *redacted* passes
+    the caller's ``_redacted_streams`` result so the pipeline is not rerun. The
+    distilled result is used ONLY when a filter actually collapsed something;
+    otherwise the raw streams fall through to today's path (byte-identical to
+    flag-off). Any failure — store construction, filter, or redaction — falls
+    back to the raw streams, losing nothing.
     """
     if not is_distill_enabled():
         return raw_stdout, raw_stderr, False
     try:
-        # Cheap pre-checks BEFORE the redaction pipeline runs: the ~25-regex
-        # sanitize pass over the full stream is the expensive part, and most
-        # run_command output (ls, git, cat, ...) matches no filter. Sniff on
-        # the raw command + a bounded head of the raw output; skip outsized
-        # inputs entirely (the model only sees the first MAX_OUTPUT_CHARS and
-        # the complete bounded capture is already available via a redacted
-        # full_output_path artifact).
+        # Cheap pre-checks: most run_command output (ls, git, cat, ...) matches
+        # no filter. Sniff on the raw command + a bounded head of the raw
+        # output; skip outsized inputs entirely (the model only sees the first
+        # MAX_OUTPUT_CHARS and the complete bounded capture is already
+        # available via a redacted full_output_path artifact).
         if len(raw_stdout) + len(raw_stderr) > MAX_DISTILL_INPUT_CHARS:
             return raw_stdout, raw_stderr, False
         sniff_head = (
@@ -458,8 +465,9 @@ def _maybe_distill_output(
             return raw_stdout, raw_stderr, False
 
         root = workspace.require_root()
-        redacted_stdout = sanitize_tool_output_no_truncate(raw_stdout)
-        redacted_stderr = sanitize_tool_output_no_truncate(raw_stderr)
+        redacted_stdout, redacted_stderr = (
+            redacted if redacted is not None else _redacted_streams(raw_stdout, raw_stderr)
+        )
         store = open_omission_store(GuardedWorkspaceStore(root))
         result = distill_command_output(
             stdout=redacted_stdout,
@@ -474,6 +482,126 @@ def _maybe_distill_output(
     except Exception:  # noqa: BLE001 — fallback-to-raw is the invariant
         logger.warning("tool-output distillation failed; using raw output", exc_info=True)
         return raw_stdout, raw_stderr, False
+
+
+def _prepare_command_output(  # noqa: PLR0913 - one call site per result shape.
+    workspace: WorkspaceGuard,
+    command: str,
+    raw_stdout: str,
+    raw_stderr: str,
+    *,
+    output_truncated: bool,
+    output_counters: dict[str, int] | None,
+    distill: bool,
+) -> tuple[str, str, StoredObject | None]:
+    """Return the payload streams and the persisted full capture, if any.
+
+    Each stream is redacted once; the persisted capture and the distiller
+    share that result.
+    """
+    safe_stdout, safe_stderr = _redacted_streams(raw_stdout, raw_stderr)
+    combined = safe_stdout + safe_stderr
+    if output_truncated and output_counters is not None:
+        combined = (
+            f"{combined}\n...[{output_counters['discarded_bytes']} output bytes discarded "
+            "after the bounded capture limit]"
+        )
+    output_id = uuid.uuid4().hex[:12]
+    payload_stdout, payload_stderr, distilled = (
+        _maybe_distill_output(
+            workspace, command, raw_stdout, raw_stderr, output_id,
+            redacted=(safe_stdout, safe_stderr),
+        )
+        if distill
+        else (raw_stdout, raw_stderr, False)
+    )
+    full_path = _persist_large_output(
+        workspace, combined, output_id, force=distilled, redacted=True,
+    )
+    if not distilled:
+        return payload_stdout, payload_stderr, full_path
+    if full_path is None:
+        # Markers would point at a capture that was never written.
+        return raw_stdout, raw_stderr, None
+    display_path = full_path.display_path
+    return (
+        payload_stdout.replace(FULL_OUTPUT_PATH_PLACEHOLDER, display_path),
+        payload_stderr.replace(FULL_OUTPUT_PATH_PLACEHOLDER, display_path),
+        full_path,
+    )
+
+
+def _output_fields(
+    full_path: StoredObject | None,
+    output_counters: dict[str, int] | None,
+    output_truncated: bool,
+) -> dict[str, object]:
+    """Capture fields shared by the model payload and the result metadata."""
+    fields: dict[str, object] = {}
+    if full_path is not None:
+        fields["full_output_path"] = full_path.absolute_path
+        fields["full_output_display_path"] = full_path.display_path
+        fields["full_output_complete"] = not output_truncated
+    if output_counters is not None:
+        fields["output_counters"] = output_counters
+    if output_truncated:
+        fields["output_truncated"] = True
+    return fields
+
+
+def _timed_out_result(  # noqa: PLR0913 - keyword-only result assembly.
+    *,
+    command: str,
+    display_cwd: str,
+    stdout: str,
+    stderr: str,
+    full_path: StoredObject | None,
+    timeout_seconds: float,
+    output_fields: dict[str, object],
+    resource_cleanup: dict[str, object],
+    classification_meta: dict[str, str] | None,
+) -> ToolHandlerResult:
+    timeout_fix = (
+        f"The command timed out after {timeout_seconds:g} seconds and was stopped. "
+        f"Retry with a larger timeout_seconds (up to {MAX_TIMEOUT_SECONDS:g}) or "
+        "run_in_background=true; the same arguments will time out again."
+    )
+    display_path = full_path.display_path if full_path is not None else None
+    payload: dict[str, object] = {
+        "command": command,
+        "cwd": display_cwd,
+        "exit_code": None,
+        "stdout": _truncate_failure_stream(stdout, display_path),
+        "stderr": _truncate_failure_stream(stderr, display_path),
+        "ok": False,
+        "shell": _shell_name(),
+        "timed_out": True,
+        "timeout_seconds": timeout_seconds,
+        "message": timeout_fix,
+        **output_fields,
+    }
+    # No "exit_code" key in metadata: the process was stopped, not exited, and
+    # consumers read its presence as "the command ran to completion".
+    metadata: dict[str, object] = {
+        "shell": _shell_name(),
+        "resource_cleanup": resource_cleanup,
+        "timed_out": True,
+        "timeout_seconds": timeout_seconds,
+        "failure_class": "limit_exceeded",
+        "remediation": timeout_fix,
+        **output_fields,
+    }
+    if classification_meta is not None:
+        metadata["classification"] = classification_meta
+    return ToolHandlerResult(
+        output=json.dumps(payload, ensure_ascii=False, indent=2),
+        success=False,
+        # CMP_TOOL_IO_FAILED stays the wire code; its default "transient"
+        # class (retry unchanged) is wrong for a time limit, so failure_class
+        # overrides it to limit_exceeded (retry with changed arguments).
+        error_code=CMP_TOOL_IO_FAILED,
+        metadata=metadata,
+    )
 
 
 # ── Main tool handler ─────────────────────────────────────────────────
@@ -513,7 +641,9 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
             retryable=False,
         )
 
-    # ── Security classification (when feature is enabled) ─────────
+    # ── Security classification metadata (when feature is enabled) ─
+    # The classifier blocks only blocked patterns and empty input, which
+    # _parse_command already refused; here the verdict is reported metadata.
     classification_meta: dict[str, str] | None = None
     if _shell_security_enabled():
         verdict = classify_command(command)
@@ -522,12 +652,6 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
             "reason": verdict.reason,
             "executable": verdict.executable,
         }
-        if verdict.verdict is CommandVerdict.BLOCKED:
-            raise ToolExecutionFailure(
-                code=CMP_TOOL_COMMAND_BLOCKED,
-                message=f"command blocked by security classifier: {verdict.reason}",
-                retryable=False,
-            )
 
     argv = _shell_argv(command)
 
@@ -611,42 +735,22 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
             retryable=False,
         )
     if getattr(completed, "timed_out", False):
-        # A time limit, not a glitch: the transient class CMP_TOOL_IO_FAILED
-        # carries told the model to retry unchanged, which times out again.
-        timeout_fix = (
-            f"The command timed out after {timeout_seconds:g} seconds and was stopped. "
-            f"Retry with a larger timeout_seconds (up to {MAX_TIMEOUT_SECONDS:g}) or "
-            "run_in_background=true; the same arguments will time out again."
+        # The partial capture is persisted like any large output so a middle
+        # truncation marker always names a recoverable full_output path.
+        timeout_stdout, timeout_stderr, timeout_path = _prepare_command_output(
+            workspace, command, raw_stdout, raw_stderr,
+            output_truncated=output_truncated, output_counters=output_counters, distill=False,
         )
-        timeout_payload: dict[str, object] = {
-            "command": command,
-            "cwd": display_cwd,
-            "stdout": _truncate_failure_stream(raw_stdout),
-            "stderr": _truncate_failure_stream(raw_stderr),
-            "ok": False,
-            "shell": _shell_name(),
-            "timed_out": True,
-            "timeout_seconds": timeout_seconds,
-            "message": timeout_fix,
-        }
-        if output_counters is not None:
-            timeout_payload["output_counters"] = output_counters
-        if output_truncated:
-            timeout_payload["output_truncated"] = True
-        return ToolHandlerResult(
-            output=json.dumps(timeout_payload, ensure_ascii=False, indent=2),
-            success=False,
-            error_code=CMP_TOOL_IO_FAILED,
-            metadata={
-                "shell": _shell_name(),
-                "resource_cleanup": resource_cleanup,
-                "timed_out": True,
-                "timeout_seconds": timeout_seconds,
-                "failure_class": "limit_exceeded",
-                "remediation": timeout_fix,
-                **({"output_counters": output_counters} if output_counters is not None else {}),
-                **({"output_truncated": True} if output_truncated else {}),
-            },
+        return _timed_out_result(
+            command=command,
+            display_cwd=display_cwd,
+            stdout=timeout_stdout,
+            stderr=timeout_stderr,
+            full_path=timeout_path,
+            timeout_seconds=timeout_seconds,
+            output_fields=_output_fields(timeout_path, output_counters, output_truncated),
+            resource_cleanup=resource_cleanup,
+            classification_meta=classification_meta,
         )
     exit_code = int(completed.returncode)
 
@@ -659,31 +763,12 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
         exit_code == 0 or semantic is not None
     )
 
-    # ── Large-output persistence ──────────────────────────────────
-    combined_raw = raw_stdout + raw_stderr
-    if output_truncated and output_counters is not None:
-        combined_raw = (
-            f"{combined_raw}\n...[{output_counters['discarded_bytes']} output bytes discarded "
-            "after the bounded capture limit]"
-        )
-    output_id = uuid.uuid4().hex[:12]
-    # ── Optional errors-first distillation (flag-gated, default OFF) ──
-    payload_stdout, payload_stderr, distilled = _maybe_distill_output(
-        workspace, command, raw_stdout, raw_stderr, output_id
+    # ── Distillation + large-output persistence ──────────────────
+    payload_stdout, payload_stderr, full_path = _prepare_command_output(
+        workspace, command, raw_stdout, raw_stderr,
+        output_truncated=output_truncated, output_counters=output_counters, distill=True,
     )
-    full_path = _persist_large_output(
-        workspace,
-        combined_raw,
-        output_id,
-        force=distilled,
-    )
-    if distilled and full_path is None:
-        payload_stdout, payload_stderr = raw_stdout, raw_stderr
-        distilled = False
-    elif distilled and full_path is not None:
-        display_path = full_path.display_path
-        payload_stdout = payload_stdout.replace(FULL_OUTPUT_PATH_PLACEHOLDER, display_path)
-        payload_stderr = payload_stderr.replace(FULL_OUTPUT_PATH_PLACEHOLDER, display_path)
+    output_fields = _output_fields(full_path, output_counters, output_truncated)
 
     # ── Build response payload ────────────────────────────────────
     output_display_path = full_path.display_path if full_path is not None else None
@@ -717,14 +802,7 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
             payload["expectation_note"] = f"Observed expected exit code: {exit_code}"
     if semantic is not None:
         payload["semantic_note"] = semantic
-    if full_path is not None:
-        payload["full_output_path"] = full_path.absolute_path
-        payload["full_output_display_path"] = full_path.display_path
-        payload["full_output_complete"] = not output_truncated
-    if output_counters is not None:
-        payload["output_counters"] = output_counters
-    if output_truncated:
-        payload["output_truncated"] = True
+    payload.update(output_fields)
     if not is_ok:
         hint = _unresolved_command_hint(raw_stderr)
         if hint is not None:
@@ -762,14 +840,7 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
             )
     if classification_meta is not None:
         metadata["classification"] = classification_meta
-    if full_path is not None:
-        metadata["full_output_path"] = full_path.absolute_path
-        metadata["full_output_display_path"] = full_path.display_path
-        metadata["full_output_complete"] = not output_truncated
-    if output_counters is not None:
-        metadata["output_counters"] = output_counters
-    if output_truncated:
-        metadata["output_truncated"] = True
+    metadata.update(output_fields)
     if exit_code_covers_final_segment:
         metadata["exit_code_covers"] = "final_segment_only"
         if completed_with_warnings:
@@ -840,12 +911,27 @@ def check_background_job_tool(
             message=f"no background job found with id: {job_id}",
             retryable=False,
         )
-    # A job that ended because a stop was requested is a state the poll read
-    # successfully; reporting it as a tool error reads as a failed poll.
-    cancelled = status.get("error") == BACKGROUND_JOB_CANCELLED_ERROR
+    status.pop("schema_version", None)  # persistence detail, never model-facing
+    # A running or terminal job (completed, failed, cancelled, timed out) is a
+    # state the poll read successfully: ``state``/``exit_code``/``error`` carry
+    # the job's outcome. Only an unreadable or rejected status fails the poll.
+    if status.get("state") in _READABLE_JOB_STATES:
+        return ToolHandlerResult(
+            output=json.dumps(status, ensure_ascii=False, indent=2),
+            success=True,
+        )
     return ToolHandlerResult(
         output=json.dumps(status, ensure_ascii=False, indent=2),
-        success=cancelled or status.get("state") in ("completed", "running"),
+        success=False,
+        error_code=CMP_TOOL_EXECUTION_FAILED,
+        metadata={
+            "failure_class": "unavailable",
+            "remediation": (
+                f"The status of background job {job_id} could not be read or was rejected; "
+                "polling again will not change that. Re-run the command if its result "
+                "is still needed."
+            ),
+        },
     )
 
 
@@ -862,6 +948,7 @@ def stop_background_job_tool(
             message=f"no background job found with id: {job_id}",
             retryable=False,
         )
+    status.pop("schema_version", None)  # persistence detail, never model-facing
     return ToolHandlerResult(
         output=json.dumps(status, ensure_ascii=False, indent=2),
         success=status.get("state") in ("completed", "failed"),

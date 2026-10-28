@@ -510,7 +510,11 @@ def test_python_temp_script_is_not_shell_classified() -> None:
         shell_security=True,
     )
 
-    assert approval is None
+    # 2026-10-25 security-boundary review: Python temp scripts take the mandatory
+    # Python gate (was auto-run with no prompt); the body is still not shell-classified.
+    assert approval is not None
+    assert "always requires approval" in approval.reason.lower()
+    assert "(del)" not in approval.reason
 
 
 def test_cmd_temp_script_requires_destructive_approval() -> None:

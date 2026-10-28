@@ -5,6 +5,14 @@ const { spawn, spawnSync } = require('child_process');
 
 const { API_VERSION } = require('./sidecar-client');
 const { sanitizeSpawnEnv } = require('./sanitize-spawn-env');
+const {
+  PROBE_CACHE_FILENAME,
+  buildProbeCacheKey,
+  invalidatePackagedProbeCache,
+  invalidateProbeCacheOnStartupFailure,
+  readProbeCacheHit,
+  recordProbeSuccess,
+} = require('./packaged-sidecar-probe-cache');
 
 const MANIFEST_NAME = 'manifest.json';
 const DEFAULT_VERSION_TIMEOUT_MS = 45000;
@@ -238,13 +246,14 @@ function buildSuccessSpec(context, artifactSha256, validationTimings) {
   const buildDetail = context.manifestGeneratedAtUtc
     ? `built ${context.manifestGeneratedAtUtc}`
     : 'build time unavailable';
+  const probeDetail = validationTimings?.probeCached === true ? 'cached version probe' : 'version probe';
   return {
     ok: true,
     launchCommand: context.artifactPath,
     launchArgs: [],
     launchSource: 'packaged-binary',
     packagedLaunchDetail:
-      `Packaged sidecar validated via manifest integrity and version probe (${buildDetail}).`,
+      `Packaged sidecar validated via manifest integrity and ${probeDetail} (${buildDetail}).`,
     manifestPath: context.manifestPath,
     sidecarDir: context.sidecarDir,
     artifactPath: context.artifactPath,
@@ -252,8 +261,8 @@ function buildSuccessSpec(context, artifactSha256, validationTimings) {
     manifestGeneratedAtUtc: context.manifestGeneratedAtUtc,
     manifestSha256: context.manifestSha256,
     artifactSha256,
-    // Async path only: how long integrity validation cost (cold-start audit
-    // input for deciding whether the --version probe is worth its spawn).
+    // Async path only: how long integrity validation cost and whether the
+    // --version probe was satisfied from the probe cache (cold-start audit).
     ...(validationTimings ? { validationTimings } : {}),
   };
 }
@@ -334,8 +343,19 @@ function resolvePackagedSidecarLaunch({
   return buildSuccessSpec(context, actualSha256);
 }
 
+function statArtifact(artifactPath, fsImpl) {
+  try {
+    return typeof fsImpl.statSync === 'function' ? fsImpl.statSync(artifactPath) : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
 // Async counterpart streams hashing and probes `--version` asynchronously to
-// avoid blocking the main thread; validation logic is shared.
+// avoid blocking the main thread; validation logic is shared. With a
+// probeCachePath (desktop: under userData) a probe success is remembered for
+// the exact verified artifact, and later launches skip the ~1 s probe; the
+// hash check above it still runs every time. No path = probe every launch.
 async function resolvePackagedSidecarLaunchAsync({
   resourcesPath = process.resourcesPath,
   fsImpl = fs,
@@ -344,6 +364,9 @@ async function resolvePackagedSidecarLaunchAsync({
   platform = process.platform,
   versionTimeoutMs = DEFAULT_VERSION_TIMEOUT_MS,
   probeVersion = true,
+  probeCachePath = '',
+  appVersion = '',
+  cacheFsImpl = fs,
 } = {}) {
   const validation = validatePackagedManifest({ resourcesPath, fsImpl, apiVersion, platform });
   if (!validation.ok) {
@@ -372,25 +395,75 @@ async function resolvePackagedSidecarLaunchAsync({
   const hashMs = Math.max(Date.now() - hashStartedAt, 0);
 
   let probeMs = null;
+  let probeCached = false;
   if (probeVersion) {
-    const probeStartedAt = Date.now();
-    const probeResult = await spawnVersionProbeAsync(context.artifactPath, {
-      versionTimeoutMs,
-      spawnImpl,
-    });
-    probeMs = Math.max(Date.now() - probeStartedAt, 0);
-    const probeFailure = evaluateVersionProbeResult(probeResult, context, context.apiVersion);
-    if (probeFailure) {
-      return probeFailure;
+    const cacheKey = probeCachePath
+      ? buildProbeCacheKey({
+        artifactPath: context.artifactPath,
+        artifactSha256: actualSha256,
+        stat: statArtifact(context.artifactPath, fsImpl),
+        apiVersion: context.apiVersion,
+        appVersion,
+      })
+      : null;
+    probeCached = readProbeCacheHit(probeCachePath, cacheKey, cacheFsImpl);
+    if (!probeCached) {
+      const probeStartedAt = Date.now();
+      const probeResult = await spawnVersionProbeAsync(context.artifactPath, {
+        versionTimeoutMs,
+        spawnImpl,
+      });
+      probeMs = Math.max(Date.now() - probeStartedAt, 0);
+      const probeFailure = evaluateVersionProbeResult(probeResult, context, context.apiVersion);
+      if (probeFailure) {
+        invalidatePackagedProbeCache(probeCachePath, cacheFsImpl);
+        return probeFailure;
+      }
+      recordProbeSuccess(probeCachePath, cacheKey, cacheFsImpl);
     }
   }
 
-  return buildSuccessSpec(context, actualSha256, { hashMs, probeMs });
+  const spec = buildSuccessSpec(context, actualSha256, { hashMs, probeMs, probeCached });
+  return probeCachePath ? { ...spec, probeCachePath } : spec;
+}
+
+// The desktop backend's packaged-launch resolver: validation runs inside the
+// awaited backendService.start() phase (after the window exists), with the
+// probe cache under userData. The hash runs every launch; the ~1 s probe is
+// skipped when userData holds a probe success for the same verified artifact
+// and app version, and that entry is dropped if the sidecar then fails to start.
+function createPackagedLaunchResolver({
+  resourcesPath, getUserDataDir, appVersion = '', log = () => {}, getSidecarManager = () => null,
+}) {
+  return async () => {
+    const packagedSidecarLaunch = await resolvePackagedSidecarLaunchAsync({
+      resourcesPath,
+      probeCachePath: path.join(getUserDataDir(), PROBE_CACHE_FILENAME),
+      appVersion,
+    });
+    if (packagedSidecarLaunch) {
+      log(packagedSidecarLaunch.ok ? 'INFO' : 'WARN', 'sidecar.packaged_launch_resolved', {
+        launchSource: packagedSidecarLaunch.launchSource,
+        detail: packagedSidecarLaunch.packagedLaunchDetail || packagedSidecarLaunch.failureReason || '',
+        artifactPath: packagedSidecarLaunch.artifactPath || '',
+        manifestPath: packagedSidecarLaunch.manifestPath || '',
+        ok: packagedSidecarLaunch.ok === true,
+        validationTimings: packagedSidecarLaunch.validationTimings || null,
+      });
+      if (packagedSidecarLaunch.validationTimings?.probeCached === true) {
+        invalidateProbeCacheOnStartupFailure(getSidecarManager(), packagedSidecarLaunch.probeCachePath, { log });
+      }
+    }
+    return packagedSidecarLaunch;
+  };
 }
 
 module.exports = {
+  createPackagedLaunchResolver,
   DEFAULT_VERSION_TIMEOUT_MS,
   MANIFEST_NAME,
+  PROBE_CACHE_FILENAME,
+  invalidatePackagedProbeCache,
   resolvePackagedSidecarLaunch,
   resolvePackagedSidecarLaunchAsync,
   sha256File,

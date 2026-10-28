@@ -561,12 +561,6 @@
         ? controller.init(...args)
         : Promise.resolve(state.setup);
     });
-    const refreshSetupStateSafe = setupSafe((...args) => {
-      const controller = getSetupController();
-      return controller && typeof controller.refresh === 'function'
-        ? controller.refresh(...args)
-        : Promise.resolve(state.setup);
-    });
     const applySetupBackendStatusSafe = setupSafe((...args) => {
       const controller = getSetupController();
       return controller && typeof controller.applyBackendStatus === 'function'
@@ -578,12 +572,6 @@
       return controller && typeof controller.openTile === 'function'
         ? controller.openTile(...args)
         : null;
-    });
-    const showSetupFromSettingsSafe = setupSafe(() => {
-      const controller = getSetupController();
-      if (controller && typeof controller.showFromSettings === 'function') {
-        controller.showFromSettings();
-      }
     });
     const showSetupHelpSafe = setupSafe(() => {
       const controller = getSetupController();
@@ -627,10 +615,8 @@
 
     return {
       initSetupControllerSafe,
-      refreshSetupStateSafe,
       applySetupBackendStatusSafe,
       openSetupTileSafe,
-      showSetupFromSettingsSafe,
       showSetupHelpSafe,
       showFactoryResetSafe,
       handleRunSetupAgain,

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import os
 import threading
 import time
 from contextlib import contextmanager
@@ -11,9 +13,14 @@ from pathlib import Path
 from typing import Callable, Iterator, Literal, Protocol, Sequence
 
 from sidecar.ai.tools.builtins.file_state import open_regular_file
+from sidecar.ai.tools.builtins.lsp.languages import (
+    language_id_for_path,
+    resolve_language_for_path,
+)
 from sidecar.ai.tools.builtins.lsp.limits import LSP_MAX_DOCUMENT_BYTES
 from sidecar.ai.tools.builtins.lsp.protocol import (
     LSPProcessSession,
+    LSPProcessSessionLimits,
     LSPProtocolError,
     LSPRequestTimeout,
     LSPServerTerminated,
@@ -29,7 +36,8 @@ from sidecar.ai.tools.contracts import ToolExecutionFailure
 
 LSPSessionStatus = Literal["ready", "degraded", "unavailable"]
 
-# Detection moved to server_detection; these names stay importable from here.
+# Detection (server_detection) and extension mapping (languages) moved out;
+# these names stay importable from here.
 __all__ = [
     "LSPDocumentSyncResult",
     "LSPLanguage",
@@ -48,18 +56,8 @@ _MAX_PUBLISHED_DIAGNOSTICS_PER_DOCUMENT = 500
 
 logger = logging.getLogger(__name__)
 
-_EXTENSION_LANGUAGE_MAP: dict[str, LSPLanguage] = {
-    ".ts": "typescript",
-    ".tsx": "typescript",
-    ".mts": "typescript",
-    ".cts": "typescript",
-    ".js": "javascript",
-    ".jsx": "javascript",
-    ".mjs": "javascript",
-    ".cjs": "javascript",
-    ".py": "python",
-    ".pyi": "python",
-}
+# (size, mtime_ns, sha1) of the text last sent for an open document.
+_DocumentFingerprint = tuple[int, int, str]
 
 
 class _SessionLike(Protocol):
@@ -86,6 +84,8 @@ class _ManagedSession:
     session: _SessionLike
     last_used: float
     in_flight: int = 0
+    # Replaced while leased (command change): the last lease release closes it.
+    close_on_release: bool = False
 
 
 @dataclass(frozen=True)
@@ -118,8 +118,11 @@ class LSPManager:
         session_factory: SessionFactory | None = None,
         clock: Callable[[], float] = time.monotonic,
         sweep_interval_seconds: float = 60.0,
+        request_timeout_seconds: Callable[[], float] | None = None,
     ) -> None:
         self._idle_timeout_seconds = max(0.0, float(idle_timeout_seconds))
+        # Read when a server starts, so a settings change applies to new sessions.
+        self._request_timeout_seconds = request_timeout_seconds
         self._session_factory = session_factory or self._default_session_factory
         self._clock = clock
         self._sweep_interval_seconds = max(0.001, float(sweep_interval_seconds))
@@ -129,6 +132,7 @@ class LSPManager:
         self._lock = threading.Lock()
         self._sessions: dict[tuple[str, LSPLanguage], _ManagedSession] = {}
         self._document_versions: dict[tuple[int, str], int] = {}
+        self._document_fingerprints: dict[tuple[int, str], _DocumentFingerprint] = {}
         self._published_diagnostics: dict[tuple[int, str], list[object]] = {}
         self._initialized_sessions: set[int] = set()
 
@@ -164,6 +168,11 @@ class LSPManager:
                 managed.in_flight -= 1
                 if managed.in_flight == 0:
                     managed.last_used = self._clock()
+                close_now = managed.in_flight == 0 and managed.close_on_release
+                if close_now:
+                    self._clear_document_state(managed.session)
+            if close_now:
+                self._close_sessions([managed])
 
     def _acquire_session(
         self,
@@ -182,11 +191,11 @@ class LSPManager:
         try:
             with self._lock:
                 current = self._sessions.get(key)
-                # A dead session is replaced even while leased; its holder keeps its own reference.
-                if current is None or not current.session.is_running:
+                stale_command = current is not None and current.command != safe_command
+                if current is None or not current.session.is_running or stale_command:
                     if current is not None:
-                        retired.append(self._sessions.pop(key))
-                        self._clear_document_state(current.session)
+                        del self._sessions[key]
+                        self._retire_locked(current, retired)
                     session = self._session_factory(safe_command, workspace)
                     if language != "typescript":
                         session.start()
@@ -208,6 +217,24 @@ class LSPManager:
                 return current
         finally:
             self._close_sessions(retired)
+
+    def retire_sessions(self) -> None:
+        """Drop every cached session (a server command changed); new requests start fresh."""
+        retired: list[_ManagedSession] = []
+        with self._lock:
+            for managed in self._sessions.values():
+                self._retire_locked(managed, retired)
+            self._sessions.clear()
+        self._close_sessions(retired)
+
+    def _retire_locked(self, managed: _ManagedSession, retired: list[_ManagedSession]) -> None:
+        # A dead session is replaced even while leased; its holder keeps its own
+        # reference. A live leased one (command change) closes at its last release.
+        if managed.in_flight and managed.session.is_running:
+            managed.close_on_release = True
+            return
+        self._clear_document_state(managed.session)
+        retired.append(managed)
 
     def _trim_sessions_locked(
         self, *, protected: _ManagedSession | None = None
@@ -267,7 +294,8 @@ class LSPManager:
         session.request(
             "initialize",
             {
-                "processId": None,
+                # Lets a POSIX server exit when the sidecar that owns it dies.
+                "processId": os.getpid(),
                 "rootUri": workspace.as_uri(),
                 "capabilities": {
                     "textDocument": {
@@ -294,13 +322,72 @@ class LSPManager:
     ) -> LSPDocumentSyncResult:
         path = Path(file_path).resolve(strict=False)
         uri = path.as_uri()
+        read = self._read_document(session=session, path=path, uri=uri)
+        if isinstance(read, LSPDocumentSyncResult):
+            return read
+        text, fingerprint = read
+        doc_key = (id(session), uri)
+        self._drain_session_notifications(session)
+        previous_version = self._document_versions.get(doc_key, 0)
+        if previous_version > 0 and self._document_fingerprints.get(doc_key) == fingerprint:
+            # The server already holds this text; re-sending it would only re-analyze.
+            self._document_versions[doc_key] = self._document_versions.pop(doc_key)
+            return LSPDocumentSyncResult(uri=uri, version=previous_version)
+        self._published_diagnostics.pop(doc_key, None)
+        self._document_fingerprints.pop(doc_key, None)
+        version = previous_version + 1
+        try:
+            if previous_version <= 0:
+                open_keys = [key for key in tuple(self._document_versions) if key[0] == id(session)]
+                if len(open_keys) >= _MAX_OPEN_DOCUMENTS_PER_SESSION:
+                    oldest = open_keys[0]
+                    session.notify("textDocument/didClose", {"textDocument": {"uri": oldest[1]}})
+                    del self._document_versions[oldest]
+                    self._document_fingerprints.pop(oldest, None)
+                    self._published_diagnostics.pop(oldest, None)
+                session.notify(
+                    "textDocument/didOpen",
+                    {
+                        "textDocument": {
+                            "uri": uri,
+                            "languageId": language_id_for_path(path, language),
+                            "version": version,
+                            "text": text,
+                        }
+                    },
+                )
+            else:
+                session.notify(
+                    "textDocument/didChange",
+                    {
+                        "textDocument": {"uri": uri, "version": version},
+                        "contentChanges": [{"text": text}],
+                    },
+                )
+        except LSPProtocolError as error:
+            return LSPDocumentSyncResult(
+                uri=uri,
+                version=previous_version,
+                stale_content=True,
+                reason=f"failed to send document sync notification: {type(error).__name__}",
+            )
+        self._document_versions.pop(doc_key, None)
+        self._document_versions[doc_key] = version
+        self._document_fingerprints[doc_key] = fingerprint
+        return LSPDocumentSyncResult(uri=uri, version=version)
+
+    def _read_document(
+        self, *, session: _SessionLike, path: Path, uri: str
+    ) -> tuple[str, _DocumentFingerprint] | LSPDocumentSyncResult:
+        """The normalized text and its fingerprint, or the stale/too-large result."""
         managed = next(
             (entry for entry in tuple(self._sessions.values()) if entry.session is session), None
         )
         try:
             if managed is None:
                 raise OSError("LSP session has no workspace authority")
-            size = path.stat().st_size
+            stat = path.stat()
+            size = stat.st_size
             if size > LSP_MAX_DOCUMENT_BYTES:
                 return _too_large_sync_result(uri=uri, size=size)
             with open_regular_file(
@@ -325,49 +412,12 @@ class LSPManager:
                 stale_content=True,
                 reason=f"document is not UTF-8 text: {type(error).__name__}",
             )
-
-        doc_key = (id(session), uri)
-        self._drain_session_notifications(session)
-        self._published_diagnostics.pop(doc_key, None)
-        previous_version = self._document_versions.get(doc_key, 0)
-        version = previous_version + 1
-        try:
-            if previous_version <= 0:
-                open_keys = [key for key in tuple(self._document_versions) if key[0] == id(session)]
-                if len(open_keys) >= _MAX_OPEN_DOCUMENTS_PER_SESSION:
-                    oldest = open_keys[0]
-                    session.notify("textDocument/didClose", {"textDocument": {"uri": oldest[1]}})
-                    del self._document_versions[oldest]
-                    self._published_diagnostics.pop(oldest, None)
-                session.notify(
-                    "textDocument/didOpen",
-                    {
-                        "textDocument": {
-                            "uri": uri,
-                            "languageId": language,
-                            "version": version,
-                            "text": text,
-                        }
-                    },
-                )
-            else:
-                session.notify(
-                    "textDocument/didChange",
-                    {
-                        "textDocument": {"uri": uri, "version": version},
-                        "contentChanges": [{"text": text}],
-                    },
-                )
-        except LSPProtocolError as error:
-            return LSPDocumentSyncResult(
-                uri=uri,
-                version=previous_version,
-                stale_content=True,
-                reason=f"failed to send document sync notification: {type(error).__name__}",
-            )
-        self._document_versions.pop(doc_key, None)
-        self._document_versions[doc_key] = version
-        return LSPDocumentSyncResult(uri=uri, version=version)
+        fingerprint: _DocumentFingerprint = (
+            len(content),
+            stat.st_mtime_ns,
+            hashlib.sha1(content, usedforsecurity=False).hexdigest(),
+        )
+        return text, fingerprint
 
     def request_document_diagnostics(
         self,
@@ -460,15 +510,27 @@ class LSPManager:
             except Exception as error:  # noqa: BLE001 - one bad close must not skip the rest.
                 logger.warning("LSP session close failed: %s", type(error).__name__)
 
-    @staticmethod
-    def _default_session_factory(command: tuple[str, ...], workspace_root: Path) -> _SessionLike:
-        return LSPProcessSession(command=command, workspace_root=workspace_root)
+    def _default_session_factory(
+        self, command: tuple[str, ...], workspace_root: Path
+    ) -> _SessionLike:
+        limits = None
+        if self._request_timeout_seconds is not None:
+            timeout = float(self._request_timeout_seconds())
+            defaults = LSPProcessSessionLimits()
+            limits = LSPProcessSessionLimits(
+                request_timeout_seconds=timeout,
+                initialize_timeout_seconds=max(defaults.initialize_timeout_seconds, timeout),
+            )
+        return LSPProcessSession(command=command, workspace_root=workspace_root, limits=limits)
 
     def _clear_document_state(self, session: _SessionLike) -> None:
         session_id = id(session)
         for key in list(self._document_versions):
             if key[0] == session_id:
                 del self._document_versions[key]
+        for key in list(self._document_fingerprints):
+            if key[0] == session_id:
+                del self._document_fingerprints[key]
         for key in list(self._published_diagnostics):
             if key[0] == session_id:
                 del self._published_diagnostics[key]
@@ -507,13 +569,6 @@ class LSPManager:
         while len(self._published_diagnostics) > _MAX_PUBLISHED_DIAGNOSTIC_DOCUMENTS:
             oldest_key = next(iter(self._published_diagnostics))
             del self._published_diagnostics[oldest_key]
-
-
-def resolve_language_for_path(path: Path | str) -> LSPLanguage | None:
-    """Return the LSP language for a workspace-relative or absolute path."""
-
-    suffix = Path(str(path)).suffix.lower()
-    return _EXTENSION_LANGUAGE_MAP.get(suffix)
 
 
 def _too_large_sync_result(*, uri: str, size: int) -> LSPDocumentSyncResult:

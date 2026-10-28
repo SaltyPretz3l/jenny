@@ -67,16 +67,6 @@
     tests: 'Write thorough unit tests for the following code:',
   });
 
-  // contextMenuOrder 1/2 are the plain sends, 3 is the controller's word-wrap
-  // toggle; the intents follow at 4-7, then blame-lite (8) and squiggle-fix (9),
-  // so the "jenny" group reads top to bottom.
-  const INTENT_ACTIONS = Object.freeze([
-    { id: 'jenny.selection.explain', label: jt('ide.selection.explain', 'Jenny: Explain selection'), intent: 'explain', order: 4 },
-    { id: 'jenny.selection.fix', label: jt('ide.selection.fix', 'Jenny: Fix selection'), intent: 'fix', order: 5 },
-    { id: 'jenny.selection.refactor', label: jt('ide.selection.refactor', 'Jenny: Refactor selection'), intent: 'refactor', order: 6 },
-    { id: 'jenny.selection.tests', label: jt('ide.selection.generateTests', 'Jenny: Generate tests for selection'), intent: 'tests', order: 7 },
-  ]);
-
   function createIdeSelectionIntents(deps) {
     const options = deps || {};
     const editorHost = options.editorHost || null;
@@ -88,16 +78,14 @@
     // toast so the silent degrades become discoverable.
     const onNotice = typeof options.onNotice === 'function' ? options.onNotice : () => {};
 
-    // Pure prompt builders + the marker picker live in send-utils so this
-    // module stays small. resolveSendUtils always returns an object (|| {}), so
-    // default-param destructure supplies the safe fallbacks for any helper a
-    // degraded build is missing.
+    // Pure prompt builders + the marker picker live in send-utils (loaded
+    // just before this module by the IDE manifest) so this module stays small.
     const {
-      summarizeBlameCommits = () => [],
-      buildBlameSummaryIntent = () => '',
-      pickMarkerUnderCursor = () => null,
-      sliceSurroundingLines = () => ({ code: '', startLine: 0, endLine: 0 }),
-      buildFixSquiggleIntent = () => '',
+      summarizeBlameCommits,
+      buildBlameSummaryIntent,
+      pickMarkerUnderCursor,
+      sliceSurroundingLines,
+      buildFixSquiggleIntent,
     } = resolveSendUtils(options);
 
     // Lazily constructed git client (self-bootstraps off the bridge). Built on
@@ -140,10 +128,16 @@
       onSendToJenny(payload);
     }
 
+    // The focused editor's path, or '' for none or a diff tab (nothing to send).
+    function focusedPath() {
+      const path = editorHost?.getFocusedPath?.() || '';
+      return path && !isDiffTabId(path) ? path : '';
+    }
+
     // Builds the send payload for the active selection (target: 'current' | 'new').
     function sendSelection(target, intent) {
-      const path = editorHost?.getFocusedPath?.() || '';
-      if (!path || isDiffTabId(path)) {
+      const path = focusedPath();
+      if (!path) {
         return;
       }
       const code = editorHost.getSelectedText();
@@ -167,8 +161,8 @@
     // selection. Degrades to a no-op (returns false) when there is no path, no
     // selection, no git bridge, or the range is not tracked in HEAD.
     async function sendBlameSummary(target) {
-      const path = editorHost?.getFocusedPath?.() || '';
-      if (!path || isDiffTabId(path)) {
+      const path = focusedPath();
+      if (!path) {
         return false;
       }
       const range = editorHost?.getSelectionRange?.();
@@ -247,8 +241,8 @@
     // shape) plus the surrounding code with a fix intent. Degrades to a no-op
     // when there is no path, no cursor, or no marker on the cursor line.
     function sendSquiggleFix(target) {
-      const path = editorHost?.getFocusedPath?.() || '';
-      if (!path || isDiffTabId(path)) {
+      const path = focusedPath();
+      if (!path) {
         return false;
       }
       const cursor = editorHost?.getFocusedCursorInfo?.();
@@ -285,54 +279,35 @@
       return true;
     }
 
+    // The "jenny" context-menu group, top to bottom: order 1/2 are the plain
+    // sends, 3 is the controller's word-wrap toggle, the intents follow at 4-7,
+    // then blame-lite (8) and squiggle-fix (9). Blame-lite needs a selection
+    // (the range to blame); squiggle-fix has no selection precondition - it
+    // acts on whatever marker sits at the cursor, degrading silently when none does.
     function registerActions() {
       if (typeof editorHost?.addEditorAction !== 'function') {
         return;
       }
-      editorHost.addEditorAction({
-        id: 'jenny.send-selection.current',
-        label: jt('ide.selection.sendCurrentChat', 'Send to Jenny — current chat'),
-        contextMenuGroupId: 'jenny',
-        contextMenuOrder: 1,
-        precondition: 'editorHasSelection',
-        run: () => sendSelection('current'),
-      });
-      editorHost.addEditorAction({
-        id: 'jenny.send-selection.new',
-        label: jt('ide.selection.sendNewChat', 'Send to Jenny — new chat'),
-        contextMenuGroupId: 'jenny',
-        contextMenuOrder: 2,
-        precondition: 'editorHasSelection',
-        run: () => sendSelection('new'),
-      });
-      for (const action of INTENT_ACTIONS) {
+      const actions = [
+        ['jenny.send-selection.current', jt('ide.selection.sendCurrentChat', 'Send to Jenny — current chat'), 1, () => sendSelection('current')],
+        ['jenny.send-selection.new', jt('ide.selection.sendNewChat', 'Send to Jenny — new chat'), 2, () => sendSelection('new')],
+        ['jenny.selection.explain', jt('ide.selection.explain', 'Jenny: Explain selection'), 4, () => sendSelection('current', 'explain')],
+        ['jenny.selection.fix', jt('ide.selection.fix', 'Jenny: Fix selection'), 5, () => sendSelection('current', 'fix')],
+        ['jenny.selection.refactor', jt('ide.selection.refactor', 'Jenny: Refactor selection'), 6, () => sendSelection('current', 'refactor')],
+        ['jenny.selection.tests', jt('ide.selection.generateTests', 'Jenny: Generate tests for selection'), 7, () => sendSelection('current', 'tests')],
+        ['jenny.selection.blame', jt('ide.selection.whoChanged', 'Jenny: Who changed this & why'), 8, () => sendBlameSummary('current')],
+        ['jenny.selection.fix-squiggle', jt('ide.selection.fixCursorProblem', 'Jenny: Fix the problem under the cursor'), 9, () => sendSquiggleFix('current'), false],
+      ];
+      for (const [id, label, order, run, needsSelection = true] of actions) {
         editorHost.addEditorAction({
-          id: action.id,
-          label: action.label,
+          id,
+          label,
           contextMenuGroupId: 'jenny',
-          contextMenuOrder: action.order,
-          precondition: 'editorHasSelection',
-          run: () => sendSelection('current', action.intent),
+          contextMenuOrder: order,
+          ...(needsSelection ? { precondition: 'editorHasSelection' } : {}),
+          run,
         });
       }
-      // Blame-lite needs a selection (the range to blame); squiggle-fix has no
-      // selection precondition - it acts on whatever marker sits at the cursor,
-      // degrading silently when none does.
-      editorHost.addEditorAction({
-        id: 'jenny.selection.blame',
-        label: jt('ide.selection.whoChanged', 'Jenny: Who changed this & why'),
-        contextMenuGroupId: 'jenny',
-        contextMenuOrder: 8,
-        precondition: 'editorHasSelection',
-        run: () => sendBlameSummary('current'),
-      });
-      editorHost.addEditorAction({
-        id: 'jenny.selection.fix-squiggle',
-        label: jt('ide.selection.fixCursorProblem', 'Jenny: Fix the problem under the cursor'),
-        contextMenuGroupId: 'jenny',
-        contextMenuOrder: 9,
-        run: () => sendSquiggleFix('current'),
-      });
     }
 
     // File-path context-menu items (tree rows + tabs) that prefill the composer
@@ -361,5 +336,5 @@
     };
   }
 
-  return { createIdeSelectionIntents, INTENT_TEMPLATES, INTENT_ACTIONS };
+  return { createIdeSelectionIntents, INTENT_TEMPLATES };
 });

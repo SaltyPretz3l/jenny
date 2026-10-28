@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import subprocess
 from dataclasses import replace
 from pathlib import Path
 
@@ -18,35 +17,11 @@ from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.registry import build_default_registry, build_tool_bindings
 from sidecar.ai.tools.workspace import WorkspaceGuard
 from sidecar.ai.tools.workspace_store import GuardedWorkspaceStore
+from tests.sidecar._platform_skips import make_dir_link, requires_file_symlinks, windows_only
 
 
 def _guard(tmp_path: Path) -> WorkspaceGuard:
     return WorkspaceGuard(str(tmp_path))
-
-
-def _make_junction(link: Path, target: Path) -> bool:
-    result = subprocess.run(
-        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
-        capture_output=True,
-        check=False,
-        text=True,
-    )
-    return result.returncode == 0
-
-
-def _can_create_symlink(tmp_path: Path) -> bool:
-    target = tmp_path / "symlink-probe-target"
-    target.write_text("probe", encoding="utf-8")
-    link = tmp_path / "symlink-probe-link"
-    try:
-        os.symlink(target, link)
-    except (NotImplementedError, OSError):
-        return False
-    finally:
-        if link.is_symlink():
-            link.unlink()
-        target.unlink()
-    return True
 
 
 @pytest.fixture(autouse=True)
@@ -142,9 +117,8 @@ def test_delete_file_allows_directory_child_churn_before_revalidation(
     assert (trashed / "late.txt").read_text(encoding="utf-8") == "late\n"
 
 
+@requires_file_symlinks()
 def test_delete_file_moves_same_root_symlink_object_not_target(tmp_path: Path) -> None:
-    if not _can_create_symlink(tmp_path):
-        pytest.skip("symlink creation not permitted in this environment")
     target = tmp_path / "important.txt"
     target.write_text("keep\n", encoding="utf-8")
     link = tmp_path / "alias.txt"
@@ -160,9 +134,8 @@ def test_delete_file_moves_same_root_symlink_object_not_target(tmp_path: Path) -
     assert trashed.resolve(strict=True) == target.resolve(strict=True)
 
 
+@requires_file_symlinks()
 def test_delete_file_moves_broken_symlink_object(tmp_path: Path) -> None:
-    if not _can_create_symlink(tmp_path):
-        pytest.skip("symlink creation not permitted in this environment")
     missing_target = tmp_path / "missing.txt"
     link = tmp_path / "broken.txt"
     os.symlink(missing_target, link)
@@ -176,9 +149,8 @@ def test_delete_file_moves_broken_symlink_object(tmp_path: Path) -> None:
     assert not trashed.exists()
 
 
+@requires_file_symlinks()
 def test_delete_file_moves_outside_target_link_without_touching_target(tmp_path: Path) -> None:
-    if not _can_create_symlink(tmp_path):
-        pytest.skip("symlink creation not permitted in this environment")
     outside = tmp_path.parent / f"{tmp_path.name}-outside-target.txt"
     outside.write_text("outside\n", encoding="utf-8")
     link = tmp_path / "outside-alias.txt"
@@ -200,8 +172,26 @@ def test_delete_file_moves_outside_target_link_without_touching_target(tmp_path:
 
 @pytest.mark.parametrize(
     "reserved_path",
-    [".JENNY/backups", ".Jenny/trash", ".jenny", r".jenny\backups"],
-    ids=["uppercase-backups", "mixed-case-trash", "store-root", "backslash"],
+    [
+        ".JENNY/backups",
+        ".Jenny/trash",
+        ".jenny",
+        r".jenny\backups",
+        ".jenny./backups",
+        ".jenny /trash",
+        ".jenny. ",
+        ".jenny:stream",
+    ],
+    ids=[
+        "uppercase-backups",
+        "mixed-case-trash",
+        "store-root",
+        "backslash",
+        "trailing-dot",
+        "trailing-space",
+        "trailing-dot-space-root",
+        "stream-suffix",
+    ],
 )
 def test_delete_file_refuses_jenny_directory_in_any_spelling(
     tmp_path: Path,
@@ -314,15 +304,14 @@ def test_delete_file_reports_guarded_store_refusal_without_moving_source(
     assert target.read_text(encoding="utf-8") == "hello\n"
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows junctions only")
+@windows_only("junctioned .jenny root quarantine")
 def test_delete_file_quarantines_junctioned_jenny_root(tmp_path: Path) -> None:
     target = tmp_path / "notes.txt"
     target.write_text("hello\n", encoding="utf-8")
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
 
-    if not _make_junction(tmp_path / ".jenny", elsewhere):
-        pytest.skip("mklink /J not permitted in this environment")
+    make_dir_link(tmp_path / ".jenny", elsewhere)
     result = delete_module.delete_file_tool({"path": "notes.txt"}, _guard(tmp_path))
 
     assert result.success is True
@@ -333,15 +322,14 @@ def test_delete_file_quarantines_junctioned_jenny_root(tmp_path: Path) -> None:
     assert any(entry.name.startswith("layout-jenny") for entry in quarantine.iterdir())
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows junctions only")
+@windows_only("directory junction object")
 def test_delete_file_moves_directory_junction_object_not_target(tmp_path: Path) -> None:
     target = tmp_path / "important-dir"
     target.mkdir()
     sentinel = target / "keep.txt"
     sentinel.write_text("keep", encoding="utf-8")
     junction = tmp_path / "alias-dir"
-    if not _make_junction(junction, target):
-        pytest.skip("mklink /J not permitted in this environment")
+    make_dir_link(junction, target)
 
     result = delete_module.delete_file_tool({"path": "alias-dir"}, _guard(tmp_path))
 

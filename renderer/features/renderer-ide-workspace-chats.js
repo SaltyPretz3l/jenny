@@ -169,13 +169,18 @@
 
     // The markers follow the ledger: a chat render re-checks it (debounced) and repaints Source Control on a change.
     let markerSig = '';
+    let markerIndex = null;
     let markerTimer = null;
     function scheduleMarkerRefresh() {
       if (disposed || markerTimer || !inWorkspace()) return;
       markerTimer = setTimer(() => {
         markerTimer = null;
         if (disposed) return;
-        const sig = Array.from(jennyIndexNow().byPath, ([path, c]) => `${path}\x1f${c.turnId}\x1f${c.fileKey}`).join('\x1e');
+        // An unchanged index (the same turns) cannot move a marker: skip the signature.
+        const index = jennyIndexNow();
+        if (index === markerIndex) return;
+        markerIndex = index;
+        const sig = Array.from(index.byPath, ([path, c]) => `${path}\x1f${c.turnId}\x1f${c.fileKey}`).join('\x1e');
         if (sig === markerSig) return;
         markerSig = sig;
         getGitFeature()?.refreshJennyMarkers?.();
@@ -217,6 +222,7 @@
       appendClientLog: shared.appendClientLog,
       focusChatInput: () => composition()?.getPane?.(1)?.root?.querySelector?.('textarea')?.focus?.(),
       isChatOnScreen: () => !inWorkspace() || getWorkbench()?.isVisible?.('chat-2') === true,
+      isActive: inWorkspace,
       viewDeps: {
         ...shared,
         ...fromPane(1),

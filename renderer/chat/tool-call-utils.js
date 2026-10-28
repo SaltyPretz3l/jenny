@@ -70,6 +70,11 @@
     return m.timed_out === true || m.timedOut === true;
   }
 
+  function formatToolDurationMs(value) { // the one tool-duration label: "40ms", "1.2s"
+    const ms = Number(value);
+    return !Number.isFinite(ms) || ms <= 0 ? '' : ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
+  }
+
   const GRANULAR_TOOL_STATUSES = new Set([
     'denied', 'cancelled', 'blocked', 'timed_out', 'interrupted', 'abandoned',
   ]);
@@ -107,7 +112,6 @@
 
   const TOOL_STATUS_SEVERITY = Object.freeze({
     errored: 'danger',
-    error: 'danger',
     timed_out: 'caution',
     interrupted: 'caution',
     abandoned: 'caution',
@@ -163,9 +167,9 @@
    */
   function getToolDisplayName(toolName, catalogDisplayName) {
     const normalizedName = normalizeString(toolName);
-    // The per-conversation todo list is "Jenny's checklist" everywhere the
-    // user sees it; the catalog's "Todo Write" is an implementation name.
+    // User-facing names for implementation names: the todo list is the checklist, report_findings a code review.
     if (normalizedName === 'todo_write') return jt('chat.toolCall.checklistName', 'Checklist');
+    if (normalizedName === 'report_findings') return jt('chat.toolCall.codeReviewName', 'Code review');
     const normalizedKind = normalizeToolKind(toolName);
     if (!normalizedKind) {
       return 'Tool';
@@ -342,10 +346,7 @@
     } else {
       return '';
     }
-    const durationMs = Number(meta.duration_ms);
-    if (Number.isFinite(durationMs) && durationMs > 0) {
-      parts.push((durationMs / 1000).toFixed(1) + 's');
-    }
+    parts.push(formatToolDurationMs(meta.duration_ms));
     const attempt = Number(meta.attempt);
     if (Number.isInteger(attempt) && attempt > 0) {
       parts.push('attempt ' + attempt);
@@ -729,7 +730,7 @@
   // artifacts, spawned tasks, calendar blocks, notes rows, proposal cards) never fold into a run.
   const TOOL_RUN_UNFOLDABLE_TOOLS = new Set([
     'ask_user', 'exit_plan_mode', 'image_generate', 'mermaid_generate', 'create_artifact',
-    'workspace_present', 'preview_test', 'session_spawn', 'delegate', 'home', 'project_notes', 'memory', 'propose_git_action', 'propose_command', 'propose_session', 'complete_session_handoff',
+    'workspace_present', 'preview_test', 'session_spawn', 'delegate', 'home', 'project_notes', 'memory', 'propose_git_action', 'propose_command', 'propose_session', 'complete_session_handoff', 'report_findings',
   ]);
   // A step waiting on the user ends the run and stays its own open card.
   const TOOL_RUN_BREAK_STATUSES = new Set(['awaiting_approval', 'pending_user_input']);
@@ -867,9 +868,8 @@
 
   function formatToolRunDuration(ms) {
     const value = Number(ms);
-    if (!Number.isFinite(value) || value <= 0) return '';
-    if (value < 1000) return `${Math.round(value)}ms`;
-    if (value < 60000) return `${(value / 1000).toFixed(value < 10000 ? 1 : 0)}s`;
+    if (!(Number.isFinite(value) && value >= 10000)) return formatToolDurationMs(value);
+    if (value < 60000) return `${Math.round(value / 1000)}s`;
     const totalSeconds = Math.round(value / 1000);
     return `${Math.floor(totalSeconds / 60)}m ${String(totalSeconds % 60).padStart(2, '0')}s`;
   }
@@ -988,7 +988,7 @@
     getApprovalCommandPreview,
     getToolPrimaryPath,
     getToolTargetBasename,
-    formatToolElapsedLabel,
+    formatToolElapsedLabel, formatToolDurationMs,
     getStatusLabel,
     getResultStatusLabel,
     normalizeToolStatus,

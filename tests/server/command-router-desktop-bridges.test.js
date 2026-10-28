@@ -103,3 +103,25 @@ test('hosted/browser commands cannot reach the desktop sessionProposals operatio
     assert.equal(result.error.reason, 'invalid_command_envelope', operation);
   }
 });
+
+test('hosted/browser commands cannot reach the desktop primaryChat operations', async (t) => {
+  const { validateCommand } = require('../../server/api-contract');
+  const f = createFixture(); t.after(() => f.close());
+  const sessionId = await createSession(f);
+  const operations = [
+    ['primaryChat.getState', { schema_version: 1 }],
+    ['primaryChat.activity', { schema_version: 1, limit: 10 }],
+    ['primaryChat.permissions', { schema_version: 1 }],
+    ['primaryChat.pause', { schema_version: 1 }],
+    ['primaryChat.grantLaunch', { schema_version: 1, project_id: '*' }],
+    ['primaryChat.reset', { schema_version: 1, forget: true }],
+    ['primary-chat:reset', { schema_version: 1 }],
+  ];
+  for (const [operation, params] of operations) {
+    const raw = command(f.a, operation, params, { session_id: sessionId });
+    assert.deepEqual(validateCommand(raw), { ok: false, reason: 'invalid_command_envelope' }, operation);
+    const result = await f.router.dispatch(raw, f.contextA);
+    assert.equal(result.ok, false, operation);
+    assert.equal(result.error.reason, 'invalid_command_envelope', operation);
+  }
+});

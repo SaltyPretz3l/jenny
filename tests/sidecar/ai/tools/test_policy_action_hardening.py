@@ -77,7 +77,6 @@ class TestScalarCoercion:
                     "delete": {"side_effecting": True},
                 },
             },
-            config=None,
         )
         assert descriptor.side_effecting is True
         assert descriptor.read_only is False
@@ -89,7 +88,6 @@ class TestScalarCoercion:
                 "side_effecting": False,
                 "actions": {"list": {"side_effecting": False}},
             },
-            config=None,
         )
         assert descriptor.side_effecting is False
         assert descriptor.read_only is True

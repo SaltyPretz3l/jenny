@@ -73,7 +73,7 @@ test('CRUD requires exact inspection before approval and invalidates trust after
     async request(method, params, options) {
       requests.push({ method, params, options });
       return { ok: true, identity: { name: 'docs' }, transport: 'stdio', tools: [],
-        tools_digest: 'b'.repeat(64), tool_count: 0, malformed_tool_count: 0, latency_ms: 1 };
+        tools_digest: 'b'.repeat(64), tool_count: 0, latency_ms: 1 };
     } }, async refreshManagedConfig(reason) { refreshes.push(reason); } };
   const service = new McpDiscoveryService({ userDataPath: directory, backendService,
     now: () => '2026-08-17T12:00:00.000Z' });

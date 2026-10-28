@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-import shutil
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-LSPLanguage = Literal["typescript", "javascript", "python"]
+from sidecar.ai.config import read_environment_value
+from sidecar.ai.tools.builtins.executable_lookup import which_on_explicit_path
+from sidecar.ai.tools.builtins.lsp_settings import LSPLanguage
 
 _TYPESCRIPT_DEFAULT_COMMANDS = ("typescript-language-server",)
 _PYTHON_DEFAULT_COMMANDS = ("pyright-langserver", "pylsp")
@@ -98,9 +100,10 @@ def detect_language_servers(
 
     Detection precedence per language:
     1. Configured command (``RuntimeConfig.tools_lsp_command_<lang>``) — if
-       set, must resolve through ``shutil.which`` or be an absolute path
-       to an existing file.
+       set, must be an absolute path to an existing file or resolve on PATH.
     2. Built-in default candidates on PATH.
+
+    PATH lookups skip the process cwd and relative PATH entries.
 
     The result map always carries an entry for every supported language so
     callers can show "available" / "unavailable" rows without re-checking.
@@ -150,7 +153,7 @@ def _resolve_for_language(
             configured_command=configured,
         )
     for candidate in defaults:
-        resolved = shutil.which(candidate)
+        resolved = _which_on_path(candidate)
         if resolved:
             return LSPServerCommand(
                 language=language,
@@ -176,5 +179,9 @@ def _resolve_executable(command: str) -> str | None:
     if candidate_path.is_absolute() and candidate_path.is_file():
         return str(candidate_path)
     # Otherwise treat as a PATH lookup.
-    resolved = shutil.which(candidate)
-    return resolved
+    return _which_on_path(candidate)
+
+
+def _which_on_path(name: str) -> str | None:
+    # Bare shutil.which searches the cwd before PATH on Windows.
+    return which_on_explicit_path(name, path=read_environment_value("PATH") or os.defpath)

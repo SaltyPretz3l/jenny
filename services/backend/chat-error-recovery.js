@@ -73,6 +73,10 @@ const RECOVERY_COPY = Object.freeze({
     title: 'Stopped when Jenny closed',
     hint: 'Jenny closed while this reply was running, so it stopped. Retry to run it again.',
   }),
+  handoff_deadline: Object.freeze({
+    title: 'New chat took too long to prepare',
+    hint: 'Jenny did not finish the handoff in time, so it stopped. Use Retry on the New session card to try again.',
+  }),
   app_restart: Object.freeze({
     title: 'Stopped when Jenny closed',
     hint: 'Resume continues this reply where it stopped.',
@@ -112,6 +116,10 @@ const RECOVERY_COPY = Object.freeze({
   provider: Object.freeze({
     title: 'Provider issue',
     hint: 'Check the model or provider settings, then retry the turn.',
+  }),
+  model_busy: Object.freeze({
+    title: 'Model was still switching',
+    hint: 'Another model load was still running when this turn started. Retry the turn.',
   }),
   provider_rate_limited: Object.freeze({
     title: 'Provider rate limit',
@@ -203,16 +211,20 @@ function recoveryCopyKey(recoveryClass, errorPayload, terminalSubcode = '') {
   if (recoveryClass === 'provider' && isRateLimitPayload(errorPayload)) {
     return 'provider_rate_limited';
   }
+  if (recoveryClass === 'provider' && errorPayload?.category === 'model_busy') {
+    return 'model_busy';
+  }
   if (recoveryClass === 'refused'
     && /does not support image attachments/i.test(String(errorPayload?.message || ''))) {
     return 'model_cannot_read_images';
   }
   // A turn the app's own shutdown cancelled stays in the calm cancelled class
   // but names its cause (dogfood TR-012).
+  // The same holds for a New session preparation turn its deadline stopped.
   const payload = errorPayload && typeof errorPayload === 'object' ? errorPayload : {};
-  if (recoveryClass === 'cancelled'
-    && normalizeToken(payload.terminal_subcode || terminalSubcode || payload.cancel_reason) === 'app_shutdown') {
-    return 'app_shutdown';
+  const cancelReason = normalizeToken(payload.terminal_subcode || terminalSubcode || payload.cancel_reason);
+  if (recoveryClass === 'cancelled' && (cancelReason === 'app_shutdown' || cancelReason === 'handoff_deadline')) {
+    return cancelReason;
   }
   return recoveryClass;
 }
@@ -401,6 +413,11 @@ function copyAssistantErrorRecoveryMetadata(target, source) {
   return output;
 }
 
+// A persisted assistant error row whose recovery copy is the model_busy one (F3b's child card reads it).
+function isModelBusyRecoveryRow(row) {
+  return Boolean(row) && row.recovery_title === RECOVERY_COPY.model_busy.title;
+}
+
 function buildAssistantErrorRecoveryFields(errorPayload, options = {}) {
   const fields = copyAssistantErrorRecoveryMetadata(
     {},
@@ -417,4 +434,5 @@ module.exports = {
   buildAssistantErrorRecoveryMetadata,
   classifyAssistantError,
   copyAssistantErrorRecoveryMetadata,
+  isModelBusyRecoveryRow,
 };

@@ -10,6 +10,7 @@ const { CheckpointStore, MAX_TOTAL_BYTES, MAX_RECORDS, readPortableCheckpointSna
 const { createRuntimeStoreIO } = require('../../services/session-runtime/store');
 const { stableJson } = require('../../services/session-runtime/contracts');
 const { encodeContinuation } = require('../../services/session-runtime/continuation-contracts');
+const { fileSymlinkSkip } = require('../helpers/platform-skips');
 
 const CANONICAL_BYTES = 128;
 const canonicalEvidence = () => ({ valid: true, bytes: CANONICAL_BYTES });
@@ -207,17 +208,14 @@ test('publication refuses an unindexed destination and preserves its future data
   assert.equal(JSON.parse(fs.readFileSync(file)).preserve, 'future');
 });
 
-test('live file symlink replacement cannot authorize reading a checkpoint outside its owner', t => {
+test('live file symlink replacement cannot authorize reading a checkpoint outside its owner', { skip: fileSymlinkSkip() }, t => {
   const f = fixture(t);
   const other = fixture(t);
   const ref = f.store.put(f.body, f.work);
   const file = f.store._file('checkpoint_1');
   const target = path.join(other.root, 'outside.json');
   fs.renameSync(file, target);
-  try { fs.symlinkSync(target, file, 'file'); } catch (error) {
-    if (['EPERM', 'EACCES'].includes(error.code)) return t.skip('File symlink creation is unavailable on this host.');
-    throw error;
-  }
+  fs.symlinkSync(target, file, 'file');
   assert.equal(f.store.validate(f.work, ref), false);
   assert.equal(fs.existsSync(target), true);
 });

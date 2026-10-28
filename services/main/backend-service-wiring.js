@@ -6,7 +6,7 @@ const {
 const { BackendService } = require('../backend/backend-service');
 const { createIpcPayloadStore } = require('../backend/ipc-payload-store');
 const { createTrackerForService } = require('../workspace-active-use-tracker');
-const { resolvePackagedSidecarLaunchAsync } = require('../backend/packaged-sidecar-launch');
+const { createPackagedLaunchResolver } = require('../backend/packaged-sidecar-launch');
 const { CalendarService } = require('../calendar-service');
 const { createBackgroundJobTracker } = require('./background-job-tracker');
 const { createSuggestedChangesService } = require('../backend/suggested-changes-wiring');
@@ -14,6 +14,7 @@ const { resolveChromiumSandboxStatus } = require('./chromium-sandbox-status');
 const { BACKEND_UP_PHASES } = require('./packaged-smoke');
 const { shouldBroadcastFeatureState } = require('./main-process-policy');
 const { createChatStreamBridge } = require('../chat-stream-bridge');
+const { createPostWindowServiceStarters } = require('./post-window-services');
 const { isAwaitedFeatureSettingsCommit } = require('../feature-settings-service');
 const { CompanionService } = require('../companion-service');
 const { HomeAssistantService } = require('../home-assistant-service');
@@ -26,6 +27,7 @@ const { ModelLoadDurationStore } = require('../model-load-duration-store');
 const { createModelFitObserver } = require('../model-fit-observer');
 const { formatDateKey } = require('../personality-workspace-service');
 const { SchedulerService } = require('../scheduler-service');
+const { isTurnSettledEvent } = require('../chat-messaging-wake');
 
 function createBackendServiceWithDeps({
   app,
@@ -88,22 +90,17 @@ function createBackendServiceWithDeps({
   // backendService.start() phase -- after the window exists -- rather than
   // blocking first paint synchronously at construction. The cheap packaged-mode
   // determination above stays synchronous (it only gates repoRoot/python below).
+  // The hash runs every launch; the ~1 s probe is skipped when userData holds a
+  // probe success for the same verified artifact and app version, and that
+  // entry is dropped if the sidecar then fails to start.
   const resolvePackagedLaunch = usePackagedSidecarRuntime
-    ? async () => {
-      const packagedSidecarLaunch = await resolvePackagedSidecarLaunchAsync({
-        resourcesPath: processRef.resourcesPath,
-      });
-      if (packagedSidecarLaunch) {
-        log(packagedSidecarLaunch.ok ? 'INFO' : 'WARN', 'sidecar.packaged_launch_resolved', {
-          launchSource: packagedSidecarLaunch.launchSource,
-          detail: packagedSidecarLaunch.packagedLaunchDetail || packagedSidecarLaunch.failureReason || '',
-          artifactPath: packagedSidecarLaunch.artifactPath || '',
-          manifestPath: packagedSidecarLaunch.manifestPath || '',
-          ok: packagedSidecarLaunch.ok === true,
-        });
-      }
-      return packagedSidecarLaunch;
-    }
+    ? createPackagedLaunchResolver({
+      resourcesPath: processRef.resourcesPath,
+      getUserDataDir: () => app.getPath('userData'),
+      appVersion: typeof app.getVersion === 'function' ? app.getVersion() : '',
+      log,
+      getSidecarManager: () => backendService.sidecarManager,
+    })
     : null;
   const chromiumSandbox = resolveChromiumSandboxStatus({
     platform: processRef.platform || process.platform,
@@ -206,14 +203,13 @@ function createBackendServiceWithDeps({
     backendService._appendLateEventAudit(sessionId, callId, lateEvent);
   });
   pdfAddon.on('changed', (state) => sendBridgeEvent('pdfAddon.onChanged', state));
-  void pdfAddon.start().catch(() => {});
+  require('../dictation-model-service').wireDictation({ backendService, userDataPath: app.getPath('userData'), sendBridgeEvent, log }); // row 84
   const { ExclusiveGpuCoordinator } = require('../backend/exclusive-gpu-coordinator');
   const { createChatGpuHandoff } = require('../backend/chat-gpu-handoff');
   const { reconcileRenderRecord, killRenderRecordSync, clearRenderRecordUnproven,
     readRenderRecordSummary } = require('../image-engine-pidfile');
   backendService.imageEngine = imageEngine;
   imageEngine.on('changed', (state) => sendBridgeEvent('imageEngine.onChanged', state));
-  imageEngine.start();
   backendService.exclusiveGpuCoordinator = backendService.exclusiveGpuCoordinator || new ExclusiveGpuCoordinator({ logger: log });
   backendService.chatGpuHandoff = createChatGpuHandoff({
     backendService, coordinator: backendService.exclusiveGpuCoordinator, getLlamaServerManager, getNinferManager,
@@ -241,21 +237,6 @@ function createBackendServiceWithDeps({
     platform: processRef.platform, logger: log,
   });
   backendService.commandSandbox.on('changed', (state) => sendBridgeEvent('commandSandbox.onChanged', state));
-  void backendService.commandSandbox.start().catch(() => {});
-  // Row 41: idle-gated semantic catalog over the knowledge folders (inert until
-  // the user picks an embedding model; JENNY_ENABLE_SEMANTIC_CATALOG=0 off).
-  require('./semantic-catalog-wiring').wireSemanticCatalog({
-    backendService, shellConfigService, knowledgeService, buildEffectiveFeatureFlags,
-    userDataPath: app.getPath('userData'), resourcesPath: processRef.resourcesPath || '', appRoot, log,
-    sendBridgeEvent,
-  });
-  // Row 58 W2: background reflection ("Jenny takes notes"), idle-gated like the catalog.
-  require('../backend/memory-reflection-scheduler').startMemoryReflectionScheduler({ service: backendService });
-  // Row 58 W4: feed past chats into the derived conversation index, idle-gated.
-  require('../backend/conversation-index-pump').startConversationIndexPump({ service: backendService });
-  // Row 58 W3: once per launch, purge chat memory of chats deleted while the sidecar was away.
-  backendService.memoryPurgeReconcile = require('../backend/memory-purge-reconcile')
-    .startMemoryPurgeReconcile({ service: backendService });
   backendService.workspaceActiveUseTracker = createTrackerForService(backendService, {
     app,
     getWindow: getMainWindow,
@@ -473,6 +454,8 @@ function createBackendServiceWithDeps({
   backendService.chatMessages = require('../chat-messaging-wiring').createChatMessagingService({
     backendService, emit: (event) => sendBridgeEvent('chatMessages.onChanged', event), log,
   });
+  // Row 76: the primary chat's controls (pause, launch permissions, history) and its activity log.
+  require('./primary-chat-wiring').attachPrimaryChat(backendService, { configService: () => shellConfigService, emit: (event) => sendBridgeEvent('primaryChat.onChanged', event), log });
 
   // Live inference metrics and GPU-pressure warnings (row 59 checkpoint 6): the intake the
   // notification router feeds, the shared GPU sampler and the bridge service. Desktop only.
@@ -491,10 +474,14 @@ function createBackendServiceWithDeps({
   backendService.on('chat-stream', (event) => {
     chatStreamBridge.handleEvent(event);
   });
-
-  backendService.on('service-log', (entry) => {
-    log(entry.level || 'INFO', entry.event || 'backend.service', entry.details || {});
+  // Row 70: a settled turn lets a message wake that waited for this chat run (chat-messaging-wake).
+  backendService.on('chat-stream', (event) => {
+    if (isTurnSettledEvent(event)) void backendService.chatMessages?.onTurnSettled?.(event.sessionId || event.session_id);
   });
+
+  const writeServiceLog = (entry) => log(entry.level || 'INFO', entry.event || 'backend.service', entry.details || {});
+  backendService.on('service-log', writeServiceLog);
+  backendService.drainEarlyServiceLogs?.().forEach(writeServiceLog);
 
   backendService.on('diagnostic-entry', (entry) => {
     if (entry?.event === 'sidecar.diagnostics.oversized_record') {
@@ -523,13 +510,13 @@ function createBackendServiceWithDeps({
     ) {
       getRefreshElectronToolRegistry()?.();
     }
-    if (shouldBroadcastFeatureState(context.reason, context.reasons)) {
+    // An awaited feature-settings commit sends the single post-refresh payload itself
+    // (a rollback still broadcasts: its revert write is outside the awaited commit).
+    const awaitedCommit = isAwaitedFeatureSettingsCommit(shellConfigService);
+    if (!awaitedCommit && shouldBroadcastFeatureState(context.reason, context.reasons)) {
       sendBridgeEvent('features.onChanged', buildFeatureStatePayload());
     }
-    if (
-      isAwaitedFeatureSettingsCommit(shellConfigService)
-      || !shouldRefreshManagedConfigForShellConfigReason(context.reason, context.reasons)
-    ) {
+    if (awaitedCommit || !shouldRefreshManagedConfigForShellConfigReason(context.reason, context.reasons)) {
       return;
     }
     try {
@@ -539,12 +526,31 @@ function createBackendServiceWithDeps({
     }
   });
 
+  // Row 62: post-window starts and the sidecar-gated workers (post-window-services.js).
+  const { startPostWindowServices, startSidecarIdleWorkers } = createPostWindowServiceStarters({
+    backendService, pdfAddon, imageEngine,
+    // Row 41: idle-gated semantic catalog over the knowledge folders (inert until
+    // the user picks an embedding model; JENNY_ENABLE_SEMANTIC_CATALOG=0 off).
+    wireSemanticCatalog: () => require('./semantic-catalog-wiring').wireSemanticCatalog({
+      backendService, shellConfigService, knowledgeService, buildEffectiveFeatureFlags,
+      userDataPath: app.getPath('userData'), resourcesPath: processRef.resourcesPath || '', appRoot, log,
+      sendBridgeEvent,
+    }),
+  });
+
   let deferredBackgroundRefreshesStarted = false;
   function startDeferredBackgroundRefreshes() {
     if (deferredBackgroundRefreshesStarted) {
       return;
     }
     deferredBackgroundRefreshesStarted = true;
+    try {
+      startSidecarIdleWorkers();
+    } catch (error) {
+      log('WARN', 'background_workers.start_failed', {
+        message: String((error && error.message) || error).slice(0, 256),
+      });
+    }
     const refreshes = [
       ['model_catalog', () => modelCatalogService.refresh()],
       ['link_status', () => linkStatusService.refresh()],
@@ -580,6 +586,12 @@ function createBackendServiceWithDeps({
     linkStatusService,
     schedulerService,
     startDeferredBackgroundRefreshes,
+    startPostWindowServices: () => {
+      startPostWindowServices();
+      // Row 69: ensure the primary Jenny chat once the window and IPC exist; one in-memory index
+      // scan deferred off the boot path (row 62). It logs and never throws.
+      setImmediate(() => { void backendService.ensurePrimarySession(); });
+    },
   };
 }
 

@@ -76,9 +76,10 @@ test('no summary: every section is checking, in words, never a number', () => {
       assert.equal(section.state, 'checking');
       assert.equal(section.valueText, 'Checking\u2026');
       if (section.key === 'context') {
-        const categories = section.rows.filter((row) => row.kind === 'category');
-        assert.equal(categories.length, 7);
-        assert.ok(categories.every((row) => row.tokens === null));
+        // Row 63: one shared breakdown row, rendered by renderer-context-preview as dashes while unknown.
+        assert.deepEqual(section.rows.map((row) => row.kind), ['breakdown']);
+        assert.equal(section.rows[0].projection.used, null);
+        assert.equal(section.rows[0].projection.target, null);
       } else assert.deepEqual(section.rows, []);
       assert.doesNotMatch(section.valueText, /\d/);
     }

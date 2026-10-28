@@ -22,11 +22,17 @@ from typing import Callable, cast
 
 from sidecar.ai.tools.builtins import owned_process_observation as _owned_process_observation
 from sidecar.ai.tools.builtins import owned_process_settlement as _owned_process_settlement
+from sidecar.ai.tools.builtins.git_process import (
+    git_environment,
+    neutralizing_config_arguments,
+)
 from sidecar.ai.tools.builtins.owned_process import (
     OwnedProcessError,
     get_owned_process_service,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure
+from sidecar.ai.tools.prompt_marker_guard import neutralize_prompt_markers
+from sidecar.ai.tools.sanitization import neutralize_prompt_injection_patterns
 from sidecar.ai.tools.workspace import WorkspaceGuard
 from sidecar.ai.tools.workspace_manifest_policy import build_manifest_scan_policy
 from sidecar.ai.tools.workspace_manifest_scan import (
@@ -46,6 +52,8 @@ MANIFEST_TOP_DIRS_LINE_PREFIX = "Top directories: "
 MANIFEST_ENTRY_POINTS_LINE_PREFIX = "Entry points: "
 MANIFEST_GIT_LINE_PREFIX = "Git: "
 PROMPT_LIST_LIMIT = 6
+# One rendered manifest item (directory, entry point, branch) in the prompt.
+MANIFEST_PROMPT_ITEM_CHARS = 80
 HARNESS_ENTRY_POINT_LIMIT = 2
 HARNESS_TOP_DIR_LIMIT = 3
 # Per-command ceiling for the owned-process git transport (~8x the measured
@@ -240,9 +248,17 @@ def render_workspace_manifest_block(workspace_root: str | Path | None) -> str:
     if _manifest_error(manifest):
         return ""
 
-    project_type = _join_limited_strings(manifest.get("project_type"), fallback="unknown")
-    top_dirs = _top_dir_names(manifest.get("top_dirs"), limit=PROMPT_LIST_LIMIT)
-    entry_points = _string_list(manifest.get("entry_points"), limit=PROMPT_LIST_LIMIT)
+    project_type = _prompt_safe_item(
+        _join_limited_strings(manifest.get("project_type"), fallback="unknown")
+    )
+    top_dirs = [
+        _prompt_safe_item(name)
+        for name in _top_dir_names(manifest.get("top_dirs"), limit=PROMPT_LIST_LIMIT)
+    ]
+    entry_points = [
+        _prompt_safe_item(path)
+        for path in _string_list(manifest.get("entry_points"), limit=PROMPT_LIST_LIMIT)
+    ]
     git = _object_dict(manifest.get("git"))
     totals = _object_dict(manifest.get("totals"))
     partial = " (partial)" if bool(totals.get("truncated")) else ""
@@ -270,7 +286,7 @@ def _git_prompt_line(git: dict[str, object]) -> str:
         if git.get("known", True):
             return ""
         return f"{MANIFEST_GIT_LINE_PREFIX}state unknown (git snapshot did not complete)"
-    branch = _string_value(git.get("branch"), "unknown")
+    branch = _prompt_safe_item(_string_value(git.get("branch"), "unknown"))
     dirty_count = _optional_int(git.get("dirty_count"))
     if dirty_count is None:
         return (f"{MANIFEST_GIT_LINE_PREFIX}{branch}, changed files unknown "
@@ -484,10 +500,21 @@ def _run_git(
     if timeout_seconds is None:
         return None
     try:
+        # The workspace's own .git/config is untrusted: without these overrides
+        # a core.fsmonitor / hooksPath command ran on every refresh (tool review
+        # C7 #1). --no-optional-locks keeps the snapshot from writing the index.
         completed = get_owned_process_service().run(
-            ["git", "-C", str(root), *args],
+            [
+                "git",
+                *neutralizing_config_arguments(()),
+                "--no-optional-locks",
+                "-C",
+                str(root),
+                *args,
+            ],
             cwd=root,
             timeout_seconds=timeout_seconds,
+            env=git_environment(),
         )
     except (OSError, OwnedProcessError):
         return None
@@ -642,6 +669,20 @@ def _top_dir_names(value: object, *, limit: int) -> list[str]:
 def _join_limited_strings(value: object, *, fallback: str) -> str:
     items = _string_list(value, limit=PROMPT_LIST_LIMIT)
     return ", ".join(items) if items else fallback
+
+
+def _prompt_safe_item(value: str) -> str:
+    """One bounded line of neutral text for the system prompt.
+
+    Directory names, entry-point paths and the branch come from the cloned
+    repository, so a name shaped like an instruction landed in system text
+    unfiltered (tool review C7 #10).
+    """
+    flattened = " ".join(str(value).split())
+    neutral = neutralize_prompt_markers(neutralize_prompt_injection_patterns(flattened)[0])
+    if len(neutral) > MANIFEST_PROMPT_ITEM_CHARS:
+        neutral = neutral[: MANIFEST_PROMPT_ITEM_CHARS - 1] + "\u2026"
+    return neutral
 
 
 def _format_list(items: list[str]) -> str:

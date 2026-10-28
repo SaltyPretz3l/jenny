@@ -187,3 +187,77 @@ test('registry is opt-in and bridge executes both tools in a read-only Plan Mode
     assert.equal(tool_name === 'conversations_recent' ? payload.chats[0].session_id : payload.session_id, 'target');
   }
 });
+
+test('open measures the serialized answer against the same budget as search', async () => {
+  const { OUTPUT_BUDGET_CHARS } = require('../services/tools/builtin/conversations-tool');
+  // Quotes and newlines inflate JSON well past the raw character count.
+  const heavy = '"\n'.repeat(900);
+  const f = fixture([chat('target')], Array.from({ length: 30 }, (_, i) => row(i, { content: heavy })));
+  for (const input of [{ session_id: 'target' }, { session_id: 'target', around_message_id: '15' }]) {
+    const result = await open.execute(input, f.context);
+    assert.equal(result.isError, false);
+    assert.ok(result.content.length <= OUTPUT_BUDGET_CHARS, `${result.content.length}`);
+    const payload = JSON.parse(result.content);
+    assert.ok(payload.messages.length > 0);
+    assert.equal(payload.more_before, payload.messages[0].id !== '0');
+  }
+});
+
+test('open reads one summary instead of listing every chat, and the tail path keeps more_before exact', async () => {
+  const f = fixture([chat('target')], [
+    row(0), row(1, { kind: 'receipt' }), row(2), row(3, { role: 'tool' }), row(4), row(5),
+  ]);
+  const exact = await data(open, { session_id: 'target', window: 3 }, f.context);
+  assert.deepEqual(exact.messages.map(m => m.id), ['2', '4', '5']);
+  assert.equal(exact.more_before, true);
+  const all = await data(open, { session_id: 'target', window: 4 }, f.context);
+  assert.deepEqual(all.messages.map(m => m.id), ['0', '2', '4', '5']);
+  assert.equal(all.more_before, false);
+  assert.equal(f.reads.includes('list'), false);
+});
+
+test('an unknown chat id never exports the lineage snapshot', async () => {
+  const f = fixture();
+  let exports = 0;
+  const lineage = f.service.sessionRuntime.lineageStore;
+  const original = lineage.exportPortableSnapshot;
+  lineage.exportPortableSnapshot = () => { exports += 1; return original(); };
+  const missing = await open.execute({ session_id: 'nope' }, f.context);
+  assert.equal(JSON.parse(missing.content).reason, 'not_found');
+  assert.equal(exports, 0);
+  await data(open, { session_id: 'target' }, f.context);
+  assert.equal(exports, 1);
+});
+
+test('row 69: the primary Jenny chat reads and searches every project; tool arguments never widen others', async () => {
+  const { conversationsSearchTool: search } = require('../services/tools/builtin/conversations-tool');
+  const { liveCallFields } = require('./helpers/primary-live-call');
+  const f = fixture([chat('other', { project_id: 'project_b' }), chat('hidden', { project_id: 'project_b', lockdown: true }),
+    chat('mine')], [row(1)]);
+  const requests = [];
+  f.service.sidecarClient = { connected: true, async request(method, params) {
+    requests.push(params);
+    return { ok: true, mode: 'lexical', hits: ['other', 'hidden', 'mine'].map(id => ({ session_id: id, message_id: 'm-' + id, role: 'user', snippet: id })) };
+  } };
+  // An ordinary caller stays in its project whatever the arguments say.
+  assert.deepEqual((await data(recent, { all_projects: true }, f.context)).chats.map(c => c.session_id), ['mine']);
+  const searchData = async (input, context) => JSON.parse((await search.execute(input, context)).content);
+  await searchData({ query: 'plan', all_projects: true }, f.context);
+  assert.equal(Object.hasOwn(requests.at(-1), 'all_projects'), false);
+  // The primary caller on a live call spans every project; hidden chats stay hidden.
+  const live = liveCallFields('caller', { projectId: 'project_a' });
+  Object.assign(f.caller, { session_role: 'primary' });
+  f.service.featureFlags.primary_chat = true;
+  f.service.sessionStore.getActiveTurn = () => live.activeTurn;
+  const primary = { ...live.fields, backendService: f.service };
+  assert.deepEqual((await data(recent, {}, primary)).chats.map(c => c.session_id), ['other', 'mine']);
+  assert.equal((await data(open, { session_id: 'other' }, primary)).session_id, 'other');
+  assert.equal((await open.execute({ session_id: 'hidden' }, primary)).metadata.reason, 'not_found');
+  const found = await searchData({ query: 'plan' }, primary);
+  assert.deepEqual({ all: requests.at(-1).all_projects, project: requests.at(-1).project_id, exclude: requests.at(-1).exclude_session_ids },
+    { all: true, project: 'project_a', exclude: ['caller'] });
+  assert.deepEqual(found.results.map(r => r.session_id), ['other', 'mine']);
+  // The kill switch returns the primary to its own project.
+  f.service.featureFlags.primary_chat = false;
+  assert.deepEqual((await data(recent, {}, primary)).chats.map(c => c.session_id), ['mine']);
+});

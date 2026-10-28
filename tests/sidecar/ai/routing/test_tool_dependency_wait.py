@@ -140,6 +140,10 @@ def test_real_two_iteration_loop_suspends_before_wait_execution():
         {"capability": False},
         {"preview": True},
         {"wait_child": "unrelated_child"},
+        # A non-string child_work_id used to raise TypeError (unhashable) out of
+        # the probe and abort the turn (tool review C5 #1).
+        {"wait_child": ["child_1"]},
+        {"wait_child": {"id": "child_1"}},
     ],
 )
 def test_ineligible_loop_never_claims_dependency_checkpoint(options):
@@ -167,3 +171,42 @@ def test_actual_dependency_probe_serializes_closed_checkpoint_request():
         checkpoint.probes[0].completed_spawn_refs[0].to_wire()
     ]
     assert readers[0].closed
+
+
+def _legacy_wait_loop(session_id: str) -> Any:
+    from types import SimpleNamespace
+
+    receipt = {
+        "child_work_id": "child_1", "session_id": session_id, "turn_id": "turn_child",
+        "status": "completed", "result": "ok", "truncated": False,
+    }
+    arguments = {"child_work_id": "child_1"}
+    runtime = SimpleNamespace(
+        emitted_tool_calls={
+            "wait_2": {"call_id": "wait_2", "tool_name": "session_wait", "arguments": arguments}
+        },
+        tool_result_emitted_call_ids={"wait_2"},
+        dependency_resume={"checkpoint": {
+            "completed_spawn_refs": [
+                {"call_id": "spawn_1", "child_work_id": "child_1", "result_sha256": "a" * 64}
+            ],
+            "completed_wait_refs": [],
+            "pending_call": {"call_id": "wait_2"},
+        }},
+    )
+    outcome = ToolExecutionOutcome(
+        tool_name="session_wait", output=json.dumps(receipt), success=True,
+        tool_input=dict(arguments), call_id="wait_2",
+    )
+    return SimpleNamespace(runtime=runtime, outcomes=[outcome])
+
+
+def test_legacy_completed_effects_uses_the_strict_child_receipt_validation():
+    # Review C5-A: the legacy path shares the mixed path's receipt validator, so
+    # a wait receipt's session_id/turn_id are identifier-checked here too.
+    from sidecar.ai.routing.tool_dependency_wait import completed_effects
+
+    spawns, waits = completed_effects(_legacy_wait_loop("sess_child"))
+    assert [ref.call_id for ref in spawns] == ["spawn_1"]
+    assert [(ref.call_id, ref.child_work_id) for ref in waits] == [("wait_2", "child_1")]
+    assert completed_effects(_legacy_wait_loop("bad session!")) == ((), ())

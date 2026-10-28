@@ -32,6 +32,11 @@ test('explicit tool names win and manifest families provide the fallback', () =>
   assert.equal(surfaceFamilyForTool('automation_list', 'web'), 'home');
   assert.equal(surfaceFamilyForTool('workspace_present', 'filesystem'), 'checks');
   assert.equal(surfaceFamilyForTool('delegate', 'shell'), 'helpers');
+  // Row 69 Q6: the session directory left the always-on list for Helpers.
+  for (const name of ['sessions_list', 'session_status', 'session_transcript', 'session_stop']) {
+    assert.equal(surfaceFamilyForTool(name), 'helpers', name);
+    assert.equal(ALWAYS_ON_TOOL_NAMES.includes(name), false, name);
+  }
   assert.equal(surfaceFamilyForTool('read_file'), 'files');
   assert.equal(surfaceFamilyForTool('read_file', 'web'), 'web');
   assert.equal(surfaceFamilyForTool('unknown', 'diagram'), 'artifacts');

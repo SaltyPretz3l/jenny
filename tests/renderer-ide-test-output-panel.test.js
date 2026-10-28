@@ -30,6 +30,8 @@ function setup(initial = {}) {
     onAskJenny: (payload) => calls.ask.push(payload),
     actionButton,
     escapeHtml: require('../renderer/shared/string-utils').escapeHtml,
+    getRootPath: () => state.rootPath || '',
+    windowRef: dom.window,
   });
   panel.bindEvents();
   const click = (name) => host.querySelector(`[data-ide-task-footer-action="${name}"]`).dispatchEvent(new dom.window.Event('click', { bubbles: true }));
@@ -138,4 +140,36 @@ test('dispose removes the listener', () => {
   h.panel.dispose();
   h.click('rerun');
   assert.deepEqual(h.calls.again, []);
+});
+
+test('output file:line references render as buttons that open the file in the IDE', () => {
+  const h = setup();
+  h.state.rootPath = 'C:\\ws';
+  const text = '  File "C:\\ws\\pkg\\mod.py", line 88\nsrc/app.js:12:3';
+  h.state.outputs.unit = { ...h.state.outputs.unit, stdoutTail: text, stderrTail: '' };
+  h.panel.render();
+  const pre = h.host.querySelector('pre.ide-task-output');
+  const links = pre.querySelectorAll('[data-ide-output-link-path]');
+  assert.equal(links.length, 2);
+  assert.equal(links[0].dataset.ideOutputLinkPath, 'pkg/mod.py');
+  assert.equal(pre.textContent, text, 'links never change the text');
+  const events = [];
+  h.dom.window.addEventListener('ide:open-file-at-line', (event) => { events.push(event.detail); event.preventDefault(); });
+  links[1].dispatchEvent(new h.dom.window.Event('click', { bubbles: true }));
+  assert.deepEqual(events, [{ path: 'src/app.js', line: 12, column: 3, preferIde: true }]);
+});
+
+test('output links: an absolute path outside the root stays plain, and one click opens once', () => {
+  const h = setup();
+  h.state.rootPath = 'C:\\ws';
+  h.state.outputs.unit = { ...h.state.outputs.unit, stdoutTail: 'C:\\other\\x.js:3\nsrc/a.js:1', stderrTail: '' };
+  h.panel.render();
+  h.panel.bindEvents();
+  const links = h.host.querySelectorAll('[data-ide-output-link-path]');
+  assert.equal(links.length, 1);
+  const events = [];
+  h.dom.window.addEventListener('ide:open-file-at-line', (event) => { events.push(event.detail); event.preventDefault(); });
+  links[0].dispatchEvent(new h.dom.window.Event('click', { bubbles: true }));
+  assert.equal(events.length, 1, 'a single delegated listener');
+  assert.equal(events[0].column, undefined);
 });

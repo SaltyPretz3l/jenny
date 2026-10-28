@@ -32,8 +32,8 @@
     return error;
   }
 
-  function crc32(bytes, seed = 0) {
-    let value = (seed ^ 0xffffffff) >>> 0;
+  function crc32(bytes) {
+    let value = 0xffffffff;
     for (let index = 0; index < bytes.length; index += 1) {
       value = CRC_TABLE[(value ^ bytes[index]) & 0xff] ^ (value >>> 8);
     }
@@ -164,6 +164,10 @@
       const nameBytes = bytes.subarray(cursor + 46, cursor + 46 + nameLength);
       const name = decodeName(nameBytes);
       validateName(name);
+      if (entries.has(name)) {
+        // Two parts with one name are an OPC violation and writeZip would emit both.
+        throw zipError('zip_invalid', `Duplicate ZIP entry name: ${name}`);
+      }
       const local = viewAt(bytes, localOffset, 30);
       if (local.getUint32(0, true) !== 0x04034b50 || local.getUint16(26, true) !== nameLength) {
         throw zipError('zip_invalid', 'ZIP local header does not match its central entry');
@@ -206,11 +210,12 @@
     return {
       entries,
       order,
+      limits: activeLimits,
       comment: bytes.subarray(eocdOffset + 22, eocdOffset + 22 + commentLength),
     };
   }
 
-  async function inflateEntry(entry) {
+  async function inflateEntry(entry, maxEntryBytes) {
     let reader;
     try {
       const stream = new Blob([entry.raw]).stream()
@@ -218,7 +223,7 @@
       reader = stream.getReader();
       const chunks = [];
       let length = 0;
-      const ceiling = Math.min(entry.uncompressedSize, ZIP_LIMITS.maxEntryBytes);
+      const ceiling = Math.min(entry.uncompressedSize, maxEntryBytes);
       while (true) {
         const result = await reader.read();
         if (result.done) {
@@ -231,13 +236,7 @@
         }
         chunks.push(result.value);
       }
-      const output = new Uint8Array(length);
-      let offset = 0;
-      for (const chunk of chunks) {
-        output.set(chunk, offset);
-        offset += chunk.length;
-      }
-      return output;
+      return join(chunks, length);
     } catch (error) {
       if (error?.code) {
         throw error;
@@ -253,10 +252,11 @@
     if (!entry) {
       throw zipError('zip_missing_entry', `ZIP entry is missing: ${name}`);
     }
-    if (entry.uncompressedSize > ZIP_LIMITS.maxEntryBytes) {
+    const maxEntryBytes = zip.limits?.maxEntryBytes ?? ZIP_LIMITS.maxEntryBytes;
+    if (entry.uncompressedSize > maxEntryBytes) {
       throw zipError('zip_too_large', 'ZIP entry exceeds the size limit');
     }
-    const output = entry.method === 0 ? entry.raw.slice() : await inflateEntry(entry);
+    const output = entry.method === 0 ? entry.raw.slice() : await inflateEntry(entry, maxEntryBytes);
     if (output.length !== entry.uncompressedSize || crc32(output) !== entry.crc32) {
       throw zipError('zip_corrupt', `ZIP entry failed validation: ${name}`);
     }

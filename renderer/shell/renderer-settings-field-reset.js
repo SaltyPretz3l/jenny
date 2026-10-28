@@ -104,6 +104,26 @@
       entry.trigger.hidden = false;
     }
 
+    function clearFailure(entry) {
+      if (entry.errorNode && entry.errorNode.parentNode) entry.errorNode.parentNode.removeChild(entry.errorNode);
+      entry.errorNode = null;
+    }
+
+    // A failed reset stays visible beside its trigger until the next arm: the
+    // confirm group disarms either way, so a log line alone would be silent.
+    function reportFailure(entry, error) {
+      log('settings section-reset "' + entry.key + '" failed: ' + describeError(error));
+      clearFailure(entry);
+      if (documentRef && typeof documentRef.createElement === 'function') {
+        var node = documentRef.createElement('span');
+        node.className = 'settings-reset-confirm-label settings-reset-error';
+        node.setAttribute('role', 'alert');
+        node.textContent = jt('settings.fieldReset.failed', 'Could not reset: {reason}', { reason: describeError(error) });
+        entry.container.appendChild(node);
+        entry.errorNode = node;
+      }
+    }
+
     function confirmReset(entry) {
       if (entry.inFlight) return; // single in-flight guard
       clearArmTimer(entry);
@@ -113,26 +133,24 @@
       try {
         result = typeof action === 'function' ? action() : undefined;
       } catch (error) {
-        log('settings section-reset "' + entry.key + '" action threw: ' + describeError(error));
         entry.inFlight = false;
         disarm(entry);
+        reportFailure(entry, error);
         return;
       }
       Promise.resolve(result)
         .then(function () {
-          onAfterReset();
+          // The reset is saved; a repaint failure is logged, not shown as a failed reset.
+          try { onAfterReset(); } catch (error) { log('settings section-reset "' + entry.key + '" repaint failed: ' + describeError(error)); }
+        }, function (error) {
+          reportFailure(entry, error);
         })
-        .catch(function (error) {
-          log('settings section-reset "' + entry.key + '" failed: ' + describeError(error));
-        })
-        .then(
-          function settleOk() { entry.inFlight = false; disarm(entry); },
-          function settleErr() { entry.inFlight = false; disarm(entry); }
-        );
+        .finally(function () { entry.inFlight = false; disarm(entry); });
     }
 
     function arm(entry) {
       if (entry.armed || entry.inFlight) return; // idempotent
+      clearFailure(entry);
       // Degenerate state: without the action-button builder there is nothing
       // to render the Confirm/Cancel pair with -- arming would hide the
       // trigger and strand the user until the timeout. Fall back to the
@@ -145,11 +163,9 @@
       entry.container.classList.add('settings-reset-confirm');
       entry.container.setAttribute('data-armed', 'true');
       entry.trigger.hidden = true;
-      var html = actionButton
-        ? '<span class="settings-reset-confirm-label">' + (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml(jt('settings.fieldReset.resetAll', 'Reset all?')) + '</span>'
-          + actionButton({ id: 'confirm', label: jt('settings.fieldReset.confirm', 'Confirm'), variant: 'danger', size: 'sm', className: 'settings-reset-confirm-confirm' })
-          + actionButton({ id: 'cancel', label: jt('common.cancel', 'Cancel'), variant: 'ghost', size: 'sm', className: 'settings-reset-confirm-cancel' })
-        : '';
+      var html = '<span class="settings-reset-confirm-label">' + (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml(jt('settings.fieldReset.resetAll', 'Reset all?')) + '</span>'
+        + actionButton({ id: 'confirm', label: jt('settings.fieldReset.confirm', 'Confirm'), variant: 'danger', size: 'sm', className: 'settings-reset-confirm-confirm' })
+        + actionButton({ id: 'cancel', label: jt('common.cancel', 'Cancel'), variant: 'ghost', size: 'sm', className: 'settings-reset-confirm-cancel' });
       entry.confirmNodes = childElementsFromHtml(documentRef, html);
       entry.confirmNodes.forEach(function (node) { entry.container.appendChild(node); });
       var confirmBtn = entry.container.querySelector('[data-action="confirm"]');
@@ -179,6 +195,7 @@
         inFlight: false,
         timer: null,
         confirmNodes: [],
+        errorNode: null,
       };
       var onTriggerClick = function () { arm(entry); };
       var onDocumentClick = function (event) {
@@ -191,6 +208,7 @@
       documentRef.addEventListener('click', onDocumentClick, true);
       entry._dispose = function () {
         disarm(entry);
+        clearFailure(entry);
         trigger.removeEventListener('click', onTriggerClick);
         documentRef.removeEventListener('click', onDocumentClick, true);
       };

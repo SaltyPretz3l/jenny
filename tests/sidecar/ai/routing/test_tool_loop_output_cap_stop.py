@@ -51,7 +51,7 @@ def test_output_capped_context_stop_reports_output_limit(
     caplog.set_level(logging.INFO, logger="sidecar.ai.routing.tool_loop")
     monkeypatch.setattr(
         "sidecar.ai.routing.tool_loop._empty_post_tool_context_response",
-        lambda _outcomes: "Completed tool work.",
+        lambda _outcomes, **_kwargs: "Completed tool work.",
     )
 
     def unexpected_regeneration(_loop, _spec):
@@ -127,7 +127,7 @@ def test_context_stop_uses_cause_specific_fallback(
     caplog.set_level(logging.INFO, logger="sidecar.ai.routing.tool_loop")
     monkeypatch.setattr(
         "sidecar.ai.routing.tool_loop._empty_post_tool_context_response",
-        lambda _outcomes: "",
+        lambda _outcomes, **_kwargs: "",
     )
 
     def unexpected_regeneration(_loop, _spec):

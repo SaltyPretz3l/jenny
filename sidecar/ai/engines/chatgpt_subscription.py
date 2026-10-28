@@ -8,8 +8,6 @@ from collections import OrderedDict
 from collections.abc import Generator
 from typing import Any, Mapping
 
-import httpx
-
 from sidecar.ai.engines.base import (
     BaseEngine,
     EngineMessage,
@@ -179,6 +177,11 @@ class ChatGPTSubscriptionEngine(BaseEngine):
     _ENGINE_TYPE = "chatgpt"
 
     MODEL_RESIDENCY = "remote"
+
+    # Labels for diagnostics and error text; a subclass speaking the same wire to a
+    # different provider (row 78 API-key Responses) overrides them.
+    _PROVIDER_LABEL = "chatgpt"
+    _PROVIDER_DISPLAY = "ChatGPT"
 
     def __init__(  # noqa: PLR0913
         self,
@@ -384,11 +387,25 @@ class ChatGPTSubscriptionEngine(BaseEngine):
             prompt_eval_count=usage.get("input_tokens"),
             eval_count=usage.get("output_tokens"),
             cached_tokens=cached,
-            provider_label="chatgpt",
+            provider_label=self._PROVIDER_LABEL,
         )
 
     def _resolve_reasoning_effort(self, effort: str | None) -> str | None:
         return effort
+
+    def _finalize_payload(
+        self,
+        payload: dict[str, Any],
+        *,
+        max_tokens: int,
+        reasoning_effort: str | None,
+    ) -> dict[str, Any]:
+        """Hook for a subclass that must reshape the request; the default sends it as built."""
+        _ = (max_tokens, reasoning_effort)
+        return payload
+
+    def _raise_for_initial_status(self, response: Any) -> None:
+        raise_for_initial_status(response)
 
     def stream_with_tools(  # noqa: PLR0913 - BaseEngine transport contract.
         self,
@@ -404,6 +421,8 @@ class ChatGPTSubscriptionEngine(BaseEngine):
         cancel_handle: Any = None,
         wall_clock_deadline: float | None = None,
     ) -> Generator[StreamChunk, None, GenerationResult]:
+        import httpx  # Lazy: keeps httpx off the sidecar startup graph.
+
         _ = (max_tokens, temperature, prompt_cache_enabled, response_format)
         raise_if_cancelled(cancel_handle)
         request_key = self._reasoning_request_key()
@@ -416,6 +435,9 @@ class ChatGPTSubscriptionEngine(BaseEngine):
             tools=tools,
             reasoning_effort=self._resolve_reasoning_effort(reasoning_effort),
             reasoning_by_call_id=self._reasoning_snapshot(request_key),
+        )
+        payload = self._finalize_payload(
+            payload, max_tokens=max_tokens, reasoning_effort=reasoning_effort
         )
         request_timeout = clamp_timeout_to_deadline(
             self._timeout_seconds,
@@ -446,7 +468,7 @@ class ChatGPTSubscriptionEngine(BaseEngine):
                 unregister_cancel = register_close_cancel_callback(cancel_handle, response)
                 try:
                     raise_if_cancelled(cancel_handle)
-                    raise_for_initial_status(response)
+                    self._raise_for_initial_status(response)
                     result = yield from stream_response_events(
                         response,
                         stream_profile=self._stream_profile,
@@ -489,10 +511,10 @@ class ChatGPTSubscriptionEngine(BaseEngine):
         except (httpx.TimeoutException, httpx.TransportError) as error:
             raise_if_cancelled(cancel_handle)
             raise ProviderHttpError(
-                provider="chatgpt",
+                provider=self._PROVIDER_LABEL,
                 status_code=None,
                 code=CMP_CLOUD_NETWORK_ERROR,
-                message=f"ChatGPT transport failed: {type(error).__name__}",
+                message=f"{self._PROVIDER_DISPLAY} transport failed: {type(error).__name__}",
                 retryable=True,
                 classification=(
                     "api_timeout"
@@ -503,7 +525,7 @@ class ChatGPTSubscriptionEngine(BaseEngine):
         except Exception as error:
             raise_if_cancelled(cancel_handle)
             raise GenerationError(
-                f"ChatGPT streaming failed: {type(error).__name__}"
+                f"{self._PROVIDER_DISPLAY} streaming failed: {type(error).__name__}"
             ) from error
 
         finally:

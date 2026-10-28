@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import fitz
 import pytest
 
 from sidecar.ai.error_codes import CMP_TOOL_EXECUTION_FAILED
@@ -25,8 +26,6 @@ from sidecar.ai.tools.builtins.pdf_text import (
     select_pages,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure
-
-fitz = pytest.importorskip("fitz")
 
 
 def _make_pdf(
@@ -255,6 +254,9 @@ def test_fit_excerpts_trims_longest_page_first_and_remains_gapless() -> None:
         "pdf:0123456789abcdef:1:0",
         "pdf:0123456789abcdef:1:-1",
         "pdf:0123456789abcdef:1:1:extra",
+        "pdf:0123456789abcdef:1234567890:1",
+        "pdf:0123456789abcdef:1:" + "9" * 5000,
+        "pdf:0123456789abcdef:²:1",
     ],
 )
 def test_decode_cursor_rejects_invalid_values(value: object) -> None:
@@ -272,47 +274,48 @@ def test_cursor_round_trip_and_document_digest() -> None:
     assert document_digest(b"abc") == hashlib.sha256(b"abc").hexdigest()[:16]
 
 
-class _TextPage:
-    @staticmethod
-    def extractText() -> str:  # PyMuPDF API name.
-        return "recovered text"
+class _WordsPage:
+    rect = SimpleNamespace(x0=0.0)
+
+    def __init__(self, words: list[tuple[Any, ...]]) -> None:
+        self.words = words
+        self.calls: list[str] = []
+
+    def get_text(self, kind: str, **_kwargs: Any) -> Any:
+        self.calls.append(kind)
+        assert kind == "words", "the text layer is read once, as words"
+        return self.words
 
 
-class _OcrPage:
-    # Letter size: pages without readable geometry fail closed before OCR renders.
-    rect = SimpleNamespace(width=612.0, height=792.0)
+def test_text_layer_page_is_extracted_once() -> None:
+    page = _WordsPage([(72, 100, 98, 110, "Revenue", 0, 0, 0), (120, 100, 150, 110, "12", 0, 0, 1)])
 
-    def __init__(self, textpage: Any) -> None:
-        self.textpage = textpage
-        self.calls: list[dict[str, Any]] = []
-
-    def get_textpage_ocr(self, **kwargs: Any) -> Any:
-        self.calls.append(kwargs)
-        return self.textpage
-
-
-def test_ocr_session_can_return_textpage_and_text(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        pdf_ocr,
-        "resolve_tessdata",
-        lambda **_kwargs: pdf_ocr.TessdataResolution(tmp_path, "override"),
+    lines, text_layer, info = pdf_text.page_lines(
+        page,
+        page_number=1,
+        ocr_session=pdf_ocr.PdfOcrSession(enabled=False),
+        text_less_pages=[],
+        tool_name="read_file",
     )
-    sentinel = _TextPage()
-    page = _OcrPage(sentinel)
-    session = pdf_ocr.PdfOcrSession()
 
-    assert session.recover_textpage(page, page_number=4) is sentinel
-    assert session.recover_text(page, page_number=5) == "recovered text"
-    assert session.used_pages == [4, 5]
-    assert page.calls[0] == {
-        "language": pdf_ocr.OCR_LANGUAGE,
-        "dpi": pdf_ocr.OCR_RENDER_DPI,
-        "full": True,
-        "tessdata": str(tmp_path),
-    }
+    assert page.calls == ["words"]
+    assert text_layer is True and info is None
+    assert [line.text.split() for line in lines] == [["Revenue", "12"]]
+
+
+def test_whitespace_only_words_are_not_a_text_layer() -> None:
+    page = _WordsPage([(72, 100, 98, 110, "  ", 0, 0, 0)])
+    text_less: list[int] = []
+
+    lines, text_layer, _info = pdf_text.page_lines(
+        page,
+        page_number=4,
+        ocr_session=pdf_ocr.PdfOcrSession(enabled=False),
+        text_less_pages=text_less,
+        tool_name="read_file",
+    )
+
+    assert text_layer is False and lines == [] and text_less == [4]
 
 
 @pytest.mark.parametrize(
@@ -336,10 +339,20 @@ def test_select_pages_reads_the_first_three_and_reports_the_rest(
     assert select_pages(argument, page_count=page_count) == (selected, unread)
 
 
-@pytest.mark.parametrize("argument", ["0", "0-2", "2-1", "11", "1-11", "a", ","])
+@pytest.mark.parametrize(
+    "argument",
+    [
+        "0", "0-2", "2-1", "11", "1-11", "a", ",",
+        # str.isdigit() accepts superscripts that int() refuses.
+        "²", "1-²", "²-3",
+        # int() refuses more than 4300 digits; the token is refused first.
+        "9" * 5000, "1-" + "9" * 5000,
+    ],
+)
 def test_select_pages_still_rejects_invalid_selections(argument: str) -> None:
-    with pytest.raises(ToolExecutionFailure):
+    with pytest.raises(ToolExecutionFailure) as caught:
         select_pages(argument, page_count=10)
+    assert caught.value.code == CMP_TOOL_EXECUTION_FAILED
 
 
 def test_read_note_orders_unread_ocr_and_sources_with_correct_number() -> None:

@@ -718,6 +718,7 @@ test('bundled skills match the supported catalog', () => {
     'insight',
     'meeting_notes',
     'po-review',
+    'review',
     'verification-specialist',
   ]);
   const textOnly = new Set(['claude_code_delegation', 'deep_research', 'humanizer', 'insight', 'meeting_notes']);

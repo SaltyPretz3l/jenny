@@ -45,8 +45,11 @@ function mountPanel(deps = {}) {
   });
   panel.bindEvents();
   panel.renderSourceControlPanel();
+  revealRows(panelEl);
   return { panelEl, panel, calls };
 }
+// Row actions are injected on a row's first hover or focus (cleanup G6): reveal every row's.
+const revealRows = (root) => root.querySelectorAll('.ide-scm-row').forEach((row) => row.dispatchEvent(new row.ownerDocument.defaultView.Event('focusin', { bubbles: true })));
 
 const rowOf = (panelEl, path) => panelEl.querySelector(`[data-ide-scm-path="${path}"]`);
 

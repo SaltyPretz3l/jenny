@@ -13,13 +13,15 @@ routes. `factory.py` selects the actual post-fallback engine and returns an
 | `openai-compatible` | `openai_compatible.py` | Local-compatible HTTP endpoints, including managed or user-run llama-server. Factory enforces loopback/private/link-local hosts. |
 | `chatgpt` | `responses_descriptor.py`, `chatgpt_subscription.py`, `chatgpt_provider_descriptor.py` | Core optional ChatGPT sign-in route. Jenny's own OAuth service supplies the access token; no external plugin is required. Factory fallback model is `gpt-5.5`; live discovery owns selection. |
 | `codex-cli` | `codex_cli.py` | Explicit opt-in CLI subprocess transport; the CLI uses its own login. Jenny never reads or copies its credentials. |
+| `api-provider` | `api_provider_engines.py` (transport dispatch), `api_provider_chat.py`, `api_provider_responses.py`, `api_provider_anthropic*.py`, `provider_descriptor_v6.py` | User API-key providers (row 78), one engine per transport (Chat Completions, Responses, Anthropic Messages): a closed-vocabulary v6 descriptor built by Electron (presets or a custom endpoint), https or a local host only, no redirects. The key arrives as the brokered `api_provider_key` secret and is registered for exact-value redaction. |
 | `mock` | `mock.py` | Deterministic test engine and fail-closed selection fallback. |
 | `replay` | `replay.py` | Fixture-driven local engine for tests and authorized app automation. |
 
 Unknown selections, invalid configuration and engine initialization failures fall
 back to `MockEngine` with bounded fallback metadata. A fallback does not establish
-that the requested provider or model is ready. The legacy API-key cloud engines
-under `archive/cloud-engines/` remain historical source and are not active imports.
+that the requested provider or model is ready. The removed legacy cloud engines
+(`anthropic`, `openai`, `gemini`) are gone from the tree; their engine-type names
+stay reserved and are never reused.
 
 ## Shared infrastructure
 

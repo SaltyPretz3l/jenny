@@ -16,6 +16,7 @@ const {
   VERSIONED_WORKSPACE_FILE_ERROR_CODES,
 } = require('../services/versioned-workspace-file-service');
 const { WORKSPACE_FS_ERROR_CODES } = require('../services/backend/error-codes');
+const { linkDirectory } = require('./helpers/platform-skips');
 
 function createDeferred() {
   let resolve;
@@ -340,21 +341,13 @@ test('versioned workspace reads return canonical identity metadata, strict EOL, 
   );
 });
 
-test('an in-root link alias keeps requested identity while returning canonical file identity', async (t) => {
+test('an in-root link alias keeps requested identity while returning canonical file identity', async () => {
   const root = createTrackedTempDir('jenny-versioned-alias-');
   const inside = path.join(root, 'inside');
   const alias = path.join(root, 'alias');
   fs.mkdirSync(inside);
   fs.writeFileSync(path.join(inside, 'note.txt'), 'inside\n', 'utf8');
-  try {
-    fs.symlinkSync(inside, alias, process.platform === 'win32' ? 'junction' : 'dir');
-  } catch (error) {
-    if (['EPERM', 'EACCES', 'ENOTSUP'].includes(error?.code)) {
-      t.skip(`link creation unavailable: ${error.code}`);
-      return;
-    }
-    throw error;
-  }
+  linkDirectory(inside, alias);
   const { service } = createService(root, { platform: process.platform });
 
   const result = await service.readText({ path: 'alias/note.txt' });
@@ -505,7 +498,7 @@ test('versioned workspace refuses invalid UTF-8 and read/write oversize paths by
   assert.equal(fs.readFileSync(writable, 'utf8'), 'small');
 });
 
-test('versioned workspace rejects a deterministic junction/symlink swap after open with both files unchanged', async (t) => {
+test('versioned workspace rejects a deterministic junction/symlink swap after open with both files unchanged', async () => {
   const root = createTrackedTempDir('jenny-versioned-file-');
   const outside = createTrackedTempDir('jenny-versioned-outside-');
   const inside = path.join(root, 'inside');
@@ -514,13 +507,7 @@ test('versioned workspace rejects a deterministic junction/symlink swap after op
   fs.writeFileSync(path.join(inside, 'note.txt'), 'inside-original', 'utf8');
   fs.writeFileSync(path.join(outside, 'note.txt'), 'outside-original', 'utf8');
 
-  const linkType = process.platform === 'win32' ? 'junction' : 'dir';
-  try {
-    fs.symlinkSync(inside, alias, linkType);
-  } catch (error) {
-    t.skip(`directory-link creation unavailable: ${error.code || error.message}`);
-    return;
-  }
+  linkDirectory(inside, alias);
 
   let swapped = false;
   const { service } = createService(root, {
@@ -530,7 +517,7 @@ test('versioned workspace rejects a deterministic junction/symlink swap after op
         swapped = true;
         if (process.platform === 'win32') fs.rmdirSync(alias);
         else fs.unlinkSync(alias);
-        fs.symlinkSync(outside, alias, linkType);
+        linkDirectory(outside, alias);
       },
     },
   });

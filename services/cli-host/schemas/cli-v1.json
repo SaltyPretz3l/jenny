@@ -1,0 +1,1829 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:jenny:schema:cli-v1",
+  "title": "Jenny CLI event stream, contract cli.v1",
+  "description": "One NDJSON line per event. Every event is a closed object: v=1, kind, event_seq (monotonic per run from 0), run_id, session_id, optional stream_id/turn_id/request_id/work_id (present only where the identity exists), and a closed per-kind payload. Every string is bounded; the limits are stated on each definition. A run ends with exactly one result event.",
+  "type": "object",
+  "discriminator": {
+    "propertyName": "kind"
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "kind",
+        "event_seq",
+        "run_id",
+        "session_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "kind": {
+          "const": "init"
+        },
+        "event_seq": {
+          "$ref": "#/definitions/count"
+        },
+        "run_id": {
+          "$ref": "#/definitions/id"
+        },
+        "session_id": {
+          "$ref": "#/definitions/id"
+        },
+        "stream_id": {
+          "$ref": "#/definitions/id"
+        },
+        "turn_id": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "work_id": {
+          "$ref": "#/definitions/id"
+        },
+        "payload": {
+          "$ref": "#/definitions/payload_init"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "kind",
+        "event_seq",
+        "run_id",
+        "session_id",
+        "work_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "kind": {
+          "const": "accepted"
+        },
+        "event_seq": {
+          "$ref": "#/definitions/count"
+        },
+        "run_id": {
+          "$ref": "#/definitions/id"
+        },
+        "session_id": {
+          "$ref": "#/definitions/id"
+        },
+        "stream_id": {
+          "$ref": "#/definitions/id"
+        },
+        "turn_id": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "work_id": {
+          "$ref": "#/definitions/id"
+        },
+        "payload": {
+          "$ref": "#/definitions/payload_accepted"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "kind",
+        "event_seq",
+        "run_id",
+        "session_id",
+        "stream_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "kind": {
+          "const": "started"
+        },
+        "event_seq": {
+          "$ref": "#/definitions/count"
+        },
+        "run_id": {
+          "$ref": "#/definitions/id"
+        },
+        "session_id": {
+          "$ref": "#/definitions/id"
+        },
+        "stream_id": {
+          "$ref": "#/definitions/id"
+        },
+        "turn_id": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "work_id": {
+          "$ref": "#/definitions/id"
+        },
+        "payload": {
+          "$ref": "#/definitions/payload_started"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "kind",
+        "event_seq",
+        "run_id",
+        "session_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "kind": {
+          "const": "delta"
+        },
+        "event_seq": {
+          "$ref": "#/definitions/count"
+        },
+        "run_id": {
+          "$ref": "#/definitions/id"
+        },
+        "session_id": {
+          "$ref": "#/definitions/id"
+        },
+        "stream_id": {
+          "$ref": "#/definitions/id"
+        },
+        "turn_id": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "work_id": {
+          "$ref": "#/definitions/id"
+        },
+        "payload": {
+          "$ref": "#/definitions/payload_delta"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "kind",
+        "event_seq",
+        "run_id",
+        "session_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "kind": {
+          "const": "reset"
+        },
+        "event_seq": {
+          "$ref": "#/definitions/count"
+        },
+        "run_id": {
+          "$ref": "#/definitions/id"
+        },
+        "session_id": {
+          "$ref": "#/definitions/id"
+        },
+        "stream_id": {
+          "$ref": "#/definitions/id"
+        },
+        "turn_id": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "work_id": {
+          "$ref": "#/definitions/id"
+        },
+        "payload": {
+          "$ref": "#/definitions/payload_reset"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "kind",
+        "event_seq",
+        "run_id",
+        "session_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "kind": {
+          "const": "thinking"
+        },
+        "event_seq": {
+          "$ref": "#/definitions/count"
+        },
+        "run_id": {
+          "$ref": "#/definitions/id"
+        },
+        "session_id": {
+          "$ref": "#/definitions/id"
+        },
+        "stream_id": {
+          "$ref": "#/definitions/id"
+        },
+        "turn_id": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "work_id": {
+          "$ref": "#/definitions/id"
+        },
+        "payload": {
+          "$ref": "#/definitions/payload_thinking"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "kind",
+        "event_seq",
+        "run_id",
+        "session_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "kind": {
+          "const": "tool_use"
+        },
+        "event_seq": {
+          "$ref": "#/definitions/count"
+        },
+        "run_id": {
+          "$ref": "#/definitions/id"
+        },
+        "session_id": {
+          "$ref": "#/definitions/id"
+        },
+        "stream_id": {
+          "$ref": "#/definitions/id"
+        },
+        "turn_id": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "work_id": {
+          "$ref": "#/definitions/id"
+        },
+        "payload": {
+          "$ref": "#/definitions/payload_tool_use"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "kind",
+        "event_seq",
+        "run_id",
+        "session_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "kind": {
+          "const": "tool_output"
+        },
+        "event_seq": {
+          "$ref": "#/definitions/count"
+        },
+        "run_id": {
+          "$ref": "#/definitions/id"
+        },
+        "session_id": {
+          "$ref": "#/definitions/id"
+        },
+        "stream_id": {
+          "$ref": "#/definitions/id"
+        },
+        "turn_id": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "work_id": {
+          "$ref": "#/definitions/id"
+        },
+        "payload": {
+          "$ref": "#/definitions/payload_tool_output"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "kind",
+        "event_seq",
+        "run_id",
+        "session_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "kind": {
+          "const": "tool_result"
+        },
+        "event_seq": {
+          "$ref": "#/definitions/count"
+        },
+        "run_id": {
+          "$ref": "#/definitions/id"
+        },
+        "session_id": {
+          "$ref": "#/definitions/id"
+        },
+        "stream_id": {
+          "$ref": "#/definitions/id"
+        },
+        "turn_id": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "work_id": {
+          "$ref": "#/definitions/id"
+        },
+        "payload": {
+          "$ref": "#/definitions/payload_tool_result"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "kind",
+        "event_seq",
+        "run_id",
+        "session_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "kind": {
+          "const": "tool_approval_needed"
+        },
+        "event_seq": {
+          "$ref": "#/definitions/count"
+        },
+        "run_id": {
+          "$ref": "#/definitions/id"
+        },
+        "session_id": {
+          "$ref": "#/definitions/id"
+        },
+        "stream_id": {
+          "$ref": "#/definitions/id"
+        },
+        "turn_id": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "work_id": {
+          "$ref": "#/definitions/id"
+        },
+        "payload": {
+          "$ref": "#/definitions/payload_tool_approval_needed"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "kind",
+        "event_seq",
+        "run_id",
+        "session_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "kind": {
+          "const": "tool_approval_withdrawn"
+        },
+        "event_seq": {
+          "$ref": "#/definitions/count"
+        },
+        "run_id": {
+          "$ref": "#/definitions/id"
+        },
+        "session_id": {
+          "$ref": "#/definitions/id"
+        },
+        "stream_id": {
+          "$ref": "#/definitions/id"
+        },
+        "turn_id": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "work_id": {
+          "$ref": "#/definitions/id"
+        },
+        "payload": {
+          "$ref": "#/definitions/payload_tool_approval_withdrawn"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "kind",
+        "event_seq",
+        "run_id",
+        "session_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "kind": {
+          "const": "user_questions_requested"
+        },
+        "event_seq": {
+          "$ref": "#/definitions/count"
+        },
+        "run_id": {
+          "$ref": "#/definitions/id"
+        },
+        "session_id": {
+          "$ref": "#/definitions/id"
+        },
+        "stream_id": {
+          "$ref": "#/definitions/id"
+        },
+        "turn_id": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "work_id": {
+          "$ref": "#/definitions/id"
+        },
+        "payload": {
+          "$ref": "#/definitions/payload_user_questions_requested"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "kind",
+        "event_seq",
+        "run_id",
+        "session_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "kind": {
+          "const": "user_questions_withdrawn"
+        },
+        "event_seq": {
+          "$ref": "#/definitions/count"
+        },
+        "run_id": {
+          "$ref": "#/definitions/id"
+        },
+        "session_id": {
+          "$ref": "#/definitions/id"
+        },
+        "stream_id": {
+          "$ref": "#/definitions/id"
+        },
+        "turn_id": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "work_id": {
+          "$ref": "#/definitions/id"
+        },
+        "payload": {
+          "$ref": "#/definitions/payload_user_questions_withdrawn"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "kind",
+        "event_seq",
+        "run_id",
+        "session_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "kind": {
+          "const": "plan_proposed"
+        },
+        "event_seq": {
+          "$ref": "#/definitions/count"
+        },
+        "run_id": {
+          "$ref": "#/definitions/id"
+        },
+        "session_id": {
+          "$ref": "#/definitions/id"
+        },
+        "stream_id": {
+          "$ref": "#/definitions/id"
+        },
+        "turn_id": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "work_id": {
+          "$ref": "#/definitions/id"
+        },
+        "payload": {
+          "$ref": "#/definitions/payload_plan_proposed"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "kind",
+        "event_seq",
+        "run_id",
+        "session_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "kind": {
+          "const": "plan_proposal_withdrawn"
+        },
+        "event_seq": {
+          "$ref": "#/definitions/count"
+        },
+        "run_id": {
+          "$ref": "#/definitions/id"
+        },
+        "session_id": {
+          "$ref": "#/definitions/id"
+        },
+        "stream_id": {
+          "$ref": "#/definitions/id"
+        },
+        "turn_id": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "work_id": {
+          "$ref": "#/definitions/id"
+        },
+        "payload": {
+          "$ref": "#/definitions/payload_plan_proposal_withdrawn"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "kind",
+        "event_seq",
+        "run_id",
+        "session_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "kind": {
+          "const": "decision"
+        },
+        "event_seq": {
+          "$ref": "#/definitions/count"
+        },
+        "run_id": {
+          "$ref": "#/definitions/id"
+        },
+        "session_id": {
+          "$ref": "#/definitions/id"
+        },
+        "stream_id": {
+          "$ref": "#/definitions/id"
+        },
+        "turn_id": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "work_id": {
+          "$ref": "#/definitions/id"
+        },
+        "payload": {
+          "$ref": "#/definitions/payload_decision"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "kind",
+        "event_seq",
+        "run_id",
+        "session_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "kind": {
+          "const": "status"
+        },
+        "event_seq": {
+          "$ref": "#/definitions/count"
+        },
+        "run_id": {
+          "$ref": "#/definitions/id"
+        },
+        "session_id": {
+          "$ref": "#/definitions/id"
+        },
+        "stream_id": {
+          "$ref": "#/definitions/id"
+        },
+        "turn_id": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "work_id": {
+          "$ref": "#/definitions/id"
+        },
+        "payload": {
+          "$ref": "#/definitions/payload_status"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "kind",
+        "event_seq",
+        "run_id",
+        "session_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "kind": {
+          "const": "complete"
+        },
+        "event_seq": {
+          "$ref": "#/definitions/count"
+        },
+        "run_id": {
+          "$ref": "#/definitions/id"
+        },
+        "session_id": {
+          "$ref": "#/definitions/id"
+        },
+        "stream_id": {
+          "$ref": "#/definitions/id"
+        },
+        "turn_id": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "work_id": {
+          "$ref": "#/definitions/id"
+        },
+        "payload": {
+          "$ref": "#/definitions/payload_complete"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "kind",
+        "event_seq",
+        "run_id",
+        "session_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "kind": {
+          "const": "error"
+        },
+        "event_seq": {
+          "$ref": "#/definitions/count"
+        },
+        "run_id": {
+          "$ref": "#/definitions/id"
+        },
+        "session_id": {
+          "$ref": "#/definitions/id"
+        },
+        "stream_id": {
+          "$ref": "#/definitions/id"
+        },
+        "turn_id": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "work_id": {
+          "$ref": "#/definitions/id"
+        },
+        "payload": {
+          "$ref": "#/definitions/payload_error"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "v",
+        "kind",
+        "event_seq",
+        "run_id",
+        "session_id",
+        "payload"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "kind": {
+          "const": "result"
+        },
+        "event_seq": {
+          "$ref": "#/definitions/count"
+        },
+        "run_id": {
+          "$ref": "#/definitions/id"
+        },
+        "session_id": {
+          "$ref": "#/definitions/id"
+        },
+        "stream_id": {
+          "$ref": "#/definitions/id"
+        },
+        "turn_id": {
+          "$ref": "#/definitions/id"
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "work_id": {
+          "$ref": "#/definitions/id"
+        },
+        "payload": {
+          "$ref": "#/definitions/payload_result"
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "Identity token: 1-128 chars of [A-Za-z0-9_.:-]."
+    },
+    "ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+      "description": "Decision-request reference (approval id, question ref, plan approval id): 1-512 chars, no control characters. Never clipped: an over-long ref drops the event instead."
+    },
+    "call_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+      "description": "Provider tool-call id: 1-256 chars, no control characters."
+    },
+    "tool_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "Tool name: 1-128 chars of [A-Za-z0-9_.:-]."
+    },
+    "token": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "description": "Short machine reason or status token: 1-64 chars of [A-Za-z0-9_.:-]."
+    },
+    "cmp_code": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^CMP-[A-Z]+(-[A-Z0-9]+)+$",
+      "description": "CMP-<DOMAIN>-<NNNN> error code, at most 64 chars."
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "Non-negative safe integer."
+    },
+    "summary_text": {
+      "type": "string",
+      "maxLength": 512,
+      "description": "Human summary line, clipped to 512 chars."
+    },
+    "delta_text": {
+      "type": "string",
+      "maxLength": 65536,
+      "description": "One assistant text delta, clipped to 65536 chars."
+    },
+    "thinking_text": {
+      "type": "string",
+      "maxLength": 16384,
+      "description": "One reasoning delta, clipped to 16384 chars."
+    },
+    "tool_result_text": {
+      "type": "string",
+      "maxLength": 16384,
+      "description": "Tool result body, clipped to 16384 chars."
+    },
+    "output_line_text": {
+      "type": "string",
+      "maxLength": 4000,
+      "description": "One tool output line, clipped to 4000 chars."
+    },
+    "message_text": {
+      "type": "string",
+      "maxLength": 2000,
+      "description": "Error or status message, clipped to 2000 chars."
+    },
+    "result_text": {
+      "type": "string",
+      "maxLength": 262144,
+      "description": "Final result text, clipped to 262144 chars."
+    },
+    "version_text": {
+      "type": "string",
+      "maxLength": 64,
+      "description": "Version string, at most 64 chars."
+    },
+    "model_text": {
+      "type": "string",
+      "maxLength": 256,
+      "description": "Model or engine name, at most 256 chars."
+    },
+    "cwd_text": {
+      "type": "string",
+      "maxLength": 4096,
+      "description": "Working directory, at most 4096 chars."
+    },
+    "question_prompt_text": {
+      "type": "string",
+      "maxLength": 2000,
+      "description": "Question prompt, clipped to 2000 chars."
+    },
+    "option_text": {
+      "type": "string",
+      "maxLength": 256,
+      "description": "Answer option label, clipped to 256 chars."
+    },
+    "plan_title_text": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "Plan title, clipped to 200 chars."
+    },
+    "plan_summary_text": {
+      "type": "string",
+      "maxLength": 2000,
+      "description": "Plan summary, clipped to 2000 chars."
+    },
+    "plan_step_text": {
+      "type": "string",
+      "maxLength": 500,
+      "description": "One plan step, clipped to 500 chars."
+    },
+    "work_status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "paused",
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+        "needs_attention"
+      ],
+      "description": "Durable runtime work status (services/session-runtime/contracts.js WORK_STATUSES)."
+    },
+    "discard_scope": {
+      "type": "string",
+      "enum": [
+        "all",
+        "live_slice",
+        "none"
+      ],
+      "description": "What a reset erased: all = every text segment of the turn; live_slice = only the unsaved slice since the last tool boundary; none = nothing."
+    },
+    "stop_reason": {
+      "type": "string",
+      "enum": [
+        "tool_cap",
+        "max_iterations",
+        "diminishing_returns",
+        "context_budget"
+      ],
+      "description": "Resumable stop reported by the turn."
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Token usage.",
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "total_tokens"
+      ],
+      "properties": {
+        "input_tokens": {
+          "$ref": "#/definitions/count"
+        },
+        "output_tokens": {
+          "$ref": "#/definitions/count"
+        },
+        "total_tokens": {
+          "$ref": "#/definitions/count"
+        },
+        "estimated": {
+          "type": "boolean"
+        }
+      }
+    },
+    "tool_list": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "$ref": "#/definitions/tool_name"
+      },
+      "description": "At most 256 tool names."
+    },
+    "optional_limit": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/count"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "A budget value; null means unlimited."
+    },
+    "decision_request": {
+      "type": "string",
+      "enum": [
+        "tool_approval",
+        "user_questions",
+        "plan_proposal"
+      ]
+    },
+    "decision_by": {
+      "type": "string",
+      "enum": [
+        "policy",
+        "user",
+        "caller"
+      ]
+    },
+    "payload_init": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Run configuration, echoed before any work is submitted.",
+      "required": [
+        "versions",
+        "cwd",
+        "model",
+        "engine",
+        "permission_mode",
+        "allowed_tools",
+        "budgets"
+      ],
+      "properties": {
+        "versions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "cli",
+            "contract"
+          ],
+          "properties": {
+            "cli": {
+              "$ref": "#/definitions/version_text"
+            },
+            "contract": {
+              "const": "cli.v1"
+            },
+            "app": {
+              "$ref": "#/definitions/version_text"
+            },
+            "sidecar_api": {
+              "$ref": "#/definitions/version_text"
+            }
+          }
+        },
+        "cwd": {
+          "$ref": "#/definitions/cwd_text"
+        },
+        "model": {
+          "$ref": "#/definitions/model_text"
+        },
+        "engine": {
+          "$ref": "#/definitions/model_text"
+        },
+        "permission_mode": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "auto",
+            "plan"
+          ]
+        },
+        "allowed_tools": {
+          "$ref": "#/definitions/tool_list"
+        },
+        "disallowed_tools": {
+          "$ref": "#/definitions/tool_list"
+        },
+        "budgets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "max_turns",
+            "max_output_tokens",
+            "max_inference_requests",
+            "timeout_ms"
+          ],
+          "properties": {
+            "max_turns": {
+              "$ref": "#/definitions/optional_limit"
+            },
+            "max_output_tokens": {
+              "$ref": "#/definitions/optional_limit"
+            },
+            "max_inference_requests": {
+              "$ref": "#/definitions/optional_limit"
+            },
+            "timeout_ms": {
+              "$ref": "#/definitions/optional_limit"
+            }
+          }
+        }
+      }
+    },
+    "payload_accepted": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Durable acceptance; precedes any stream id.",
+      "required": [
+        "user_message_id",
+        "idempotency_key",
+        "retry_point"
+      ],
+      "properties": {
+        "user_message_id": {
+          "$ref": "#/definitions/id"
+        },
+        "idempotency_key": {
+          "$ref": "#/definitions/id"
+        },
+        "retry_point": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Durable work record at acceptance. Resubmitting with the same idempotency_key is deduplicated by the runtime; revision lets a caller detect progress since acceptance.",
+          "required": [
+            "revision",
+            "status"
+          ],
+          "properties": {
+            "revision": {
+              "$ref": "#/definitions/count"
+            },
+            "status": {
+              "$ref": "#/definitions/work_status"
+            }
+          }
+        }
+      }
+    },
+    "payload_started": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A runtime turn (stream) started.",
+      "required": [],
+      "properties": {
+        "model": {
+          "$ref": "#/definitions/model_text"
+        }
+      }
+    },
+    "payload_delta": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Assistant text delta.",
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "text": {
+          "$ref": "#/definitions/delta_text"
+        },
+        "truncated": {
+          "const": true
+        }
+      }
+    },
+    "payload_reset": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The caller drops buffered text per discard_scope.",
+      "required": [
+        "discard_scope",
+        "preserve_prior_segments"
+      ],
+      "properties": {
+        "discard_scope": {
+          "$ref": "#/definitions/discard_scope"
+        },
+        "preserve_prior_segments": {
+          "type": "boolean"
+        },
+        "next_assistant_message_id": {
+          "$ref": "#/definitions/id"
+        },
+        "reason": {
+          "$ref": "#/definitions/token"
+        }
+      }
+    },
+    "payload_thinking": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Reasoning delta; emitted only when opted in.",
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "thinking_id": {
+          "$ref": "#/definitions/id"
+        },
+        "text": {
+          "$ref": "#/definitions/thinking_text"
+        },
+        "truncated": {
+          "const": true
+        }
+      }
+    },
+    "payload_tool_use": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A tool call; arguments are summarized, never copied.",
+      "required": [
+        "call_id",
+        "tool_name"
+      ],
+      "properties": {
+        "call_id": {
+          "$ref": "#/definitions/call_id"
+        },
+        "tool_name": {
+          "$ref": "#/definitions/tool_name"
+        },
+        "summary": {
+          "$ref": "#/definitions/summary_text"
+        },
+        "status": {
+          "$ref": "#/definitions/token"
+        }
+      }
+    },
+    "payload_tool_output": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Live tool output chunk; emitted only when opted in.",
+      "required": [
+        "call_id",
+        "lines"
+      ],
+      "properties": {
+        "call_id": {
+          "$ref": "#/definitions/call_id"
+        },
+        "tool_name": {
+          "$ref": "#/definitions/tool_name"
+        },
+        "lines": {
+          "type": "array",
+          "maxItems": 50,
+          "description": "At most 50 lines per chunk.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "stream",
+              "text"
+            ],
+            "properties": {
+              "stream": {
+                "type": "string",
+                "enum": [
+                  "stdout",
+                  "stderr"
+                ]
+              },
+              "text": {
+                "$ref": "#/definitions/output_line_text"
+              }
+            }
+          }
+        },
+        "partial": {
+          "$ref": "#/definitions/output_line_text"
+        },
+        "sequence": {
+          "$ref": "#/definitions/count"
+        },
+        "dropped_lines": {
+          "$ref": "#/definitions/count"
+        }
+      }
+    },
+    "payload_tool_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Tool result with a bounded body.",
+      "required": [
+        "call_id",
+        "tool_name",
+        "status",
+        "text"
+      ],
+      "properties": {
+        "call_id": {
+          "$ref": "#/definitions/call_id"
+        },
+        "tool_name": {
+          "$ref": "#/definitions/tool_name"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "error",
+            "denied"
+          ]
+        },
+        "text": {
+          "$ref": "#/definitions/tool_result_text"
+        },
+        "truncated": {
+          "const": true
+        },
+        "error_code": {
+          "$ref": "#/definitions/token"
+        },
+        "duration_ms": {
+          "$ref": "#/definitions/count"
+        }
+      }
+    },
+    "payload_tool_approval_needed": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A tool call waits for an approve/deny decision.",
+      "required": [
+        "ref",
+        "call_id",
+        "tool_name"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/definitions/ref"
+        },
+        "call_id": {
+          "$ref": "#/definitions/call_id"
+        },
+        "tool_name": {
+          "$ref": "#/definitions/tool_name"
+        },
+        "summary": {
+          "$ref": "#/definitions/summary_text"
+        },
+        "reason": {
+          "$ref": "#/definitions/summary_text"
+        },
+        "one_off_only": {
+          "type": "boolean"
+        }
+      }
+    },
+    "payload_tool_approval_withdrawn": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A pending approval was withdrawn without a decision.",
+      "required": [
+        "ref"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/definitions/ref"
+        },
+        "call_id": {
+          "$ref": "#/definitions/call_id"
+        },
+        "reason": {
+          "$ref": "#/definitions/token"
+        }
+      }
+    },
+    "payload_user_questions_requested": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The model asks the user; at most 16 questions with at most 16 options each.",
+      "required": [
+        "ref",
+        "terminal",
+        "questions"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/definitions/ref"
+        },
+        "call_id": {
+          "$ref": "#/definitions/call_id"
+        },
+        "terminal": {
+          "type": "boolean",
+          "description": "true when the questions end the turn (a question batch)."
+        },
+        "questions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "prompt",
+              "options"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "#/definitions/id"
+              },
+              "prompt": {
+                "$ref": "#/definitions/question_prompt_text"
+              },
+              "options": {
+                "type": "array",
+                "maxItems": 16,
+                "items": {
+                  "$ref": "#/definitions/option_text"
+                }
+              },
+              "multi_select": {
+                "type": "boolean"
+              },
+              "allow_other": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    },
+    "payload_user_questions_withdrawn": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Pending questions were withdrawn without an answer.",
+      "required": [
+        "ref"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/definitions/ref"
+        },
+        "call_id": {
+          "$ref": "#/definitions/call_id"
+        },
+        "reason": {
+          "$ref": "#/definitions/token"
+        }
+      }
+    },
+    "payload_plan_proposed": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A plan waits for an accept/reject decision.",
+      "required": [
+        "ref",
+        "call_id",
+        "title",
+        "steps"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/definitions/ref"
+        },
+        "plan_id": {
+          "$ref": "#/definitions/id"
+        },
+        "call_id": {
+          "$ref": "#/definitions/call_id"
+        },
+        "title": {
+          "$ref": "#/definitions/plan_title_text"
+        },
+        "summary": {
+          "$ref": "#/definitions/plan_summary_text"
+        },
+        "steps": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/definitions/plan_step_text"
+          },
+          "description": "At most 20 steps."
+        }
+      }
+    },
+    "payload_plan_proposal_withdrawn": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A pending plan was withdrawn without a decision.",
+      "required": [
+        "ref"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/definitions/ref"
+        },
+        "call_id": {
+          "$ref": "#/definitions/call_id"
+        },
+        "reason": {
+          "$ref": "#/definitions/token"
+        }
+      }
+    },
+    "payload_decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "How a decision request was settled.",
+      "required": [
+        "ref",
+        "request",
+        "outcome",
+        "by"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/definitions/ref"
+        },
+        "request": {
+          "$ref": "#/definitions/decision_request"
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "allow",
+            "deny",
+            "answer",
+            "decline"
+          ]
+        },
+        "by": {
+          "$ref": "#/definitions/decision_by"
+        },
+        "rule": {
+          "$ref": "#/definitions/summary_text"
+        },
+        "call_id": {
+          "$ref": "#/definitions/call_id"
+        },
+        "tool_name": {
+          "$ref": "#/definitions/tool_name"
+        }
+      }
+    },
+    "payload_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Work-record transitions and engine progress lines.",
+      "required": [
+        "phase"
+      ],
+      "properties": {
+        "phase": {
+          "type": "string",
+          "enum": [
+            "work",
+            "progress",
+            "context_compacted"
+          ]
+        },
+        "work_status": {
+          "$ref": "#/definitions/work_status"
+        },
+        "revision": {
+          "$ref": "#/definitions/count"
+        },
+        "text": {
+          "$ref": "#/definitions/message_text"
+        }
+      }
+    },
+    "payload_complete": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The turn completed.",
+      "required": [],
+      "properties": {
+        "usage": {
+          "$ref": "#/definitions/usage"
+        },
+        "resumable_stop": {
+          "$ref": "#/definitions/stop_reason"
+        },
+        "completion_reason": {
+          "type": "string",
+          "enum": [
+            "awaiting_proposal",
+            "session_handoff_completed"
+          ]
+        }
+      }
+    },
+    "payload_error": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The turn failed.",
+      "required": [
+        "code",
+        "retryable"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "#/definitions/cmp_code"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "message": {
+          "$ref": "#/definitions/message_text"
+        },
+        "category": {
+          "$ref": "#/definitions/token"
+        }
+      }
+    },
+    "payload_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Exactly one final frame per run.",
+      "required": [
+        "subtype",
+        "is_error",
+        "exit_code",
+        "session_id",
+        "result",
+        "usage",
+        "num_turns",
+        "duration_ms",
+        "permission_denials"
+      ],
+      "properties": {
+        "subtype": {
+          "type": "string",
+          "enum": [
+            "success",
+            "denied",
+            "input_required",
+            "budget",
+            "cancelled",
+            "error"
+          ]
+        },
+        "is_error": {
+          "type": "boolean"
+        },
+        "exit_code": {
+          "type": "integer",
+          "enum": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            75,
+            130,
+            143
+          ]
+        },
+        "session_id": {
+          "$ref": "#/definitions/id"
+        },
+        "result": {
+          "$ref": "#/definitions/result_text"
+        },
+        "truncated": {
+          "const": true
+        },
+        "usage": {
+          "$ref": "#/definitions/usage"
+        },
+        "num_turns": {
+          "$ref": "#/definitions/count"
+        },
+        "duration_ms": {
+          "$ref": "#/definitions/count"
+        },
+        "permission_denials": {
+          "type": "array",
+          "maxItems": 64,
+          "description": "At most 64 denials.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "ref",
+              "request",
+              "by"
+            ],
+            "properties": {
+              "ref": {
+                "$ref": "#/definitions/ref"
+              },
+              "request": {
+                "$ref": "#/definitions/decision_request"
+              },
+              "by": {
+                "$ref": "#/definitions/decision_by"
+              },
+              "rule": {
+                "$ref": "#/definitions/summary_text"
+              },
+              "call_id": {
+                "$ref": "#/definitions/call_id"
+              },
+              "tool_name": {
+                "$ref": "#/definitions/tool_name"
+              }
+            }
+          }
+        },
+        "resumable_stop": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Present only when the run can be resumed from a checkpoint.",
+          "required": [
+            "reason"
+          ],
+          "properties": {
+            "reason": {
+              "type": "string",
+              "enum": [
+                "tool_cap",
+                "max_iterations",
+                "diminishing_returns",
+                "context_budget",
+                "runtime_budget",
+                "timeout",
+                "paused"
+              ]
+            },
+            "work_id": {
+              "$ref": "#/definitions/id"
+            }
+          }
+        },
+        "error_code": {
+          "$ref": "#/definitions/cmp_code"
+        }
+      }
+    }
+  }
+}

@@ -15,6 +15,7 @@ from sidecar.ai.config import RuntimeConfig, codex_cli_unavailable_reason
 from sidecar.ai.engines.base import BaseEngine
 from sidecar.ai.engines.mock import MockEngine
 from sidecar.runtime.diagnostics import emit_startup_audit_mark, log_event
+from sidecar.runtime.exact_secret_redaction import register_exact_secret
 
 logger = logging.getLogger(__name__)
 
@@ -390,6 +391,44 @@ def _create_chatgpt_selection(
     )
 
 
+def _create_api_provider_selection(
+    config: RuntimeConfig,
+    *,
+    capability_profile_store: Any | None = None,
+) -> EngineSelection:
+    from sidecar.ai.engines.api_provider_engines import api_provider_engine_class
+
+    descriptor = config.api_provider_descriptor
+    limits = config.api_provider_model_limits
+    engine_class = api_provider_engine_class(descriptor)
+    if not descriptor or not limits or engine_class is None:
+        return _build_mock(
+            fallback_from="api-provider",
+            fallback_reason="api-provider engine unavailable: not configured",
+            capability_profile_store=capability_profile_store,
+        )
+    # Before the engine exists, so even a construction failure cannot log the key.
+    register_exact_secret(config.api_provider_key)
+    resolved_model = str(config.model or "").strip()
+
+    def build() -> tuple[BaseEngine, str, Callable[[], None]]:
+        engine = engine_class(
+            descriptor=descriptor,
+            api_key=config.api_provider_key,
+            limits=limits,
+        )
+        return engine, resolved_model, lambda: engine.load_model(resolved_model)
+
+    # No exception text in the reason: descriptor values and the key stay out of it.
+    return _init_or_fallback(
+        "api-provider",
+        "API provider",
+        build,
+        include_exc_detail=False,
+        capability_profile_store=capability_profile_store,
+    )
+
+
 def _create_ollama_selection(
     config: RuntimeConfig,
     progress_callback: Callable[[dict[str, Any]], None] | None,
@@ -522,6 +561,12 @@ def create_engine(
             config,
             provider_descriptor=provider_descriptor,
             provider_authority_check=provider_authority_check,
+            capability_profile_store=capability_profile_store,
+        )
+
+    if requested_type == "api-provider":
+        return _create_api_provider_selection(
+            config,
             capability_profile_store=capability_profile_store,
         )
 

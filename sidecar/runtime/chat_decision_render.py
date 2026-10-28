@@ -37,6 +37,7 @@ from sidecar.runtime.chat_helpers import (
     _decision_usage_payload,
     _fallback_usage_payload,
     attach_compact_threshold,
+    attach_context_calibration,
     attach_context_used_tokens,
     attach_context_window,
     estimate_text_tokens,
@@ -466,6 +467,9 @@ def _chat_response_from_decision(
     if context_tokens is not None:
         usage_payload["context_tokens_estimate"] = context_tokens
     attach_context_window(usage_payload, stack.engine)
+    attach_context_calibration(
+        usage_payload, decision.context_calibration, stack.engine, stack.config
+    )
     attach_plan_usage(usage_payload, stack.engine)
     # Only forward the compaction trigger when compaction can actually fire
     # (both flags on); otherwise the meter would advertise an auto-compact

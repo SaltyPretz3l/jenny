@@ -22,6 +22,7 @@ const { ProjectStore } = require('../../services/projects/project-store');
 const { ProjectWorkspacePool } = require('../../services/projects/project-workspace-pool');
 const { ToolPermissionStore } = require('../../services/tools/tool-permission-store');
 const { cleanupTrackedResources, createTrackedTempDir } = require('../helpers/resource-cleanup');
+const { linkDirectory } = require('../helpers/platform-skips');
 
 test.afterEach(async () => cleanupTrackedResources());
 
@@ -315,16 +316,11 @@ test('projects.list reports folder_exists and is_current and keeps every existin
   assert.equal(sync.projects.length, 3);
 });
 
-test('is_current follows the real path: a Workspace opened through a junction still matches its project', async (t) => {
+test('is_current follows the real path: a Workspace opened through a junction still matches its project', async () => {
   const fixture = createFixture();
   const real = fixture.folder('RealFolder');
   const link = path.join(fixture.root, 'LinkedFolder');
-  try {
-    fs.symlinkSync(real, link, process.platform === 'win32' ? 'junction' : 'dir');
-  } catch (error) {
-    t.skip(`directory link unavailable: ${error.code || error.message}`);
-    return;
-  }
+  linkDirectory(real, link);
   const project = createBound(fixture, 'Real', real);
   fixture.setWorkspaceRoot(link);
   const listed = await fixture.application.listProjectsWithStatus();
@@ -511,18 +507,13 @@ test('revealFolder re-checks the project after its folder probe: a delete or reb
   assert.deepEqual(opened, [], 'neither stale folder reaches the OS');
 });
 
-test('revealFolder refuses a registered path that now resolves somewhere else (a junction swapped in)', async (t) => {
+test('revealFolder refuses a registered path that now resolves somewhere else (a junction swapped in)', async () => {
   const fixture = createFixture();
   const registered = fixture.folder('Registered');
   const project = createBound(fixture, 'Registered', registered);
   const elsewhere = fixture.folder('Elsewhere');
   fs.rmSync(registered, { recursive: true, force: true });
-  try {
-    fs.symlinkSync(elsewhere, registered, process.platform === 'win32' ? 'junction' : 'dir');
-  } catch (error) {
-    t.skip(`cannot create a directory link here: ${error.code}`);
-    return;
-  }
+  linkDirectory(elsewhere, registered);
   const opened = [];
   const result = await fixture.application.revealProjectFolder({ project_id: project.id }, {
     openFolder: async (folder) => { opened.push(folder); return ''; },

@@ -1,6 +1,6 @@
 'use strict';
 
-const manifest = require('./tool-manifest.json');
+const { MANIFEST_TOOLS, manifestEntry } = require('./tool-manifest-index');
 
 const SURFACE_FAMILIES = Object.freeze([
   { id: 'files', section: 'project', sidecarFamilies: ['filesystem'], toolNames: [] },
@@ -14,7 +14,9 @@ const SURFACE_FAMILIES = Object.freeze([
   { id: 'web', section: 'reach', sidecarFamilies: ['web'], toolNames: [] },
   { id: 'knowledge', section: 'reach', sidecarFamilies: ['knowledge'], toolNames: [] },
   { id: 'home', section: 'reach', sidecarFamilies: ['home'], toolNames: ['automation_list', 'automation_read'] },
-  { id: 'helpers', section: 'reach', sidecarFamilies: [], toolNames: ['delegate'] },
+  // Row 69 Q6 (2026-10-20): the session directory joined Helpers when it left the always-on list.
+  { id: 'helpers', section: 'reach', sidecarFamilies: [],
+    toolNames: ['delegate', 'sessions_list', 'session_status', 'session_transcript', 'session_stop'] },
 ].map(family => Object.freeze({ ...family,
   sidecarFamilies: Object.freeze(family.sidecarFamilies), toolNames: Object.freeze(family.toolNames) })));
 
@@ -23,6 +25,9 @@ const ALWAYS_ON_TOOL_NAMES = Object.freeze([
   'tool_search', 'load_skill', 'connections_list', 'session_spawn', 'session_wait', 'session_result',
   'memory', 'propose_git_action', 'propose_command', 'propose_session', 'complete_session_handoff',
   'session_message',
+  // Row 69: like session_message, never stripped by the composer Tools toggle. The session directory
+  // tools moved to Helpers; services/backend/session-directory-tool-gate.js decides which chats see them.
+  'jenny_help',
   // Memory v2 (row 58): the memory tool's read-only look-back tools (W3, W4 search).
   'conversations_recent', 'conversation_open', 'conversations_search',
   // Row 60: the compaction recall tool for micro-compacted tool outputs.
@@ -33,12 +38,10 @@ const LEGACY_TOGGLE_TO_SURFACE = Object.freeze({
   web_search: 'web', Bash: 'terminal', python_execute: 'python', file_tools: 'files',
 });
 
-const manifestToolFamilies = new Map(manifest.tools.map(tool => [tool.name, tool.tool_family]));
-
 function surfaceFamilyForTool(name, toolFamily) {
   const explicit = SURFACE_FAMILIES.find(family => family.toolNames.includes(name));
   if (explicit) return explicit.id;
-  const sidecarFamily = toolFamily || manifestToolFamilies.get(name);
+  const sidecarFamily = toolFamily || manifestEntry(name)?.tool_family;
   return SURFACE_FAMILIES.find(family => family.sidecarFamilies.includes(sidecarFamily))?.id || '';
 }
 
@@ -65,7 +68,7 @@ function resolveRequestToolPreferences(raw, catalog) {
   if (families.files === false && typeof families.artifacts !== 'boolean') disabledFamilies.add('artifacts');
   const disabledConnections = new Set(Object.keys(connections).filter(id => connections[id] === false));
   const disabledTools = new Set();
-  for (const tool of manifest.tools) {
+  for (const tool of MANIFEST_TOOLS) {
     if (disabledFamilies.has(surfaceFamilyForTool(tool.name, tool.tool_family))) disabledTools.add(tool.name);
   }
   if (catalog && typeof catalog === 'object' && !Array.isArray(catalog)) {

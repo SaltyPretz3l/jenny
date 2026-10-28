@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -11,16 +9,7 @@ import pytest
 from sidecar.ai.error_codes import CMP_TOOL_IO_FAILED
 from sidecar.ai.tools.builtins import file_history as file_history_module
 from sidecar.ai.tools.contracts import ToolExecutionFailure
-
-
-def _make_junction(link: Path, target: Path) -> bool:
-    result = subprocess.run(
-        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
-        capture_output=True,
-        check=False,
-        text=True,
-    )
-    return result.returncode == 0
+from tests.sidecar._platform_skips import make_dir_link, windows_only
 
 
 def test_create_checkpoint_happy_path_is_unaffected(tmp_path: Path) -> None:
@@ -68,7 +57,7 @@ def test_create_checkpoint_propagates_guarded_store_refusal_before_copy(
         assert residue == []
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows junctions only")
+@windows_only("junctioned backups dir quarantine")
 def test_create_checkpoint_quarantines_junctioned_backups_dir(tmp_path: Path) -> None:
     target = tmp_path / "notes.txt"
     target.write_text("hello\n", encoding="utf-8")
@@ -77,8 +66,7 @@ def test_create_checkpoint_quarantines_junctioned_backups_dir(tmp_path: Path) ->
     jenny = tmp_path / ".jenny"
     jenny.mkdir()
 
-    if not _make_junction(jenny / "backups", elsewhere):
-        pytest.skip("mklink /J not permitted in this environment")
+    make_dir_link(jenny / "backups", elsewhere)
     info = file_history_module.create_checkpoint(target, tmp_path)
 
     assert info.created is True

@@ -15,6 +15,7 @@ No cloud credentials, no Anthropic/OpenAI API keys, no telemetry.
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 from sidecar.ai.engines.base import EngineMessage
@@ -23,6 +24,11 @@ from sidecar.ai.engines.model_name import (
     is_bonsai2_model,
     is_ornith15_model,
     uses_qwen38_chat_contract,
+)
+from sidecar.ai.engines.server_token_count import (
+    ServerTokenCounter,
+    build_count_payload,
+    payload_has_image,
 )
 from sidecar.ai.engines.vllm_engine import VLLMEngine
 from sidecar.ai.thinking_guard import THINKING_BUDGET_NUM_PREDICT_FRACTION
@@ -36,6 +42,22 @@ _OPENAI_COMPAT_DEFAULT_BASE_URL = "http://127.0.0.1:8033/v1"
 _PROMPT_ESTIMATE_MARGIN_TOKENS = 512
 _MIN_OUTPUT_ROOM_TOKENS = 1_024
 _IMAGE_PROMPT_TOKENS_ESTIMATE = 1_024
+# The server's own prompt count over our chars/4 estimate, learned per model
+# (``_record_prompt_usage``). chars/4 undercounts code-heavy prompts by up to
+# ~1.4x. A reading below the band is most likely a cached-tail count, so it is
+# dropped rather than trusted; the fit never scales the estimate below 1.0.
+_MIN_PROMPT_SCALE = 0.9
+_MAX_PROMPT_SCALE = 4.0
+# With no scale known, an exact count is only worth asking for when the
+# estimate (with the undercount allowance) plus the request nears the window.
+_TIGHT_FIT_ESTIMATE_ALLOWANCE = 1.6
+# A tight fit with no scale and no exact count assumes the measured code-heavy
+# undercount (HB-028: ~1.37x) instead of trusting chars/4.
+_COLD_FIT_ALLOWANCE = 1.4
+_FIT_ESTIMATE_CONTEXT_KEY = "prompt_estimate_tokens"
+# The turn's count-source scale (exact or calibrated), published by the budget
+# preflight (``context_count.publish_request_token_scale``).
+_REQUEST_SCALE_CONTEXT_KEY = "prompt_token_scale"
 
 _QWEN38_LLAMA_EFFORT_MAP = {
     "default": "medium",
@@ -89,6 +111,9 @@ class OpenAICompatibleEngine(VLLMEngine):
     _ENGINE_TYPE = "openai-compatible"
     _DISPLAY_NAME = "OpenAI-compatible server"
     _START_COMMAND_HINT = "your OpenAI-compatible server (e.g. llama-server, vllm, tgi)"
+    # ``_fit_output_to_window`` clamps max_tokens to the room the prompt leaves,
+    # so the budget may hold back only the answer floor (token_budget.py).
+    fits_output_to_window = True
 
     def get_inference_budget_context_length(self) -> int | None:
         # This subclass may inflate output for reasoning beyond its served hint.
@@ -111,6 +136,23 @@ class OpenAICompatibleEngine(VLLMEngine):
         self._configured_context_length = _positive_int(configured_context_length)
         self._profile_max_output_tokens = _positive_int(profile_max_output_tokens)
         self._profile_thinking_headroom = _positive_int(profile_thinking_headroom) or 0
+        # Bounded process-local state, used only to size ``max_tokens``: one
+        # float for the served model (cleared on model change or unload) plus
+        # the last fitted estimate when no request context carries it.
+        self._prompt_scale: tuple[str | None, float] | None = None
+        self._fit_estimate: int | None = None
+        # Count routes that failed this load (``server_token_count``).
+        self._token_counter = ServerTokenCounter()
+
+    def load_model(self, model_path: str) -> None:
+        self._token_counter.reset()
+        super().load_model(model_path)
+
+    def unload_model(self, _name: str | None = None) -> None:
+        super().unload_model(_name)
+        self._prompt_scale = None
+        self._fit_estimate = None
+        self._token_counter.reset()
 
     def set_prefill_progress_enabled(self, enabled: bool) -> None:
         """Adopt the application's verified managed-server capability."""
@@ -272,15 +314,97 @@ class OpenAICompatibleEngine(VLLMEngine):
         its slot, and final + thinking headroom can equal the whole window.
         """
         requested = int(payload.get("max_tokens") or 0)
+        # Recorded before any early return, so this request's usage can never
+        # pair with an older request's estimate.
+        estimate = _estimate_prompt_tokens(payload)
+        # An image is estimated at a flat share, so its request teaches no ratio.
+        self._remember_fit_estimate(None if payload_has_image(payload) else estimate)
         window = self.get_configured_context_length()
         if window is None or requested <= 0:
             return requested
-        room = window - _estimate_prompt_tokens(payload) - _PROMPT_ESTIMATE_MARGIN_TOKENS
+        room = window - self._prompt_tokens_for_fit(payload, estimate, requested, window)
+        room -= _PROMPT_ESTIMATE_MARGIN_TOKENS
         fitted = min(requested, max(room, _MIN_OUTPUT_ROOM_TOKENS), window)
         payload["max_tokens"] = fitted
         # The budget follows the fitted output, not the requested one.
         _cap_thinking_budget(payload, fitted)
         return fitted
+
+    def _prompt_tokens_for_fit(
+        self, payload: dict[str, Any], estimate: int, requested: int, window: int
+    ) -> int:
+        """Prompt size for the fit: the larger known scale (never below 1.0),
+        else an exact count when tight, else the cold undercount allowance."""
+        scales = [s for s in (self._request_token_scale(), self._learned_prompt_scale()) if s]
+        if scales:
+            return math.ceil(estimate * max(1.0, *scales))
+        if estimate * _TIGHT_FIT_ESTIMATE_ALLOWANCE + requested <= window:
+            return estimate
+        try:
+            exact = self._exact_prompt_tokens(payload)
+        except Exception:  # noqa: BLE001 - the count is best-effort
+            exact = None
+        if isinstance(exact, int) and not isinstance(exact, bool) and exact > 0:
+            return exact
+        return math.ceil(estimate * _COLD_FIT_ALLOWANCE)
+
+    def _request_token_scale(self) -> float | None:
+        context = self._current_request_context()
+        value = context.get(_REQUEST_SCALE_CONTEXT_KEY) if isinstance(context, dict) else None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return float(value) if math.isfinite(value) and value > 0 else None
+
+    def _exact_prompt_tokens(self, payload: dict[str, Any]) -> int | None:
+        """The server's token count of ``payload``, or None when it has no cheap one."""
+        return self._token_counter.count(
+            self._service._client,
+            self._base_url,
+            payload,
+            llama_props=self._served_props_ok,
+        )
+
+    def count_request_tokens(
+        self, *, messages: list[Any], tools: list[dict[str, Any]]
+    ) -> int | None:
+        """The server's count of the request these router messages would send."""
+        payload = build_count_payload(model=self.model_name, messages=messages, tools=tools)
+        return None if payload is None else self._exact_prompt_tokens(payload)
+
+    def _learned_prompt_scale(self) -> float | None:
+        learned = self._prompt_scale
+        if learned is None or learned[0] != self.model_name:
+            return None
+        return learned[1]
+
+    def _remember_fit_estimate(self, estimate: int | None) -> None:
+        context = self._current_request_context()
+        if isinstance(context, dict):
+            context[_FIT_ESTIMATE_CONTEXT_KEY] = estimate
+        else:
+            self._fit_estimate = estimate
+
+    def _record_provider_usage(self, body: dict[str, Any] | None) -> None:
+        super()._record_provider_usage(body)
+        usage = body.get("usage") if isinstance(body, dict) else None
+        if isinstance(usage, dict):
+            self._record_prompt_usage(usage.get("prompt_tokens"))
+
+    def _record_prompt_usage(self, prompt_tokens: Any) -> None:
+        """Learn the server-over-estimate ratio from a finished request's usage."""
+        context = self._current_request_context()
+        if isinstance(context, dict):
+            estimate = context.pop(_FIT_ESTIMATE_CONTEXT_KEY, None)
+        else:
+            estimate, self._fit_estimate = self._fit_estimate, None
+        tokens = _positive_int(prompt_tokens)
+        if tokens is None or self.model_name is None or not self.reports_full_prompt_input_tokens:
+            return
+        if not isinstance(estimate, int) or isinstance(estimate, bool) or estimate <= 0:
+            return
+        scale = tokens / estimate
+        if math.isfinite(scale) and _MIN_PROMPT_SCALE <= scale <= _MAX_PROMPT_SCALE:
+            self._prompt_scale = (self.model_name, scale)
 
     def _build_not_reachable_message(self) -> str:
         return (

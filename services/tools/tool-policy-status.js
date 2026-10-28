@@ -39,9 +39,9 @@ function buildToolPolicyStatusFacet(permissionStore, redactor = null) {
     return {
       available: true,
       kind: 'policy',
-      version: Number(snapshot.version) || 1,
-      legacy_policy_count: Object.keys(snapshot.legacy_policies || {}).length,
-      rule_count: Array.isArray(snapshot.rules) ? snapshot.rules.length : 0,
+      version: snapshot.version,
+      legacy_policy_count: Object.keys(snapshot.legacy_policies).length,
+      rule_count: snapshot.rules.length,
       snapshot_id: buildPolicySnapshotId(snapshot),
       hooks: {
         enabled: false,

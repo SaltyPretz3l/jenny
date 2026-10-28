@@ -39,9 +39,16 @@
   const TOOL_DETAIL_REGISTRY_MAX_ENTRIES = 200;
   const TOOL_DETAIL_REGISTRY_MAX_BYTES = 8 * 1024 * 1024;
   const TOOL_DETAIL_CLAMP_LINE_FLOOR = 10;
+  const PRETTY_CACHE_MAX_ENTRIES = 200;
+  // Copy-all / Show-more text of clamped and capped sections only (a short
+  // section copies its own DOM text). Entries remember their chat session.
   const fullTextRegistry = new Map();
+  // Pretty-print memo (source -> pretty text, json flag), separate from the
+  // copy registry so short sections never enter it.
+  const prettyCache = new Map();
   const utf8Encoder = typeof TextEncoder === 'function' ? new TextEncoder() : null;
   let fullTextRegistryBytes = 0;
+  let activeRegistrySession = '';
   let defaultBuilder = null;
 
   function utf8Bytes(value) {
@@ -63,38 +70,65 @@
     return lineCount;
   }
 
-  function setBoundedEntry(registry, key, text, byteState, sourceText) {
-    const normalizedKey = String(key || '').trim();
-    if (!normalizedKey) return byteState.bytes;
-    const value = String(text == null ? '' : text);
-    const existing = registry.get(normalizedKey);
-    if (existing && existing.text === value && existing.source === sourceText) {
-      return byteState.bytes;
+  // A row's copy ids start with its DOM token, 'tool-row-' + the encoded row
+  // key, whose first part names the session (tool-call-utils buildToolRowKey).
+  function copyIdSession(copyId) {
+    const match = /^tool-row-(.+)$/.exec(copyId);
+    if (!match) return '';
+    try {
+      return /^session=([^|]*)\|/.exec(decodeURIComponent(match[1]))?.[1] || '';
+    } catch (_error) {
+      return '';
     }
-    const bytes = utf8Bytes(value);
-    if (existing) {
-      byteState.bytes -= existing.bytes;
-      registry.delete(normalizedKey);
+  }
+
+  // The entry the budget gives up first: the oldest of another session, so a
+  // long chat in one session never evicts the open session's sections.
+  function pickEvictionKey(registry) {
+    for (const [key, entry] of registry) {
+      if (entry.session !== activeRegistrySession) return key;
     }
-    if (bytes > TOOL_DETAIL_REGISTRY_MAX_BYTES) return byteState.bytes;
-    registry.set(normalizedKey, { text: value, bytes, source: sourceText });
-    byteState.bytes += bytes;
-    while (
-      registry.size > TOOL_DETAIL_REGISTRY_MAX_ENTRIES
-      || byteState.bytes > TOOL_DETAIL_REGISTRY_MAX_BYTES
-    ) {
-      const oldestKey = registry.keys().next().value;
-      const oldest = registry.get(oldestKey);
-      byteState.bytes -= oldest ? oldest.bytes : 0;
-      registry.delete(oldestKey);
+    return registry.keys().next().value;
+  }
+
+  // An evicted capped section can no longer copy or show its full text: its
+  // Copy all control leaves rather than silently copying the preview.
+  function retireEvictedControls(copyId) {
+    const doc = typeof globalThis !== 'undefined' ? globalThis.document : null;
+    if (!doc || typeof doc.querySelectorAll !== 'function') return;
+    for (const control of doc.querySelectorAll('.tool-detail-copy-all[data-inv-copy-target]')) {
+      if (control.getAttribute('data-inv-copy-target') === copyId) control.hidden = true;
     }
-    return byteState.bytes;
   }
 
   function registerFullText(copyId, text, sourceText) {
-    const state = { bytes: fullTextRegistryBytes };
-    fullTextRegistryBytes = setBoundedEntry(fullTextRegistry, copyId, text, state, sourceText);
-    return fullTextRegistry.has(String(copyId || '').trim());
+    const key = String(copyId || '').trim();
+    if (!key) return false;
+    const value = String(text == null ? '' : text);
+    const session = copyIdSession(key);
+    activeRegistrySession = session;
+    const existing = fullTextRegistry.get(key);
+    if (existing && existing.text === value && existing.source === sourceText) {
+      fullTextRegistry.delete(key);
+      fullTextRegistry.set(key, existing);
+      return true;
+    }
+    const bytes = utf8Bytes(value);
+    if (existing) {
+      fullTextRegistryBytes -= existing.bytes;
+      fullTextRegistry.delete(key);
+    }
+    if (bytes > TOOL_DETAIL_REGISTRY_MAX_BYTES) return false;
+    fullTextRegistry.set(key, { text: value, bytes, source: sourceText, session });
+    fullTextRegistryBytes += bytes;
+    while (fullTextRegistry.size > TOOL_DETAIL_REGISTRY_MAX_ENTRIES
+      || fullTextRegistryBytes > TOOL_DETAIL_REGISTRY_MAX_BYTES) {
+      const evictKey = pickEvictionKey(fullTextRegistry);
+      fullTextRegistryBytes -= fullTextRegistry.get(evictKey).bytes;
+      fullTextRegistry.delete(evictKey);
+      retireEvictedControls(evictKey);
+    }
+    return fullTextRegistry.has(key);
   }
 
   function getFullText(copyId) {
@@ -104,6 +138,16 @@
 
   if (inventoryCodeBlock && typeof inventoryCodeBlock.registerCopyTextResolver === 'function') {
     inventoryCodeBlock.registerCopyTextResolver(getFullText);
+  }
+
+  // The one DOMPurify config for a Python table (the transcript renderer
+  // shares it); a fresh object per call, since DOMPurify may annotate it.
+  function sanitizeConfig() {
+    return {
+      ALLOWED_TAGS: ['div', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'caption'],
+      ALLOWED_ATTR: ['class'],
+      ALLOW_DATA_ATTR: false,
+    };
   }
 
   function createToolDetailBody(deps) {
@@ -116,13 +160,12 @@
       : function sanitizeToolTableHtml(html) {
           const purify = typeof globalThis !== 'undefined' ? globalThis.DOMPurify : null;
           if (!purify || typeof purify.sanitize !== 'function') return '';
-          return purify.sanitize(String(html || ''), {
-            ALLOWED_TAGS: ['div', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'caption'],
-            ALLOWED_ATTR: ['class'],
-            ALLOW_DATA_ATTR: false,
-          });
+          return purify.sanitize(String(html || ''), sanitizeConfig());
         };
     const toolCallUtils = settings.toolCallUtils || {};
+    // A builder whose sections never exceed the preview cap (the subagent
+    // transcript) passes a no-op so it stays out of the chat's shared registry.
+    const register = typeof settings.registerFullText === 'function' ? settings.registerFullText : registerFullText;
     const shellRenderer = toolShellUtils && typeof toolShellUtils.createToolShellRenderer === 'function'
       ? toolShellUtils.createToolShellRenderer({
           escapeHtml,
@@ -186,13 +229,19 @@
     function prettyJson(text, copyId) {
       const raw = String(text == null ? '' : text);
       const key = String(copyId || '').trim();
-      const cached = fullTextRegistry.get(key);
-      if (cached && cached.source === raw) return { text: cached.text, json: cached.json === true };
+      const cached = prettyCache.get(key);
+      if (cached && cached.source === raw) return cached;
       const trimmed = raw.trim();
+      let result = { source: raw, text: raw, json: false };
       if ((trimmed.startsWith('{') || trimmed.startsWith('[')) && trimmed.length <= TOOL_DETAIL_PREVIEW_MAX_CHARS) {
-        try { return { text: JSON.stringify(JSON.parse(trimmed), null, 2), json: true }; } catch (_error) { /* not JSON: shown as is */ }
+        try { result = { source: raw, text: JSON.stringify(JSON.parse(trimmed), null, 2), json: true }; } catch (_error) { /* not JSON: shown as is */ }
       }
-      return { text: raw, json: false };
+      if (key) {
+        prettyCache.delete(key);
+        prettyCache.set(key, result);
+        if (prettyCache.size > PRETTY_CACHE_MAX_ENTRIES) prettyCache.delete(prettyCache.keys().next().value);
+      }
+      return result;
     }
 
     function buildShowMoreLabel(lineCount, fullCharCount, previewCharCount) {
@@ -211,12 +260,12 @@
       // A pretty section is tagged json exactly when its text parsed as JSON.
       const pretty = opts.pretty === true ? prettyJson(sourceText, copyId) : null;
       const raw = pretty ? pretty.text : sourceText;
-      const fullTextRegistered = registerFullText(copyId, raw, pretty ? sourceText : undefined);
-      if (pretty && fullTextRegistered) fullTextRegistry.get(copyId).json = pretty.json;
       const preview = raw.slice(0, TOOL_DETAIL_PREVIEW_MAX_CHARS);
       const capped = raw.length > TOOL_DETAIL_PREVIEW_MAX_CHARS;
       const fullLineCount = countLines(raw);
       const shouldClamp = capped || fullLineCount > TOOL_DETAIL_CLAMP_LINE_FLOOR;
+      // Only a clamped or capped section needs its full text off-DOM.
+      const fullTextRegistered = shouldClamp && register(copyId, raw, pretty ? sourceText : undefined);
       const moreLabel = buildShowMoreLabel(fullLineCount, raw.length, preview.length);
       const preClass = String(opts.className || 'tool-call-output');
       const languageId = String(opts.language || (pretty?.json ? 'json' : ''));
@@ -270,7 +319,7 @@
       const fullLineCount = Math.max(entries.length, 1);
       const shouldClamp = hasCappedValue || fullLineCount > TOOL_DETAIL_CLAMP_LINE_FLOOR;
       const fullText = JSON.stringify(value, null, 2);
-      const fullTextRegistered = registerFullText(copyId, fullText);
+      const fullTextRegistered = shouldClamp && register(copyId, fullText);
       const gridBody = useSharedGrid ? shellRenderer.kvGrid(value) : (rows ? `<div class="tool-kv-grid">${rows}</div>` : '');
       const grid = gridBody && shouldClamp
         ? gridBody.replace('class="tool-kv-grid"', `class="tool-kv-grid" data-detail-clamped="true"${hasCappedValue && fullTextRegistered ? ' data-detail-capped="true"' : ''}`)
@@ -282,7 +331,7 @@
         : (hasCappedValue
             ? '<div class="tool-detail-more tool-detail-limit-note">' + escapeHtml(jt('chat.toolDetail.previewOnlyLimit', 'Preview only · full payload exceeds the in-memory copy limit.')) + '</div>'
             : '');
-      return `<div class="tool-call-section inv-codeblock-wrap" data-tool-detail-section="true">${sectionCaption(label, fullTextRegistered ? copyId : '')}${grid}${footer}</div>`;
+      return `<div class="tool-call-section inv-codeblock-wrap" data-tool-detail-section="true">${sectionCaption(label, fullTextRegistered || !hasCappedValue ? copyId : '')}${grid}${footer}</div>`;
     }
 
     function parseInput(model) {
@@ -360,7 +409,9 @@
       return '';
     }
 
-    function errorBody(model) {
+    // The failure's outcome, error-code chip and retry, shared by the Error
+    // section and a Python run's own parsed error section.
+    function errorDecorations(model) {
       const outcome = toolCallUtils && typeof toolCallUtils.classifyToolResultOutcome === 'function'
         ? toolCallUtils.classifyToolResultOutcome({
             error_code: model.errorCode,
@@ -368,8 +419,6 @@
             status: model.status,
           })
         : 'failure';
-      // Prefer outputText because it contains the tool's failure text; resultSummary describes what was run.
-      const message = String(model.outputText || model.resultSummary || (outcome === 'stopped' ? jt('chat.toolDetail.toolStopped', 'Tool was stopped') : jt('chat.toolDetail.toolFailed', 'Tool failed')));
       const code = String(model.errorCode || '').trim();
       const codeChip = code && code.toLowerCase() !== 'unknown'
         && errorRecoveryUtils && typeof errorRecoveryUtils.buildErrorCodeChip === 'function'
@@ -386,13 +435,18 @@
             { callId: model.callId, messageId: model.retryMessageId, errorClass: 'tool', primary: true }
           )}</div>`
         : '';
+      return { resultOutcome: outcome, captionExtra: codeChip, trailingMarkup: retry };
+    }
+
+    function errorBody(model, decorations) {
+      const decor = decorations || errorDecorations(model);
+      // Prefer outputText because it contains the tool's failure text; resultSummary describes what was run.
+      const message = String(model.outputText || model.resultSummary || (decor.resultOutcome === 'stopped' ? jt('chat.toolDetail.toolStopped', 'Tool was stopped') : jt('chat.toolDetail.toolFailed', 'Tool failed')));
       return textSection('Error', message, {
         copyId: `${model.domToken || model.callId || 'tool'}-error`,
         className: 'tool-call-output tool-call-output-error',
         isError: true,
-        resultOutcome: outcome,
-        captionExtra: codeChip,
-        trailingMarkup: retry,
+        ...decor,
       });
     }
 
@@ -450,7 +504,9 @@
       return body;
     }
 
-    function pythonBody(model, includeGenericOutput) {
+    // `errorDecor` (a failed run): its parsed error section carries the chip and
+    // retry, and is marked consumed so the raw payload is not repeated as Error.
+    function pythonBody(model, includeGenericOutput, errorDecor) {
       let parsed;
       try { parsed = JSON.parse(String(model.outputText || '')); } catch (_error) { parsed = null; }
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -484,7 +540,9 @@
           copyId: `${domToken}-python-error`,
           className: 'tool-call-output tool-call-output-error python-output-error',
           isError: true,
+          ...(errorDecor || {}),
         }));
+        if (errorDecor) errorDecor.consumed = true;
         hasStructuredOutput = true;
       }
       if (includeGenericOutput && !hasStructuredOutput && model.outputText) {
@@ -562,10 +620,12 @@
       const scripted = toolShellUtils.isScriptedChangeTool?.(kind) === true;
       let body;
       if (model.isError) {
+        const decor = errorDecorations(model);
         const specializedErrorBody = kind === 'python_execute'
-          ? pythonBody(model, false)
+          ? pythonBody(model, false, decor)
           : (scripted ? bashBody(model) : inputSections(model));
-        body = `${specializedErrorBody}${errorBody(model)}${scripted ? changedFilesSection(model) : ''}`;
+        const { consumed, ...errorOptions } = decor;
+        body = `${specializedErrorBody}${consumed ? '' : errorBody(model, errorOptions)}${scripted ? changedFilesSection(model) : ''}`;
       } else if (kind === 'monitor' && model.metadata && model.metadata.monitor) {
         body = monitorBody(model);
       } else if (kind === 'python_execute') {
@@ -637,6 +697,7 @@
 
   return {
     TOOL_DETAIL_PREVIEW_MAX_CHARS,
+    sanitizeConfig,
     createToolDetailBody,
     buildDetailBodyMarkup,
     registerFullText,

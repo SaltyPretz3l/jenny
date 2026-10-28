@@ -13,7 +13,9 @@ def test_live_tools_redact_failures_and_never_forward_success_output():
     assert 'target' not in sent[-1]['steps'][0]
     live(events.ToolResultEvent('a', 'read_file', True, 'private successful contents', {'path': 'ok.txt'}))
     assert sent[-1]['steps'][0]['target'] == 'ok.txt'
-    assert 'private successful contents' not in str(sent)
+    # Successful output rides only in the transcript (row 67), never in the steps.
+    assert 'private successful contents' not in str([frame['steps'] for frame in sent])
+    assert sent[-1]['transcript'][0]['output'] == 'private successful contents'
     live(events.ToolExecutingEvent('b', 'read_file', {'path': '../secrets.txt'}))
     live(events.ToolResultEvent('b', 'read_file', False, 'Denied ../secrets.txt', {'path': '../secrets.txt'}))
     assert 'secrets.txt' not in str(sent)
@@ -25,7 +27,8 @@ def test_text_throttle_reset_usage_and_terminal_fence():
     clock = [0.0]
     live = SubagentLiveActivity(sent.append, clock=lambda: clock[0])
     live(events.ThinkingEvent('reason', 'private reasoning', 'reasoning'))
-    assert not sent
+    # Reasoning opens a live transcript thought; its text waits for the close.
+    assert len(sent) == 1 and 'private reasoning' not in str(sent)
     live(events.TokenDeltaEvent('First', 1))
     live(events.TokenDeltaEvent(' part', 2))
     assert len(sent) == 1

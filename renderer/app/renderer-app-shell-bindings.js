@@ -192,17 +192,47 @@
         appendClientLog('WARN', 'composer.settings_fit_mount_failed', { message: String(error?.message || error || '') });
       }
     }
-    // Row 38 item 5: a pull tick or a new recommendation repaints once per microtask.
+    // Row 38 item 5: a pull transition or a new recommendation repaints once per
+    // microtask. A running pull's byte ticks (detail.pullProgress, 4 Hz for the
+    // whole download) repaint at most once a second: the first at once, the rest
+    // in one trailing paint. Settings patches its own row per tick.
+    const MODEL_PROGRESS_REPAINT_MS = 1000;
     let modelRepaintQueued = false;
     let modelRepaintDisposed = false;
-    const onModelStateChanged = () => {
+    let progressRepaintTimer = null;
+    let progressRepaintOwed = false;
+    const queueModelRepaint = () => {
       if (modelRepaintQueued || modelRepaintDisposed) return;
       modelRepaintQueued = true;
       Promise.resolve().then(() => { modelRepaintQueued = false; if (!modelRepaintDisposed) callbacks.renderAll?.(); });
     };
+    const openProgressRepaintWindow = () => {
+      progressRepaintTimer = ctx.windowRef.setTimeout(() => {
+        progressRepaintTimer = null;
+        if (!progressRepaintOwed || modelRepaintDisposed) return;
+        progressRepaintOwed = false;
+        queueModelRepaint();
+        openProgressRepaintWindow();
+      }, MODEL_PROGRESS_REPAINT_MS);
+    };
+    const onModelStateChanged = (event) => {
+      if (modelRepaintDisposed) return;
+      if (event?.detail?.pullProgress !== true) {
+        progressRepaintOwed = false;
+        queueModelRepaint();
+        return;
+      }
+      if (progressRepaintTimer) {
+        progressRepaintOwed = true;
+        return;
+      }
+      queueModelRepaint();
+      openProgressRepaintWindow();
+    };
     ctx.windowRef.addEventListener('jenny:model-state-changed', onModelStateChanged);
     registerCleanup(() => {
       modelRepaintDisposed = true;
+      if (progressRepaintTimer) ctx.windowRef.clearTimeout(progressRepaintTimer);
       ctx.windowRef.removeEventListener('jenny:model-state-changed', onModelStateChanged);
     });
 

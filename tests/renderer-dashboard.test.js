@@ -94,6 +94,21 @@ test('dashboard registry renders registered widgets as cards in registration ord
   assert.deepEqual(log.entries, []);
 });
 
+test('dashboard registry renderOne repaints only the named placed card', () => {
+  const { documentRef, grid } = createDom();
+  const log = createLogCapture();
+  const registry = createDashboardRegistry({ documentRef, appendClientLog: log.appendClientLog });
+  const renders = { alpha: 0, beta: 0 };
+  registry.register({ id: 'alpha', title: 'Alpha', render: () => { renders.alpha += 1; } });
+  registry.register({ id: 'beta', title: 'Beta', render: () => { renders.beta += 1; } });
+
+  assert.equal(registry.renderOne(grid, 'beta', { state: {} }), false, 'not placed yet');
+  registry.renderInto(grid, { state: {} });
+  assert.equal(registry.renderOne(grid, 'beta', { state: {} }), true);
+  assert.deepEqual(renders, { alpha: 1, beta: 2 });
+  assert.equal(registry.renderOne(grid, 'missing', { state: {} }), false);
+});
+
 test('dashboard registry rejects invalid descriptors and duplicate ids', () => {
   const { documentRef } = createDom();
   const log = createLogCapture();
@@ -261,12 +276,12 @@ test('dashboard manager applies change events and repaints only while home is ac
 
   listeners.scheduler[0]({ upcoming: [], running: [{ id: 'run-1', label: 'Sweep' }], generatedAt: 'g2' });
   assert.equal(state.scheduler.running[0].label, 'Sweep');
-  assert.equal(probeRenders, 1);
+  assert.equal(probeRenders, 0, 'only the info strip reads the scheduler slice; widgets are not repainted');
 
   state.ui.activeView = 'chat';
   listeners.scheduler[0]({ upcoming: [], running: [{ id: 'run-2', label: 'Index' }], generatedAt: 'g3' });
   assert.equal(state.scheduler.running[0].label, 'Index', 'state stays fresh while home is inactive');
-  assert.equal(probeRenders, 1, 'no repaint while home is inactive');
+  assert.equal(probeRenders, 0, 'no repaint while home is inactive');
 
   manager.dispose();
   assert.equal(listeners.scheduler.length, 0);

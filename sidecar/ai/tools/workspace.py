@@ -24,6 +24,24 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _win32_rewrites_segment(path: Path) -> bool:
+    """A segment Win32 silently rewrites: trailing dot/space or an NTFS ``:`` stream.
+
+    ``Path.resolve(strict=False)`` keeps ``.jenny./trash`` as spelled while the
+    kernel creates ``.jenny/trash``, so the reserved-path guard judged a
+    different name from the one written; ``.jenny:x`` opened a stream on the
+    state directory (tool review C7 #2). The drive anchor's colon is not a
+    segment.
+    """
+    segments = path.parts[1:] if path.drive or path.root else path.parts
+    for segment in segments:
+        if segment in (".", ".."):
+            continue
+        if segment.rstrip(" .") != segment or ":" in segment:
+            return True
+    return False
+
 _WINDOWS_REPARSE_POINT_ATTRIBUTE = 0x400
 _PATH_REDACTION_PLACEHOLDERS = ("[redacted:path]", "[redacted]", "<path>")
 
@@ -292,6 +310,19 @@ class WorkspaceGuard:
             expanded_candidate = home + candidate[1:]
 
         requested = Path(expanded_candidate)
+        if (
+            os.name == "nt"
+            and _win32_rewrites_segment(requested)
+            and not _describe_redaction_placeholder(candidate)
+        ):
+            raise ToolExecutionFailure(
+                code=CMP_TOOL_INVALID_PATH,
+                message=(
+                    "path contains a segment Windows would rename (a trailing dot or "
+                    f"space, or a ':' stream): {candidate}"
+                ),
+                retryable=False,
+            )
         target = requested if requested.is_absolute() else root / requested
 
         try:

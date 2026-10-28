@@ -195,7 +195,7 @@ test('dispose leaves an index file that lists every chat with its current summar
 
   store.dispose();
   const base = readRawIndex(profile);
-  assert.equal(base.schema_version, 25);
+  assert.equal(base.schema_version, 26);
   assert.ok(base.journal_epoch >= 1);
   assert.deepEqual(Object.keys(base).sort(), ['journal_epoch', 'schema_version', 'sessions']);
   assert.deepEqual(Object.keys(base.sessions).sort(), ['chat_a', 'chat_c']);

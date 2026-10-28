@@ -76,6 +76,38 @@ def _active_skill_state() -> tuple[tuple[_SkillScopeRoot, ...], frozenset[str]]:
     return _operation_skill_state.get() or (_scope_roots, _disabled_skill_ids)
 
 
+def _scope_roots_from_config(config: Any | None) -> tuple[_SkillScopeRoot, ...]:
+    """The one reading of the ``skills_<scope>_root`` / ``_enabled`` keys.
+
+    A scope is enabled only on a literal ``True`` (a missing key defaults to
+    enabled), exactly like ``sidecar.ai.context.builder_skills.resolve_skill_scopes``:
+    a value the prompt side treats as disabled (``None``, ``"false"``, ``1``)
+    must not leave the tool able to read that scope.
+    """
+    roots: list[_SkillScopeRoot] = []
+    for scope_name in SCOPE_PRECEDENCE:
+        raw_root = config_value(config, f"skills_{scope_name}_root")
+        if not isinstance(raw_root, str) or not raw_root.strip():
+            continue
+        roots.append(
+            _SkillScopeRoot(
+                scope=scope_name,
+                root=Path(raw_root).expanduser(),
+                enabled=config_value(config, f"skills_{scope_name}_enabled", True) is True,
+            )
+        )
+    return tuple(roots)
+
+
+def _disabled_ids_from_config(config: Any | None) -> frozenset[str]:
+    raw_disabled = config_value(config, "skills_disabled_ids", ())
+    if not isinstance(raw_disabled, (list, tuple)):
+        return frozenset()
+    return frozenset(
+        item.strip() for item in raw_disabled if isinstance(item, str) and item.strip()
+    )
+
+
 @contextmanager
 def scoped_skill_tool(config: Any | None) -> Iterator[None]:
     """Bind trusted request-local skill roots without changing startup globals."""
@@ -84,22 +116,8 @@ def scoped_skill_tool(config: Any | None) -> Iterator[None]:
         roots = tuple(root for root in _scope_roots if root.scope != "project")
         disabled = _disabled_skill_ids
     else:
-        roots_list: list[_SkillScopeRoot] = []
-        for scope_name in SCOPE_PRECEDENCE:
-            raw_root = config_value(config, f"skills_{scope_name}_root")
-            if not isinstance(raw_root, str) or not raw_root.strip():
-                continue
-            roots_list.append(_SkillScopeRoot(
-                scope=scope_name,
-                root=Path(raw_root).expanduser(),
-                enabled=config_value(config, f"skills_{scope_name}_enabled", True) is True,
-            ))
-        roots = tuple(roots_list)
-        raw_disabled = config_value(config, "skills_disabled_ids", ())
-        disabled = frozenset(
-            item.strip() for item in raw_disabled
-            if isinstance(item, str) and item.strip()
-        ) if isinstance(raw_disabled, (list, tuple)) else frozenset()
+        roots = _scope_roots_from_config(config)
+        disabled = _disabled_ids_from_config(config)
     token = _operation_skill_state.set((roots, disabled))
     try:
         yield
@@ -115,26 +133,8 @@ def configure_skill_tool(config: Any | None) -> None:
     only ever read a skill the context builder actually advertised.
     """
     global _disabled_skill_ids, _scope_roots  # noqa: PLW0603
-    roots: list[_SkillScopeRoot] = []
-    for scope_name in SCOPE_PRECEDENCE:
-        raw_root = config_value(config, f"skills_{scope_name}_root")
-        if not isinstance(raw_root, str) or not raw_root.strip():
-            continue
-        raw_enabled = config_value(config, f"skills_{scope_name}_enabled", True)
-        roots.append(
-            _SkillScopeRoot(
-                scope=scope_name,
-                root=Path(raw_root).expanduser(),
-                enabled=raw_enabled is not False,
-            )
-        )
-    _scope_roots = tuple(roots)
-    raw_disabled_ids = config_value(config, "skills_disabled_ids", ())
-    _disabled_skill_ids = frozenset(
-        item.strip()
-        for item in raw_disabled_ids
-        if isinstance(item, str) and item.strip()
-    ) if isinstance(raw_disabled_ids, (list, tuple)) else frozenset()
+    _scope_roots = _scope_roots_from_config(config)
+    _disabled_skill_ids = _disabled_ids_from_config(config)
 
 
 def _reset_skill_tool_state() -> None:

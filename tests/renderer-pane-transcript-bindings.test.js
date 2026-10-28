@@ -19,6 +19,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { loadRendererApp, waitForUi } = require('./helpers/renderer-shell-harness');
+const { withExactApproval } = require('./helpers/exact-approval-fixtures');
 
 function buildSummary(id, title) {
   return {
@@ -159,8 +160,14 @@ test('an inline approval in pane 1 resolves pane 1\'s approval', async (t) => {
   const shell = window.jennyShell;
   await sendFromPaneOne(window, pane1, 'write a file');
   await shell.__emitChat({ type: 'started', sessionId: 'session-b', streamId: 'stream-b' });
-  await shell.__emitChat({ type: 'tool_approval_needed', sessionId: 'session-b', streamId: 'stream-b',
-    callId: 'call-write-b', approvalId: 'approval-b', toolName: 'write_file', input: { path: 'b.txt', content: 'x' } });
+  const approvalNeeded = { type: 'tool_approval_needed', sessionId: 'session-b', streamId: 'stream-b',
+    callId: 'call-write-b', approvalId: 'approval-b', toolName: 'write_file', input: { path: 'b.txt', content: 'x' } };
+  // Without the backend's exact presentation (a rehydrated approval's shape) pane 1 offers no Allow.
+  await shell.__emitChat(approvalNeeded);
+  await waitForUi(window, 80);
+  assert.equal(pane1.dom.chatTimeline.querySelector('.tool-approve-btn'), null, 'no Allow without the exact presentation');
+  assert.ok(pane1.dom.chatTimeline.querySelector('[data-approval-exact-unavailable="missing"]'));
+  await shell.__emitChat(withExactApproval(approvalNeeded));
   await waitForUi(window, 80);
   assert.equal(doc.getElementById('chatTimeline').querySelector('.tool-approve-btn'), null, 'pane 0 shows no approval card');
   const allow = pane1.dom.chatTimeline.querySelector('.tool-approve-btn:not(.tool-approve-always-btn)');
@@ -201,7 +208,6 @@ test('after both panes mount, New chat, Home and the window keydown keep exactly
   // One window keydown is pane 1's scroll coordinator (W1: it marks scroll-key
   // intent for its own thread); the zoom-reset keydown stays pane 0's.
   assert.equal(on(window, 'keydown'), 1, 'pane 1 added no zoom-reset window keydown');
-  assert.equal(on(doc.getElementById('composerCommandPopover'), 'click'), 0, 'pane 1 left the command popover to pane 0');
   assert.ok(tracker.entries.some((entry) => entry.type === 'click' && entry.target.closest?.('.chat-pane[data-pane-id="1"]')), 'pane 1 did bind its own timeline');
 
   const creates = [];

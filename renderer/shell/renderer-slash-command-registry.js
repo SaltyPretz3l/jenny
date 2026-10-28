@@ -349,12 +349,18 @@
     // Row 59 checkpoint 5a: the user's explicit request for a separate, linked chat.
     registry.register('/linked', jt('composer.slash.linkedDescription', 'Start a separate chat linked to this one'),
       config.linkedHandler || unavailable, { action: 'insert' });
+    // Row 60 W4: Jenny drafts a handoff note, the user edits it, a linked chat starts from it.
+    registry.register('/handoff', jt('composer.slash.handoffDescription', 'Continue in a new chat with a handoff note'),
+      config.handoffHandler || unavailable);
     // Memory v2 (row 58 W1): explicit user memory commands; the project comes from the chat.
     registry.register('/remember', jt('composer.slash.rememberDescription', 'Ask Jenny to remember something'),
       config.rememberHandler || unavailable, { action: 'insert' });
     registry.register('/forget', jt('composer.slash.forgetDescription', 'Forget a memory by id or by its words'),
       config.forgetHandler || unavailable, { action: 'insert' });
     registry.register('/memory', jt('composer.slash.memoryDescription', 'List what Jenny remembers here'), config.memoryHandler || unavailable);
+    // Row 76: the Jenny chat's Activity dialog (primary chat only; the handler refuses other chats).
+    registry.register('/activity', jt('composer.slash.activityDescription', 'What the Jenny chat did and may do'),
+      config.activityHandler || unavailable, { requiresSession: true });
     return true;
   }
 

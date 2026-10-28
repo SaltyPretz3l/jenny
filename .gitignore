@@ -101,6 +101,7 @@ archive/
 !docs/archive/
 docs/archive/*
 !docs/archive/HARDENING_HISTORY.md
+!docs/archive/manifest-*-pre-compaction-2026-10-17.md
 !docs/archive/JENNY_UNINSTALL_AND_DATA_PORTABILITY.md
 !docs/archive/PLUGIN_STAGE7_SANDBOXED_UI_AND_PROVIDER_RETROFIT.md
 !docs/archive/PLUGIN_STAGE8_PRIVILEGED_ADAPTERS.md

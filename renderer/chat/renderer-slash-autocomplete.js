@@ -1,4 +1,4 @@
-/* Shared, completion-only slash menu for the composer and Commands button (UMD). */
+/* Shared, completion-only slash menu for the composer and its + menu (UMD). */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(require('../inventory/text-field'), require('../shell/renderer-command-palette').scoreMatch);
@@ -10,6 +10,9 @@
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const TRIGGER_RE = /^\/([a-z0-9_-]*)$/i;
+  // Row 63: the composer's + menu asks for this menu by dispatching this on the input
+  // ({ anchor, kind: 'commands' | 'skills' }); a handled request is cancelled.
+  const SLASH_MENU_EVENT = 'jenny:open-slash-menu';
   let nextId = 0;
 
   function searchCommands(entries, query) {
@@ -42,7 +45,8 @@
     const registry = options.registry;
     const state = options.state;
     const id = 'composer-slash-menu-' + (++nextId);
-    let input, button, popover, search, results, timer, unsubscribe;
+    let input, anchor, popover, search, results, timer, unsubscribe;
+    let kind = '';
     let rows = [];
     let selectedIndex = 0;
     let mode = '';
@@ -58,7 +62,8 @@
       const sessionId = typeof options.getSessionId === 'function' ? options.getSessionId() : state?.currentSessionId;
       return JSON.stringify([sessionId, state?.ui?.activeView]);
     }
-    function owner() { return mode === 'button' ? search : input; }
+    // 'inline' follows a typed /; 'search' is the searchable menu the + menu opens.
+    function owner() { return mode === 'search' ? search : input; }
     function remember(el, names) {
       if (el) savedAttributes.set(el, names.map((name) => [name, el.getAttribute(name)]));
     }
@@ -79,12 +84,14 @@
         el?.setAttribute('aria-expanded', 'false');
         el?.removeAttribute('aria-activedescendant');
       }
-      button?.setAttribute('aria-expanded', 'false');
-      if (restoreFocus) (previous === 'button' ? button : input)?.focus();
+      const opener = anchor;
+      anchor = null;
+      kind = '';
+      if (restoreFocus) (previous === 'search' ? opener : input)?.focus();
     }
     function position() {
       if (!mode || !popover) return;
-      const rect = (mode === 'button' ? button : input).getBoundingClientRect();
+      const rect = (mode === 'search' ? anchor : input).getBoundingClientRect();
       const width = Math.min(Math.max(320, input.getBoundingClientRect().width), Math.max(0, win.innerWidth - 16));
       popover.style.position = 'fixed';
       popover.style.width = width + 'px';
@@ -166,11 +173,12 @@
       if (disposed || completing || event?.isComposing) return;
       if (mode && context !== contextKey()) return hide();
       const match = detectTrigger();
-      if (mode !== 'button' && !match) return hide();
+      if (mode !== 'search' && !match) return hide();
       if (!mode) { mode = 'inline'; context = contextKey(); }
       ensurePopover();
-      const query = mode === 'button' ? search.value : match[1];
-      const nextRows = searchCommands(registry.listCommands(), query);
+      const query = mode === 'search' ? search.value : match[1];
+      const catalog = registry.listCommands();
+      const nextRows = searchCommands(kind === 'skills' ? catalog.filter((entry) => entry.skill) : catalog, query);
       const nextFingerprint = JSON.stringify([query, nextRows]);
       if (fingerprint !== nextFingerprint) {
         rows = nextRows;
@@ -178,7 +186,7 @@
         fingerprint = nextFingerprint;
         render();
       }
-      search.hidden = mode !== 'button';
+      search.hidden = mode !== 'search';
       popover.classList.remove('hidden');
       owner().setAttribute('aria-expanded', 'true');
       position();
@@ -190,18 +198,26 @@
       timer = null;
       if (mode) refresh();
     }
-    function openButton() {
-      if (disposed || !button) return;
-      if (mode === 'button') return hide(true);
+    // The searchable menu under `request.anchor` (the + button), optionally skills only.
+    function openSearch(request) {
+      if (disposed || !request?.anchor) return;
       hide();
       ensurePopover();
-      mode = 'button';
+      mode = 'search';
       context = contextKey();
+      anchor = request.anchor;
+      kind = request.kind === 'skills' ? 'skills' : '';
       search.value = '';
+      search.placeholder = kind === 'skills' ? jt('composer.slash.searchSkills', 'Search skills…')
+        : jt("slashAutocomplete.searchCommandsAndSkills2", "Search commands and skills…");
       fingerprint = '';
-      button.setAttribute('aria-expanded', 'true');
       refresh();
       search.focus();
+    }
+    function openRequested(event) {
+      if (disposed || !registry) return;
+      event.preventDefault();
+      openSearch({ anchor: event.detail?.anchor || input, kind: event.detail?.kind });
     }
     function accept(index) {
       if (context !== contextKey()) return hide();
@@ -241,18 +257,11 @@
       const row = event.target.closest('[data-slash-index]');
       if (row) { event.preventDefault(); accept(Number(row.dataset.slashIndex)); }
     }
-    function clickButton(event) {
-      // Claim this entry point before the fallback legacy popover listeners.
-      if (!button || !button.contains(event.target)) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      openButton();
-    }
     function outside(event) {
-      if (mode && event.target !== owner() && !popover?.contains(event.target) && !button?.contains(event.target)) hide();
+      if (mode && event.target !== owner() && !popover?.contains(event.target)) hide();
     }
     function focusChanged(event) {
-      if (mode && event.target !== owner() && !popover?.contains(event.target) && event.target !== button) hide();
+      if (mode && event.target !== owner() && !popover?.contains(event.target) && event.target !== anchor) hide();
     }
     function caretChanged() { if (mode === 'inline') refresh(); }
     function attach() {
@@ -260,19 +269,13 @@
       input = options.getInput?.() || doc.getElementById('chatInput');
       if (!input) return dispose;
       attached = true;
-      // The Commands button is pane 0's document chrome; a second pane's menu passes getButton: () => null.
-      button = typeof options.getButton === 'function' ? options.getButton() : doc.getElementById('composerTerminalShortcut');
       remember(input, ['role', 'aria-autocomplete', 'aria-controls', 'aria-expanded', 'aria-activedescendant']);
-      remember(button, ['aria-haspopup', 'aria-controls', 'aria-expanded', 'data-slash-menu-owned']);
-      button?.setAttribute('data-slash-menu-owned', 'true');
       combobox(input);
-      button?.setAttribute('aria-haspopup', 'listbox');
-      button?.setAttribute('aria-controls', id);
       input.addEventListener('input', refresh);
+      input.addEventListener(SLASH_MENU_EVENT, openRequested);
       input.addEventListener('click', caretChanged);
       input.addEventListener('keyup', caretChanged);
       doc.addEventListener('keydown', handleKeydown, true);
-      doc.addEventListener('click', clickButton, true);
       doc.addEventListener('pointerdown', outside, true);
       doc.addEventListener('focusin', focusChanged);
       win.addEventListener('resize', position);
@@ -285,10 +288,10 @@
       disposed = true;
       unsubscribe?.();
       input?.removeEventListener('input', refresh);
+      input?.removeEventListener(SLASH_MENU_EVENT, openRequested);
       input?.removeEventListener('click', caretChanged);
       input?.removeEventListener('keyup', caretChanged);
       doc?.removeEventListener('keydown', handleKeydown, true);
-      doc?.removeEventListener('click', clickButton, true);
       doc?.removeEventListener('pointerdown', outside, true);
       doc?.removeEventListener('focusin', focusChanged);
       win?.removeEventListener('resize', position);
@@ -302,7 +305,7 @@
       savedAttributes.clear();
       attached = false;
     }
-    return { attach, dispose, isOpen: () => Boolean(mode), refresh, openButton, hide };
+    return { attach, dispose, isOpen: () => Boolean(mode), refresh, openSearch, hide };
   }
-  return { TRIGGER_RE, searchCommands, completeCommand, createSlashAutocomplete };
+  return { TRIGGER_RE, SLASH_MENU_EVENT, searchCommands, completeCommand, createSlashAutocomplete };
 });

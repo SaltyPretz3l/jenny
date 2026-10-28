@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pymupdf as fitz
 import pytest
 
 from sidecar.ai.tools.builtins import pdf_ocr_rapid
@@ -24,8 +25,6 @@ from sidecar.ai.tools.builtins.pdf_ocr_rapid import (
     word_tuples,
 )
 from sidecar.ai.tools.builtins.pdf_text import PdfTextLine, reconstruct_page_lines
-
-fitz = pytest.importorskip("pymupdf")
 
 
 class _Page:

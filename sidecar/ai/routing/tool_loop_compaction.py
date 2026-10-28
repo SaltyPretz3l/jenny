@@ -11,7 +11,11 @@ from sidecar.ai.config import resolve_effective_max_tokens
 from sidecar.ai.context.compaction import MICRO_FIRST_CODE, compact_context, compaction_policy
 from sidecar.ai.context.compaction_diagnostics import compaction_window_shape
 from sidecar.ai.context.compaction_prompts import resolve_compaction_prompt
-from sidecar.ai.context.token_budget import estimate_messages_tokens
+from sidecar.ai.context.token_budget import (
+    estimate_messages_tokens,
+    estimate_tool_schema_tokens,
+    resolve_tokenizer_backend,
+)
 from sidecar.ai.feature_flags import (
     FEATURE_CONTEXT_COMPACTION,
     is_feature_flag_enabled,
@@ -30,14 +34,63 @@ class RequestMeasurement:
     provider_tokens: int
     messages: tuple[Any, ...]
     estimate: int
+    # The same messages counted with the inner (unscaled) estimator, so the
+    # calibration reading stays exact while the window only grows (0: not taken).
+    inner_estimate: int = 0
 
 
-def note_request_measurement(loop: Any, usage: Any) -> None:
+def _calibration_backend(
+    loop: Any, tracker: Any, tool_payload: Any, usage: Any = None
+) -> Any | None:
+    """The inner (unscaled) estimator to calibrate against, or None to skip.
+
+    The next turn's count ladder divides the provider's count by the inner
+    estimate of the request's messages plus tool schemas
+    (``context_count._exact_scale``). Only an engine whose input count is the
+    whole prompt can calibrate (Ollama counts the uncached tail). A request
+    carrying an image (attached or a tool preview) is skipped: its tiles are a
+    separate unscaled surcharge. So is a reply from a fallback model, whose
+    count says nothing about the configured one.
+    """
+    engine = getattr(getattr(loop, "kernel", None), "_engine", None)
+    full_prompt = getattr(engine, "reports_full_prompt_input_tokens", False) is True
+    if tool_payload is None or not full_prompt:
+        return None
+    context = getattr(loop, "request_context", None)
+    if getattr(context, "vision_images", None) or getattr(context, "vision_token_surcharge", 0):
+        return None
+    if getattr(getattr(loop, "runtime", None), "preview_images", None):
+        return None
+    usage_model = str(getattr(usage, "model", "") or "")
+    engine_model = str(getattr(engine, "model_name", "") or "")
+    if usage_model and engine_model and usage_model != engine_model:
+        return None
+    backend = getattr(tracker, "backend", None)
+    if backend is None:
+        backend = resolve_tokenizer_backend(loop.kernel._config)
+    return getattr(backend, "inner", backend)
+
+
+def _inner_messages_estimate(loop: Any, inner: Any) -> int:
+    """The window counted with the inner estimator, re-tokenizing only the rows
+    appended since the last measurement (a per-message sum, like the estimate)."""
+    previous = _appended_since_measurement(loop)
+    if previous is None or previous.inner_estimate <= 0:
+        return estimate_messages_tokens(loop.working_messages, inner)
+    tail = loop.working_messages[len(previous.messages):]
+    return previous.inner_estimate + estimate_messages_tokens(tail, inner)
+
+
+def note_request_measurement(loop: Any, usage: Any, tool_payload: Any = None) -> None:
     """Remember the provider's prompt count for the request just made.
 
     The char estimator carries 30% headroom, which compacted a 32k llama-server
     window at ~11k estimated tokens (gate 2026-10-14 F16); the provider's own
     count needs none. Cleared when the engine reports no count.
+
+    ``tool_payload`` is the request's tool schemas. With it the tracker also keeps
+    ``calibration_reading``, the provider-vs-estimate pair the terminal usage block
+    carries to the next turn (the last request wins; ``None`` when unusable).
     """
     tracker = getattr(loop, "budget_tracker", None)
     try:
@@ -46,28 +99,66 @@ def note_request_measurement(loop: Any, usage: Any) -> None:
         provider_tokens = 0
     if tracker is None or provider_tokens <= 0:
         loop.request_measurement = None
+        if tracker is not None:
+            tracker.calibration_reading = None
         return
+    estimate = _estimate_window(loop, getattr(tracker, "backend", None))
+    inner = _calibration_backend(loop, tracker, tool_payload, usage)
+    inner_messages = _inner_messages_estimate(loop, inner) if inner is not None else 0
+    tracker.calibration_reading = None
+    if inner is not None:
+        inner_total = inner_messages + estimate_tool_schema_tokens(tool_payload, inner)
+        if inner_total > 0:
+            config = loop.kernel._config
+            tracker.calibration_reading = {
+                "provider_tokens": provider_tokens,
+                "estimate_tokens": inner_total,
+                "estimator": type(inner).__name__,
+                "engine": str(getattr(config, "engine_type", "")),
+                "model": str(getattr(config, "model", "")),
+            }
     loop.request_measurement = RequestMeasurement(
         provider_tokens=provider_tokens,
         messages=tuple(loop.working_messages),
-        estimate=estimate_messages_tokens(loop.working_messages, getattr(tracker, "backend", None)),
+        estimate=estimate,
+        inner_estimate=inner_messages,
     )
+
+
+def _appended_since_measurement(loop: Any) -> RequestMeasurement | None:
+    """The last measurement when the window only grew since, else None.
+
+    Only an append-only history keeps a measurement meaningful: any rewrite
+    (compaction, a re-pinned row, trimming) falls back to a full estimate.
+    """
+    measurement = getattr(loop, "request_measurement", None)
+    if not isinstance(measurement, RequestMeasurement):
+        return None
+    sent = measurement.messages
+    current = loop.working_messages
+    if len(current) < len(sent) or any(a is not b for a, b in zip(sent, current, strict=False)):
+        return None
+    return measurement
+
+
+def _estimate_window(loop: Any, backend: Any) -> int:
+    """Estimate the window, re-tokenizing only rows appended since the last
+    measurement (the estimate is a per-message sum, so the prefix carries)."""
+    measurement = _appended_since_measurement(loop)
+    if measurement is None:
+        return estimate_messages_tokens(loop.working_messages, backend)
+    tail = loop.working_messages[len(measurement.messages):]
+    return measurement.estimate + estimate_messages_tokens(tail, backend)
 
 
 def _measured_context(loop: Any, tokens_now: int, num_tools: int) -> tuple[int, int] | None:
     """(whole-prompt tokens now, whole-prompt compaction threshold) from the
     provider's count, or None when it cannot be trusted for this history."""
-    measurement = getattr(loop, "request_measurement", None)
     tracker = loop.budget_tracker
     budget = getattr(tracker, "budget", None)
     raw_window = int(getattr(tracker, "raw_context_window", 0) or 0)
-    if not isinstance(measurement, RequestMeasurement) or budget is None or raw_window <= 0:
-        return None
-    sent = measurement.messages
-    current = loop.working_messages
-    # Only an append-only history keeps the count meaningful: any rewrite
-    # (compaction, a re-pinned row, trimming) falls back to the estimate.
-    if len(current) < len(sent) or any(a is not b for a, b in zip(sent, current, strict=False)):
+    measurement = _appended_since_measurement(loop)
+    if measurement is None or budget is None or raw_window <= 0:
         return None
     total = measurement.provider_tokens + max(0, int(tokens_now) - measurement.estimate)
     threshold = replace(budget, context_window=raw_window).meter_compact_threshold(num_tools)
@@ -87,7 +178,10 @@ def compact_tool_loop_context(
     backend = getattr(tracker, "backend", None)
     if budget is not None and preview_tokens:
         budget = budget.with_reserved_tokens(preview_tokens)
-    tokens_before = estimate_messages_tokens(loop.working_messages, backend)
+    tokens_before = _estimate_window(loop, backend)
+    # The meter's message estimate, the way context.preview counts it: never the
+    # provider-measured rescale below, which only steers the compaction decision.
+    loop.meter_estimate_tokens = tokens_before
     if budget is None or not is_feature_flag_enabled(
         loop.feature_flags,
         FEATURE_CONTEXT_COMPACTION,
@@ -245,7 +339,8 @@ def compact_tool_loop_context(
             window_shape=compaction_window_shape(loop.working_messages),
         )
     )
-    return max(0, int(result.tokens_after)) + int(held_tokens)
+    loop.meter_estimate_tokens = max(0, int(result.tokens_after)) + int(held_tokens)
+    return loop.meter_estimate_tokens
 
 
 def _apply_context_pressure(  # noqa: PLR0913

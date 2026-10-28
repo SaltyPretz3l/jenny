@@ -129,16 +129,6 @@
     };
   }
 
-  function resolveTimers(injected) {
-    const g = typeof globalThis !== 'undefined' ? globalThis : {};
-    const t = injected || {};
-    const win = g.window || g;
-    return {
-      setTimeout: typeof t.setTimeout === 'function' ? t.setTimeout : (fn, ms) => win.setTimeout(fn, ms),
-      clearTimeout: typeof t.clearTimeout === 'function' ? t.clearTimeout : (id) => win.clearTimeout(id),
-    };
-  }
-
   function createMapLod(deps) {
     const d = deps || {};
     const transform = d.transform || null;
@@ -146,7 +136,7 @@
     const viewportEl = d.viewportEl || null;
     const onLodChange = typeof d.onLodChange === 'function' ? d.onLodChange : () => {};
     const debounceMs = Number.isFinite(d.debounceMs) ? d.debounceMs : DEBOUNCE_MS;
-    const timers = resolveTimers(d.timers);
+    const timers = d.timers || globalThis;
 
     let disposed = false;
     let unsubscribe = null;

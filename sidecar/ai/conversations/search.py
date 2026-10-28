@@ -115,10 +115,13 @@ def _cosine(
         return []
     numpy = _load_numpy()
     if numpy is not None:
+        # The stored float32 matrix is multiplied as is: widening it to float64 first doubled
+        # the peak memory of a 20k-row (all-projects) scan. Only the dot products widen.
         matrix = numpy.frombuffer(b"".join(row[1] for row in usable), dtype=numpy.float32)
-        matrix = matrix.reshape(len(usable), len(packed)).astype(numpy.float64)
+        matrix = matrix.reshape(len(usable), len(packed))
+        dots = (matrix @ numpy.asarray(packed, dtype=numpy.float32)).astype(numpy.float64)
         norms = numpy.asarray([row[2] for row in usable], dtype=numpy.float64)
-        scores = (matrix @ numpy.asarray(packed, dtype=numpy.float64)) / (norms * query_norm)
+        scores = dots / (norms * query_norm)
         pairs = zip(scores.tolist(), (row[0] for row in usable), strict=True)
         return [(float(score), rowid) for score, rowid in pairs if math.isfinite(score)]
     results: list[tuple[float, int]] = []
@@ -132,7 +135,7 @@ def _cosine(
     return results
 
 
-def _lexical(store: ConversationStore, query: str, project_id: str,
+def _lexical(store: ConversationStore, query: str, project_id: str | None,
              exclude: Sequence[str]) -> list[tuple[MessageRow, str, float]]:
     tokens = query_tokens(query)
     if not tokens:
@@ -151,7 +154,7 @@ def _lexical_hits(lexical: list[tuple[MessageRow, str, float]], limit: int) -> l
 
 
 def _vector(store: ConversationStore, query_vector: list[float], model_key: str,
-            project_id: str, exclude: Sequence[str]) -> list[int]:
+            project_id: str | None, exclude: Sequence[str]) -> list[int]:
     rows = store.vector_rows(model_key, len(query_vector), project_id, exclude,
                              cap=MAX_SIMILARITY_SCAN_ROWS)
     ranked = sorted(
@@ -165,12 +168,15 @@ def search_conversations(  # noqa: PLR0913 - the RPC's explicit keyword surface.
     store: ConversationStore,
     *,
     query: str,
-    project_id: str,
+    project_id: str | None,
     exclude_session_ids: Sequence[str],
     limit: int,
     embedder: Embedder | None,
 ) -> dict[str, Any]:
-    """Scoped hits, at most ``MAX_HITS_PER_SESSION`` per session and ``limit`` in all."""
+    """Scoped hits, at most ``MAX_HITS_PER_SESSION`` per session and ``limit`` in all.
+
+    ``project_id=None`` searches every project (the primary chat's scope).
+    """
     exclude = list(dict.fromkeys(exclude_session_ids))
     query_vector: list[float] | None = None
     reason: str | None = None
@@ -198,7 +204,7 @@ def _hybrid(  # noqa: PLR0913 - the search's scope, passed through.
     lexical: list[tuple[MessageRow, str, float]],
     query_vector: list[float],
     model_key: str,
-    project_id: str,
+    project_id: str | None,
     exclude: Sequence[str],
     limit: int,
 ) -> dict[str, Any]:

@@ -73,7 +73,7 @@
 }
 .send-outbox .send-outbox__action:disabled { cursor: default; opacity: 0.55; }
 .send-outbox .send-outbox__action--cancel { font-size: var(--font-size-title); padding: 0; }
-.send-outbox .send-outbox__action--cancel:hover:not(:disabled) { color: var(--status-error, #ff8a8a); }
+.send-outbox .send-outbox__action--cancel:hover:not(:disabled) { color: var(--state-danger); }
 .send-outbox__input {
   display: block;
   width: 100%;
@@ -97,7 +97,7 @@
 .send-outbox__status { color: var(--text-secondary); font-size: var(--font-size-caption); padding: 0 8px 4px; }
 .send-outbox__row--failed .send-outbox__status,
 .send-outbox__row--needs_review .send-outbox__status,
-.send-outbox-badge.send-outbox-badge--failed { color: var(--status-error, #ff8a8a); }
+.send-outbox-badge.send-outbox-badge--failed { color: var(--state-danger); }
 .send-outbox-badge { margin-inline-start: 6px; color: var(--text-secondary); font-size: var(--font-size-caption); }
 /* No entrance/height animation: queue changes must not animate the timeline viewport. */
 
@@ -176,8 +176,50 @@
   outline-offset: -2px;
 }
 .runtime-queue .runtime-queue__action:disabled { cursor: default; opacity: 0.55; }
-.runtime-queue .runtime-queue__action--withdraw:hover:not(:disabled) { color: var(--status-error, #ff8a8a); }
+.runtime-queue .runtime-queue__action--withdraw:hover:not(:disabled) { color: var(--state-danger); }
 .runtime-queue .runtime-queue__action--resume,
 .runtime-queue .runtime-queue__action--restart,
 .runtime-queue .runtime-queue__action--open { color: var(--text-primary); }
 /* No entrance/height animation: queue changes must not animate the timeline viewport. */
+
+/* Option C (2026-10-20): a queued send stays where it was typed, its bubble
+   greyed until it starts, with one quiet line of state and actions under it. */
+.chat-entry[data-queued-send] .chat-bubble {
+  color: var(--text-muted);
+  background: transparent;
+  box-shadow: none;
+  border: 1px dashed var(--border-default);
+}
+.chat-entry[data-queued-send] .chat-hover-row { display: none; }
+.queued-send-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px 4px;
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+}
+.queued-send-meta__label { padding-inline-end: 4px; }
+.chat-entry[data-queued-send="stuck"] .queued-send-meta__label,
+.chat-entry[data-queued-send="paused"] .queued-send-meta__label { color: var(--status-warning, #ffd08a); }
+.queued-send-meta .queued-send-meta__action {
+  min-height: 28px;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.queued-send-meta .queued-send-meta__action:hover:not(:disabled) {
+  background: var(--surface-hover, rgba(255, 255, 255, 0.05));
+  color: var(--text-primary);
+}
+.queued-send-meta .queued-send-meta__action:focus-visible {
+  outline: 2px solid var(--accent-primary, #a9baff);
+  outline-offset: -2px;
+}
+.queued-send-meta .queued-send-meta__action:disabled { cursor: default; opacity: 0.55; }

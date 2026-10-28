@@ -35,36 +35,27 @@
     && typeof historyStripModule.renderTestRunnerHistoryStrip === 'function'
     ? historyStripModule.renderTestRunnerHistoryStrip
     : null;
-  const gateUtils = gateUtilsModule && typeof gateUtilsModule.deriveGateVerdict === 'function'
-    ? gateUtilsModule
-    : null;
+  // A fixed in-repo module loaded before this one (script manifest order).
+  const gateUtils = gateUtilsModule;
+  const { recordsFor: historyFor, lastRecord } = gateUtils;
 
+  // 'skipped': a Jenny run that never started because the user's own run held the lock.
   const STATUS_LABELS = {
-    passed: 'Passed',
-    failed: 'Failed',
-    error: 'Error',
-    aborted: 'Aborted',
-    timeout: jt('ide.testRunner.timedOut', 'Timed out'),
-    interrupted: 'Interrupted',
-    running: 'Running',
-    // A Jenny run that never started because the user's own run held the lock.
-    skipped: 'Skipped',
+    ...gateUtils.VERDICT_LABELS,
     none: jt('ide.testRunner.neverRun', 'Never run'),
   };
+  // Main could not confirm a stopped run's process tree died (it still holds
+  // the run): its own state, never collapsed into idle or plain running.
+  const STOP_UNCONFIRMED_LABEL = jt('ide.runScripts.statusStopUnconfirmed', 'stop unconfirmed');
 
   // List/header controls whose data attribute names the equivalent control across a re-render.
   const FOCUS_ATTRS = ['run', 'abort', 'remove', 'show-output', 'gate-config', 'gate-mode'].map((name) => `data-test-runner-${name}`);
 
   const defaultEscapeHtml = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
 
-  function historyFor(state, configId) {
-    const byConfig = state && state.history && state.history.byConfig;
-    return byConfig && Array.isArray(byConfig[configId]) ? byConfig[configId] : [];
-  }
-
-  function lastRecord(state, configId) {
-    const records = historyFor(state, configId);
-    return records.length ? records[records.length - 1] : null;
+  function isStopUnconfirmed(state, configId) {
+    const last = lastRecord(state, configId);
+    return Boolean(last) && last.terminationConfirmed === false;
   }
 
   function lastStatus(state, configId) {
@@ -165,7 +156,6 @@
 
     // "by Jenny · 2m ago" beside the status pill. Empty when nothing has run.
     function buildAttribution(state, id) {
-      if (!gateUtils) return '';
       const attribution = gateUtils.attributionFor(lastRecord(state, id), now());
       if (!attribution.text) return '';
       return `<span class="ide-test-runner-panel__by" data-initiator="${escapeHtml(attribution.initiator)}">${escapeHtml(attribution.text)}</span>`;
@@ -176,7 +166,8 @@
       const activeRun = state.activeRun || null;
       const isRunning = Boolean(activeRun) && String(state.activeConfigId || '') === id;
       const runDisabled = Boolean(activeRun);
-      const status = isRunning ? 'running' : lastStatus(state, id);
+      const unconfirmed = isStopUnconfirmed(state, id);
+      const status = isRunning && !unconfirmed ? 'running' : lastStatus(state, id);
       // The gate is marked with a filled dot before the label -- never a
       // left-border bar (design law).
       const gateDot = config.gate === true
@@ -185,6 +176,7 @@
       return `<div class="ide-test-runner-panel__row" data-config-id="${escapeHtml(id)}"${config.gate === true ? ' data-gate="1"' : ''}>`
         + `<span class="ide-test-runner-panel__label">${gateDot}${escapeHtml(config.label || id)}</span>`
         + `<span class="ide-test-runner-panel__status" data-status="${escapeHtml(status)}">${escapeHtml(STATUS_LABELS[status] || status)}</span>`
+        + (unconfirmed ? `<span class="ide-test-runner-panel__status" data-status="unconfirmed">${escapeHtml(STOP_UNCONFIRMED_LABEL)}</span>` : '')
         + buildAttribution(state, id)
         + `<span class="ide-test-runner-panel__cmd">${escapeHtml(config.command || '')}</span>`
         + '<span class="ide-test-runner-panel__row-actions">'
@@ -236,7 +228,6 @@
     }
 
     function buildGateHeader(state, configs) {
-      if (!gateUtils) return '';
       return gateUtils.buildGateHeaderMarkup({ configs, state, selectField, escapeHtml });
     }
 
@@ -255,7 +246,7 @@
           (getRunOutput(c && c.id) || {}).runId || '',
           historyFor(state, c && c.id).slice(-30).map((run) => run && [
             run.status, run.durationMs, run.startedAt, run.passedCount, run.failedCount,
-            run.initiator, run.gateAttempt, run.skipReason,
+            run.initiator, run.gateAttempt, run.skipReason, run.terminationConfirmed,
           ]),
         ]),
         state.activeRun || null,
@@ -285,6 +276,7 @@
       const activeConfigId = String(state.activeConfigId || '');
       const config = configs.find((c) => c && c.id === activeConfigId) || null;
       const label = config ? (config.label || config.id) : (activeConfigId || jt('ide.testRunner.removedConfiguration', 'a removed configuration'));
+      const unconfirmed = isStopUnconfirmed(state, activeConfigId);
       const stopBtn = buildActionButton({
         variant: 'danger',
         className: 'ide-test-runner-panel__active-run-stop',
@@ -292,8 +284,9 @@
         ariaLabel: jt('ide.testRunner.stopConfig', 'Stop {label}', { label }),
         dataset: { 'test-runner-abort': activeConfigId || 'active' },
       });
-      return '<div class="ide-test-runner-panel__active-run" role="status">'
+      return `<div class="ide-test-runner-panel__active-run${unconfirmed ? ' ide-test-runner-panel__active-run--unconfirmed' : ''}" role="status">`
         + `<span class="ide-test-runner-panel__active-run-label">${escapeHtml(jt('ide.testRunner.runningLabel', 'Running: {label}', { label }))}</span>`
+        + (unconfirmed ? `<span class="ide-test-runner-panel__status" data-status="unconfirmed">${escapeHtml(STOP_UNCONFIRMED_LABEL)}</span>` : '')
         + stopBtn
         + '</div>';
     }
@@ -420,7 +413,7 @@
       // A duplicate never reaches the store: the user's mental model is "I
       // already have a `unit`", so say exactly that instead of a silent drop.
       if (currentConfigs().some((c) => c && c.id === id)) {
-        setFormNote(gateUtils ? gateUtils.describeRejection({ id, reason: 'duplicate_id' }) : jt('ide.testRunner.alreadyExists', '"{id}" already exists.', { id }));
+        setFormNote(gateUtils.describeRejection({ id, reason: 'duplicate_id' }));
         return;
       }
       setFormNote('');
@@ -446,7 +439,7 @@
           ? result.rejected.find((entry) => entry && String(entry.id || '') === id)
           : null;
         if (rejection) {
-          setFormNote(gateUtils ? gateUtils.describeRejection(rejection) : jt('ide.testRunner.notSaved', '"{id}" was not saved.', { id }));
+          setFormNote(gateUtils.describeRejection(rejection));
           return;
         }
         const live = getMountEl();
@@ -462,7 +455,7 @@
     // header's mode select is the workspace's choice, so it follows the gate
     // to a new configuration rather than resetting.
     function handleGateConfigChange(configId, modeHint) {
-      const previousGate = gateUtils ? gateUtils.findGate(currentConfigs()) : null;
+      const previousGate = gateUtils.findGate(currentConfigs());
       const mode = String(modeHint || (previousGate && previousGate.gateOnFailure) || 'retry');
       const baseline = pendingConfigs;
       const next = currentConfigs().map((c) => {
@@ -474,7 +467,7 @@
     }
 
     function handleGateModeChange(mode) {
-      const gate = gateUtils ? gateUtils.findGate(currentConfigs()) : null;
+      const gate = gateUtils.findGate(currentConfigs());
       if (!gate) {
         return;
       }

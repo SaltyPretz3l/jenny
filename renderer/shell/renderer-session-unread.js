@@ -36,8 +36,24 @@
   }
 
   /**
-   * Re-reads one chat's unread count when a message lands or is read, then hands it to apply().
-   * @param {object} options {bridge, apply(sessionId, unreadCount), setTimeout?, clearTimeout?}
+   * The session list with one chat's mail counts replaced, or null when nothing moved (or the chat
+   * is not listed). The failed-delivery count feeds the "Needs you" row; null keeps the summary's own.
+   * @returns {Array<object>|null}
+   */
+  function patchMailCounts(sessions, sessionId, unread, failed) {
+    const list = Array.isArray(sessions) ? sessions : [];
+    const current = list.find((session) => session && session.id === sessionId);
+    if (!current) return null;
+    const failedCount = failed === null || failed === undefined ? (current.failed_delivery_count || 0) : failed;
+    if ((current.unread_message_count || 0) === unread && (current.failed_delivery_count || 0) === failedCount) return null;
+    const patched = Object.assign({}, current, { unread_message_count: unread, failed_delivery_count: failedCount });
+    return list.map((session) => (session === current ? patched : session));
+  }
+
+  /**
+   * Re-reads one chat's unread count when a message lands or is read, then hands it to apply(),
+   * with the failed-delivery count the same reply carries (null when absent) for "Needs you".
+   * @param {object} options {bridge, apply(sessionId, unreadCount, failedDeliveryCount), setTimeout?, clearTimeout?}
    * @returns {function} dispose
    */
   function bindUnreadSync(options) {
@@ -57,7 +73,8 @@
       return Promise.resolve(bridge.list({ schema_version: SCHEMA_VERSION, session_id: sessionId, direction: 'inbox', limit: 1 })).then(function (response) {
         if (disposed || sequences.get(sessionId) !== seq) return;
         const unread = response && response.ok === true && response.counts ? response.counts.unread : null;
-        if (Number.isSafeInteger(unread) && unread >= 0) o.apply(sessionId, unread);
+        const failed = response && response.ok === true && response.counts ? response.counts.failed_delivery : null;
+        if (Number.isSafeInteger(unread) && unread >= 0) o.apply(sessionId, unread, Number.isSafeInteger(failed) && failed >= 0 ? failed : null);
       }).catch(function () { /* the next summary refresh carries the count */ });
     }
 
@@ -79,5 +96,5 @@
     };
   }
 
-  return { count, titleClass, markup, bindUnreadSync };
+  return { count, titleClass, markup, patchMailCounts, bindUnreadSync };
 });

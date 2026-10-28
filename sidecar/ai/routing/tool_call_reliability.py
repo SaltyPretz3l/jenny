@@ -14,9 +14,9 @@ per-request in the engine and no longer flip a session capability flag.
 
 Before reading the counters, the emitter drains the heal-telemetry accumulator
 (``tool_call_healing.drain_heal_telemetry``) and routes each tallied repair into
-the per-profile ``repair_used`` counter — the heal seams (in-band parser,
-native-args coercion) have no kernel access, so this is where their successes
-reach the profile store.
+the per-profile ``repair_used`` counter in one store call — the heal seams
+(in-band parser, native-args coercion) have no kernel access, so this is where
+their successes reach the profile store.
 
 Defensive posture (mirrors ``route_policy_runtime``): every path swallows
 internal errors — a diagnostic-side failure never fails a turn. The whole
@@ -46,11 +46,25 @@ def _capability_source(kernel: Any) -> str:
 
 
 def _route_drained_repairs_to_profile(kernel: Any) -> None:
-    """Drain the heal accumulator into the per-profile ``repair_used`` counter."""
+    """Drain the heal accumulator into the per-profile ``repair_used`` counter.
+
+    One store call per drain (the tally can reach the accumulator's 10k cap),
+    best-effort like ``increment_counter_for_kernel``: a store failure drops
+    the drained count and never reaches the event.
+    """
     counts = drain_heal_telemetry()
     repair_count = int(counts.get("repair_used", 0) or 0)
-    for _ in range(repair_count):
-        _route_policy_runtime.increment_counter_for_kernel(kernel, "repair_used")
+    if repair_count <= 0:
+        return
+    try:
+        profile = _route_policy_runtime.resolve_capability_profile(kernel)
+        store = _route_policy_runtime._resolve_store(kernel) if profile is not None else None
+        if store is not None:
+            store.record_tool_call_outcome(
+                profile_id=profile.profile_id, kind="repair_used", count=repair_count
+            )
+    except Exception:  # noqa: BLE001 — diagnostic-only.
+        pass
 
 
 def _counters_payload(kernel: Any) -> dict[str, Any]:

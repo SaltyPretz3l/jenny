@@ -68,7 +68,10 @@ function decodeCompleteBase64(dataBase64, expectedByteLength) {
   // Complete-encoding invariant: strict alphabet, padded 4-char groups, and
   // a decode that round-trips to the declared byte length. Node's lenient
   // Buffer.from would silently accept sliced/garbled base64 — refuse instead.
-  if (dataBase64.length % 4 !== 0 || !COMPLETE_BASE64_RE.test(dataBase64)) {
+  // The encoded length is fixed by the declared byte length; checking it first
+  // skips the regex and the decode for a sliced or padded payload.
+  if (dataBase64.length !== Math.ceil(expectedByteLength / 3) * 4
+    || !COMPLETE_BASE64_RE.test(dataBase64)) {
     return null;
   }
   const buffer = Buffer.from(dataBase64, 'base64');

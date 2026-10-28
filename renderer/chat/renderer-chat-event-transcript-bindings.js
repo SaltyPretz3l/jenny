@@ -954,6 +954,8 @@
           }, signal: bindAbortController?.signal });
         // Row 59 checkpoint 4: the pane's addressed-message strip above its composer (backlog line, sender receipts).
         globalThis.rendererComposerMessageStrip?.mountComposerMessageStrip?.({ host: utilityCluster.parentElement.querySelector('#composerMessageStrip, [data-chat-node="composerMessageStrip"]'), pane: utilityCluster.parentElement, chatTimeline, getSessionId, signal: bindAbortController?.signal, appendClientLog });
+        // Row 76: the primary chat's paused notice, a sibling before the strip.
+        globalThis.rendererPrimaryPausedNotice?.mountPrimaryPausedNotice?.({ host: utilityCluster.parentElement.querySelector('#composerMessageStrip, [data-chat-node="composerMessageStrip"]'), pane: utilityCluster.parentElement, chatTimeline, getSessionId, state, signal: bindAbortController?.signal, appendLog: appendClientLog });
       }
     }
 

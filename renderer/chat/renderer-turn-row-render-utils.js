@@ -280,8 +280,9 @@
       normalizeId,
       normalizeReasoningPhase,
     } = turnRowModelUtils;
+    const resolveHandoffPreparationErrorNotice = turnRowModelUtils.resolveHandoffPreparationErrorNotice || (() => false);
     const { buildInteractiveCardMarkup } = interactiveCards.createInteractiveCards({
-      escapeHtml, normalizeId, renderUserQuestionsBlock, renderUserQuestionsReceipt,
+      escapeHtml, normalizeId, renderUserQuestionsBlock, renderUserQuestionsReceipt, getFeatureFlags, isPrimarySession: settings.isPrimarySession,
     });
     const {
       buildApprovalGapMarkup,
@@ -652,6 +653,7 @@
         ...(renderMessage && typeof renderMessage === 'object' ? renderMessage : {}),
         ...(folded.length ? { suppressedErrors: folded } : {}),
         ...(resolveSupersededErrorNotice(renderMessage, messages, options) ? { superseded: true } : {}),
+        ...(resolveHandoffPreparationErrorNotice(renderMessage, messages) ? { retryUnavailable: true } : {}),
       };
       if (streamId && !normalizeId(noticeMessage.stream_id)) {
         noticeMessage.stream_id = streamId;

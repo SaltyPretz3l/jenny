@@ -19,7 +19,20 @@
 //     model: the model that produced the reading,
 //     usage_source: 'provider' | 'estimate',
 //     updated_at: ISO timestamp,
+//     calibration?: {   // optional; only a full-prompt engine's reading
+//       provider_tokens, estimate_tokens: positive integers (the provider's
+//         whole-prompt count and the sidecar's unscaled estimate of the SAME
+//         request),
+//       engine, model, estimator: the labels the sidecar compares before
+//         trusting the ratio,
+//     },
 //   }
+//
+// `calibration` is the one field Electron sends BACK: the next chat.send and
+// context.preview carry it as `context_calibration` so the sidecar can count in
+// the provider's units (row 66). It is optional and the record stays version 1,
+// so every stored seed keeps loading; an invalid one is dropped on its own and
+// never takes the meter seed with it.
 //
 // Consumption contract (renderer/shell/renderer-shell-runtime-utils.js
 // `getContextMeterOptions`): the record seeds ONLY the two continuity inputs
@@ -41,11 +54,40 @@ const SESSION_CONTEXT_USAGE_VERSION = 1;
 const CONTEXT_USAGE_SOURCES = new Set(['provider', 'estimate']);
 const CONTEXT_USAGE_MODEL_MAX_CHARS = 200;
 const CONTEXT_USAGE_UPDATED_AT_MAX_CHARS = 64;
+const CALIBRATION_LABEL_MAX_CHARS = 200;
 
 function positiveInteger(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) return 0;
   return Math.floor(numeric);
+}
+
+function strictPositiveInteger(value) {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
+
+function calibrationLabel(value) {
+  if (typeof value !== 'string') return '';
+  const text = value.trim();
+  return text.length > 0 && text.length <= CALIBRATION_LABEL_MAX_CHARS ? text : '';
+}
+
+// Built key-by-key; null for anything that is not a complete, valid reading.
+function normalizeContextCalibration(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const providerTokens = strictPositiveInteger(input.provider_tokens);
+  const estimateTokens = strictPositiveInteger(input.estimate_tokens);
+  const engine = calibrationLabel(input.engine);
+  const model = calibrationLabel(input.model);
+  const estimator = calibrationLabel(input.estimator);
+  if (!providerTokens || !estimateTokens || !engine || !model || !estimator) return null;
+  return {
+    provider_tokens: providerTokens,
+    estimate_tokens: estimateTokens,
+    engine,
+    model,
+    estimator,
+  };
 }
 
 // Fails closed to null: an omitted, malformed, negative, fractional, or
@@ -62,6 +104,7 @@ function normalizeSessionContextUsage(input) {
   if (contextWindow <= 0 && compactThresholdTokens <= 0) return null;
   const usageSource = String(input.usage_source || '').trim();
   if (!CONTEXT_USAGE_SOURCES.has(usageSource)) return null;
+  const calibration = normalizeContextCalibration(input.calibration);
   return {
     version: SESSION_CONTEXT_USAGE_VERSION,
     used_tokens: usedTokens,
@@ -70,6 +113,7 @@ function normalizeSessionContextUsage(input) {
     model: String(input.model || '').trim().slice(0, CONTEXT_USAGE_MODEL_MAX_CHARS),
     usage_source: usageSource,
     updated_at: String(input.updated_at || '').trim().slice(0, CONTEXT_USAGE_UPDATED_AT_MAX_CHARS),
+    ...(calibration ? { calibration } : {}),
   };
 }
 
@@ -100,20 +144,39 @@ function buildSessionContextUsageRecord(usage, { updatedAt = null } = {}) {
     model: source.model,
     usage_source: usageSource,
     updated_at: String(updatedAt || new Date().toISOString()),
+    calibration: source.context_calibration,
   });
+}
+
+// The `context_calibration` request param for chat.send / context.preview: the
+// session record's stored calibration, or nothing. The sidecar re-validates it and
+// only trusts it for the engine and model that produced it.
+function contextCalibrationSendField(session) {
+  const calibration = normalizeContextCalibration(session?.context_usage?.calibration);
+  return calibration ? { context_calibration: calibration } : {};
 }
 
 // chat.done seam (chat-stream-managed-runtime-notifications.js). Fail-soft in
 // every direction: a non-authoritative reading, a missing session id, an older
 // store without the setter, or a store write that throws all degrade to "no
 // seed persisted" — the ring keeps working from live state either way.
+// A turn whose last request could not calibrate (an image, a fallback reply)
+// keeps the session's previous calibration rather than dropping it; the sidecar
+// still checks its engine/model/estimator labels before trusting it.
 function persistTerminalContextUsage(ctx, usage) {
   const record = buildSessionContextUsageRecord(usage);
   if (!record) return false;
   const sessionId = String(ctx?.resolvedSessionId || '').trim();
   if (!sessionId) return false;
   try {
-    return Boolean(ctx?.service?.sessionStore?.setSessionContextUsage?.(sessionId, record));
+    const store = ctx?.service?.sessionStore;
+    if (!record.calibration) {
+      const previous = normalizeContextCalibration(
+        store?.getSessionSummary?.(sessionId)?.context_usage?.calibration,
+      );
+      if (previous) record.calibration = previous;
+    }
+    return Boolean(store?.setSessionContextUsage?.(sessionId, record));
   } catch (_error) {
     try {
       ctx?.service?._emitServiceLog?.('WARN', 'chat.context_usage_not_persisted', {
@@ -131,6 +194,8 @@ function persistTerminalContextUsage(ctx, usage) {
 module.exports = {
   SESSION_CONTEXT_USAGE_VERSION,
   buildSessionContextUsageRecord,
+  contextCalibrationSendField,
+  normalizeContextCalibration,
   normalizeSessionContextUsage,
   persistTerminalContextUsage,
 };

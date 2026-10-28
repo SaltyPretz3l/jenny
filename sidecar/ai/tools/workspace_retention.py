@@ -10,8 +10,9 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Mapping, cast
 
@@ -55,6 +56,11 @@ MAX_TOUCHED_CHANGE_SETS = MAX_CHANGE_SETS_PER_WORKSPACE
 # reaching eligibility): the horizon is 30 days, and chat.send advances the
 # clock on nearly every turn, so per-send rewrites were pure fsync churn.
 ACTIVE_USE_WRITE_QUANTUM_SECONDS = 60 * 60
+# .jenny/quarantine holds delete tombstones and unsafe links moved aside; the
+# maintenance sweep keeps at most this many, none older than the age cap.
+QUARANTINE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
+QUARANTINE_MAX_ENTRIES = 200
+_QUARANTINE_STAMP_RE = re.compile(r"-(\d{8}T\d{6})-[0-9a-f]{32}$")
 _LEDGER_NAME = ".retention-active-use.json"
 _LEDGER_MAX_BYTES = 512 * 1024
 _OPEN_OR_RETAINED_STATES = frozenset(
@@ -63,17 +69,11 @@ _OPEN_OR_RETAINED_STATES = frozenset(
 
 
 # ── chat.send -> journal active-use accounting ──────────────────────────────
-
-
 def touch_workspace_active_use(brain_container: Any, params: object) -> None:
     """Best-effort chat.send hook: advance active-use accounting for one turn.
 
-    No-op whenever ``params`` is not a dict, the field is absent/negative, or
-    the workspace/recovery roots are not configured -- this must never affect
-    chat.send's own result. Safe to call once per chat.send request; calling
-    it again with the same value is idempotent (the running counters are
-    monotonic, see ``_advance_active_use``).
-    """
+    A no-op on bad params or unconfigured roots; it never affects chat.send's
+    result and is idempotent per value (counters are monotonic)."""
     if not isinstance(params, dict):
         return
     raw_seconds = params.get("workspace_active_use_seconds")
@@ -86,22 +86,53 @@ def touch_workspace_active_use(brain_container: Any, params: object) -> None:
         return
     try:
         guarded = GuardedWorkspaceStore(Path(workspace_root))
-        _record_current_active_use(guarded, raw_seconds)
-        store = WorkspaceMutationJournalStore(Path(state_root) / "workspace-recovery")
+        ledger = _record_current_active_use(guarded, raw_seconds)
+        recovery_root = Path(state_root) / "workspace-recovery"
+        if _journal_scan_not_due(ledger, recovery_root / "v1", workspace_root, raw_seconds):
+            return  # no set can need a write yet: skip the store and its journal scan
+        store = WorkspaceMutationJournalStore(recovery_root)
         record_active_use_seconds(store, workspace_root, raw_seconds, guarded=guarded)
     except Exception as error:  # noqa: BLE001 - accounting must never fail chat.send
-        logger.warning(
-            "workspace_retention_active_use_touch_failed",
-            extra={"reason": type(error).__name__},
-        )
+        logger.warning("workspace_retention_active_use_touch_failed",
+                       extra={"reason": type(error).__name__})
+
+
+def _journal_scan_not_due(
+    ledger: Mapping[str, Any], version_root: Path, workspace_root: str, seconds: int
+) -> bool:
+    """True while the last scan's ``due_seconds`` is ahead and its set inventory
+    (count and newest id) is unchanged, so no journal can need a write yet."""
+    marker = ledger.get("journal_scan")
+    if not isinstance(marker, dict) or type(marker.get("due_seconds")) is not int:
+        return False
+    if seconds >= marker["due_seconds"]:
+        return False
+    try:
+        workspace_dir = version_root / workspace_identity(workspace_root).workspace_id
+    except (OSError, ValueError):
+        return False
+    return marker.get("inventory") == _inventory(_iter_change_set_ids(workspace_dir))
+
+
+def _inventory(ids: list[str]) -> list[object]:
+    return [len(ids), ids[-1] if ids else ""]
+
+
+def _next_write_seconds(retention: Mapping[str, Any]) -> int:
+    """The least clock value at which ``_advance_active_use`` rewrites this set."""
+    created = retention["created_active_use_seconds"]
+    last, age = retention["last_accessed_active_use_seconds"], retention["active_age_seconds"]
+    if age >= ACTIVE_RETENTION_SECONDS:
+        return MAX_ACTIVE_USE_SECONDS + 1
+    target = min(ACTIVE_RETENTION_SECONDS, age + ACTIVE_USE_WRITE_QUANTUM_SECONDS)
+    if created == 0 or max(last, created) - created >= target:
+        return 0
+    return created + target
 
 
 def record_active_use_seconds(
-    store: WorkspaceMutationJournalStore,
-    workspace_root: str | Path,
-    workspace_active_use_seconds: int,
-    *,
-    guarded: GuardedWorkspaceStore | None = None,
+    store: WorkspaceMutationJournalStore, workspace_root: str | Path,
+    workspace_active_use_seconds: int, *, guarded: GuardedWorkspaceStore | None = None,
 ) -> tuple[str, ...]:
     """Advance retention active-use accounting for one workspace's change sets.
 
@@ -109,10 +140,8 @@ def record_active_use_seconds(
     skipped rather than raised, so one bad record cannot block the others.
     Returns the ids of change sets that were actually rewritten.
     """
-    if (
-        type(workspace_active_use_seconds) is not int
-        or not 0 <= workspace_active_use_seconds <= MAX_ACTIVE_USE_SECONDS
-    ):
+    seconds = workspace_active_use_seconds
+    if type(seconds) is not int or not 0 <= seconds <= MAX_ACTIVE_USE_SECONDS:
         return ()
     try:
         identity = workspace_identity(workspace_root)
@@ -123,7 +152,9 @@ def record_active_use_seconds(
     baselines = _bounded_mapping(ledger.get("journal_baselines"))
     touched: list[str] = []
     live_ids: set[str] = set()
-    for change_set_id in _iter_change_set_ids(store, identity.workspace_id):
+    change_set_ids = _iter_change_set_ids(store.version_root / identity.workspace_id)
+    due_seconds = MAX_ACTIVE_USE_SECONDS + 1
+    for change_set_id in change_set_ids:
         loaded = store.load(identity.workspace_id, change_set_id)
         if not loaded.ok or loaded.record is None:
             continue
@@ -135,29 +166,25 @@ def record_active_use_seconds(
         baseline = baselines.get(change_set_id)
         if baseline is None:
             recorded = retention.get("created_active_use_seconds")
-            baseline = (
-                recorded
-                if type(recorded) is int and recorded > 0
-                else workspace_active_use_seconds
-            )
+            baseline = recorded if type(recorded) is int and recorded > 0 else seconds
             if len(baselines) < MAX_LEDGER_BASELINE_ENTRIES:
                 baselines[change_set_id] = baseline
-        updated = _advance_active_use(record, baseline, workspace_active_use_seconds)
-        if updated is None:
-            continue
-        result = store.write_transition(
-            updated, workspace_root=workspace_root, retention_only=True
-        )
-        if result.ok:
-            touched.append(change_set_id)
-        else:
-            logger.warning(
-                "workspace_retention_active_use_write_failed",
-                extra={"change_set_id": change_set_id},
-            )
+        updated = _advance_active_use(record, baseline, seconds)
+        if updated is not None:
+            result = store.write_transition(
+                updated, workspace_root=workspace_root, retention_only=True)
+            if result.ok:
+                touched.append(change_set_id)
+                retention = cast(dict[str, Any], updated["retention"])
+            else:  # the unwritten set stays due, so the next chat.send scans again
+                logger.warning("workspace_retention_active_use_write_failed",
+                               extra={"change_set_id": change_set_id})
+        due_seconds = min(due_seconds, _next_write_seconds(retention))
     pruned = _prune_baselines(baselines, frozenset(live_ids))
-    if pruned != ledger.get("journal_baselines"):
+    scan_marker = {"due_seconds": due_seconds, "inventory": _inventory(change_set_ids)}
+    if pruned != ledger.get("journal_baselines") or scan_marker != ledger.get("journal_scan"):
         ledger["journal_baselines"] = pruned
+        ledger["journal_scan"] = scan_marker
         _save_ledger(workspace_store, ledger)
     return tuple(touched)
 
@@ -173,11 +200,7 @@ def _advance_active_use(
     new_created = baseline if created == 0 else created
     new_last = max(last, seconds, new_created)
     new_age = min(MAX_ACTIVE_USE_SECONDS, max(0, new_last - new_created))
-    if (new_created, new_last, new_age) == (
-        created,
-        last,
-        retention["active_age_seconds"],
-    ):
+    if (new_created, new_last, new_age) == (created, last, retention["active_age_seconds"]):
         return None
     if (
         created != 0
@@ -194,8 +217,7 @@ def _advance_active_use(
     return updated
 
 
-def _iter_change_set_ids(store: WorkspaceMutationJournalStore, workspace_id: str) -> list[str]:
-    workspace_dir = store.version_root / workspace_id
+def _iter_change_set_ids(workspace_dir: Path) -> list[str]:
     try:
         children = sorted(workspace_dir.iterdir(), key=lambda item: item.name)
     except OSError:
@@ -203,9 +225,8 @@ def _iter_change_set_ids(store: WorkspaceMutationJournalStore, workspace_id: str
     ids: list[str] = []
     for child in children:
         if len(ids) >= MAX_TOUCHED_CHANGE_SETS:
-            logger.warning(
-                "workspace_retention_scan_bounded", extra={"workspace_id": workspace_id}
-            )
+            logger.warning("workspace_retention_scan_bounded",
+                           extra={"workspace_id": workspace_dir.name})
             break
         if child.is_dir() and not child.is_symlink():
             ids.append(child.name)
@@ -213,29 +234,18 @@ def _iter_change_set_ids(store: WorkspaceMutationJournalStore, workspace_id: str
 
 
 # ── wall-clock review RPCs ───────────────────────────────────────────────────
-
-
 def list_recovery_review(
-    store: WorkspaceMutationJournalStore,
-    workspace_root: str | Path,
-    *,
-    now: datetime | None = None,
+    store: WorkspaceMutationJournalStore, workspace_root: str | Path,
+    *, now: datetime | None = None,
 ) -> dict[str, object]:
     """List change sets whose 365-day wall-clock review is due but unacknowledged.
 
-    Never mutates. A set stays listed on every call until
-    ``acknowledge_recovery_review`` durably records
-    ``wall_clock_review_presented_at`` -- only then may a later maintenance
-    pass age-evict it on the wall cap.
-    """
-    try:
-        identity = workspace_identity(workspace_root)
-    except (OSError, ValueError) as error:
-        raise WorkspaceRetentionError(
-            "workspace_identity_unavailable", "Workspace identity could not be verified."
-        ) from error
+    Never mutates. A set stays listed until ``acknowledge_recovery_review``
+    durably records ``wall_clock_review_presented_at``; only then may a later
+    maintenance pass age-evict it on the wall cap."""
+    identity = _identity_or_raise(workspace_root)
     due: list[dict[str, object]] = []
-    for change_set_id in _iter_change_set_ids(store, identity.workspace_id):
+    for change_set_id in _iter_change_set_ids(store.version_root / identity.workspace_id):
         loaded = store.load(identity.workspace_id, change_set_id)
         if not loaded.ok or loaded.record is None:
             continue
@@ -249,53 +259,44 @@ def list_recovery_review(
 
 
 def acknowledge_recovery_review(
-    store: WorkspaceMutationJournalStore,
-    workspace_root: str | Path,
-    change_set_id: str,
-    *,
-    now: datetime | None = None,
+    store: WorkspaceMutationJournalStore, workspace_root: str | Path, change_set_id: str,
+    *, now: datetime | None = None,
 ) -> dict[str, object]:
     """Durably record that the UI presented one set's wall-clock review."""
-    try:
-        identity = workspace_identity(workspace_root)
-    except (OSError, ValueError) as error:
-        raise WorkspaceRetentionError(
-            "workspace_identity_unavailable", "Workspace identity could not be verified."
-        ) from error
+    identity = _identity_or_raise(workspace_root)
     loaded = store.load(identity.workspace_id, change_set_id)
     if not loaded.ok or loaded.record is None:
-        raise WorkspaceRetentionError(
-            "change_set_not_found", "Workspace change set was not found."
-        )
+        raise WorkspaceRetentionError("change_set_not_found", "Workspace change set was not found.")
     record = copy.deepcopy(loaded.record)
     observed_at = now or datetime.now(UTC)
     retention = cast(dict[str, Any], record["retention"])
     if not _wall_clock_review_due(retention, observed_at):
         existing = retention["wall_clock_review_presented_at"]
         if existing is not None:
-            return {
-                "change_set_id": change_set_id,
-                "wall_clock_review_presented_at": existing,
-            }
-        raise WorkspaceRetentionError(
-            "recovery_review_not_due", "Workspace recovery review is not due."
-        )
+            return {"change_set_id": change_set_id, "wall_clock_review_presented_at": existing}
+        raise WorkspaceRetentionError("recovery_review_not_due",
+                                      "Workspace recovery review is not due.")
     presented_at = _format_utc(observed_at)
     retention["wall_clock_review_presented_at"] = presented_at
     cast(dict[str, Any], record["wall_time"])["updated_at"] = presented_at
-    result = store.write_transition(
-        record, workspace_root=workspace_root, retention_only=True
-    )
+    result = store.write_transition(record, workspace_root=workspace_root, retention_only=True)
     if not result.ok or result.record is None:
-        raise WorkspaceRetentionError(
-            "acknowledge_write_failed",
-            "Workspace review acknowledgement could not be recorded.",
-        )
+        raise WorkspaceRetentionError("acknowledge_write_failed",
+                                      "Workspace review acknowledgement could not be recorded.")
     acknowledged_retention = cast(dict[str, Any], result.record["retention"])
     return {
         "change_set_id": change_set_id,
         "wall_clock_review_presented_at": acknowledged_retention["wall_clock_review_presented_at"],
     }
+
+
+def _identity_or_raise(workspace_root: str | Path) -> Any:
+    try:
+        return workspace_identity(workspace_root)
+    except (OSError, ValueError) as error:
+        raise WorkspaceRetentionError(
+            "workspace_identity_unavailable", "Workspace identity could not be verified."
+        ) from error
 
 
 def _wall_clock_review_due(retention: Mapping[str, Any], now: datetime) -> bool:
@@ -328,8 +329,6 @@ def _review_entry(record: Mapping[str, Any]) -> dict[str, object]:
 
 
 # ── active-use age tracker for trash/backup retention ───────────────────────
-
-
 @dataclass
 class ActiveUseAgeTracker:
     """Persistent per-entry active-use age source for trash and backups.
@@ -365,30 +364,14 @@ class ActiveUseAgeTracker:
             self.dirty = False
 
 
-def active_use_age_source(
-    store: GuardedWorkspaceStore, kind: str
-) -> ActiveUseAgeTracker:
+def active_use_age_source(store: GuardedWorkspaceStore, kind: str) -> ActiveUseAgeTracker:
     """Build a persistent active-use age source for trash or backups."""
     if kind not in {"trash", "backup"}:
         raise ValueError("active-use source kind must be trash or backup")
-    ledger = _load_ledger(store)
-    tracker = ActiveUseAgeTracker(
-        current_active_use_seconds=_ledger_active_seconds(ledger),
-        baselines=_bounded_mapping(ledger.get(f"{kind}_baselines")),
-        known=ledger.get("active_use_known") is True,
-    )
-
-    def save() -> None:
-        ledger[f"{kind}_baselines"] = dict(tracker.baselines)
-        _save_ledger(store, ledger)
-
-    tracker.save = save
-    return tracker
+    return _tracker_from_ledger(store, _load_ledger(store), kind)
 
 
 # ── continuous maintenance (startup + on every journal commit) ─────────────
-
-
 def run_recovery_maintenance(
     store: WorkspaceMutationJournalStore, workspace_root: str | Path
 ) -> None:
@@ -397,10 +380,8 @@ def run_recovery_maintenance(
     try:
         guarded = GuardedWorkspaceStore(root)
     except (OSError, ValueError, ToolExecutionFailure) as error:
-        logger.warning(
-            "workspace_retention_maintenance_store_unavailable",
-            extra={"reason": type(error).__name__},
-        )
+        logger.warning("workspace_retention_maintenance_store_unavailable",
+                       extra={"reason": type(error).__name__})
         return
     ledger = _load_ledger(guarded)
     current_seconds = _ledger_active_seconds(ledger)
@@ -414,12 +395,9 @@ def run_recovery_maintenance(
         pinned_ids = store.pinned_recovery_object_ids(workspace_id)
     except (OSError, ValueError):
         pinned_ids = frozenset()
-    from sidecar.ai.tools.builtins.file_history import (  # avoid a module cycle
-        apply_backup_retention_best_effort,
-    )
-    from sidecar.ai.tools.builtins.trash_maintenance import (  # avoid a module cycle
-        apply_trash_retention_best_effort,
-    )
+    # Lazy imports avoid a module cycle.
+    from sidecar.ai.tools.builtins.file_history import apply_backup_retention_best_effort
+    from sidecar.ai.tools.builtins.trash_maintenance import apply_trash_retention_best_effort
 
     apply_trash_retention_best_effort(
         guarded,
@@ -433,12 +411,48 @@ def run_recovery_maintenance(
     )
     ledger["current_active_use_seconds"] = current_seconds
     ledger["trash_baselines"] = _prune_baselines(
-        trash_tracker.baselines, _live_trash_names(guarded)
-    )
+        trash_tracker.baselines, _live_trash_names(guarded))
     ledger["backup_baselines"] = _prune_baselines(
-        backup_tracker.baselines, _live_backup_names(guarded)
-    )
+        backup_tracker.baselines, _live_backup_names(guarded))
     _save_ledger(guarded, ledger)
+    sweep_quarantine(guarded)
+
+
+def sweep_quarantine(guarded: GuardedWorkspaceStore, *, now: datetime | None = None) -> int:
+    """Purge ``.jenny/quarantine`` entries past the age cap, then the oldest past
+    the entry cap. Age is the UTC stamp the store writes into each name (a move
+    keeps the old mtime); an unstamped name is never touched, and removal never
+    follows a link. Returns the number of entries removed."""
+    try:
+        entries = guarded.list_entries(guarded.resolve(WorkspaceStoreKind.QUARANTINE),
+                                       quarantine_links=False)
+    except ToolExecutionFailure:
+        return 0
+    stamped = sorted((stamp, entry.name) for entry in entries
+                     if (stamp := _quarantine_stamp(entry.name)) is not None)
+    cutoff = (now or datetime.now(UTC)) - timedelta(seconds=QUARANTINE_MAX_AGE_SECONDS)
+    overflow = len(stamped) - QUARANTINE_MAX_ENTRIES
+    removed = 0
+    for index, (stamp, name) in enumerate(stamped):  # oldest first
+        if stamp >= cutoff and index >= overflow:
+            break
+        try:
+            guarded.purge_quarantine_entry(name)
+            removed += 1
+        except (OSError, ToolExecutionFailure) as error:
+            logger.warning("workspace_retention_quarantine_purge_failed",
+                           extra={"reason": type(error).__name__})
+    return removed
+
+
+def _quarantine_stamp(name: str) -> datetime | None:
+    match = _QUARANTINE_STAMP_RE.search(name)
+    if match is None:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%Y%m%dT%H%M%S").replace(tzinfo=UTC)
+    except ValueError:
+        return None
 
 
 def _tracker_from_ledger(
@@ -461,24 +475,15 @@ def _tracker_from_ledger(
 def _trash_entry_is_pinned(pinned_ids: frozenset[str], entry_name: str) -> bool:
     prefix = f"trash:.jenny/trash/{entry_name}/"
     exact = f"trash:.jenny/trash/{entry_name}"
-    return any(
-        object_id == exact or object_id.startswith(prefix)
-        for object_id in pinned_ids
-    )
+    return any(object_id == exact or object_id.startswith(prefix) for object_id in pinned_ids)
 
 
 def _live_trash_names(guarded: GuardedWorkspaceStore) -> frozenset[str]:
-    from sidecar.ai.tools.builtins.trash_maintenance import (
-        list_trash_entries,
-    )
+    from sidecar.ai.tools.builtins.trash_maintenance import list_trash_entries
 
     try:
-        return frozenset(
-            entry.name
-            for entry in list_trash_entries(
-                guarded, max_entries=MAX_STORE_LIST_ENTRIES
-            )
-        )
+        return frozenset(entry.name for entry in list_trash_entries(
+            guarded, max_entries=MAX_STORE_LIST_ENTRIES))
     except ToolExecutionFailure:
         return frozenset()
 
@@ -520,8 +525,6 @@ def _bounded_mapping(value: object) -> dict[str, int]:
 
 
 # ── per-workspace active-use ledger (derived cache, not authoritative) ──────
-
-
 def _ledger_ref(guarded: GuardedWorkspaceStore) -> Any:
     return guarded.resolve(WorkspaceStoreKind.BACKUPS, _LEDGER_NAME)
 
@@ -544,31 +547,24 @@ def _save_ledger(guarded: GuardedWorkspaceStore, ledger: Mapping[str, Any]) -> N
     try:
         guarded.write_json_atomic(_ledger_ref(guarded), dict(ledger))
     except ToolExecutionFailure as error:
-        logger.warning(
-            "workspace_retention_ledger_write_failed",
-            extra={"reason": type(error).__name__},
-        )
+        logger.warning("workspace_retention_ledger_write_failed",
+                       extra={"reason": type(error).__name__})
 
 
 def _empty_ledger() -> dict[str, Any]:
-    return {
-        "schema_version": 1,
-        "active_use_known": False,
-        "current_active_use_seconds": 0,
-        "journal_baselines": {},
-        "trash_baselines": {},
-        "backup_baselines": {},
-    }
+    return {"schema_version": 1, "active_use_known": False, "current_active_use_seconds": 0,
+            "journal_baselines": {}, "trash_baselines": {}, "backup_baselines": {}}
 
 
-def _record_current_active_use(guarded: GuardedWorkspaceStore, seconds: int) -> None:
+def _record_current_active_use(guarded: GuardedWorkspaceStore, seconds: int) -> dict[str, Any]:
     ledger = _load_ledger(guarded)
     current = _ledger_active_seconds(ledger)
     if ledger.get("active_use_known") is True and current >= seconds:
-        return
+        return ledger
     ledger["active_use_known"] = True
     ledger["current_active_use_seconds"] = max(current, seconds)
     _save_ledger(guarded, ledger)
+    return ledger
 
 
 def _ledger_active_seconds(ledger: Mapping[str, Any]) -> int:
@@ -586,12 +582,7 @@ def _format_utc(value: datetime) -> str:
 
 
 __all__ = [
-    "ActiveUseAgeTracker",
-    "WorkspaceRetentionError",
-    "acknowledge_recovery_review",
-    "active_use_age_source",
-    "list_recovery_review",
-    "record_active_use_seconds",
-    "run_recovery_maintenance",
-    "touch_workspace_active_use",
+    "ActiveUseAgeTracker", "WorkspaceRetentionError", "acknowledge_recovery_review",
+    "active_use_age_source", "list_recovery_review", "record_active_use_seconds",
+    "run_recovery_maintenance", "sweep_quarantine", "touch_workspace_active_use",
 ]

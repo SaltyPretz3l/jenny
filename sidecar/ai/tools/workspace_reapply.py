@@ -16,6 +16,7 @@ from sidecar.ai.tools.workspace_restore import (
     MAX_LISTED_CHANGE_SETS,
     WorkspaceRestoreError,
     _apply_virtual_inverse,
+    _assert_no_other_active_set,
     _change_set_summary,
     _inverse_plan,
     _load_record,
@@ -28,7 +29,6 @@ from sidecar.ai.tools.workspace_restore import (
     _verify_recovery_objects,
     _virtual_signature,
     _write_required,
-    list_change_sets,
 )
 
 
@@ -49,17 +49,7 @@ def reapply_change_set(
             "change_set_not_reapplicable",
             "Only an undone workspace change set can be re-applied.",
         )
-    busy_sets = cast(list[dict[str, object]], list_change_sets(store, root)["change_sets"])
-    if any(
-        item["change_set_id"] != change_set_id
-        and item["state"] in {"prepared", "in_progress"}
-        for item in busy_sets
-    ):
-        raise WorkspaceRestoreError(
-            "restore_workspace_busy",
-            "Workspace recovery is blocked while another change set is active.",
-            details={"status": "busy"},
-        )
+    _assert_no_other_active_set(store, root, change_set_id)
     # Re-arming drops the copies this undo kept of what it replaced, so each
     # protected file must already be back on disk (the Redo safety copy).
     protected = _protected_paths(root, record)

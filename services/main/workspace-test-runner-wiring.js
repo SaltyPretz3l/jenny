@@ -286,10 +286,13 @@ function createWorkspaceTestRunnerWiring(deps = {}) {
         } : null };
     };
     return Object.freeze({
-      listConfigs() {
+      // includeState answers verify's listing and its last-run statuses from
+      // one scope (one authority check and one config read).
+      listConfigs({ includeState = false } = {}) {
         if (!flagEnabled() || !isAllowed()) return disabledEnvelope();
         const scope = scopeForRun();
-        return scope.root ? { configs: scope.configs } : { configs: [], available: false, reason: 'root_missing' };
+        if (!scope.root) return { configs: [], available: false, reason: 'root_missing' };
+        return includeState ? { configs: scope.configs, state: service.getState(scope) } : { configs: scope.configs };
       },
       run(payload, internalExecutionPort = null) {
         return flagEnabled() && isAllowed()

@@ -544,3 +544,36 @@ test('the checklist glyph replaces the dot and stills under reduced motion', () 
   const animations = fs.readFileSync(path.join(__dirname, '..', 'styles', 'chat-activity-row.css'), 'utf8');
   assert.match(animations, /@keyframes turn-activity-checklist-draw/);
 });
+
+test('a manual compaction wears the compaction row with no stream until the coordinator settles it', (t) => {
+  // Settled chat: no pending article, and no stream is live.
+  const { timeline, flags, clock, row } = makeHarness(t, { withPendingArticle: false });
+  timeline.innerHTML = '<article class="chat-entry assistant"><div class="chat-message-content"><div class="chat-row">done</div></div></article>';
+  flags.live = false;
+  const heard = [];
+  row.onTypedActivityChange((change) => heard.push(change));
+
+  row.noteSessionCompaction('session-1', true);
+  const node = findRow(timeline);
+  assert.ok(node, 'mounts at once, without a live stream');
+  assert.ok(node.parentNode.closest('.chat-entry.assistant'), 'at the tail of the last reply');
+  assert.equal(node.dataset.turnActivityKind, 'compaction');
+  assert.equal(node.querySelector('.turn-activity-name').textContent, 'Compacting context');
+  assert.equal(node.querySelector('.turn-activity-label').textContent, 'summarizing older context…');
+  assert.deepEqual(row.getSessionTypedActivity('session-1'), { kind: 'compaction', toolName: '', checklist: false, waitState: '' });
+  assert.equal(heard.length, 1, 'the sprite hears the compaction start');
+
+  clock.nowMs = 65000;
+  row.tick();
+  assert.equal(findRow(timeline), node, 'a dead-stream check never drops it');
+  assert.equal(node.querySelector('.turn-activity-elapsed').textContent, '1:05');
+  row.noteSessionCompaction('session-1', true);
+  assert.equal(heard.length, 1, 'a repeated pending report is not a new episode');
+  noteEvent(row, 'delta', { sessionId: 'session-1' });
+  assert.equal(findRow(timeline), node, 'a stream event of the session does not dismiss it');
+
+  row.noteSessionCompaction('session-1', false);
+  assert.equal(findRow(timeline), null, 'settling removes the row');
+  assert.equal(row.getSessionTypedActivity('session-1'), null);
+  assert.equal(heard.length, 2, 'and the sprite hears it end');
+});

@@ -178,7 +178,7 @@ test('rapid Restart clicks stay single-flight while the old session kill is pend
   await Promise.resolve();
 
   assert.equal(api.calls.spawn.length, 1, 'no replacement starts until the single kill settles');
-  resolveKill({ ok: true });
+  resolveKill({ ok: true, killed: true, terminationConfirmed: true });
   await settle();
 
   assert.equal(api.calls.spawn.length, 2, 'exactly one replacement session starts');
@@ -546,4 +546,53 @@ test('a command longer than one terminal write is refused before anything reache
   assert.equal(await panel.sendCommand('x'.repeat(MAX_WRITE_BYTES)), false);
   assert.equal(api.calls.write.length, before, 'no partial command is typed into the shell line');
   assert.deepEqual(logs.filter((l) => l.code === 'ide.pty_send_command_refused').map((l) => l.data), [{ code: 'too_long' }]);
+});
+
+/* Stop/Restart honour the kill answer: an unconfirmed termination is its own
+ * state ("stop unconfirmed"), never collapsed into "stopped", and Restart never
+ * re-attaches to a possibly surviving shell under a freshly cleared terminal. */
+
+function statusEl(mount) {
+  return mount.querySelector('[data-ide-terminal-status]');
+}
+
+test('Restart with an unconfirmed kill keeps the terminal, starts nothing, and says so', async (t) => {
+  const harness = createHarness();
+  t.after(() => harness.dispose());
+  const { panel, mount, term, api } = buildPanel(harness);
+  panel.renderTerminalPanel();
+  panel.bindEvents();
+  await panel.startSession();
+  api.kill = async (payload) => { api.calls.kill.push(payload); return { ok: false, killed: false, terminationConfirmed: false }; };
+  mount.querySelector('[data-ide-terminal-action="restart"]').click();
+  await settle();
+  assert.equal(api.calls.spawn.length, 1, 'no replacement spawn re-attaches to the surviving shell');
+  assert.equal(term.cleared || 0, 0, 'the terminal is not cleared over a live shell');
+  assert.equal(statusEl(mount).textContent, 'stop unconfirmed');
+  assert.equal(statusEl(mount).classList.contains('ide-terminal-status--warn'), true);
+});
+
+test('a rejected kill on Stop is unconfirmed; the late exit of that session clears the warning', async (t) => {
+  const harness = createHarness();
+  t.after(() => harness.dispose());
+  const { panel, mount, api } = buildPanel(harness);
+  panel.renderTerminalPanel();
+  await panel.startSession();
+  api.kill = async (payload) => { api.calls.kill.push(payload); throw new Error('bridge gone'); };
+  assert.equal(await panel.stopSession(), false);
+  assert.equal(statusEl(mount).textContent, 'stop unconfirmed');
+  api.emitExit({ sessionId: 'pty-1', exitCode: 0 });
+  assert.equal(statusEl(mount).textContent, 'stopped', 'the session is now confirmed gone');
+  assert.equal(statusEl(mount).classList.contains('ide-terminal-status--warn'), false);
+});
+
+test('a confirmed Stop (or one racing a natural exit) stays plain "stopped"', async (t) => {
+  const harness = createHarness();
+  t.after(() => harness.dispose());
+  const { panel, mount, api } = buildPanel(harness);
+  panel.renderTerminalPanel();
+  await panel.startSession();
+  api.kill = async (payload) => { api.calls.kill.push(payload); return { ok: true, killed: false }; };
+  assert.equal(await panel.stopSession(), true);
+  assert.equal(statusEl(mount).textContent, 'stopped');
 });

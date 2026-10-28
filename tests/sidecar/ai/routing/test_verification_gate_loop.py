@@ -443,6 +443,7 @@ def test_the_gate_runs_at_most_twice_per_turn(monkeypatch):
         iteration_total=8,
     )
     loop.grant_gate_iteration = lambda: _ToolLoopRun.grant_gate_iteration(loop)
+    loop.release_gate_iteration = lambda: _ToolLoopRun.release_gate_iteration(loop)
 
     decisions = [
         _FinalResponseMixin._run_verification_gate(loop, iteration)

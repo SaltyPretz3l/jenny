@@ -240,3 +240,38 @@ test('a refused panel open degrades to the in-stage aside', () => {
   assert.equal(rig.doc.getElementById('origin').getAttribute('aria-controls'), rig.inspector.id || 'subagentInspector', 'the card controls the host in use');
   rig.dispose();
 });
+
+test('Copy writes the saved answer through the shell clipboard and announces it', async () => {
+  const rig = setup({ tasks: [{ ...ONE_CHILD, answer: 'The full answer.' }] });
+  const written = [];
+  rig.dom.window.jennyShell = { clipboard: { writeText: async (text) => { written.push(text); } } };
+  rig.doc.getElementById('origin').click();
+  const copy = rig.inspector.querySelector('[data-subagent-copy]');
+  assert.ok(copy, 'the answer offers Copy');
+  copy.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(written, ['The full answer.']);
+  assert.equal(rig.inspector.querySelector('[data-subagent-copy-status]').textContent, 'Copied');
+  assert.equal(copy.textContent.trim(), 'Copied');
+  rig.dispose();
+});
+
+test('the Overview | Transcript switch flips the drill-in through the control\'s own change event', () => {
+  const transcript = [{ kind: 'text', text: 'A note.' }, { kind: 'tool', call_id: 'c', tool: 'grep_search', display: 'Grep Search', status: 'completed', input: '{"pattern":"x"}', output: 'a.md:1:x' }];
+  const rig = setup({ tasks: [{ ...ONE_CHILD, transcript }] });
+  rig.doc.getElementById('origin').click();
+  assert.ok(rig.inspector.querySelector('[data-subagent-view]'), 'the switch shows');
+  assert.equal(rig.inspector.querySelector('.subagent-transcript'), null, 'Overview first');
+  // The inventory's segmented handlers turn a click or arrow key into this event.
+  const flip = (value) => rig.inspector.querySelector('[data-subagent-view]')
+    .dispatchEvent(new rig.dom.window.CustomEvent('inv-segmented-change', { bubbles: true, detail: { value } }));
+  flip('transcript');
+  assert.ok(rig.inspector.querySelector('.subagent-transcript'), 'Transcript after the change');
+  assert.equal(rig.doc.activeElement?.getAttribute('data-value'), 'transcript', 'focus follows the choice');
+  flip('overview');
+  assert.equal(rig.inspector.querySelector('.subagent-transcript'), null, 'and back');
+  const left = new rig.dom.window.KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true });
+  rig.inspector.querySelector('[data-subagent-view] [data-value="overview"]').dispatchEvent(left);
+  assert.ok(rig.inspector.querySelector('.subagent-detail-title'), 'ArrowLeft on the switch is not "back"');
+  rig.dispose();
+});

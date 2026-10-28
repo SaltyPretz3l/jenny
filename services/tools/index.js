@@ -4,7 +4,7 @@ const { ToolRegistry } = require('./tool-registry');
 const { ToolPathPolicy } = require('./tool-path-policy');
 const { ToolPermissionStore } = require('./tool-permission-store');
 const { ToolExecutor } = require('./tool-executor');
-const toolManifest = require('./tool-manifest.json');
+const { withManifestSchema } = require('./tool-manifest-index');
 
 const jennyStatusTool = require('./builtin/jenny-status-tool');
 const worktreeListTool = require('./builtin/worktree-list-tool');
@@ -27,32 +27,11 @@ const proposeCommandTool = require('./builtin/propose-command-tool');
 const proposeSessionTool = require('./builtin/propose-session-tool');
 const completeSessionHandoffTool = require('./builtin/complete-session-handoff-tool');
 const sessionMessageTool = require('./builtin/session-message-tool');
-
-const manifestEntriesByName = new Map(toolManifest.tools.map((entry) => [entry.name, entry]));
-
-function cloneJson(value) {
-  return JSON.parse(JSON.stringify(value));
-}
-
-function withManifestSchema(toolDefinition) {
-  const manifestEntry = manifestEntriesByName.get(toolDefinition.name);
-  if (!manifestEntry || manifestEntry.owner !== 'electron') {
-    return toolDefinition;
-  }
-  return {
-    ...toolDefinition,
-    parameters: cloneJson(manifestEntry.parameters),
-    readOnly: manifestEntry.read_only === true,
-    sideEffecting: manifestEntry.side_effecting === true,
-    workflowEligible: manifestEntry.workflow_eligible === true,
-    toolFamily: typeof manifestEntry.tool_family === 'string' ? manifestEntry.tool_family : '',
-    sourceKind: typeof manifestEntry.source_kind === 'string' ? manifestEntry.source_kind : '',
-    workspaceRequired: manifestEntry.availability?.workspace_required !== false,
-    planModeOnly: manifestEntry.availability?.plan_mode_only === true,
-    proposeModeOnly: manifestEntry.availability?.propose_mode_only === true,
-    actions: manifestEntry.actions ? cloneJson(manifestEntry.actions) : undefined,
-  };
-}
+const sessionsListTool = require('./builtin/sessions-list-tool');
+const sessionStatusTool = require('./builtin/session-status-tool');
+const sessionTranscriptTool = require('./builtin/session-transcript-tool');
+const sessionStopTool = require('./builtin/session-stop-tool');
+const jennyHelpTool = require('./builtin/jenny-help-tool');
 
 function createDefaultRegistry(options = {}) {
   const registry = new ToolRegistry();
@@ -65,6 +44,8 @@ function createDefaultRegistry(options = {}) {
   registry.registerTool(withManifestSchema(proposeSessionTool));
   registry.registerTool(withManifestSchema(completeSessionHandoffTool));
   registry.registerTool(withManifestSchema(sessionMessageTool));
+  // Row 69 W4b: the bundled app guide; flag-less and read-only, so it is always registered.
+  registry.registerTool(withManifestSchema(jennyHelpTool));
   if (options.toolsWorktreeEnabled === true) {
     registry.registerTool(withManifestSchema(worktreeListTool));
     registry.registerTool(withManifestSchema(worktreeCreateTool));
@@ -101,6 +82,9 @@ function createDefaultRegistry(options = {}) {
     registry.registerTool(withManifestSchema(conversationOpenTool));
     registry.registerTool(withManifestSchema(conversationsSearchTool));
   }
+  if (options.toolsSessionDirectoryEnabled === true) {
+    for (const tool of [sessionsListTool, sessionStatusTool, sessionTranscriptTool, sessionStopTool]) registry.registerTool(withManifestSchema(tool));
+  }
   return registry;
 }
 
@@ -110,4 +94,5 @@ module.exports = {
   ToolPathPolicy,
   ToolPermissionStore,
   ToolExecutor,
+  withManifestSchema,
 };

@@ -25,7 +25,8 @@
  *   getViewportRect (fn?)   () => {left,top,width,height}; defaults to
  *                           viewportEl.getBoundingClientRect(). Injectable for
  *                           tests where jsdom returns a zero rect.
- *   onCommitReason  (fn?)   optional side-channel; subscribers are preferred.
+ *   capFit       (bool?)    true caps fitToContent at FIT_SCALE_MAX (the File
+ *                           Map Atlas); other surfaces fit uncapped.
  *
  * controller methods:
  *   getState()                       → {scale, tx, ty}          (a fresh copy)
@@ -35,19 +36,26 @@
  *                                    [SCALE_MIN, SCALE_MAX].
  *   panBy(dx, dy[, reason])          shift by client-space pixels.
  *   panTo(tx, ty[, reason])          set translation directly.
- *   fitToContent(bounds[, reason])   frame {minX,minY,maxX,maxY} in the viewport.
+ *   fitToContent(bounds[, reason])   frame {minX,minY,maxX,maxY} in the viewport;
+ *                                    with capFit the scale is capped at FIT_SCALE_MAX
+ *                                    unless reason === 'district' (flyToFit is uncapped).
  *   reclampToBounds([reason])        re-run clamp against the current bounds.
  *   setBounds(bounds)                content extent used by clamp/fit (no commit).
  *   subscribe(fn)                    fn({scale,tx,ty,reason}) on every commit;
  *                                    returns an unsubscribe function.
  *   dispose()                        remove listeners, cancel rAF/debounce, clear
  *                                    subscribers; every method becomes a no-op.
- *   _internals                       { clamp, SCALE_MIN, SCALE_MAX, MIN_CONTENT_VISIBLE,
- *                                      DEFAULT_STORAGE_KEY_PREFIX, PERSIST_DEBOUNCE_MS,
- *                                      storageKey, commitReason }  (tests only)
+ *   _internals                       { bounds }  (tests only)
  *
- * _internals.clamp({scale,tx,ty}, bounds, viewport) is a PURE, DOM-free function
- * (exported for unit testing) that keeps at least MIN_CONTENT_VISIBLE px of
+ * Gestures: only the primary button pans; pointer capture is deferred until
+ * the pointer travels past CLICK_SLOP_PX (an immediate capture retargets the
+ * click to the viewport, so tile/card click listeners never saw it); a lost
+ * capture or a window blur ends the pan; a horizontal-only wheel never zooms.
+ * --atlas-zoom (a whole-subtree restyle) is stamped only when the scale moved
+ * more than ZOOM_STAMP_RATIO from the last stamp, and exactly on settle.
+ *
+ * clamp({scale,tx,ty}, bounds, viewport) (module export) is a PURE, DOM-free
+ * function that keeps at least MIN_CONTENT_VISIBLE px of
  * actual content visible in the viewport per axis, so the map can never be
  * scrolled — or restored from a stale persisted camera — fully off-screen.
  */
@@ -58,50 +66,32 @@
   }
   root.rendererIdeMapTransform = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-  const globalRefForOwnership = typeof globalThis !== 'undefined' ? globalThis : {};
-
-  function resolveEventOwnership() {
-    if (globalRefForOwnership.rendererIdeMapEventOwnership) {
-      return globalRefForOwnership.rendererIdeMapEventOwnership;
-    }
-    if (typeof require === 'function') {
-      try {
-        return require('./renderer-ide-map-event-ownership');
-      } catch (_error) {
-        /* unavailable */
-      }
-    }
-    return {};
-  }
-
-  // WIDE-029: shared ownership guard (renderer-ide-map-event-ownership.js) so
-  // pan/zoom never steals events from the controls bar, minimap, Overview
-  // panel, findings chip bar, contenteditable regions, or generic interactive
-  // controls — the empty canvas (or a node/cluster card riding on it) is the
-  // only thing that owns pan, and wheel-driven zoom is skipped entirely over
-  // a scroll-owning/control surface so nested scrolling (Overview's
-  // overflow-y:auto body) keeps working. Falls back to permissive no-op
-  // checks if the sibling module is ever unavailable (never throws, never
-  // regresses existing canvas behavior).
-  const eventOwnership = resolveEventOwnership();
-  const ownsCanvasPointerEvent = typeof eventOwnership.ownsCanvasPointerEvent === 'function'
-    ? eventOwnership.ownsCanvasPointerEvent
-    : () => true;
-  const ownsMapWheelZoom = typeof eventOwnership.ownsMapWheelZoom === 'function'
-    ? eventOwnership.ownsMapWheelZoom
-    : () => true;
-  const normalizePointerId = typeof eventOwnership.normalizePointerId === 'function'
-    ? eventOwnership.normalizePointerId
-    : (event) => (event && event.pointerId != null ? event.pointerId : 'mouse');
-  const createPointerIdGate = typeof eventOwnership.createPointerIdGate === 'function'
-    ? eventOwnership.createPointerIdGate
-    : () => ({ capture() {}, matches: () => true, release() {}, isActive: () => false });
+  // WIDE-029: shared ownership guard so pan/zoom never steals events from the
+  // controls bar, Overview panel, findings chip bar, contenteditable regions,
+  // or generic interactive controls — the empty canvas (or a node card riding
+  // on it) owns pan, and wheel zoom is skipped over a scroll-owning/control
+  // surface so nested scrolling keeps working. The IDE script manifest loads
+  // renderer-ide-map-event-ownership.js first.
+  const {
+    ownsCanvasPointerEvent, ownsMapWheelZoom, normalizePointerId, createPointerIdGate,
+  } = globalThis.rendererIdeMapEventOwnership || require('./renderer-ide-map-event-ownership');
 
   const SCALE_MIN = 0.2;
   const SCALE_MAX = 3.0;
+  // Ceiling for the whole-map fit under capFit (a district fit stays uncapped), so a small
+  // workspace opens near 1:1 instead of at 2x. It must stay >= the LOD tiles
+  // boundary (DOTS_TILES_BOUNDARY, 1.0) plus its hysteresis band
+  // (HYSTERESIS_BAND, 0.03) in renderer-ide-map-lod.js, or a small map would
+  // open at the dots tier.
+  const FIT_SCALE_MAX = 1.1;
   const MIN_CONTENT_VISIBLE = 48;
-  const PERSIST_DEBOUNCE_MS = 150;
-  const DEFAULT_STORAGE_KEY_PREFIX = 'jenny.fileMap.view.';
+  // Debounce for the settle pass (exact --atlas-zoom stamp + persistence).
+  const SETTLE_MS = 150;
+  const STORAGE_KEY_PREFIX = 'jenny.fileMap.view.';
+  // A pointerdown that travels farther than this (client px) is a pan.
+  const CLICK_SLOP_PX = 4;
+  // Re-stamp --atlas-zoom mid-gesture only past this relative scale change.
+  const ZOOM_STAMP_RATIO = 0.04;
 
   function clampScale(scale) {
     if (!Number.isFinite(scale)) {
@@ -184,13 +174,13 @@
     const viewportEl = o.viewportEl || null;
     const contentEl = o.contentEl || null;
     const workspaceId = o.workspaceId == null ? '' : String(o.workspaceId);
+    const fitCap = o.capFit === true ? FIT_SCALE_MAX : 0;
     const timers = resolveTimers(o.timers);
     // WIDE-030: no workspace identity → no persistence at all (restore AND
     // persist both no-op on a null storage). Without this, every identity-less
     // workspace read/wrote the SAME bare-prefix key.
     const storage = workspaceId ? resolveStorage(o.storage) : null;
-    const keyPrefix = o.storageKeyPrefix || DEFAULT_STORAGE_KEY_PREFIX;
-    const storageKey = keyPrefix + workspaceId;
+    const storageKey = STORAGE_KEY_PREFIX + workspaceId;
 
     const state = { scale: 1, tx: 0, ty: 0 };
     // Injectable clock (tests drive flyTo deterministically).
@@ -201,7 +191,9 @@
 
     let rafId = null;
     let pendingReason = 'init';
-    let persistTimer = null;
+    let settleTimer = null;
+    // The stylesheet's var(--atlas-zoom, 1) fallback is the initial stamp.
+    let stampedZoom = 1;
 
     function defaultViewportRect() {
       if (viewportEl && typeof viewportEl.getBoundingClientRect === 'function') {
@@ -247,17 +239,22 @@
     }
 
     // ── commit machinery (rAF-coalesced) ───────────────────────────────────
+    // Zoom-compensation hook: the stylesheet divides chrome sizes (district
+    // borders, header labels, ray strokes) by --atlas-zoom so they hold a
+    // constant VISUAL size across the 0.2–3.0 zoom range. Rewriting it
+    // restyles the whole content subtree, so mid-gesture frames re-stamp only
+    // on a material change; the settle pass stamps the exact value.
+    function stampZoom(exact) {
+      if (!contentEl || !contentEl.style || typeof contentEl.style.setProperty !== 'function') return;
+      if (stampedZoom === state.scale) return;
+      if (!exact && Math.abs(state.scale / stampedZoom - 1) <= ZOOM_STAMP_RATIO) return;
+      stampedZoom = state.scale;
+      contentEl.style.setProperty('--atlas-zoom', String(state.scale));
+    }
     function applyDom() {
       if (contentEl && contentEl.style) {
         contentEl.style.transform = 'translate(' + state.tx + 'px, ' + state.ty + 'px) scale(' + state.scale + ')';
-        // Zoom-compensation hook: the stylesheet divides chrome sizes
-        // (district borders, header labels, ray strokes) by this variable so
-        // they hold a constant VISUAL size across the 0.2–3.0 zoom range —
-        // without it, far zoom scales 1px borders and 12px labels to
-        // invisible sub-pixel chrome.
-        if (typeof contentEl.style.setProperty === 'function') {
-          contentEl.style.setProperty('--atlas-zoom', String(state.scale));
-        }
+        stampZoom(false);
       }
     }
     function notify(reason) {
@@ -265,30 +262,31 @@
       for (const fn of [...subscribers]) {
         try { fn(snapshot); } catch (_error) { /* subscriber isolation */ }
       }
-      if (typeof o.onCommitReason === 'function') {
-        try { o.onCommitReason(snapshot); } catch (_error) { /* best-effort */ }
-      }
     }
-    function schedulePersist() {
-      if (disposed || !storage) {
+    // Settle pass, debounced after the last commit: the exact zoom stamp,
+    // then best-effort persistence when this camera has a workspace identity.
+    function scheduleSettle() {
+      if (disposed) {
         return;
       }
-      if (persistTimer != null) {
-        timers.clearTimeout(persistTimer);
+      if (settleTimer != null) {
+        timers.clearTimeout(settleTimer);
       }
-      persistTimer = timers.setTimeout(() => {
-        persistTimer = null;
+      settleTimer = timers.setTimeout(() => {
+        settleTimer = null;
+        stampZoom(true);
+        if (!storage) return;
         try {
           storage.setItem(storageKey, JSON.stringify({ scale: state.scale, tx: state.tx, ty: state.ty }));
         } catch (_error) { /* persistence is best-effort */ }
-      }, PERSIST_DEBOUNCE_MS);
+      }, SETTLE_MS);
     }
     function flushCommit() {
       rafId = null;
       const reason = pendingReason;
       applyDom();
       notify(reason);
-      schedulePersist();
+      scheduleSettle();
     }
     function commit(reason) {
       if (disposed) {
@@ -407,8 +405,9 @@
     }
 
     // Shared fit math: the {scale, tx, ty} that centers `b` in the viewport
-    // at 90% zoom-to-fit. Null when the viewport has no size yet.
-    function computeFitTarget(b) {
+    // at 90% zoom-to-fit, optionally capped at `maxScale`. Null when the
+    // viewport has no size yet.
+    function computeFitTarget(b, maxScale) {
       const vp = viewportSize();
       if (!b || vp.width <= 0 || vp.height <= 0) {
         return null;
@@ -419,7 +418,8 @@
       // Never let the controls take more than half the height from the fit.
       const inset = Math.min(Math.max(0, rawInset), vp.height / 2);
       const usableH = vp.height - inset;
-      const scale = clampScale(Math.min(vp.width / contentW, usableH / contentH) * 0.9);
+      const fit = Math.min(vp.width / contentW, usableH / contentH) * 0.9;
+      const scale = clampScale(maxScale > 0 ? Math.min(maxScale, fit) : fit);
       const cx = (b.minX + b.maxX) / 2;
       const cy = (b.minY + b.maxY) / 2;
       return {
@@ -442,7 +442,7 @@
       if (b) {
         setBounds(b);
       }
-      const target = computeFitTarget(b);
+      const target = computeFitTarget(b, reason === 'district' ? 0 : fitCap);
       if (!target) {
         assign({ scale: state.scale, tx: state.tx, ty: state.ty }, reason || 'fit');
         return false;
@@ -481,30 +481,36 @@
     // concurrent touch never perturbs an in-flight one-finger pan).
     let panLastX = 0;
     let panLastY = 0;
+    let panStartX = 0;
+    let panStartY = 0;
+    let panCaptured = false;
     const panPointerGate = createPointerIdGate();
+    const ownerWindow = (viewportEl && viewportEl.ownerDocument && viewportEl.ownerDocument.defaultView) || null;
     function onPointerDown(event) {
-      if (disposed || panPointerGate.isActive()) {
+      if (disposed || panPointerGate.isActive() || (event.button != null && event.button !== 0)) {
         return;
       }
-      // WIDE-029: pan is owned by the empty canvas (or a node/cluster card
-      // riding on it) ONLY — never by controls, the minimap, the Overview
-      // panel, the findings chip bar, contenteditable regions, or generic
-      // interactive controls, even though all of those are DOM descendants
-      // of this same viewport.
+      // WIDE-029: pan is owned by the empty canvas (or a node card riding on
+      // it) ONLY — never by the controls, Overview, findings, rail,
+      // contenteditable regions, or generic controls inside this viewport.
       if (!ownsCanvasPointerEvent(event.target)) {
         return;
       }
       cancelFly();
       panPointerGate.capture(normalizePointerId(event));
-      panLastX = event.clientX;
-      panLastY = event.clientY;
-      if (viewportEl && typeof viewportEl.setPointerCapture === 'function' && event.pointerId != null) {
-        try { viewportEl.setPointerCapture(event.pointerId); } catch (_error) { /* jsdom / no capture */ }
-      }
+      panCaptured = false;
+      panLastX = panStartX = event.clientX;
+      panLastY = panStartY = event.clientY;
     }
     function onPointerMove(event) {
       if (disposed || !panPointerGate.matches(event)) {
         return;
+      }
+      if (!panCaptured && Math.hypot(event.clientX - panStartX, event.clientY - panStartY) > CLICK_SLOP_PX) {
+        panCaptured = true;
+        if (viewportEl && typeof viewportEl.setPointerCapture === 'function' && event.pointerId != null) {
+          try { viewportEl.setPointerCapture(event.pointerId); } catch (_error) { /* jsdom / no capture */ }
+        }
       }
       const dx = event.clientX - panLastX;
       const dy = event.clientY - panLastY;
@@ -516,11 +522,16 @@
       if (!panPointerGate.matches(event)) {
         return;
       }
-      if (viewportEl && typeof viewportEl.releasePointerCapture === 'function'
+      panPointerGate.release();
+      if (panCaptured && viewportEl && typeof viewportEl.releasePointerCapture === 'function'
         && event && event.pointerId != null) {
         try { viewportEl.releasePointerCapture(event.pointerId); } catch (_error) { /* best-effort */ }
       }
+      panCaptured = false;
+    }
+    function onWindowBlur() {
       panPointerGate.release();
+      panCaptured = false;
     }
     function onWheel(event) {
       if (disposed) {
@@ -535,29 +546,30 @@
       if (typeof event.preventDefault === 'function') {
         event.preventDefault();
       }
+      if (!event.deltaY) return; // horizontal-only scroll has no zoom direction
       const factor = event.deltaY < 0 ? 1.1 : (1 / 1.1);
       zoomToward({ x: event.clientX, y: event.clientY }, state.scale * factor);
     }
 
+    const VIEWPORT_LISTENERS = [
+      ['pointerdown', onPointerDown], ['pointermove', onPointerMove], ['pointerup', endPan],
+      ['pointercancel', endPan], ['lostpointercapture', endPan],
+    ];
     function bindEvents() {
       if (!viewportEl || typeof viewportEl.addEventListener !== 'function') {
         return;
       }
-      viewportEl.addEventListener('pointerdown', onPointerDown);
-      viewportEl.addEventListener('pointermove', onPointerMove);
-      viewportEl.addEventListener('pointerup', endPan);
-      viewportEl.addEventListener('pointercancel', endPan);
+      for (const [type, fn] of VIEWPORT_LISTENERS) viewportEl.addEventListener(type, fn);
       viewportEl.addEventListener('wheel', onWheel, { passive: false });
+      ownerWindow?.addEventListener?.('blur', onWindowBlur);
     }
     function unbindEvents() {
       if (!viewportEl || typeof viewportEl.removeEventListener !== 'function') {
         return;
       }
-      viewportEl.removeEventListener('pointerdown', onPointerDown);
-      viewportEl.removeEventListener('pointermove', onPointerMove);
-      viewportEl.removeEventListener('pointerup', endPan);
-      viewportEl.removeEventListener('pointercancel', endPan);
+      for (const [type, fn] of VIEWPORT_LISTENERS) viewportEl.removeEventListener(type, fn);
       viewportEl.removeEventListener('wheel', onWheel, { passive: false });
+      ownerWindow?.removeEventListener?.('blur', onWindowBlur);
     }
 
     // ── persistence restore ─────────────────────────────────────────────────
@@ -603,10 +615,11 @@
         timers.cancelAnimationFrame(rafId);
         rafId = null;
       }
-      if (persistTimer != null) {
-        timers.clearTimeout(persistTimer);
-        persistTimer = null;
+      if (settleTimer != null) {
+        timers.clearTimeout(settleTimer);
+        settleTimer = null;
       }
+      panPointerGate.release();
       subscribers.clear();
     }
 
@@ -623,23 +636,13 @@
       panTo,
       flyTo,
       flyToFit,
-      cancelFly,
       fitToContent,
       reclampToBounds,
       setBounds,
       subscribe,
       dispose,
       _internals: {
-        clamp,
-        SCALE_MIN,
-        SCALE_MAX,
-        MIN_CONTENT_VISIBLE,
-        PERSIST_DEBOUNCE_MS,
-        DEFAULT_STORAGE_KEY_PREFIX,
-        storageKey,
-        get commitReason() { return pendingReason; },
         get bounds() { return bounds; },
-        forceCommitFlush: flushCommit,
       },
     };
   }
@@ -649,8 +652,7 @@
     clamp,
     SCALE_MIN,
     SCALE_MAX,
+    FIT_SCALE_MAX,
     MIN_CONTENT_VISIBLE,
-    PERSIST_DEBOUNCE_MS,
-    DEFAULT_STORAGE_KEY_PREFIX,
   };
 });

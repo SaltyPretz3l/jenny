@@ -345,3 +345,26 @@ test('the Tools sync reaches the bound sandbox row through onParentChange until 
   assert.equal(row().hasAttribute('data-setting-parent-off'), false, 'a disposed controller no longer follows the parent');
   dom.window.close();
 });
+
+test('a pushed state that changes nothing on screen keeps the row and its alert node', async () => {
+  let listener;
+  const failed = { enabled: false, state: 'unavailable', reason: 'docker_missing', platform: 'windows', qualified: true };
+  const bridge = {
+    async getState() { return failed; },
+    onChanged(callback) { listener = callback; return () => {}; },
+  };
+  const { dom, host, controller } = harness(bridge);
+  controller.bind();
+  await settle();
+  const row = host.querySelector('[data-settings-field="commandSandboxEnabled"]');
+  const alert = row.querySelector('.settings-field-error[role="alert"]');
+  assert.match(alert.textContent, /Install and start Docker/);
+  listener({ state: { ...failed } });
+  assert.equal(host.querySelector('[data-settings-field="commandSandboxEnabled"]'), row, 'the same state does not repaint');
+  assert.equal(host.querySelector('.settings-field-error'), alert);
+  listener({ ...failed, state: 'recovery-required', reason: '' });
+  assert.notEqual(host.querySelector('[data-settings-field="commandSandboxEnabled"]'), row, 'a new state repaints');
+  assert.equal(host.dataset.commandSandboxState, 'recovery-required');
+  controller.dispose();
+  dom.window.close();
+});

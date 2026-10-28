@@ -8,8 +8,11 @@ import re
 from dataclasses import dataclass
 from typing import Any, Mapping, NoReturn
 
+from sidecar.ai.error_codes import CMP_MODE_TOOL_BLOCKED
 from sidecar.ai.routing.tool_execution_snapshots import split_visible_execution_arguments
+from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.models import ToolCallRequest
+from sidecar.ai.tools.plan_artifact_policy import PLAN_ARTIFACT_WRITE_ARG
 from sidecar.runtime.approval_plan import (
     SIDECAR_INJECTED_ARG_KEYS,
     FrozenExecutionInputs,
@@ -182,9 +185,23 @@ class RestoredToolInputs:
         return cls(canonical_bytes=body, source_sha256=sha256)
 
     def source_frozen_inputs(self) -> FrozenExecutionInputs:
-        """Return a fresh parsed source value without exposing mutable aliases."""
+        """Return a fresh parsed source value without exposing mutable aliases.
 
-        return _frozen(_decode(self.canonical_bytes, self.source_sha256))
+        ``__post_init__`` already proved these immutable bytes canonical,
+        duplicate-free, finite and well-shaped, so a plain C-speed parse yields
+        an equal, unaliased copy without repeating that validation.
+        """
+
+        value = json.loads(self.canonical_bytes)
+        return FrozenExecutionInputs(
+            call_id=value["call_id"],
+            tool_name=value["tool_name"],
+            visible_tool_arguments=value["visible_tool_arguments"],
+            effective_tool_arguments=value["effective_tool_arguments"],
+            injected_arg_keys=tuple(value["injected_arg_keys"]),
+            effective_args_fingerprint=value["effective_args_fingerprint"],
+            execution_context_payload=value["execution_context_payload"],
+        )
 
     def bind_for_attempt(
         self,
@@ -255,8 +272,48 @@ class RestoredToolInputs:
         )
 
 
+def refuse_restored_mode_drift(
+    restored: FrozenExecutionInputs | Any,
+    *,
+    read_only: bool,
+    approved_plan: Any,
+    trusted_plan_artifact_write: bool,
+) -> None:
+    """A resumed call keeps its frozen mode only while the turn still has it.
+
+    Restored inputs are the frozen truth and are never recomputed (the
+    approval path re-freezes and compares; the resource-deferral resume must
+    not, see test_restored_tool_inputs). The mode keys the freeze injected --
+    ``_jenny_read_only``, ``_jenny_approved_plan``, the plan-artifact write
+    grant and the context's ``read_only`` -- are instead checked against the
+    current request, so a turn that became read-only while paused refuses the
+    write instead of replaying it (tool review C5 #2).
+    """
+    args = restored.effective_tool_arguments
+    payload = restored.execution_context_payload
+    drifted: list[str] = []
+    if "_jenny_read_only" in args and args["_jenny_read_only"] != bool(read_only):
+        drifted.append("_jenny_read_only")
+    if "_jenny_approved_plan" in args and args["_jenny_approved_plan"] != approved_plan:
+        drifted.append("_jenny_approved_plan")
+    if args.get(PLAN_ARTIFACT_WRITE_ARG) is True and not trusted_plan_artifact_write:
+        drifted.append(PLAN_ARTIFACT_WRITE_ARG)
+    if "read_only" in payload and payload["read_only"] != bool(read_only):
+        drifted.append("read_only")
+    if drifted:
+        raise ToolExecutionFailure(
+            code=CMP_MODE_TOOL_BLOCKED,
+            message=(
+                "The execution mode changed while this call was paused; it was not run. "
+                "Re-issue the call under the current mode."
+            ),
+            retryable=False,
+        )
+
+
 __all__ = [
     "MAX_RESTORED_TOOL_INPUT_BYTES",
     "RestoredToolInputError",
     "RestoredToolInputs",
+    "refuse_restored_mode_drift",
 ]

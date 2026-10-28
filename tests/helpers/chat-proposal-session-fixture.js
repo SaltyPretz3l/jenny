@@ -7,6 +7,7 @@
 const R = require('../../services/backend/chat-proposal-records');
 const S = require('../../services/backend/chat-proposal-session-records');
 const { createFixture } = require('./chat-proposal-service-fixture');
+const preparation = require('../../services/session-handoff-preparation');
 
 function sessionBinding(overrides = {}) {
   const { session = {}, restrictions = {}, ...rest } = overrides;
@@ -53,15 +54,14 @@ function createSessionFixture(t, opts = {}) {
         sessionHandoffPreparation: { proposal_id: record.proposal_id, attempt_id: record.attempt_id },
       };
     },
+    // The real staged timers (first-output limit, then 60 s from the first output), recorded.
     startPreparationDeadline(ports, args) {
-      handoff.calls.push(['start_deadline', args.proposalId, args.attemptId]);
-      ports.deadlines.set(`${args.proposalId}:${args.attemptId}`, ports.setTimer(args.onExpire, 60000));
+      handoff.calls.push(['start_deadline', args.proposalId, args.attemptId, args.stage]);
+      preparation.startPreparationDeadline(ports, args);
     },
     clearPreparationDeadline(ports, args) {
       handoff.calls.push(['clear_deadline', args.proposalId, args.attemptId]);
-      const key = `${args.proposalId}:${args.attemptId}`;
-      if (ports.deadlines.has(key)) ports.clearTimer(ports.deadlines.get(key));
-      ports.deadlines.delete(key);
+      preparation.clearPreparationDeadline(ports, args);
     },
     async completeSessionHandoff(ports, args) {
       handoff.calls.push(['complete', args.proposalId]);
@@ -81,6 +81,11 @@ function createSessionFixture(t, opts = {}) {
     getTurnCompletionReason: (_sessionId, turnId) => ctl.reasons.get(turnId) ?? null,
     supportsSessionHandoff: () => ctl.handoffSupported,
     supportsProducerTool: () => true,
+    // Row 76: the primary's project choice and standing launch permission (off unless a test turns them on).
+    allowsProjectChoice: () => false,
+    projectExists: () => true,
+    matchLaunchPermission: () => null,
+    isWakeTurn: () => false,
     setTimer: (fn, ms) => {
       const timer = { fn, ms, cleared: false, fired: false };
       ctl.timers.push(timer);

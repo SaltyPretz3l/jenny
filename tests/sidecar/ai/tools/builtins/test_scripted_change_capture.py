@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
 from functools import partial
 from pathlib import Path
 
@@ -24,6 +23,7 @@ from sidecar.ai.tools.builtins import worktree_change_tracking as tracking
 from sidecar.ai.tools.builtins.git_ops import _run_git_raw
 from sidecar.ai.tools.contracts import ToolHandlerResult
 from sidecar.ai.tools.workspace import WorkspaceGuard
+from tests.sidecar._platform_skips import make_dir_link, requires_file_symlinks
 from tests.sidecar.ai.tools.builtins.test_worktree_change_tracking import _repo, _run_shell
 
 _SECRET = "hunter2-do-not-leak"
@@ -190,18 +190,6 @@ def test_ordinary_names_are_not_sensitive() -> None:
         assert capture.is_sensitive_path(name) is False
 
 
-def _make_dir_link(link: Path, target: Path) -> None:
-    if sys.platform == "win32":
-        completed = subprocess.run(
-            ["cmd", "/c", "mklink", "/J", str(link), str(target)],
-            capture_output=True, check=False,
-        )
-        if completed.returncode != 0:
-            pytest.skip("junction creation is unavailable")
-        return
-    os.symlink(target, link, target_is_directory=True)
-
-
 def _build_untracked(
     repo: Path, guard: WorkspaceGuard, changed: list[str], clock: object = None
 ) -> capture.ScriptedDiffs:
@@ -225,7 +213,7 @@ def test_a_junction_or_symlink_escape_is_never_followed(tmp_path: Path) -> None:
     outside = tmp_path.parent / f"{tmp_path.name}-outside"
     outside.mkdir()
     (outside / "loot.txt").write_text(f"{_SECRET}\n", "utf-8")
-    _make_dir_link(repo / "link", outside)
+    make_dir_link(repo / "link", outside)
 
     built = _build_untracked(repo, guard, ["link/loot.txt"])
 
@@ -234,14 +222,12 @@ def test_a_junction_or_symlink_escape_is_never_followed(tmp_path: Path) -> None:
     assert _SECRET not in json.dumps(built.diffs)
 
 
+@requires_file_symlinks()
 def test_a_file_symlink_is_summary_only(tmp_path: Path) -> None:
     repo, guard = _repo(tmp_path)
     outside = tmp_path / "outside.txt"
     outside.write_text(f"{_SECRET}\n", "utf-8")
-    try:
-        os.symlink(outside, repo / "alias.txt")
-    except (OSError, NotImplementedError):
-        pytest.skip("file symlink creation is unavailable")
+    os.symlink(outside, repo / "alias.txt")
 
     built = _build_untracked(repo, guard, ["alias.txt"])
 

@@ -6,10 +6,12 @@ import logging
 import os
 import re
 import sys
+import threading
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
+from time import monotonic
 from typing import Any
 
 from sidecar.ai.config import read_environment_value
@@ -19,6 +21,8 @@ RAPID_RENDER_DPI = 200
 RAPID_RENDER_DPI_HIGH = 300
 UNCERTAIN_SCORE_THRESHOLD = 0.85
 MAX_UNCERTAIN_TOKENS = 20
+# A failed engine load other than a missing package is retried after this long.
+RAPID_LOAD_RETRY_SECONDS = 30.0
 MODEL_FILENAMES = {
     "Det": "PP-OCRv6_det_small.onnx",
     "Cls": "ch_ppocr_mobile_v2.0_cls_mobile.onnx",
@@ -84,6 +88,66 @@ def load_engine() -> Any:
     models_dir = Path(rapidocr.__file__).parent / "models"
     logging.getLogger("RapidOCR").setLevel(logging.WARNING)
     return rapidocr.RapidOCR(params=engine_params(models_dir))
+
+
+@dataclass(frozen=True)
+class _EngineLoad:
+    loader: Callable[[], Any]
+    engine: Any
+    error: Exception | None
+    # monotonic() time after which a failed load is tried again; None = never.
+    retry_after: float | None = None
+
+
+class _SharedEngine:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.state: _EngineLoad | None = None
+
+
+_SHARED_ENGINE = _SharedEngine()
+# The engine updates its own call options per call; one recognition at a time.
+ENGINE_CALL_LOCK = threading.Lock()
+
+
+def shared_engine() -> tuple[Any | None, Exception | None]:
+    """``(engine, load error)`` for the process's one RapidOCR engine.
+
+    Loads run one at a time under a lock, so a caller arriving during a load
+    waits and then uses its outcome. A loaded engine is kept for the process.
+    A missing package (``ImportError``) is remembered for the process; any
+    other load failure is remembered for ``RAPID_LOAD_RETRY_SECONDS`` and then
+    loaded again, so a broken runtime is not reloaded on every read. Keyed by
+    the current ``load_engine`` so a replaced loader loads afresh.
+    """
+
+    loader = load_engine
+    with _SHARED_ENGINE.lock:
+        state = _SHARED_ENGINE.state
+        if (
+            state is None
+            or state.loader is not loader
+            or (state.retry_after is not None and monotonic() >= state.retry_after)
+        ):
+            try:
+                state = _EngineLoad(loader, loader(), None)
+            except ImportError as exc:
+                # Kept for the process: drop the traceback so its frames are freed.
+                state = _EngineLoad(loader, None, exc.with_traceback(None))
+            except Exception as exc:  # noqa: BLE001 - the session reports the failure.
+                state = _EngineLoad(
+                    loader,
+                    None,
+                    exc.with_traceback(None),
+                    retry_after=monotonic() + RAPID_LOAD_RETRY_SECONDS,
+                )
+            _SHARED_ENGINE.state = state
+    return state.engine, state.error
+
+
+def reset_shared_engine() -> None:
+    with _SHARED_ENGINE.lock:
+        _SHARED_ENGINE.state = None
 
 
 def render_dpi(page: Any) -> int:

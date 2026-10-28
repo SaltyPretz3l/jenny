@@ -32,6 +32,13 @@ _BROWSER_ACCEPT_LANGUAGE = "en-US,en;q=0.9"
 _REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
 _NAT64_WELL_KNOWN_NETWORK = ipaddress.ip_network("64:ff9b::/96")
 _SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
+# Ranges older Python 3.11.x classify as public: deprecated site-local, the full
+# IETF protocol-assignments /24 (stdlib only knows a /29 of it) and local-use NAT64.
+_EXTRA_BLOCKED = (
+    ipaddress.ip_network("fec0::/10"),
+    ipaddress.ip_network("192.0.0.0/24"),
+    ipaddress.ip_network("64:ff9b:1::/48"),
+)
 # RFC 5214 §6.1: the top 32 bits of an ISATAP interface identifier. `0200:5efe`
 # sets the universal/local bit and is reserved for a globally-unique embedded
 # IPv4; `0000:5efe` is the form used otherwise. Both are matched — see
@@ -66,6 +73,10 @@ class _SingleFetchResult:
     content_type: str
     status_code: int
     location: str = ""
+
+
+class HostResolutionError(ValueError):
+    """The hostname did not resolve (DNS failure, not a malformed URL)."""
 
 
 class RedirectBlockedError(RuntimeError):
@@ -151,6 +162,8 @@ def _is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     # `is_private`.
     if ip in _NAT64_WELL_KNOWN_NETWORK or ip in _SHARED_ADDRESS_SPACE:
         return False
+    if any(ip in net for net in _EXTRA_BLOCKED):
+        return False
     return not (
         ip.is_private
         or ip.is_loopback
@@ -206,7 +219,7 @@ def validate_public_url(
     try:
         infos = _getaddrinfo(host, port, deadline=deadline)
     except socket.gaierror as exc:
-        raise ValueError(f"Hostname resolution failed: {host}") from exc
+        raise HostResolutionError(f"Hostname resolution failed: {host}") from exc
 
     if not infos:
         raise ValueError(f"Hostname resolution returned no addresses: {host}")
@@ -378,7 +391,13 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 
 def _build_opener(pinned_ip: str) -> Any:
-    handlers: list[urllib.request.BaseHandler] = [_NoRedirectHandler()]
+    # An empty ProxyHandler first: the default one reads env/system proxies and
+    # rewrites req.host, so the pinned connection would dial the target IP at the
+    # proxy's port. Web tools always connect directly to the validated address.
+    handlers: list[urllib.request.BaseHandler] = [
+        urllib.request.ProxyHandler({}),
+        _NoRedirectHandler(),
+    ]
     safe_pinned_ip = str(pinned_ip or "").strip()
     if safe_pinned_ip:
         handlers.extend(

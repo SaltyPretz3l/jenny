@@ -18,6 +18,7 @@ const { WORKSPACE_FS_ERROR_CODES } = require('../services/workspace-ide-errors')
 const { WorkspaceRootCoordinator } = require('../services/workspace-root-coordinator');
 const { getBridgeChannel } = require('../services/ipc-contract');
 const { registerWorkspaceFsIpcHandlers } = require('../services/main/workspace-ipc-registration');
+const { linkDirectory } = require('./helpers/platform-skips');
 
 function createCoordinator(rootPath) {
   return new WorkspaceRootCoordinator({
@@ -122,7 +123,7 @@ test('preview warns only for top-level sensitive sources and generated directory
   ));
 });
 
-test('imports a mixed tree with auto-rename, nested symlink isolation, and no temp residue', async (t) => {
+test('imports a mixed tree with auto-rename, nested symlink isolation, and no temp residue', async () => {
   const { workspace, outside } = makeRoots();
   const source = path.join(outside, 'bundle');
   const nested = path.join(source, 'nested');
@@ -132,12 +133,7 @@ test('imports a mixed tree with auto-rename, nested symlink isolation, and no te
   fs.writeFileSync(path.join(source, 'root.txt'), 'root');
   fs.writeFileSync(path.join(nested, 'child.txt'), 'child');
   const linkPath = path.join(nested, 'linked');
-  try {
-    fs.symlinkSync(linkTarget, linkPath, process.platform === 'win32' ? 'junction' : 'dir');
-  } catch (error) {
-    if (error?.code === 'EPERM') return t.skip('symlink creation is unavailable on this host');
-    throw error;
-  }
+  linkDirectory(linkTarget, linkPath);
   fs.mkdirSync(path.join(workspace, 'dest', 'bundle'), { recursive: true });
   fs.writeFileSync(path.join(workspace, 'dest', 'bundle', 'existing.txt'), 'keep');
 
@@ -161,25 +157,17 @@ test('imports a mixed tree with auto-rename, nested symlink isolation, and no te
   assert.deepEqual(await tempResidue(workspace), []);
 });
 
-test('a directory swapped to a junction between scan and copy is skipped while siblings land', async (t) => {
+test('a directory swapped to a junction between scan and copy is skipped while siblings land', async () => {
   const { workspace, outside } = makeRoots();
   const source = path.join(outside, 'bundle');
   const changing = path.join(source, 'changing');
   const moved = path.join(outside, 'changing-original');
   const junctionTarget = path.join(outside, 'junction-target');
-  const probe = path.join(outside, 'junction-probe');
   fs.mkdirSync(changing, { recursive: true });
   fs.mkdirSync(junctionTarget);
   fs.writeFileSync(path.join(changing, 'original.txt'), 'original');
   fs.writeFileSync(path.join(junctionTarget, 'escaped.txt'), 'escaped');
   fs.writeFileSync(path.join(source, 'sibling.txt'), 'sibling');
-  try {
-    fs.symlinkSync(junctionTarget, probe, process.platform === 'win32' ? 'junction' : 'dir');
-    fs.rmSync(probe);
-  } catch (error) {
-    if (error?.code === 'EPERM') return t.skip('junction creation is unavailable on this host');
-    throw error;
-  }
   let changingReads = 0;
   const injectedFs = new Proxy(fsPromises, {
     get(target, property) {

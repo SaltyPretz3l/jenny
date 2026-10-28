@@ -8,10 +8,14 @@ const { createSendSlashDispatch } = require('../renderer/chat/renderer-skill-sla
 const composerState = require('../renderer/chat/renderer-composer-v2-state');
 
 function harness(t) {
-  const dom = new JSDOM('<textarea id="chatInput"></textarea><button id="composerTerminalShortcut">/commands</button>');
+  const dom = new JSDOM('<textarea id="chatInput"></textarea><button id="composerAttachShortcut">+</button>');
   const doc = dom.window.document;
   const input = doc.getElementById('chatInput');
-  const button = doc.getElementById('composerTerminalShortcut');
+  // Row 63: the + menu's Commands row asks the composer's menu to open under the + button.
+  const button = doc.getElementById('composerAttachShortcut');
+  button.addEventListener('click', () => {
+    input.dispatchEvent(new dom.window.CustomEvent(autocompleteUtils.SLASH_MENU_EVENT, { cancelable: true, detail: { anchor: button } }));
+  });
   const state = { currentSessionId: 's1', ui: { activeView: 'chat' }, composerSessionState: new Map([['s1', { generation: 1 }]]) };
   let runs = 0, selections = 0, submits = 0, inputEvents = 0;
   const registry = createSlashCommandRegistry({ state });
@@ -63,10 +67,7 @@ for (const entryPoint of ['inline', 'button']) {
       let target = h.input;
       if (entryPoint === 'button') {
         h.type('draft arguments');
-        let legacy = 0;
-        h.button.addEventListener('click', () => { legacy++; });
         h.button.click();
-        assert.equal(legacy, 0);
         assert.equal(h.input.value, 'draft arguments');
         target = h.doc.querySelector('.slash-autocomplete-search');
         assert.equal(h.doc.activeElement, target);
@@ -159,6 +160,13 @@ test('returning focus to the draft dismisses button search without changing text
   assert.equal(h.input.value, 'keep this');
 });
 
+test('pressing the + button again closes the search menu so the + menu opens alone', (t) => {
+  const h = harness(t); h.button.click();
+  assert.equal(h.controller.isOpen(), true);
+  h.button.dispatchEvent(new h.dom.window.Event('pointerdown', { bubbles: true }));
+  assert.equal(h.controller.isOpen(), false);
+});
+
 test('small viewport clamps menu width and duplicate disposal restores attributes', (t) => {
   const h = harness(t);
   Object.defineProperty(h.dom.window, 'innerWidth', { value: 300 });
@@ -194,7 +202,7 @@ test('live registry updates, session fencing, ARIA and teardown', (t) => {
 // 1's bound #chatInput (pane 0's) instead of its own textarea. It now binds
 // its own composer and session, anchors there, and leaves pane 0's alone.
 test('split view: a second pane gets its own menu on its textarea, keyed to its session, disposed with it', (t) => {
-  const dom = new JSDOM('<textarea id="chatInput"></textarea><button id="composerTerminalShortcut">/commands</button>'
+  const dom = new JSDOM('<textarea id="chatInput"></textarea>'
     + '<section class="chat-pane" data-pane-id="1"><textarea class="composer-input" data-chat-node="chatInput"></textarea></section>');
   const doc = dom.window.document;
   const input0 = doc.getElementById('chatInput');
@@ -233,14 +241,12 @@ test('split view: a second pane gets its own menu on its textarea, keyed to its 
   type(input1, '/c');
   assert.equal(input1.getAttribute('aria-expanded'), 'true', 'pane 1 fences on its own session, not the focused mirror');
 
-  let legacy = 0;
-  doc.getElementById('composerTerminalShortcut').addEventListener('click', () => { legacy += 1; });
   input1.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-  doc.getElementById('composerTerminalShortcut').click();
-  assert.equal(legacy, 0, 'the Commands button is claimed once, by pane 0');
+  const request = new dom.window.CustomEvent(autocompleteUtils.SLASH_MENU_EVENT, { cancelable: true, detail: { anchor: input0 } });
+  assert.equal(input0.dispatchEvent(request), false, 'pane 0\'s menu claims a request on its own composer');
   assert.equal(input0.getAttribute('aria-expanded'), 'false');
   assert.equal(input1.getAttribute('aria-expanded'), 'false');
-  assert.equal(doc.querySelectorAll('.slash-autocomplete-popover:not(.hidden)').length, 1, 'one menu open: pane 0\'s button menu');
+  assert.equal(doc.querySelectorAll('.slash-autocomplete-popover:not(.hidden)').length, 1, 'one menu open: pane 0\'s search menu');
 
   pane1.dispose();
   assert.equal(input1.hasAttribute('role'), false, 'pane 1 close restores its textarea');
@@ -262,4 +268,22 @@ test('slash popover: an opaque popover surface, and no undefined tokens in the c
   assert.deepEqual(undefinedTokens, []);
   const popoverRule = sheet.match(/\.slash-autocomplete-popover\s*\{([^}]*)\}/)[1];
   assert.match(popoverRule, /background:\s*var\(--surface-popover-background\)/);
+});
+
+test('a skills request narrows the search menu to skills and Escape returns to the + button', (t) => {
+  const h = harness(t);
+  h.input.dispatchEvent(new h.dom.window.CustomEvent(autocompleteUtils.SLASH_MENU_EVENT, {
+    cancelable: true, detail: { anchor: h.button, kind: 'skills' },
+  }));
+  const search = h.doc.querySelector('.slash-autocomplete-search');
+  assert.equal(h.doc.activeElement, search);
+  assert.equal(search.placeholder, 'Search skills…');
+  assert.deepEqual([...h.doc.querySelectorAll('[role="option"] .slash-autocomplete-command')].map((node) => node.textContent), ['/verify']);
+  h.key('Escape', search);
+  assert.equal(h.controller.isOpen(), false);
+  assert.equal(h.doc.activeElement, h.button);
+  // A later Commands request lists everything again.
+  h.button.click();
+  assert.equal(h.doc.querySelector('.slash-autocomplete-search').placeholder, 'Search commands and skills…');
+  assert.equal(h.doc.querySelectorAll('[role="option"]').length, 3);
 });

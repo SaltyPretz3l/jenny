@@ -58,10 +58,6 @@
   resize: none;
 }
 
-.home-dashboard-rail textarea {
-  resize: none;
-}
-
 /* Vertical separator between the columns. A hairline at rest; the full hit
  * area is the padded column so it is grabbable without being loud. */
 .home-rail-resizer {

@@ -87,11 +87,7 @@ function outputsMatchStamp(root, outputs, recordedOutputs) {
   });
 }
 
-function buildPreloadBundle({ root = REPO_ROOT, env = process.env, argv = [] } = {}) {
-  lastBuildSkipped = false;
-  // Keep module import side-effect free for policy and contract tests. A missing
-  // dev dependency becomes an actionable error only when a build is requested.
-  const esbuild = require('esbuild');
+function preloadBuildPlan(root) {
   const resolvedRoot = path.resolve(root);
   const buildOptions = {
     absWorkingDir: resolvedRoot,
@@ -111,7 +107,37 @@ function buildPreloadBundle({ root = REPO_ROOT, env = process.env, argv = [] } =
   const outputs = PRELOAD_ENTRY_BASENAMES.map((name) => (
     path.join(resolvedRoot, name.replace(/\.js$/, '.bundle.js'))
   ));
-  const stampPath = path.join(resolvedRoot, STAMP_BASENAME);
+  return { resolvedRoot, buildOptions, outputs, stampPath: path.join(resolvedRoot, STAMP_BASENAME) };
+}
+
+// The skip test: every output still matches its recorded fingerprint and the
+// recorded inputs still hash to the stamp value.
+function stampIsCurrent({ resolvedRoot, buildOptions, outputs, stampPath }, esbuildVersion) {
+  const previousStamp = readStamp(stampPath, resolvedRoot);
+  if (!previousStamp || !outputsMatchStamp(resolvedRoot, outputs, previousStamp.outputs)) {
+    return false;
+  }
+  try {
+    return computeStamp(resolvedRoot, previousStamp.inputs, esbuildVersion, buildOptions) === previousStamp.value;
+  } catch {
+    // An unreadable prior input invalidates the stamp.
+    return false;
+  }
+}
+
+// Read-only check for an in-process launcher (main.js on unpackaged launches):
+// no esbuild child process, no writes. False means a build is due.
+function isPreloadBundleCurrent({ root = REPO_ROOT } = {}) {
+  return stampIsCurrent(preloadBuildPlan(root), require('esbuild').version);
+}
+
+function buildPreloadBundle({ root = REPO_ROOT, env = process.env, argv = [] } = {}) {
+  lastBuildSkipped = false;
+  // Keep module import side-effect free for policy and contract tests. A missing
+  // dev dependency becomes an actionable error only when a build is requested.
+  const esbuild = require('esbuild');
+  const plan = preloadBuildPlan(root);
+  const { resolvedRoot, buildOptions, outputs, stampPath } = plan;
   // Packaging must never ship whatever a stale or racy stamp happened to skip,
   // so pack:release / release:windows force a rebuild. They do it with the
   // --force argv flag, not this env var: npm runs scripts through cmd.exe on
@@ -122,17 +148,9 @@ function buildPreloadBundle({ root = REPO_ROOT, env = process.env, argv = [] } =
   // `set VAR=1 && next-command` leaves a trailing space IN THE VALUE.
   const forceRebuild = String(env.JENNY_PRELOAD_FORCE_REBUILD || '').trim() === '1'
     || argv.includes('--force');
-  const previousStamp = forceRebuild ? null : readStamp(stampPath, resolvedRoot);
-  if (previousStamp && outputsMatchStamp(resolvedRoot, outputs, previousStamp.outputs)) {
-    try {
-      if (computeStamp(resolvedRoot, previousStamp.inputs, esbuild.version, buildOptions)
-          === previousStamp.value) {
-        lastBuildSkipped = true;
-        return { output: outputs[0], skipped: true };
-      }
-    } catch {
-      // An unreadable prior input invalidates the stamp and falls through.
-    }
+  if (!forceRebuild && stampIsCurrent(plan, esbuild.version)) {
+    lastBuildSkipped = true;
+    return { output: outputs[0], skipped: true };
   }
 
   fs.rmSync(stampPath, { force: true });
@@ -188,5 +206,7 @@ if (require.main === module) {
 
 module.exports = {
   buildPreloadBundle,
+  isPreloadBundleCurrent,
+  preloadBuildPlan,
   REPO_ROOT,
 };

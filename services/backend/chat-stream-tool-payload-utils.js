@@ -22,7 +22,7 @@ const { workspaceRootId } = require('../workspace-root-identity');
 const TOOL_APPROVAL_MISSING_CALL_ID_CODE = TOOL_ERROR_CODES.COMMAND_BLOCKED;
 const APPROVAL_POLICY_SCOPES = new Set([
   'Local command execution', 'Workspace files', 'Web and browser session',
-  'Jenny work items', 'Jenny content', 'Local computer', 'Requested tool',
+  'Jenny work items', 'Jenny content', 'Local computer', 'Requested tool', 'Another chat',
 ]);
 const APPROVAL_POLICY_CONSEQUENCES = new Set([
   'May run a local command and change local state.',
@@ -114,6 +114,8 @@ function approvalStateFromAbortSignal(controller) {
     : 'cancelled';
 }
 
+// `local_trusted` / `trusted_local_path` are never taken from the wire: only
+// mergeLocalGeneratedArtifactPaths sets them, from the Electron-side cache.
 function normalizeGeneratedArtifactsFromNotification(value) {
   if (!Array.isArray(value)) {
     return [];
@@ -122,8 +124,6 @@ function normalizeGeneratedArtifactsFromNotification(value) {
     .filter((entry) => entry && typeof entry === 'object' && !Array.isArray(entry))
     .map((entry) => {
       const rawAbsolutePath = String(entry.absolute_path || '').trim();
-      const hasLocalTrusted = Object.prototype.hasOwnProperty.call(entry, 'local_trusted');
-      const hasTrustedLocalPath = Object.prototype.hasOwnProperty.call(entry, 'trusted_local_path');
       return {
         artifact_id: String(entry.artifact_id || '').trim(),
         artifact_kind: String(entry.artifact_kind || '').trim(),
@@ -138,8 +138,6 @@ function normalizeGeneratedArtifactsFromNotification(value) {
         height: Math.max(Number(entry.height || 0), 0),
         editable: entry.editable !== false,
         status: String(entry.status || 'available').trim(),
-        ...(hasLocalTrusted ? { local_trusted: entry.local_trusted === true } : {}),
-        ...(hasTrustedLocalPath ? { trusted_local_path: entry.trusted_local_path === true } : {}),
       };
     })
     .filter((entry) => (
@@ -362,6 +360,30 @@ function buildToolCallPayload({
   };
 }
 
+// Approval fields of an already-approved tool_use row, so the executing and
+// result rewrites keep its consent instead of relabelling it `auto`.
+function carriedApprovalFields(messages, messageId) {
+  const id = String(messageId || '').trim();
+  const list = Array.isArray(messages) ? messages : [];
+  if (!id) return {};
+  for (let index = list.length - 1; index >= 0; index -= 1) {
+    const message = list[index];
+    if (String(message?.id || '') !== id) continue;
+    const call = message?.tool_call && typeof message.tool_call === 'object' ? message.tool_call : {};
+    const state = String(call.approval_state || '').trim();
+    if (!state || state === 'auto') return {};
+    return {
+      approvalState: state,
+      approvalId: String(call.approval_id || '').trim(),
+      reason: String(call.reason || ''),
+      policyScope: String(call.policy_scope || ''),
+      policyConsequence: String(call.policy_consequence || ''),
+      oneOffOnly: call.one_off_only === true,
+    };
+  }
+  return {};
+}
+
 function findToolMessageId(messages, { kind, callId, streamId = '', fallbackId = '' }) {
   const list = Array.isArray(messages) ? messages : [];
   const normalizedCallId = String(callId || '').trim();
@@ -460,7 +482,24 @@ function toolResultExitCode(metadata) {
   return Number.isInteger(code) ? code : null;
 }
 
+// Canonical events that open a tool row. The text written before the call must enter the turn log
+// ahead of them, or a reload draws the tool row above the commentary that introduced it (approvals
+// e9170d9b4; every tool event after the owner's 2026-10-27 runs logged row_order_violation). The
+// duplicate skips match the notification handler's, so a repeated start never cuts post-tool text.
+const TOOL_BOUNDARY_EVENT_TYPES = new Set(['tool_call_requested', 'tool_execution_started', 'tool_approval_requested']);
+
+function opensNewToolRow(event, startedCallIds, seenToolCalls) {
+  const type = String(event?.type || '');
+  if (!TOOL_BOUNDARY_EVENT_TYPES.has(type)) return false;
+  if (type === 'tool_approval_requested') return true;
+  const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
+  const callId = String(event.tool_call_id || payload.tool_call_id || payload.toolCallId || '').trim();
+  if (type === 'tool_execution_started' && startedCallIds instanceof Set && startedCallIds.has(callId)) return false;
+  return !(seenToolCalls instanceof Set && seenToolCalls.has(callId));
+}
+
 module.exports = {
+  opensNewToolRow,
   sessionMessageApprovalFields,
   containsTraversal,
   normalizeDurationMs,
@@ -485,6 +524,7 @@ module.exports = {
   sanitizeApprovalReason,
   sanitizeApprovalPolicyText,
   sanitizeApprovalPolicyPresentation,
+  carriedApprovalFields,
   findToolMessageId,
   resolveApprovalCallId,
   approvalTerminalOutput,

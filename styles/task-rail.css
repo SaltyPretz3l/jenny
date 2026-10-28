@@ -69,18 +69,13 @@
   color: var(--text-primary);
 }
 
+/* One toolbar row: the filter (with counts) and the project scope. */
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-2);
-  padding: var(--space-5) var(--space-6) var(--space-3);
-}
-
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-summary {
-  min-width: 0;
-  color: var(--text-muted);
-  font-size: var(--font-size-caption);
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6) var(--space-2);
 }
 
 /* Project scope: a quiet menu button that names whose tasks the rail shows.
@@ -131,21 +126,57 @@
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-filters {
-  width: max-content;
-  margin: 0 var(--space-6) var(--space-3);
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
+/* Quiet add row: reads as the first list row and becomes a field on focus.
+ * Enter adds; the Add button shows once there is text. */
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-add {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
   gap: var(--space-3);
-  padding: 0 var(--space-6) var(--space-3);
+  min-height: 34px;
+  margin: 0 var(--space-3) var(--space-2);
+  padding: 0 var(--space-1) 0 var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-add:hover {
+  background: var(--rail-hover-bg);
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-add:focus-within {
+  border-color: var(--border-strong);
+  background: transparent;
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-add-glyph {
+  width: 14px;
+  height: 14px;
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-add .inv-text-field-control {
-  min-height: var(--space-16);
+  min-height: 0;
+  max-block-size: 8lh;
+  padding: var(--space-2) 0;
+  border: 0;
+  background: transparent;
+  outline: 0;
   resize: none;
+  /* Grows with a long title so it can be proofread before Enter. */
+  field-sizing: content;
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-add .inv-text-field-control::placeholder {
+  color: var(--text-muted);
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-add:has(.inv-text-field-control:placeholder-shown) .btn {
+  display: none;
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-error {
@@ -157,16 +188,18 @@
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-list {
   flex: 1 1 auto;
   min-height: 0;
+  padding-bottom: var(--space-6);
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--widget-scrollbar-color) transparent;
 }
 
+/* Section headings: the name, one fact beside it, an optional action at the end. */
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-group {
   display: flex;
   gap: var(--space-3);
   align-items: baseline;
-  padding: var(--space-4) var(--space-6) var(--space-1);
+  padding: var(--space-5) var(--space-6) var(--space-2);
   color: var(--text-decorative);
   font-size: var(--font-size-caption);
   font-weight: 500;
@@ -177,40 +210,56 @@
   font-weight: 500;
 }
 
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check,
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-row {
-  padding: var(--space-3) var(--space-6);
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-group-action {
+  margin-inline-start: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
 }
 
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check {
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-group-action:hover,
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-group-action:focus-visible {
+  color: var(--accent);
+}
+
+/* Jenny's checklist: the task-rail 6 px dots; the step she is on reads first. */
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check,
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check-fold {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  column-gap: var(--space-3);
-  align-items: start;
+  grid-template-columns: var(--tl-dot-size) minmax(0, 1fr) auto;
+  column-gap: var(--space-4);
+  align-items: baseline;
+  margin: 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check-text {
-  color: var(--text-primary);
+  color: var(--text-secondary);
   font-size: var(--font-size-body);
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check-meta {
-  color: var(--text-muted);
+  color: var(--tl-status-active);
   font-size: var(--font-size-caption);
 }
 
+/* The dot sits on the text's x-height, not above the first line. */
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check-dot {
   width: var(--tl-dot-size);
   height: var(--tl-dot-size);
-  margin-top: var(--space-2);
   border-radius: 50%;
+  background: var(--text-decorative);
+  transform: translateY(-1px);
 }
 
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check[data-check-status="pending"] .task-rail-check-dot {
-  background: var(--text-decorative);
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check[data-check-status="in_progress"] .task-rail-check-text {
+  color: var(--text-primary);
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check[data-check-status="in_progress"] .task-rail-check-dot {
@@ -218,41 +267,89 @@
   animation: tool-call-running-breathe var(--motion-duration-pulse) var(--motion-ease-standard) infinite alternate;
 }
 
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check[data-check-status="completed"] .task-rail-check-dot {
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check[data-check-status="completed"] .task-rail-check-dot,
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check-fold .task-rail-check-dot {
   background: var(--tl-status-ok);
   opacity: 0.7;
 }
 
+/* Marked off like a finished follow-up, so All reads at a glance. */
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check[data-check-status="completed"] .task-rail-check-text {
   color: var(--text-muted);
   text-decoration: line-through;
 }
 
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check-fold {
+  width: calc(100% - 2 * var(--space-3));
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--font-size-footnote);
+  text-align: start;
+  cursor: pointer;
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check-fold:hover,
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-check-fold:focus-visible {
+  background: var(--rail-hover-bg);
+  color: var(--text-secondary);
+}
+
+/* Follow-up rows: checkbox, title, one fact. No dividers; hover like the chat list. */
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-row {
+  margin: 0 var(--space-3);
+  border-radius: var(--radius-sm);
   transition: background-color var(--motion-duration-feedback) var(--motion-ease-standard);
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-row:hover,
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-row:focus-within {
+  background: var(--rail-hover-bg);
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-row[data-expanded="true"] {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-row-main {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: start;
-  gap: var(--space-3);
-}
-
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-checkbox {
-  margin-top: var(--space-1);
-}
-
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-copy {
-  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr) auto 24px;
+  align-items: center;
+  column-gap: var(--space-3);
+  min-height: 34px;
+  padding: 0 var(--space-1) 0 var(--space-3);
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-title {
+  min-width: 0;
+  padding: var(--space-2) 0;
+  border: 0;
+  background: none;
   color: var(--text-primary);
+  font: inherit;
   font-size: var(--font-size-body);
-  font-weight: 500;
   line-height: 1.4;
+  text-align: start;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-title:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: calc(-1 * var(--focus-ring-width));
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-row[data-expanded="true"] .task-rail-title {
   overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-row--later .task-rail-title {
+  color: var(--text-secondary);
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-row--resolved .task-rail-title {
@@ -260,34 +357,22 @@
   text-decoration: line-through;
 }
 
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-notes {
-  display: -webkit-box;
-  margin-top: var(--space-2);
-  overflow: hidden;
-  color: var(--text-secondary);
-  font-size: var(--font-size-footnote);
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-}
-
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-meta,
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-editor-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-meta {
-  margin-top: var(--space-2);
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-fact {
   color: var(--text-muted);
   font-size: var(--font-size-caption);
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-fact--due {
+  color: var(--accent);
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-fact--here {
+  color: var(--tl-status-active);
+}
+
+/* The overflow button shows on hover, focus or an open row; it keeps its slot so nothing shifts. */
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-overflow {
   width: 24px;
   height: 24px;
@@ -295,7 +380,15 @@
   border-radius: var(--radius-base);
   background: transparent;
   color: var(--text-muted);
+  opacity: 0;
   cursor: pointer;
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-row:hover .task-rail-overflow,
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-row:focus-within .task-rail-overflow,
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-row[data-expanded="true"] .task-rail-overflow,
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-overflow[aria-expanded="true"] {
+  opacity: 1;
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-overflow:hover,
@@ -304,11 +397,41 @@
   color: var(--text-primary);
 }
 
+/* An opened row: notes, where it came from, Open session and Edit, under the title. */
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-detail {
+  display: grid;
+  gap: var(--space-3);
+  padding: 0 var(--space-3) var(--space-4) calc(var(--space-3) + 16px + var(--space-3));
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-notes {
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-meta {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  overflow-wrap: anywhere;
+}
+
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-detail-actions,
+.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-editor {
   display: grid;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-6);
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  margin: 0 var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-editor-actions {
@@ -316,22 +439,10 @@
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-empty {
-  padding: var(--space-7) var(--space-6);
-  color: var(--text-secondary);
+  padding: var(--space-6);
+  color: var(--text-muted);
   font-size: var(--font-size-body);
   line-height: 1.5;
-  text-align: center;
-}
-
-.artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-6);
-  border-top: 1px solid var(--line);
-  color: var(--text-decorative);
-  font-size: var(--font-size-caption);
 }
 
 .artifact-review-panel[data-artifact-review-mode="tasks"] .task-rail-row--flash {

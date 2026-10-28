@@ -62,6 +62,31 @@ test('main logs an invoke handler slower than the threshold with its sync share'
   assert.equal(installIpcHandlerTiming(ipcMain, { log: () => {} }), false, 'installs once');
 });
 
+// Owner launch 2026-10-20: twelve boot reads that only awaited the starting
+// sidecar (syncMs 0-8) filled Diagnostics with "slow request" warnings.
+test('a slow handler that only awaited is INFO; blocking or a stall is WARN', async () => {
+  const ipcMain = makeIpcMain();
+  const logs = [];
+  let clock = 0;
+  installIpcHandlerTiming(ipcMain, { log: (...entry) => logs.push(entry), now: () => clock });
+  const awaitFor = (syncMs, totalMs) => () => {
+    clock += syncMs;
+    return Promise.resolve().then(() => { clock += totalMs - syncMs; return 'ok'; });
+  };
+  ipcMain.handle('models:list', awaitFor(1, 4790));
+  ipcMain.handle('catalog:get-status', awaitFor(260, 1500));
+  // 2026-10-27: a catalog read that waited out Ollama's cold start (10.7 s) is not a stall.
+  ipcMain.handle('llama-server:list-local-ggufs', awaitFor(1, 10734));
+  ipcMain.handle('models:stuck', awaitFor(0, 31000));
+  for (const channel of ['models:list', 'catalog:get-status', 'llama-server:list-local-ggufs', 'models:stuck']) {
+    assert.equal(await ipcMain.handlers.get(channel)({}), 'ok');
+    await Promise.resolve();
+  }
+  assert.deepEqual(logs.map(([level, , data]) => `${level}:${data.channel}`), [
+    'INFO:models:list', 'WARN:catalog:get-status', 'INFO:llama-server:list-local-ggufs', 'WARN:models:stuck',
+  ]);
+});
+
 test('a slow synchronous failure is still reported', () => {
   const ipcMain = makeIpcMain();
   const logs = [];

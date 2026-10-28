@@ -43,7 +43,6 @@ from tests.sidecar.replay.assertions import (
 from tests.sidecar.replay.conftest import RecordingLoopRuntime
 from tests.sidecar.replay.fixture_format import (
     Fixture,
-    FixtureValidationError,
     discover_fixtures,
     load_fixture,
 )
@@ -51,39 +50,18 @@ from tests.sidecar.replay.replay_engine import ReplayEngine, make_kernel
 
 
 def _engine_marker(fixture: Fixture) -> list[Any]:
-    """Engine-level marker policy: skip Phase 5+, otherwise unmarked.
+    """Engine-level marker policy: every fixture runs, nothing is marked.
 
     Engine-level assertions HERE are tautological for any well-formed fixture
-    (ReplayEngine echoes the expectations by construction), so no xfail
-    markers apply. The non-tautological half lives in
-    ``test_replay_provider_parse.py`` (W4.6): provider fixtures with a real
-    streaming tool parser replay their ``raw_chunks`` through the production
-    parser and assert the same expectations.
+    (ReplayEngine echoes the expectations by construction), so no xfail or
+    skip markers apply and no phase gate is needed (the engine check passes
+    for every target phase, including fixture 13). The non-tautological half
+    lives in ``test_replay_provider_parse.py`` (W4.6): provider fixtures with
+    a real streaming tool parser replay their ``raw_chunks`` through the
+    production parser and assert the same expectations.
     """
-    if fixture.metadata.target_phase >= 5:
-        return [
-            pytest.mark.skip(
-                reason=(
-                    f"Phase {fixture.metadata.target_phase}: "
-                    f"{fixture.metadata.description}"
-                )
-            )
-        ]
+    del fixture
     return []
-
-
-def _phase_dependent_marker(fixture: Fixture) -> list[Any]:
-    """Routing- and protocol-level marker policy.
-
-    Fixtures targeting phases 3-5 run unconditionally. Phases 6+ are
-    skipped because no production gating logic for them exists yet.
-    """
-    target = fixture.metadata.target_phase
-    if target in (3, 4, 5):
-        return []
-    return [
-        pytest.mark.skip(reason=f"Phase {target}: {fixture.metadata.description}")
-    ]
 
 
 def _build_corpus_params(marker_fn: Callable[[Fixture], list[Any]]) -> list[Any]:
@@ -94,17 +72,9 @@ def _build_corpus_params(marker_fn: Callable[[Fixture], list[Any]]) -> list[Any]
     """
     items: list[Any] = []
     for path in discover_fixtures():
-        try:
-            fixture = _load_cached(path)
-        except FixtureValidationError as error:
-            items.append(
-                pytest.param(
-                    path,
-                    id=path.stem,
-                    marks=pytest.mark.xfail(reason=f"fixture loader error: {error}"),
-                )
-            )
-            continue
+        # A malformed fixture raises FixtureValidationError at collection, so
+        # the suite fails loudly instead of staying green.
+        fixture = _load_cached(path)
         items.append(pytest.param(path, id=path.stem, marks=marker_fn(fixture)))
     return items
 
@@ -123,7 +93,8 @@ def _load_cached(path: Path) -> Fixture:
 
 
 _ENGINE_PARAMS = _build_corpus_params(_engine_marker)
-_PHASE_DEPENDENT_PARAMS = _build_corpus_params(_phase_dependent_marker)
+# Routing- and protocol-level tests run every fixture too (all target phases 3-5).
+_PHASE_DEPENDENT_PARAMS = _ENGINE_PARAMS
 
 
 def _drive_engine(fixture: Fixture) -> tuple[list[Any], Any]:

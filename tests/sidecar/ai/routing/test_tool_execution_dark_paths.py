@@ -23,15 +23,17 @@ from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.ai.routing.router import ToolExecutionOutcome
 from sidecar.ai.routing.tool_execution import (
     _descriptor_validation_outcome,
-    _execute_delegate_synthetic_tool,
     _merge_result_metadata,
     approval_if_needed,
     classify_run_command_for_approval,
-    inject_expected_read_snapshot,
-    normalize_snapshot_lookup_path,
     rebuild_read_snapshot_cache,
     update_read_snapshot_cache,
 )
+from sidecar.ai.routing.tool_execution_snapshots import (
+    inject_expected_read_snapshot,
+    normalize_snapshot_lookup_path,
+)
+from sidecar.ai.routing.tool_execution_tool_handlers import _execute_delegate_synthetic_tool
 from sidecar.ai.routing.tool_observation import (
     KIND_TOOL_EXECUTION_FAILED,
     KIND_TOOL_EXECUTION_OBSERVED,

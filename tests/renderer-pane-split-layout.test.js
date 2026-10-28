@@ -57,7 +57,7 @@ const PRE_W1_CHAT_VIEW_IDS = Object.freeze([
   'composerModelPopover', 'composerModelSelect', 'composerPlanUsageSlot', 'composerProjectPillSlot',
   'composerRunModeHint', 'composerRunModeSlot',
   'composerSendDisabledReason', 'composerSettingsButton', 'composerSettingsDisabledReason',
-  'composerStatusNotice', 'composerTerminalShortcut', 'composerToolToggleSlot', 'composerTurnTimer',
+  'composerStatusNotice', 'composerToolToggleSlot', 'composerTurnTimer',
   'composerV2FailedSendNotice', 'composerWayfinderHost', 'composerWrap',
   // Row 59 checkpoint 2: the context panel's Artifacts list (count, expand, list) is gone; its section keeps the toggle.
   'contextArtifactSection', 'contextLogCount',
@@ -97,8 +97,9 @@ const CHAT_PANEL_IDS = ['composerChatChipHost', 'composerChatPanel', 'composerCh
   'composerChatPanelChips', 'composerChatPanelList', 'composerChatPosture', 'composerChatPostureDot', 'composerChatPostureText'];
 const REMOVED_GEAR_IDS = ['composerSettingsButton', 'composerSettingsDisabledReason', 'composerGearPostureDot', 'composerRunModeHint'];
 
-// The three resolution groups for a clone of #chatPaneTemplate. 20 + 9 + 3 = 32
-// (2026-09-29: timelineCollapseExpandToggle retired with transcript views).
+// The three resolution groups for a clone of #chatPaneTemplate. 20 + 8 + 3 = 31
+// (2026-09-29: timelineCollapseExpandToggle retired with transcript views;
+// row 63, 2026-10-19: the Commands button folds into the + menu).
 // Hosts a second pane owns (present in the template; W2-2b adds attachmentTray,
 // W3-2 adds subagentInspector).
 const TEMPLATE_HOST_NAMES = Object.freeze([
@@ -113,7 +114,7 @@ const TEMPLATE_HOST_NAMES = Object.freeze([
 // W3-3 adds the settings group, which pane 1's composer rail builds at mount).
 const RUNTIME_BUILT_CONTROL_NAMES = Object.freeze([
   'jumpToTopButton', 'jumpToLastPromptButton', 'jumpToBottomButton', 'artifactSplitViewToggle',
-  'composerTerminalShortcut', 'stopStreamButton', 'sendButton',
+  'stopStreamButton', 'sendButton',
   'composerAttachShortcut', 'composerSettingsGroup',
 ]);
 // Split view W3-1 (deliberate pin change): pane 1's template carries its own
@@ -156,13 +157,13 @@ function cloneTemplateInto(documentRef) {
   return paneRoot;
 }
 
-test('the three resolution groups partition CHAT_PANE_NODE_NAMES (20 + 9 + 3 = 32)', () => {
+test('the three resolution groups partition CHAT_PANE_NODE_NAMES (20 + 8 + 3 = 31)', () => {
   const groups = [...TEMPLATE_HOST_NAMES, ...RUNTIME_BUILT_CONTROL_NAMES, ...PANE_ZERO_ONLY_COLUMN_NAMES];
   assert.equal(TEMPLATE_HOST_NAMES.length, 20);
-  assert.equal(RUNTIME_BUILT_CONTROL_NAMES.length, 9);
+  assert.equal(RUNTIME_BUILT_CONTROL_NAMES.length, 8);
   assert.equal(PANE_ZERO_ONLY_COLUMN_NAMES.length, 3);
   assert.equal(new Set(groups).size, groups.length, 'no name sits in two groups');
-  assert.equal(CHAT_PANE_NODE_NAMES.length, 32, 'W1-1 adds chatPaneKicker: 28 -> 29; W2-2b adds attachmentTray and composerAttachShortcut: 31; W3-2 adds subagentInspector: 32; W3-3 adds composerSettingsGroup: 33; transcript views retire timelineCollapseExpandToggle: 32');
+  assert.equal(CHAT_PANE_NODE_NAMES.length, 31, 'W1-1 adds chatPaneKicker: 28 -> 29; W2-2b adds attachmentTray and composerAttachShortcut: 31; W3-2 adds subagentInspector: 32; W3-3 adds composerSettingsGroup: 33; transcript views retire timelineCollapseExpandToggle: 32; row 63 retires composerTerminalShortcut: 31');
   assert.deepEqual([...groups].sort(), [...CHAT_PANE_NODE_NAMES].sort());
 });
 
@@ -171,7 +172,7 @@ test('one-pane identity: #chatView ids are the pre-W1 set plus exactly the four 
   const chatView = documentRef.getElementById('chatView');
   const ids = [...chatView.querySelectorAll('[id]')].map((node) => node.id).sort();
 
-  assert.equal(PRE_W1_CHAT_VIEW_IDS.length, 95); // 107 less the two Session Pulse ids (2026-09-27), less timelineCollapseExpandToggle (transcript views, 2026-09-29), less the four remote banner ids (Remote Control removed, 2026-10-02), less chatSpriteHolo (sprite holo retired, 2026-10-02), less pluginSessionFallbackAction (plugin platform retired, 2026-10-05), less contextArtifactCount/Expand/List (the context panel's Artifacts list retired, row 59 checkpoint 2, 2026-10-15)
+  assert.equal(PRE_W1_CHAT_VIEW_IDS.length, 94); // 107 less the two Session Pulse ids (2026-09-27), less timelineCollapseExpandToggle (transcript views, 2026-09-29), less the four remote banner ids (Remote Control removed, 2026-10-02), less chatSpriteHolo (sprite holo retired, 2026-10-02), less pluginSessionFallbackAction (plugin platform retired, 2026-10-05), less contextArtifactCount/Expand/List (the context panel's Artifacts list retired, row 59 checkpoint 2, 2026-10-15), less composerTerminalShortcut (the Commands button folded into the + menu, row 63, 2026-10-19)
   assert.deepEqual(
     ids,
     [...PRE_W1_CHAT_VIEW_IDS.filter((id) => !REMOVED_LEGACY_ARTIFACT_PANEL_IDS.includes(id) && !REMOVED_GEAR_IDS.includes(id)), ...W1_ADDED_IDS, ...W3_ADDED_IDS, ...CHAT_PANEL_IDS].sort(),
@@ -230,7 +231,7 @@ test('structure: the wrapper holds exactly the four pane children behind the kic
   assert.equal(resizer.classList.contains('hidden'), true, 'the divider is hidden with one pane');
 });
 
-test('resolver: pane 0 resolves all 32 by id; the data-chat-node set outside the template is the list', () => {
+test('resolver: pane 0 resolves all 31 by id; the data-chat-node set outside the template is the list', () => {
   const documentRef = indexHtmlDocument();
   const resolved = resolveChatPaneDom(documentRef, null);
   for (const name of CHAT_PANE_NODE_NAMES) {
@@ -253,7 +254,7 @@ test('resolver: pane 0 resolves all 32 by id; the data-chat-node set outside the
   assert.deepEqual(marked, [...CHAT_PANE_NODE_NAMES].sort());
 });
 
-test('resolver: a cloned template resolves exactly the 20 hosts and null for the 10 + 3', () => {
+test('resolver: a cloned template resolves exactly the 20 hosts and null for the 8 + 3', () => {
   const documentRef = indexHtmlDocument();
   const paneZero = resolveChatPaneDom(documentRef, null);
   const paneRoot = cloneTemplateInto(documentRef);
@@ -418,7 +419,7 @@ test('the pane divider mirrors the artifact divider attribute names plus the ari
   assert.deepEqual(extra, [], 'nothing beyond the mirrored set');
 });
 
-test('a real renderer boot is green with the wrapper and resolves all 32 names', async (t) => {
+test('a real renderer boot is green with the wrapper and resolves all 31 names', async (t) => {
   const app = await loadRendererApp({});
   t.after(async () => { await app.dispose(); });
   const { window } = app;

@@ -61,6 +61,64 @@ test('snapshot keeps pinned tabs first and the newest 30 activations, capturing 
   assert.equal(top, 3, 'both lines clamp to the end of the changed file');
 });
 
+test('capture writes PDF page and zoom from the host, falling back to the saved values', () => {
+  const ide = ideState.createIdeUiState();
+  for (const path of ['a.pdf', 'b.pdf', 'c.pdf', 'd.pdf']) ideState.openTab(ide, path);
+  ide.openTabs.find((tab) => tab.path === 'b.pdf').restore = { page: 9, zoom: 'page-fit' };
+  ide.openTabs.find((tab) => tab.path === 'd.pdf').restore = { page: 2 };
+  const restore = createIdeTabRestore({ editorHost: {
+    getViewLines: () => null,
+    getPdfViewPosition: (path) => ({
+      'a.pdf': { page: 3, zoom: 1.5 },
+      'c.pdf': { page: 0, zoom: 'huge' },
+    }[path] || null),
+  } });
+  const snapshot = restore.capture(ideState.toPersistedState(ide), ide);
+  const byPath = Object.fromEntries(snapshot.openTabs.map((tab) => [tab.path, tab]));
+  assert.deepEqual(byPath['a.pdf'], { path: 'a.pdf', page: 3, zoom: 1.5 });
+  assert.deepEqual(byPath['b.pdf'], { path: 'b.pdf', page: 9, zoom: 'page-fit' }, 'unloaded pane keeps the saved position');
+  assert.deepEqual(byPath['c.pdf'], { path: 'c.pdf' }, 'invalid host values are dropped');
+  assert.deepEqual(byPath['d.pdf'], { path: 'd.pdf', page: 2 });
+  const plain = createIdeTabRestore({ editorHost: {} }).capture(ideState.toPersistedState(ide), ide);
+  assert.deepEqual(plain.openTabs.find((tab) => tab.path === 'a.pdf'), { path: 'a.pdf' }, 'hosts without the method change nothing');
+});
+
+test('persisted page and zoom hydrate into tab.restore, and applyPosition clears them only on true', () => {
+  const ide = ideState.createIdeUiState();
+  ideState.applyPersistedState(ide, { openTabs: [
+    { path: 'a.pdf', page: 5, zoom: 'page-width' },
+    { path: 'b.pdf', page: 2, line: 7, top: 3 },
+    { path: 'plain.js' },
+  ], activeTabPath: 'a.pdf' });
+  // Hydration keeps the code tab's { line, top } shape; a PDF tab adds page/zoom.
+  const pdfRestore = { line: undefined, top: undefined, page: 5, zoom: 'page-width' };
+  assert.deepEqual(ide.openTabs[0].restore, pdfRestore);
+  assert.equal(ide.openTabs[2].restore, undefined);
+
+  const calls = [];
+  let accept = false;
+  const restore = createIdeTabRestore({ editorHost: {
+    restorePdfView: (path, view) => { calls.push({ path, view }); return accept; },
+    revealTopLine: () => true,
+  } });
+  restore.applyPosition(ide.openTabs[0]);
+  assert.deepEqual(calls, [{ path: 'a.pdf', view: { page: 5, zoom: 'page-width' } }]);
+  assert.deepEqual(ide.openTabs[0].restore, pdfRestore, 'kept when the host declines');
+  accept = true;
+  restore.applyPosition(ide.openTabs[0]);
+  assert.equal(calls.length, 2);
+  assert.equal(ide.openTabs[0].restore, undefined, 'cleared once applied');
+
+  restore.applyPosition(ide.openTabs[1]);
+  assert.equal(ide.openTabs[1].restore, undefined, 'page and line keys are both consumed');
+  const reveals = [];
+  createIdeTabRestore({ editorHost: { restorePdfView: () => true, revealTopLine: () => reveals.push(1) } })
+    .applyPosition({ path: 'x.pdf', restore: { page: 1 } });
+  assert.deepEqual(reveals, [], 'a PDF restore never reveals lines');
+  restore.applyPosition({ path: 'noop.pdf', restore: { line: 2 } });
+  assert.equal(calls.length, 3, 'a line-only restore never calls restorePdfView');
+});
+
 test('parallel missing-file probe ignores failures and feeds a dismissible muted strip', async (t) => {
   const dom = new JSDOM('<div><div class="ide-tabbar"><div id="tabs"></div></div><div id="editor"></div></div>');
   t.after(() => dom.window.close());

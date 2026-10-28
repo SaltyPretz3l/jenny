@@ -211,3 +211,57 @@ test('live timeline renders one combined tool card that updates in place', async
     'artifact teaser should remain available while result details are collapsed'
   );
 });
+
+test('live and hydrated tool_result rows carry the same duration and stored attachments', () => {
+  const {
+    buildTurnEventFromStreamPayload,
+    createTurnReducerState,
+    applyTurnStreamEvent,
+  } = require('../renderer/chat/renderer-turn-reducer');
+  const { projectTurnRows } = require('../renderer/chat/renderer-turn-row-projector');
+  const options = Object.freeze({ deterministicRowId: true });
+  const attachment = {
+    id: 'att-1', kind: 'image', mimeType: 'image/png', byteLength: 10, width: 4, height: 3, assetPath: 'assets/att-1.png',
+  };
+  const payloads = [
+    { type: 'started', streamId: 'stream-d' },
+    { type: 'tool_use', streamId: 'stream-d', callId: 'call-d', toolName: 'python_execute', status: 'running', summary: 'Run' },
+    {
+      type: 'tool_result', streamId: 'stream-d', callId: 'call-d', toolName: 'python_execute', content: 'ok',
+      summary: 'Ran', approvalState: 'auto', durationMs: 1234, trustedAttachments: [attachment],
+    },
+  ];
+  const state = createTurnReducerState(options);
+  const turnEvents = [];
+  payloads.forEach((payload, index) => {
+    const events = buildTurnEventFromStreamPayload(payload, {
+      turn_id: 'stream-d',
+      event_id: `stream-d:${payload.type}:${index}`,
+      primary_assistant_message_id: 'assistant_stream-d',
+      primary_tool_message_id: 'tool_use_call-d',
+      tool_result_message_id: 'tool_result_call-d',
+      sort_key: [index, 0, 0],
+    });
+    turnEvents.push(...(Array.isArray(events) ? events : [events]).filter(Boolean));
+    applyTurnStreamEvent(state, events);
+  });
+  // The persisted canonical event (services' tool_result shape): duration_ms
+  // and the stored refs ride on the payload.
+  const persisted = turnEvents.map((event) => (event.kind !== 'tool_result' ? event : {
+    ...event,
+    payload: {
+      ...event.payload,
+      duration_ms: 1234,
+      trusted_attachment_refs: [{
+        id: 'att-1', kind: 'image', mime_type: 'image/png', byte_length: 10, width: 4, height: 3, asset_path: 'assets/att-1.png',
+      }],
+    },
+  }));
+  const pick = (rows) => rows.find((row) => row.kind === 'tool_result');
+  const live = pick(state.turns_by_id['stream-d'].rows);
+  const hydrated = pick(projectTurnRows(persisted, options));
+  assert.ok(live && hydrated, 'both paths build the result row');
+  assert.equal(live.payload.duration_ms, 1234);
+  assert.equal(live.payload.duration_ms, hydrated.payload.duration_ms);
+  assert.deepEqual(live.payload.trusted_attachment_refs, hydrated.payload.trusted_attachment_refs);
+});

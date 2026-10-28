@@ -264,6 +264,25 @@ test('group follow-up: activation and editor focus report the group active path'
   wiring.dispose();
 });
 
+test('activating a tab in a group asks the workbench to bring that group into view', () => {
+  // Real-app gate 2026-10-26: a file opened from the tree into a group that gave way to the
+  // primary (0 px in a narrow window) stayed out of sight.
+  const ide = ideState.createIdeUiState();
+  ideState.openTab(ide, 'a.js');
+  ide.openTabs.forEach((tab) => { tab.group = 'editor-3'; });
+  const revealed = [];
+  const wiring = createIdeEditorGroupsWiring({
+    getIde: () => ide,
+    editorHost: { hasDocument: () => true },
+    getWorkbenchWiring: () => ({ workbench: { revealEditorGroup: (id) => revealed.push(id) } }),
+    groupViewUtils: { createIdeEditorGroupView: () => ({ render() {}, dispose() {} }) },
+  });
+  wiring.reconcile();
+  assert.equal(wiring.activateInGroup('a.js'), true);
+  assert.deepEqual(revealed, ['editor-3']);
+  wiring.dispose();
+});
+
 test('group follow-up: Ctrl+Tab history follows grouped file activation', async (t) => {
   const rig = await openIde(t);
   await openFiles(rig, 'a.js', 'b.js', 'c.js');
@@ -363,4 +382,179 @@ test('closing a tab in a group shows its neighbour, not the first tab (W5 review
   await settle();
   const active = rig.groupEl('editor-2').querySelector('.ide-tab--active');
   assert.equal(active?.getAttribute('data-ide-tab'), 'b.js');
+});
+
+// ── Tabs overhaul (row 81): shared strip events, focus marker, menus ──
+
+function makeUnitWiring(extra = {}) {
+  const { JSDOM } = require('jsdom');
+  const dom = new JSDOM('<!doctype html><body><div id="ideMain"></div></body>');
+  const doc = dom.window.document;
+  const main = doc.getElementById('ideMain');
+  const ide = ideState.createIdeUiState();
+  for (const path of ['a.js', 'b.js', 'c.js', 'd.js']) ideState.openTab(ide, path);
+  ideState.openTab(ide, 'e.js', { transientPreview: true });
+  for (const tab of ide.openTabs) if (tab.path !== 'a.js') tab.group = 'editor-2';
+  const viewDeps = {};
+  const rendered = [];
+  const menus = [];
+  const persisted = [];
+  const closed = [];
+  const wiring = createIdeEditorGroupsWiring({
+    getIde: () => ide,
+    getDom: () => ({ ideMain: main, ideView: doc.body }),
+    editorHost: { hasDocument: () => true },
+    canHold: () => false,
+    groupViewUtils: {
+      createIdeEditorGroupView(deps) {
+        viewDeps[deps.groupId] = deps;
+        const el = doc.createElement('section');
+        doc.body.appendChild(el);
+        return { el, render() { rendered.push(deps.groupId); }, dispose() { el.remove(); }, focus() {}, getViewState() { return null; }, forget() {} };
+      },
+    },
+    contextMenu: { show: (options) => menus.push(options) },
+    schedulePersist: () => persisted.push(true),
+    getCloseOrchestrator: () => ({
+      requestCloseToRight: (path) => closed.push(['right', path]),
+      requestCloseOthers: (path) => closed.push(['others', path]),
+      requestCloseSaved: (id) => closed.push(['saved', id]),
+      requestCloseAll: (id) => closed.push(['all', id]),
+    }),
+    ...extra,
+  });
+  wiring.bindEvents();
+  wiring.reconcile();
+  const markerOf = (el) => el.hasAttribute('data-ide-group-focused');
+  return { wiring, ide, main, doc, viewDeps, rendered, menus, persisted, closed, markerOf, groupEl: () => wiring.getElement('editor-2'), win: dom.window };
+}
+
+test('row 81: the focused group root carries data-ide-group-focused, #ideMain when the primary is focused', () => {
+  const rig = makeUnitWiring();
+  assert.equal(rig.markerOf(rig.main), true, 'the primary starts focused');
+  assert.equal(rig.markerOf(rig.groupEl()), false);
+  rig.viewDeps['editor-2'].onFocus('editor-2');
+  assert.equal(rig.markerOf(rig.groupEl()), true);
+  assert.equal(rig.markerOf(rig.main), false, 'only one group carries it');
+  rig.main.dispatchEvent(new rig.win.FocusEvent('focusin', { bubbles: true }));
+  assert.equal(rig.markerOf(rig.main), true);
+  assert.equal(rig.markerOf(rig.groupEl()), false);
+  rig.wiring.activateInGroup('c.js');
+  assert.equal(rig.markerOf(rig.groupEl()), true, 'activating a grouped tab focuses its group');
+  assert.equal(rig.markerOf(rig.main), false);
+  rig.wiring.focusNextGroup();
+  assert.equal(rig.markerOf(rig.main), true, 'cycling group focus moves the marker');
+  rig.wiring.dispose();
+  assert.equal(rig.markerOf(rig.main), false, 'dispose leaves no marker behind');
+});
+
+test('row 81: a group view that goes away hands the marker back to the primary group', () => {
+  const rig = makeUnitWiring();
+  rig.viewDeps['editor-2'].onFocus('editor-2');
+  for (const tab of rig.ide.openTabs) delete tab.group;
+  rig.wiring.reconcile();
+  assert.equal(rig.groupEl(), null);
+  assert.equal(rig.markerOf(rig.main), true);
+});
+
+test('row 81: the group tab menu adds Keep Open, Close to the Right and Pin / Unpin', () => {
+  const rig = makeUnitWiring();
+  rig.viewDeps['editor-2'].onContextMenu('e.js', { anchorEl: rig.groupEl() });
+  const items = rig.menus.at(-1).items;
+  assert.equal(rig.menus.at(-1).anchorEl, rig.groupEl());
+  const labels = items.map((item) => item.label || '-');
+  assert.deepEqual(labels.slice(0, 7), ['Keep Open', 'Close', 'Close Others', 'Close to the Right', 'Close Saved', 'Close All', 'Close Group']);
+  assert.equal(items.find((item) => item.label === 'Close to the Right').disabled, true, 'e.js is the last tab of its group');
+  assert.ok(labels.includes('Pin'));
+  items[0].action();
+  assert.equal(ideState.getTab(rig.ide, 'e.js').transientPreview, undefined);
+  assert.ok(rig.rendered.includes('editor-2') && rig.persisted.length === 1);
+
+  rig.viewDeps['editor-2'].onContextMenu('b.js', { anchorX: 1, anchorY: 2 });
+  const second = rig.menus.at(-1).items;
+  assert.equal(second.some((item) => item.label === 'Keep Open'), false, 'only a preview tab offers Keep Open');
+  const toRight = second.find((item) => item.label === 'Close to the Right');
+  assert.equal(toRight.disabled, false);
+  toRight.action();
+  assert.deepEqual(rig.closed, [['right', 'b.js']]);
+  second.find((item) => item.label === 'Pin').action();
+  assert.equal(ideState.getTab(rig.ide, 'b.js').pinned, true);
+  assert.deepEqual(rig.ide.openTabs.map((tab) => tab.path), ['b.js', 'a.js', 'c.js', 'd.js', 'e.js'], 'pinned-first');
+  rig.viewDeps['editor-2'].onContextMenu('b.js', { anchorX: 1, anchorY: 2 });
+  assert.ok(rig.menus.at(-1).items.some((item) => item.label === 'Unpin'));
+});
+
+test('row 81: double-click keeps a preview tab open, otherwise toggles the pin, then renders and persists', () => {
+  const rig = makeUnitWiring();
+  rig.viewDeps['editor-2'].onDoubleClick('e.js');
+  assert.equal(ideState.getTab(rig.ide, 'e.js').transientPreview, undefined);
+  assert.notEqual(ideState.getTab(rig.ide, 'e.js').pinned, true);
+  rig.viewDeps['editor-2'].onDoubleClick('e.js');
+  assert.equal(ideState.getTab(rig.ide, 'e.js').pinned, true);
+  assert.equal(rig.persisted.length, 2);
+  assert.equal(rig.rendered.filter((id) => id === 'editor-2').length >= 2, true);
+  const before = rig.persisted.length;
+  rig.viewDeps['editor-2'].onDoubleClick('missing.js');
+  assert.equal(rig.persisted.length, before, 'an unknown path changes nothing');
+});
+
+test('row 81: the open-tabs list anchors on the trigger, checks the active tab and offers Reopen Closed Tab when wired', () => {
+  const reopened = [];
+  const rig = makeUnitWiring({ reopenClosedTab: () => reopened.push(true) });
+  ideState.setTabDirty(rig.ide, 'c.js', true);
+  rig.ide.dirtyByPath = { 'c.js': true };
+  const trigger = rig.groupEl();
+  rig.wiring.activateInGroup('d.js');
+  rig.viewDeps['editor-2'].onOverflow(trigger);
+  const menu = rig.menus.at(-1);
+  assert.equal(menu.anchorEl, trigger);
+  assert.deepEqual(menu.items.map((item) => item.label || '-'), ['b.js', 'c.js', 'd.js', 'e.js', '-', 'Close Saved', 'Close All', 'Reopen Closed Tab']);
+  assert.deepEqual(menu.items.map((item) => item.checked), [false, false, true, false, undefined, undefined, undefined, undefined]);
+  assert.equal(menu.items[1].shortcutHint, '●', 'the unsaved tab carries the dot');
+  menu.items[5].action();
+  menu.items[6].action();
+  menu.items[7].action();
+  assert.deepEqual(rig.closed, [['saved', 'editor-2'], ['all', 'editor-2']]);
+  assert.deepEqual(reopened, [true]);
+  const bare = makeUnitWiring();
+  bare.viewDeps['editor-2'].onOverflow(bare.groupEl());
+  assert.equal(bare.menus.at(-1).items.some((item) => item.label === 'Reopen Closed Tab'), false);
+});
+
+test('row 81: the git decoration dep reaches each group view', () => {
+  const seen = [];
+  const rig = makeUnitWiring({ getGitDecoration: (path) => { seen.push(path); return 'modified'; } });
+  assert.equal(rig.viewDeps['editor-2'].getGitDecoration('b.js'), 'modified');
+  assert.deepEqual(seen, ['b.js']);
+  const bare = makeUnitWiring();
+  assert.equal(bare.viewDeps['editor-2'].getGitDecoration('b.js'), undefined, 'optional');
+});
+
+test('row 81: the group toolbar Split moves the group tab into a new group, double-click pins it', async (t) => {
+  const previous = globalThis.rendererIdeStageSwitch;
+  globalThis.rendererIdeStageSwitch = {
+    editorActionsMarkup: () => '<button class="ide-editor-action" data-ide-editor-action="split-right">s</button>',
+  };
+  t.after(() => {
+    if (previous === undefined) delete globalThis.rendererIdeStageSwitch;
+    else globalThis.rendererIdeStageSwitch = previous;
+  });
+  const rig = await openIde(t);
+  await openFiles(rig, 'a.js', 'b.js', 'c.js');
+  const main = rig.doc.getElementById('ideMain');
+  assert.equal(main.hasAttribute('data-ide-group-focused'), true, 'the primary group starts focused');
+  rig.runCommand('ide:split-editor-right'); // c.js -> editor-2
+  await settle();
+  assert.equal(rig.groupEl('editor-2').hasAttribute('data-ide-group-focused'), true);
+  assert.equal(main.hasAttribute('data-ide-group-focused'), false);
+
+  const win = rig.harness.dom.window;
+  rig.groupEl('editor-2').querySelector('[data-ide-tab-path="c.js"]').dispatchEvent(new win.MouseEvent('dblclick', { bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(ideState.getTab(rig.ide(), 'c.js').pinned, true, 'a group tab pins on double-click');
+
+  rig.groupEl('editor-2').querySelector('[data-ide-editor-action="split-right"]').click();
+  await settle();
+  assert.deepEqual(rig.groupTabs('editor-3'), ['c.js'], 'Split moved the active group tab to a new group');
+  assert.equal(rig.groupEl('editor-2'), null, 'and the emptied group closed');
 });

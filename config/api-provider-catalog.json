@@ -1,0 +1,7482 @@
+{
+ "generated_at": "2026-10-25",
+ "license": "MIT (config/models-dev-LICENSE.txt)",
+ "providers": {
+  "anthropic-api": [
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 1.0,
+     "cache_write": 12.5,
+     "input": 10.0,
+     "output": 50.0
+    },
+    "id": "claude-fable-5",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.25,
+     "cache_write": 12.5,
+     "input": 10.0,
+     "output": 50.0
+    },
+    "id": "claude-fable-5-1",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.1,
+     "cache_write": 1.25,
+     "input": 1.0,
+     "output": 5.0
+    },
+    "id": "claude-haiku-4-5",
+    "max_output_tokens": 64000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.1,
+     "cache_write": 1.25,
+     "input": 1.0,
+     "output": 5.0
+    },
+    "id": "claude-haiku-4-5-20251001",
+    "max_output_tokens": 64000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.01,
+     "cache_write": 0.125,
+     "input": 0.1,
+     "output": 0.5
+    },
+    "id": "claude-haiku-5-5",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "cache_write": 6.25,
+     "input": 5.0,
+     "output": 25.0
+    },
+    "id": "claude-opus-4-5",
+    "max_output_tokens": 64000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "cache_write": 6.25,
+     "input": 5.0,
+     "output": 25.0
+    },
+    "id": "claude-opus-4-5-20251101",
+    "max_output_tokens": 64000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "cache_write": 6.25,
+     "input": 5.0,
+     "output": 25.0
+    },
+    "id": "claude-opus-4-6",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "cache_write": 6.25,
+     "input": 5.0,
+     "output": 25.0
+    },
+    "id": "claude-opus-4-7",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "cache_write": 6.25,
+     "input": 5.0,
+     "output": 25.0
+    },
+    "id": "claude-opus-4-8",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "cache_write": 6.25,
+     "input": 5.0,
+     "output": 25.0
+    },
+    "id": "claude-opus-5",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "cache_write": 5.0,
+     "input": 4.0,
+     "output": 20.0
+    },
+    "id": "claude-opus-5-5",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.3,
+     "cache_write": 3.75,
+     "input": 3.0,
+     "output": 15.0
+    },
+    "id": "claude-sonnet-4-5",
+    "max_output_tokens": 64000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.3,
+     "cache_write": 3.75,
+     "input": 3.0,
+     "output": 15.0
+    },
+    "id": "claude-sonnet-4-5-20250929",
+    "max_output_tokens": 64000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.3,
+     "cache_write": 3.75,
+     "input": 3.0,
+     "output": 15.0
+    },
+    "id": "claude-sonnet-4-6",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "cache_write": 2.5,
+     "input": 2.0,
+     "output": 10.0
+    },
+    "id": "claude-sonnet-5",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.1,
+     "cache_write": 2.5,
+     "input": 2.0,
+     "output": 10.0
+    },
+    "id": "claude-sonnet-5-5",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   }
+  ],
+  "deepseek": [
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.003,
+     "input": 0.15,
+     "output": 0.6
+    },
+    "id": "deepseek-flash",
+    "max_output_tokens": 393216,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.003,
+     "input": 0.15,
+     "output": 0.6
+    },
+    "id": "deepseek-v4-flash",
+    "max_output_tokens": 393216,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.003,
+     "input": 0.15,
+     "output": 0.6
+    },
+    "id": "deepseek-v4-flash-vision-exp",
+    "max_output_tokens": 393216,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.022,
+     "input": 0.66,
+     "output": 1.98
+    },
+    "id": "deepseek-v4-pro",
+    "max_output_tokens": 393216,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   }
+  ],
+  "fireworks": [
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.006,
+     "input": 0.3,
+     "output": 1.2
+    },
+    "id": "accounts/fireworks/models/deepseek-v4p1-flash",
+    "max_output_tokens": 384000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.006,
+     "input": 0.3,
+     "output": 1.2
+    },
+    "id": "accounts/fireworks/models/deepseek-v4p1-flash-1017",
+    "max_output_tokens": 384000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.3,
+     "input": 3.0,
+     "output": 15.0
+    },
+    "id": "accounts/fireworks/models/ember-1",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048573,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.26,
+     "input": 1.4,
+     "output": 4.4
+    },
+    "id": "accounts/fireworks/models/glm-5p3",
+    "max_output_tokens": 262144,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048573,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.03,
+     "input": 0.15,
+     "output": 0.5
+    },
+    "id": "accounts/fireworks/models/glm-5p3-flash",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.015,
+     "input": 0.15,
+     "output": 0.6
+    },
+    "id": "accounts/fireworks/models/gpt-oss-120b",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.17,
+     "input": 1.0,
+     "output": 4.05
+    },
+    "id": "accounts/fireworks/models/inkling",
+    "max_output_tokens": 1048576,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.3,
+     "input": 3.0,
+     "output": 15.0
+    },
+    "id": "accounts/fireworks/models/kimi-k3",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 512000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.06,
+     "input": 0.3,
+     "output": 1.2
+    },
+    "id": "accounts/fireworks/models/minimax-m3",
+    "max_output_tokens": 512000,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.015,
+     "input": 0.15,
+     "output": 0.6
+    },
+    "id": "accounts/fireworks/models/minimax-m3p1-flash",
+    "max_output_tokens": 512000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.15,
+     "input": 1.25,
+     "output": 4.25
+    },
+    "id": "accounts/fireworks/models/muse-spark-open",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.12,
+     "input": 0.6,
+     "output": 2.4
+    },
+    "id": "accounts/fireworks/models/nemotron-3-ultra-nvfp4",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.01,
+     "input": 0.05,
+     "output": 0.2
+    },
+    "id": "accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b",
+    "max_output_tokens": 262144,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.25,
+     "input": 2.0,
+     "output": 6.0
+    },
+    "id": "accounts/fireworks/models/qwen3p8-2p4t-a95b",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.25,
+     "input": 2.0,
+     "output": 6.0
+    },
+    "id": "accounts/fireworks/models/qwen3p8-max",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.006,
+     "input": 0.3,
+     "output": 1.2
+    },
+    "id": "accounts/fireworks/routers/deepseek-flash-latest",
+    "max_output_tokens": 384000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.0042,
+     "input": 0.21,
+     "output": 0.84
+    },
+    "id": "accounts/fireworks/routers/deepseek-v4p1-flash-1017-spot",
+    "max_output_tokens": 384000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.0042,
+     "input": 0.21,
+     "output": 0.84
+    },
+    "id": "accounts/fireworks/routers/deepseek-v4p1-flash-spot",
+    "max_output_tokens": 384000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048572,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.39,
+     "input": 2.1,
+     "output": 6.6
+    },
+    "id": "accounts/fireworks/routers/glm-5p3-fast",
+    "max_output_tokens": 262144,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048573,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.182,
+     "input": 0.98,
+     "output": 3.08
+    },
+    "id": "accounts/fireworks/routers/glm-5p3-spot",
+    "max_output_tokens": 262144,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048572,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.39,
+     "input": 2.1,
+     "output": 6.6
+    },
+    "id": "accounts/fireworks/routers/glm-fast-latest",
+    "max_output_tokens": 262144,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048573,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.03,
+     "input": 0.15,
+     "output": 0.5
+    },
+    "id": "accounts/fireworks/routers/glm-flash-latest",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048573,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.26,
+     "input": 1.4,
+     "output": 4.4
+    },
+    "id": "accounts/fireworks/routers/glm-latest",
+    "max_output_tokens": 262144,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.45,
+     "input": 4.5,
+     "output": 22.5
+    },
+    "id": "accounts/fireworks/routers/kimi-fast-latest",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.45,
+     "input": 4.5,
+     "output": 22.5
+    },
+    "id": "accounts/fireworks/routers/kimi-k3-fast",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.21,
+     "input": 2.1,
+     "output": 10.5
+    },
+    "id": "accounts/fireworks/routers/kimi-k3-spot",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.3,
+     "input": 3.0,
+     "output": 15.0
+    },
+    "id": "accounts/fireworks/routers/kimi-latest",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 512000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.06,
+     "input": 0.3,
+     "output": 1.2
+    },
+    "id": "accounts/fireworks/routers/minimax-latest",
+    "max_output_tokens": 512000,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.25,
+     "input": 2.0,
+     "output": 6.0
+    },
+    "id": "accounts/fireworks/routers/qwen-max-latest",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   }
+  ],
+  "gemini-openai": [
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "input": 2.0,
+     "output": 12.0
+    },
+    "id": "deep-research-max-preview-04-2026",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "input": 2.0,
+     "output": 12.0
+    },
+    "id": "deep-research-preview-04-2026",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "input": 1.25,
+     "output": 10.0
+    },
+    "id": "gemini-2.5-computer-use-preview-10-2025",
+    "max_output_tokens": 64000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.03,
+     "input": 0.3,
+     "output": 2.5
+    },
+    "id": "gemini-2.5-flash",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 32768,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.075,
+     "input": 0.3,
+     "output": 30.0
+    },
+    "id": "gemini-2.5-flash-image",
+    "max_output_tokens": 32768,
+    "reasoning": false,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.01,
+     "input": 0.1,
+     "output": 0.4
+    },
+    "id": "gemini-2.5-flash-lite",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.125,
+     "input": 1.25,
+     "output": 10.0
+    },
+    "id": "gemini-2.5-pro",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.05,
+     "input": 0.5,
+     "output": 3.0
+    },
+    "id": "gemini-3-flash-preview",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 65536,
+    "cost_per_mtok_usd": {
+     "input": 2.0,
+     "output": 120.0
+    },
+    "id": "gemini-3-pro-image",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 2.0,
+     "output": 120.0
+    },
+    "id": "gemini-3-pro-image-preview",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 0.5,
+     "output": 60.0
+    },
+    "id": "gemini-3.1-flash-image",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 65536,
+    "cost_per_mtok_usd": {
+     "input": 0.5,
+     "output": 60.0
+    },
+    "id": "gemini-3.1-flash-image-preview",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.025,
+     "input": 0.25,
+     "output": 1.5
+    },
+    "id": "gemini-3.1-flash-lite",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 65536,
+    "cost_per_mtok_usd": {
+     "input": 0.25,
+     "output": 30.0
+    },
+    "id": "gemini-3.1-flash-lite-image",
+    "max_output_tokens": 4096,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.025,
+     "input": 0.25,
+     "output": 1.5
+    },
+    "id": "gemini-3.1-flash-lite-preview",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 0.75,
+     "output": 4.5
+    },
+    "id": "gemini-3.1-flash-live-preview",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "input": 2.0,
+     "output": 12.0
+    },
+    "id": "gemini-3.1-pro-preview",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "input": 2.0,
+     "output": 12.0
+    },
+    "id": "gemini-3.1-pro-preview-customtools",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.15,
+     "input": 1.5,
+     "output": 9.0
+    },
+    "id": "gemini-3.5-flash",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.03,
+     "input": 0.3,
+     "output": 2.5
+    },
+    "id": "gemini-3.5-flash-lite",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 16384,
+    "cost_per_mtok_usd": {
+     "input": 3.5,
+     "output": 21.0
+    },
+    "id": "gemini-3.5-live-translate-preview",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.075,
+     "input": 0.75,
+     "output": 3.75
+    },
+    "id": "gemini-3.6-flash",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.075,
+     "input": 0.75,
+     "output": 3.75
+    },
+    "id": "gemini-3.7-flash",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.075,
+     "input": 0.75,
+     "output": 3.75
+    },
+    "id": "gemini-3.8-flash",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.1,
+     "input": 2.0,
+     "output": 10.0
+    },
+    "id": "gemini-4-argon",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 2048,
+    "cost_per_mtok_usd": {
+     "input": 0.15,
+     "output": 0.0
+    },
+    "id": "gemini-embedding-001",
+    "max_output_tokens": 1,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 8192,
+    "cost_per_mtok_usd": {
+     "input": 0.2,
+     "output": 0.0
+    },
+    "id": "gemini-embedding-2",
+    "max_output_tokens": 1,
+    "reasoning": false,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.075,
+     "input": 0.75,
+     "output": 3.75
+    },
+    "id": "gemini-flash-latest",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.03,
+     "input": 0.3,
+     "output": 2.5
+    },
+    "id": "gemini-flash-lite-latest",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "input": 2.0,
+     "output": 12.0
+    },
+    "id": "gemini-pro-latest",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "id": "gemma-4-26b-a4b-it",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "id": "gemma-4-31b-it",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "lyria-3-clip-preview",
+    "max_output_tokens": 65536,
+    "reasoning": false,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "lyria-3-pro-preview",
+    "max_output_tokens": 65536,
+    "reasoning": false,
+    "tools": false,
+    "vision": true
+   }
+  ],
+  "groq": [
+   {
+    "context_length": 4096,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "allam-2-7b",
+    "max_output_tokens": 4096,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 0.05,
+     "output": 0.08
+    },
+    "id": "llama-3.1-8b-instant",
+    "max_output_tokens": 131072,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 0.59,
+     "output": 0.79
+    },
+    "id": "llama-3.3-70b-versatile",
+    "max_output_tokens": 32768,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 512,
+    "cost_per_mtok_usd": {
+     "input": 0.03,
+     "output": 0.03
+    },
+    "id": "meta-llama/llama-prompt-guard-2-22m",
+    "max_output_tokens": 512,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 512,
+    "cost_per_mtok_usd": {
+     "input": 0.04,
+     "output": 0.04
+    },
+    "id": "meta-llama/llama-prompt-guard-2-86m",
+    "max_output_tokens": 512,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.075,
+     "input": 0.15,
+     "output": 0.6
+    },
+    "id": "openai/gpt-oss-120b",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.0375,
+     "input": 0.075,
+     "output": 0.3
+    },
+    "id": "openai/gpt-oss-20b",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.0375,
+     "input": 0.075,
+     "output": 0.3
+    },
+    "id": "openai/gpt-oss-safeguard-20b",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.3,
+     "input": 0.6,
+     "output": 3.0
+    },
+    "id": "qwen/qwen3.6-27b",
+    "max_output_tokens": 16384,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 0.8,
+     "output": 4.0
+    },
+    "id": "qwen/qwen3.8-27b",
+    "max_output_tokens": 16384,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 448,
+    "id": "whisper-large-v3",
+    "max_output_tokens": 448,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 448,
+    "id": "whisper-large-v3-turbo",
+    "max_output_tokens": 448,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   }
+  ],
+  "mistral": [
+   {
+    "context_length": 256000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.03,
+     "input": 0.3,
+     "output": 0.9
+    },
+    "id": "codestral-2508",
+    "max_output_tokens": 8192,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 256000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.03,
+     "input": 0.3,
+     "output": 0.9
+    },
+    "id": "codestral-latest",
+    "max_output_tokens": 4096,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.4,
+     "output": 2.0
+    },
+    "id": "devstral-2512",
+    "max_output_tokens": 262144,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.4,
+     "output": 2.0
+    },
+    "id": "devstral-latest",
+    "max_output_tokens": 262144,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.4,
+     "output": 2.0
+    },
+    "id": "devstral-medium-latest",
+    "max_output_tokens": 262144,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.14,
+     "input": 1.4,
+     "output": 4.4
+    },
+    "id": "glm-5-2",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 256000,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "labs-devstral-small-2512",
+    "max_output_tokens": 256000,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "labs-leanstral-1-5-1",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 2.0,
+     "output": 5.0
+    },
+    "id": "magistral-medium-latest",
+    "max_output_tokens": 16384,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.02,
+     "input": 0.2,
+     "output": 0.2
+    },
+    "id": "ministral-14b-2512",
+    "max_output_tokens": 262144,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.01,
+     "input": 0.1,
+     "output": 0.1
+    },
+    "id": "ministral-3b-2512",
+    "max_output_tokens": 131072,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.01,
+     "input": 0.1,
+     "output": 0.1
+    },
+    "id": "ministral-3b-latest",
+    "max_output_tokens": 128000,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.015,
+     "input": 0.15,
+     "output": 0.15
+    },
+    "id": "ministral-8b-2512",
+    "max_output_tokens": 262144,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.015,
+     "input": 0.15,
+     "output": 0.15
+    },
+    "id": "ministral-8b-latest",
+    "max_output_tokens": 128000,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 8000,
+    "cost_per_mtok_usd": {
+     "input": 0.1,
+     "output": 0.0
+    },
+    "id": "mistral-embed",
+    "max_output_tokens": 3072,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.05,
+     "input": 0.5,
+     "output": 1.5
+    },
+    "id": "mistral-large-2512",
+    "max_output_tokens": 262144,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.14,
+     "input": 1.36,
+     "output": 4.18
+    },
+    "id": "mistral-large-4",
+    "max_output_tokens": 262144,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.05,
+     "input": 0.5,
+     "output": 1.5
+    },
+    "id": "mistral-large-latest",
+    "max_output_tokens": 262144,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 0.4,
+     "output": 2.0
+    },
+    "id": "mistral-medium-2505",
+    "max_output_tokens": 131072,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.4,
+     "output": 2.0
+    },
+    "id": "mistral-medium-2508",
+    "max_output_tokens": 262144,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.15,
+     "input": 1.5,
+     "output": 7.5
+    },
+    "id": "mistral-medium-2604",
+    "max_output_tokens": 262144,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.15,
+     "input": 1.5,
+     "output": 7.5
+    },
+    "id": "mistral-medium-latest",
+    "max_output_tokens": 262144,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "input": 0.1,
+     "output": 0.3
+    },
+    "id": "mistral-small-2506",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.015,
+     "input": 0.15,
+     "output": 0.6
+    },
+    "id": "mistral-small-2603",
+    "max_output_tokens": 256000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.015,
+     "input": 0.15,
+     "output": 0.6
+    },
+    "id": "mistral-small-latest",
+    "max_output_tokens": 256000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "input": 0.15,
+     "output": 0.15
+    },
+    "id": "open-mistral-nemo",
+    "max_output_tokens": 128000,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "input": 0.15,
+     "output": 0.15
+    },
+    "id": "pixtral-12b",
+    "max_output_tokens": 128000,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 32768,
+    "cost_per_mtok_usd": {
+     "input": 0.1,
+     "output": 0.4
+    },
+    "id": "voxtral-small-2507",
+    "max_output_tokens": 32000,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 32768,
+    "cost_per_mtok_usd": {
+     "input": 0.1,
+     "output": 0.4
+    },
+    "id": "voxtral-small-latest",
+    "max_output_tokens": 32000,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.14,
+     "input": 1.4,
+     "output": 4.4
+    },
+    "id": "zai-glm-5-2",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.14,
+     "input": 1.4,
+     "output": 4.4
+    },
+    "id": "zai-glm-5-3",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.03,
+     "input": 0.15,
+     "output": 0.5
+    },
+    "id": "zai-glm-5-3-flash",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   }
+  ],
+  "openai-api": [
+   {
+    "context_length": 16385,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.0,
+     "input": 0.5,
+     "output": 1.5
+    },
+    "id": "gpt-3.5-turbo",
+    "max_output_tokens": 4096,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 8192,
+    "cost_per_mtok_usd": {
+     "input": 30.0,
+     "output": 60.0
+    },
+    "id": "gpt-4",
+    "max_output_tokens": 8192,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "input": 10.0,
+     "output": 30.0
+    },
+    "id": "gpt-4-turbo",
+    "max_output_tokens": 4096,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1047576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "input": 2.0,
+     "output": 8.0
+    },
+    "id": "gpt-4.1",
+    "max_output_tokens": 32768,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1047576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.1,
+     "input": 0.4,
+     "output": 1.6
+    },
+    "id": "gpt-4.1-mini",
+    "max_output_tokens": 32768,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1047576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.025,
+     "input": 0.1,
+     "output": 0.4
+    },
+    "id": "gpt-4.1-nano",
+    "max_output_tokens": 32768,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "cache_read": 1.25,
+     "input": 2.5,
+     "output": 10.0
+    },
+    "id": "gpt-4o",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "input": 5.0,
+     "output": 15.0
+    },
+    "id": "gpt-4o-2024-05-13",
+    "max_output_tokens": 4096,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "cache_read": 1.25,
+     "input": 2.5,
+     "output": 10.0
+    },
+    "id": "gpt-4o-2024-08-06",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "cache_read": 1.25,
+     "input": 2.5,
+     "output": 10.0
+    },
+    "id": "gpt-4o-2024-11-20",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.075,
+     "input": 0.15,
+     "output": 0.6
+    },
+    "id": "gpt-4o-mini",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.125,
+     "input": 1.25,
+     "output": 10.0
+    },
+    "id": "gpt-5",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.025,
+     "input": 0.25,
+     "output": 2.0
+    },
+    "id": "gpt-5-mini",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.005,
+     "input": 0.05,
+     "output": 0.4
+    },
+    "id": "gpt-5-nano",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "input": 15.0,
+     "output": 120.0
+    },
+    "id": "gpt-5-pro",
+    "max_output_tokens": 272000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.125,
+     "input": 1.25,
+     "output": 10.0
+    },
+    "id": "gpt-5.1",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.175,
+     "input": 1.75,
+     "output": 14.0
+    },
+    "id": "gpt-5.2",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "input": 21.0,
+     "output": 168.0
+    },
+    "id": "gpt-5.2-pro",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.175,
+     "input": 1.75,
+     "output": 14.0
+    },
+    "id": "gpt-5.3-codex",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.175,
+     "input": 1.75,
+     "output": 14.0
+    },
+    "id": "gpt-5.3-codex-spark",
+    "max_output_tokens": 32000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.25,
+     "input": 2.5,
+     "output": 15.0
+    },
+    "id": "gpt-5.4",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.075,
+     "input": 0.75,
+     "output": 4.5
+    },
+    "id": "gpt-5.4-mini",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.02,
+     "input": 0.2,
+     "output": 1.25
+    },
+    "id": "gpt-5.4-nano",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "input": 30.0,
+     "output": 180.0
+    },
+    "id": "gpt-5.4-pro",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "input": 5.0,
+     "output": 30.0
+    },
+    "id": "gpt-5.5",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "input": 30.0,
+     "output": 180.0
+    },
+    "id": "gpt-5.5-pro",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.4,
+     "cache_write": 5.0,
+     "input": 4.0,
+     "output": 20.0
+    },
+    "id": "gpt-5.6",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.02,
+     "cache_write": 0.25,
+     "input": 0.2,
+     "output": 1.2
+    },
+    "id": "gpt-5.6-luna",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.4,
+     "cache_write": 5.0,
+     "input": 4.0,
+     "output": 20.0
+    },
+    "id": "gpt-5.6-sol",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "cache_write": 2.5,
+     "input": 2.0,
+     "output": 12.0
+    },
+    "id": "gpt-5.6-terra",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 1.0,
+     "cache_write": 12.5,
+     "input": 10.0,
+     "output": 50.0
+    },
+    "id": "gpt-6-astra",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.01,
+     "cache_write": 0.125,
+     "input": 0.1,
+     "output": 0.5
+    },
+    "id": "gpt-6-luna",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "cache_write": 2.5,
+     "input": 2.0,
+     "output": 10.0
+    },
+    "id": "gpt-6-sol",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.1,
+     "cache_write": 2.5,
+     "input": 2.0,
+     "output": 10.0
+    },
+    "id": "gpt-6.1-sol",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.4,
+     "cache_write": 5.0,
+     "input": 4.0,
+     "output": 20.0
+    },
+    "id": "gpt-daybreak-blue-latest",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "cache_read": 1.25,
+     "cache_write": 15.625,
+     "input": 12.5,
+     "output": 75.0
+    },
+    "id": "gpt-daybreak-red-latest",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.4,
+     "input": 4.0,
+     "output": 24.0
+    },
+    "id": "gpt-realtime-2.1",
+    "max_output_tokens": 32000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "cache_read": 7.5,
+     "input": 15.0,
+     "output": 60.0
+    },
+    "id": "o1",
+    "max_output_tokens": 100000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "input": 150.0,
+     "output": 600.0
+    },
+    "id": "o1-pro",
+    "max_output_tokens": 100000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "input": 2.0,
+     "output": 8.0
+    },
+    "id": "o3",
+    "max_output_tokens": 100000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.55,
+     "input": 1.1,
+     "output": 4.4
+    },
+    "id": "o3-mini",
+    "max_output_tokens": 100000,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "input": 20.0,
+     "output": 80.0
+    },
+    "id": "o3-pro",
+    "max_output_tokens": 100000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.275,
+     "input": 1.1,
+     "output": 4.4
+    },
+    "id": "o4-mini",
+    "max_output_tokens": 100000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 8191,
+    "cost_per_mtok_usd": {
+     "input": 0.13,
+     "output": 0.0
+    },
+    "id": "text-embedding-3-large",
+    "max_output_tokens": 3072,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 8191,
+    "cost_per_mtok_usd": {
+     "input": 0.02,
+     "output": 0.0
+    },
+    "id": "text-embedding-3-small",
+    "max_output_tokens": 1536,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 8192,
+    "cost_per_mtok_usd": {
+     "input": 0.1,
+     "output": 0.0
+    },
+    "id": "text-embedding-ada-002",
+    "max_output_tokens": 1536,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   }
+  ],
+  "openrouter": [
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "input": 0.8,
+     "output": 1.6
+    },
+    "id": "aion-labs/aion-2.0",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.75,
+     "input": 3.0,
+     "output": 6.0
+    },
+    "id": "aion-labs/aion-3.0",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.18,
+     "input": 0.7,
+     "output": 1.4
+    },
+    "id": "aion-labs/aion-3.0-mini",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.75,
+     "input": 3.0,
+     "output": 6.0
+    },
+    "id": "aion-labs/aion-3.5",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.18,
+     "input": 0.7,
+     "output": 1.4
+    },
+    "id": "aion-labs/aion-3.5-mini",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 32768,
+    "cost_per_mtok_usd": {
+     "input": 0.8,
+     "output": 1.6
+    },
+    "id": "aion-labs/aion-rp-llama-3.1-8b",
+    "max_output_tokens": 29491,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "input": 0.3,
+     "output": 2.5
+    },
+    "id": "amazon/nova-2-lite-v1",
+    "max_output_tokens": 65535,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 300000,
+    "cost_per_mtok_usd": {
+     "input": 0.06,
+     "output": 0.24
+    },
+    "id": "amazon/nova-lite-v1",
+    "max_output_tokens": 5120,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "input": 0.035,
+     "output": 0.14
+    },
+    "id": "amazon/nova-micro-v1",
+    "max_output_tokens": 5120,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.625,
+     "input": 2.5,
+     "output": 12.5
+    },
+    "id": "amazon/nova-premier-v1",
+    "max_output_tokens": 32000,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 300000,
+    "cost_per_mtok_usd": {
+     "input": 0.8,
+     "output": 3.2
+    },
+    "id": "amazon/nova-pro-v1",
+    "max_output_tokens": 5120,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 32768,
+    "cost_per_mtok_usd": {
+     "input": 2.5,
+     "output": 5.0
+    },
+    "id": "anthracite-org/magnum-v4-72b",
+    "max_output_tokens": 4096,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 1.0,
+     "cache_write": 12.5,
+     "input": 10.0,
+     "output": 50.0
+    },
+    "id": "anthropic/claude-fable-5",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.25,
+     "cache_write": 12.5,
+     "input": 10.0,
+     "output": 50.0
+    },
+    "id": "anthropic/claude-fable-5.1",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.1,
+     "cache_write": 1.25,
+     "input": 1.0,
+     "output": 5.0
+    },
+    "id": "anthropic/claude-haiku-4.5",
+    "max_output_tokens": 64000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.01,
+     "cache_write": 0.125,
+     "input": 0.1,
+     "output": 0.5
+    },
+    "id": "anthropic/claude-haiku-5.5",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "cache_read": 1.5,
+     "cache_write": 18.75,
+     "input": 15.0,
+     "output": 75.0
+    },
+    "id": "anthropic/claude-opus-4.1",
+    "max_output_tokens": 32000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "cache_write": 6.25,
+     "input": 5.0,
+     "output": 25.0
+    },
+    "id": "anthropic/claude-opus-4.5",
+    "max_output_tokens": 64000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "cache_write": 6.25,
+     "input": 5.0,
+     "output": 25.0
+    },
+    "id": "anthropic/claude-opus-4.6",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "cache_write": 6.25,
+     "input": 5.0,
+     "output": 25.0
+    },
+    "id": "anthropic/claude-opus-4.7",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "cache_write": 6.25,
+     "input": 5.0,
+     "output": 25.0
+    },
+    "id": "anthropic/claude-opus-4.8",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "cache_write": 6.25,
+     "input": 5.0,
+     "output": 25.0
+    },
+    "id": "anthropic/claude-opus-5",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "cache_write": 5.0,
+     "input": 4.0,
+     "output": 20.0
+    },
+    "id": "anthropic/claude-opus-5.5",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.3,
+     "cache_write": 3.75,
+     "input": 3.0,
+     "output": 15.0
+    },
+    "id": "anthropic/claude-sonnet-4.5",
+    "max_output_tokens": 64000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.3,
+     "cache_write": 3.75,
+     "input": 3.0,
+     "output": 15.0
+    },
+    "id": "anthropic/claude-sonnet-4.6",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "cache_write": 2.5,
+     "input": 2.0,
+     "output": 10.0
+    },
+    "id": "anthropic/claude-sonnet-5",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.1,
+     "cache_write": 2.5,
+     "input": 2.0,
+     "output": 10.0
+    },
+    "id": "anthropic/claude-sonnet-5.5",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.06,
+     "input": 0.25,
+     "output": 0.8
+    },
+    "id": "arcee-ai/trinity-large-thinking",
+    "max_output_tokens": 80000,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.25,
+     "output": 2.0
+    },
+    "id": "bytedance-seed/seed-1.6",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.075,
+     "output": 0.3
+    },
+    "id": "bytedance-seed/seed-1.6-flash",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.5,
+     "output": 2.5
+    },
+    "id": "bytedance-seed/seed-2-1-turbo",
+    "max_output_tokens": 235929,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.5,
+     "output": 3.0
+    },
+    "id": "bytedance-seed/seed-2.0-code",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.25,
+     "output": 2.0
+    },
+    "id": "bytedance-seed/seed-2.0-lite",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.1,
+     "output": 0.4
+    },
+    "id": "bytedance-seed/seed-2.0-mini",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.1,
+     "input": 0.1,
+     "output": 0.2
+    },
+    "id": "bytedance/ui-tars-1.5-7b",
+    "max_output_tokens": 2048,
+    "reasoning": false,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "input": 0.2,
+     "output": 0.9
+    },
+    "id": "cognitivecomputations/dolphin-mistral-24b-venice-edition",
+    "max_output_tokens": 8192,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 256000,
+    "cost_per_mtok_usd": {
+     "input": 2.5,
+     "output": 10.0
+    },
+    "id": "cohere/command-a",
+    "max_output_tokens": 8192,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 192000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.15,
+     "input": 0.3,
+     "output": 1.5
+    },
+    "id": "cohere/command-a-plus",
+    "max_output_tokens": 64000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "input": 0.15,
+     "output": 0.6
+    },
+    "id": "cohere/command-r-08-2024",
+    "max_output_tokens": 4000,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "input": 2.5,
+     "output": 10.0
+    },
+    "id": "cohere/command-r-plus-08-2024",
+    "max_output_tokens": 4000,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "input": 0.0375,
+     "output": 0.15
+    },
+    "id": "cohere/command-r7b-12-2024",
+    "max_output_tokens": 4000,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 256000,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "cohere/north-mini-code:free",
+    "max_output_tokens": 64000,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 163840,
+    "cost_per_mtok_usd": {
+     "input": 0.2574,
+     "output": 1.0287
+    },
+    "id": "deepseek/deepseek-chat",
+    "max_output_tokens": 16000,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 163840,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.11,
+     "input": 0.29,
+     "output": 1.14
+    },
+    "id": "deepseek/deepseek-chat-v3-0324",
+    "max_output_tokens": 115200,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 163840,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.13,
+     "input": 0.25,
+     "output": 0.95
+    },
+    "id": "deepseek/deepseek-chat-v3.1",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 163840,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.35,
+     "input": 0.5,
+     "output": 2.15
+    },
+    "id": "deepseek/deepseek-r1-0528",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 163840,
+    "cost_per_mtok_usd": {
+     "input": 0.27,
+     "output": 1.0
+    },
+    "id": "deepseek/deepseek-v3.1-terminus",
+    "max_output_tokens": 147456,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 163840,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.028,
+     "input": 0.28,
+     "output": 0.42
+    },
+    "id": "deepseek/deepseek-v3.2",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 163840,
+    "cost_per_mtok_usd": {
+     "input": 0.27,
+     "output": 0.41
+    },
+    "id": "deepseek/deepseek-v3.2-exp",
+    "max_output_tokens": 147456,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.0182,
+     "input": 0.091,
+     "output": 0.182
+    },
+    "id": "deepseek/deepseek-v4-flash",
+    "max_output_tokens": 943717,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.001414,
+     "input": 0.04444,
+     "output": 0.13332
+    },
+    "id": "deepseek/deepseek-v4-flash-0731",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.00686,
+     "input": 0.2156,
+     "output": 0.6468
+    },
+    "id": "deepseek/deepseek-v4-flash-vision-exp",
+    "max_output_tokens": 262144,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.0174,
+     "input": 0.2088,
+     "output": 0.4176
+    },
+    "id": "deepseek/deepseek-v4-pro",
+    "max_output_tokens": 384000,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.022,
+     "input": 0.66,
+     "output": 1.98
+    },
+    "id": "deepseek/deepseek-v4-pro-0813",
+    "max_output_tokens": 393216,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.015,
+     "input": 0.02,
+     "output": 1.0
+    },
+    "id": "deepseek/deepseek-v4.1-flash",
+    "max_output_tokens": 943718,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.003,
+     "input": 0.15,
+     "output": 0.6
+    },
+    "id": "deepseek/deepseek-v4.1-flash-1017",
+    "max_output_tokens": 393216,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 512000,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "dots-studio/dots-3-note-preview:free",
+    "max_output_tokens": 460800,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.06,
+     "input": 0.6,
+     "output": 3.0
+    },
+    "id": "elorian/glimpse",
+    "max_output_tokens": 256000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.3,
+     "input": 3.0,
+     "output": 15.0
+    },
+    "id": "fireworks/ember-1",
+    "max_output_tokens": 943718,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.03,
+     "cache_write": 0.083333,
+     "input": 0.3,
+     "output": 2.5
+    },
+    "id": "google/gemini-2.5-flash",
+    "max_output_tokens": 65535,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 32768,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.03,
+     "cache_write": 0.083333,
+     "input": 0.3,
+     "output": 2.5
+    },
+    "id": "google/gemini-2.5-flash-image",
+    "max_output_tokens": 8192,
+    "reasoning": false,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.01,
+     "cache_write": 0.083333,
+     "input": 0.1,
+     "output": 0.4
+    },
+    "id": "google/gemini-2.5-flash-lite",
+    "max_output_tokens": 65535,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.125,
+     "cache_write": 0.375,
+     "input": 1.25,
+     "output": 10.0
+    },
+    "id": "google/gemini-2.5-pro",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.125,
+     "cache_write": 0.375,
+     "input": 1.25,
+     "output": 10.0
+    },
+    "id": "google/gemini-2.5-pro-preview",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.05,
+     "cache_write": 0.083333,
+     "input": 0.5,
+     "output": 3.0
+    },
+    "id": "google/gemini-3-flash-preview",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "cache_write": 0.375,
+     "input": 2.0,
+     "output": 12.0
+    },
+    "id": "google/gemini-3-pro-image",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 65536,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "cache_write": 0.375,
+     "input": 2.0,
+     "output": 12.0
+    },
+    "id": "google/gemini-3-pro-image-preview",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 0.5,
+     "output": 3.0
+    },
+    "id": "google/gemini-3.1-flash-image",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 65536,
+    "cost_per_mtok_usd": {
+     "input": 0.5,
+     "output": 3.0
+    },
+    "id": "google/gemini-3.1-flash-image-preview",
+    "max_output_tokens": 58982,
+    "reasoning": true,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.025,
+     "cache_write": 0.083333,
+     "input": 0.25,
+     "output": 1.5
+    },
+    "id": "google/gemini-3.1-flash-lite",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 65536,
+    "cost_per_mtok_usd": {
+     "input": 0.25,
+     "output": 1.5
+    },
+    "id": "google/gemini-3.1-flash-lite-image",
+    "max_output_tokens": 58982,
+    "reasoning": true,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.025,
+     "cache_write": 0.083333,
+     "input": 0.25,
+     "output": 1.5
+    },
+    "id": "google/gemini-3.1-flash-lite-preview",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "cache_write": 0.375,
+     "input": 2.0,
+     "output": 12.0
+    },
+    "id": "google/gemini-3.1-pro-preview",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "cache_write": 0.375,
+     "input": 2.0,
+     "output": 12.0
+    },
+    "id": "google/gemini-3.1-pro-preview-customtools",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.15,
+     "cache_write": 0.083333,
+     "input": 1.5,
+     "output": 9.0
+    },
+    "id": "google/gemini-3.5-flash",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.03,
+     "cache_write": 0.083333,
+     "input": 0.3,
+     "output": 2.5
+    },
+    "id": "google/gemini-3.5-flash-lite",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.075,
+     "cache_write": 0.041667,
+     "input": 0.75,
+     "output": 3.75
+    },
+    "id": "google/gemini-3.6-flash",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.075,
+     "cache_write": 0.041667,
+     "input": 0.75,
+     "output": 3.75
+    },
+    "id": "google/gemini-3.7-flash",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.0825,
+     "cache_write": 0.041667,
+     "input": 0.825,
+     "output": 4.125
+    },
+    "id": "google/gemini-3.8-flash",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.1,
+     "cache_write": 0.1875,
+     "input": 2.0,
+     "output": 10.0
+    },
+    "id": "google/gemini-4-argon",
+    "max_output_tokens": 943718,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 65536,
+    "cost_per_mtok_usd": {
+     "input": 1.5,
+     "output": 7.5
+    },
+    "id": "google/gemini-nano-banana-2.1",
+    "max_output_tokens": 58982,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 8192,
+    "cost_per_mtok_usd": {
+     "input": 0.65,
+     "output": 0.65
+    },
+    "id": "google/gemma-2-27b-it",
+    "max_output_tokens": 2048,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 0.05,
+     "output": 0.15
+    },
+    "id": "google/gemma-3-12b-it",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.04,
+     "input": 0.08,
+     "output": 0.35
+    },
+    "id": "google/gemma-3-27b-it",
+    "max_output_tokens": 117964,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.02,
+     "input": 0.04,
+     "output": 0.05
+    },
+    "id": "google/gemma-3-4b-it",
+    "max_output_tokens": 117964,
+    "reasoning": false,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.0375,
+     "input": 0.0675,
+     "output": 0.225
+    },
+    "id": "google/gemma-4-26b-a4b-it",
+    "max_output_tokens": 235929,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "google/gemma-4-26b-a4b-it:free",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.2,
+     "output": 0.4
+    },
+    "id": "google/gemma-4-31b-it",
+    "max_output_tokens": 16384,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "google/gemma-4-31b-it:free",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "google/lyria-3-clip-preview",
+    "max_output_tokens": 65536,
+    "reasoning": false,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "google/lyria-3-pro-preview",
+    "max_output_tokens": 65536,
+    "reasoning": false,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 8192,
+    "cost_per_mtok_usd": {
+     "input": 0.08,
+     "output": 0.11
+    },
+    "id": "gryphe/mythomax-l2-13b",
+    "max_output_tokens": 3686,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 131000,
+    "cost_per_mtok_usd": {
+     "input": 0.017,
+     "output": 0.112
+    },
+    "id": "ibm-granite/granite-4.0-h-micro",
+    "max_output_tokens": 117900,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.015,
+     "input": 0.06,
+     "output": 0.25
+    },
+    "id": "ibm-granite/granite-4.2-8b",
+    "max_output_tokens": 117964,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.025,
+     "input": 0.25,
+     "output": 0.75
+    },
+    "id": "inception/mercury-2",
+    "max_output_tokens": 50000,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 260000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.004,
+     "input": 0.04,
+     "output": 0.15
+    },
+    "id": "inception/mercury-2.5",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.01,
+     "input": 0.1,
+     "output": 0.35
+    },
+    "id": "inception/mercury-3",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.0042,
+     "input": 0.021,
+     "output": 0.063
+    },
+    "id": "inclusionai/ling-3.0-flash",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.012,
+     "input": 0.06,
+     "output": 0.18
+    },
+    "id": "inclusionai/ling-3.0-flash-vl",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.015,
+     "input": 0.075,
+     "output": 0.225
+    },
+    "id": "inclusionai/ling-3.1-flash",
+    "max_output_tokens": 235929,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.05,
+     "input": 0.05,
+     "output": 0.23
+    },
+    "id": "inference-net/schematron-v2-small",
+    "max_output_tokens": 4096,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.03,
+     "input": 0.03,
+     "output": 0.15
+    },
+    "id": "inference-net/schematron-v2-turbo",
+    "max_output_tokens": 8192,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.04,
+     "input": 0.35,
+     "output": 0.5
+    },
+    "id": "liquid/lfm-2.5-2.6b",
+    "max_output_tokens": 8192,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 65536,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "liquid/lfm-2.5-2.6b:free",
+    "max_output_tokens": 8192,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.025,
+     "input": 0.05,
+     "output": 0.7
+    },
+    "id": "liquid/lfm-2.5-24b-a2b",
+    "max_output_tokens": 8192,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 8000,
+    "cost_per_mtok_usd": {
+     "input": 0.4,
+     "output": 0.75
+    },
+    "id": "mancer/weaver",
+    "max_output_tokens": 6000,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 1048756,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.006,
+     "input": 0.3,
+     "output": 1.2
+    },
+    "id": "meituan/longcat-2.0",
+    "max_output_tokens": 262144,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 0.4,
+     "output": 0.4
+    },
+    "id": "meta-llama/llama-3.1-70b-instruct",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.025,
+     "input": 0.05,
+     "output": 0.08
+    },
+    "id": "meta-llama/llama-3.1-8b-instruct",
+    "max_output_tokens": 117964,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 60000,
+    "cost_per_mtok_usd": {
+     "input": 0.027,
+     "output": 0.201
+    },
+    "id": "meta-llama/llama-3.2-1b-instruct",
+    "max_output_tokens": 54000,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 0.05,
+     "output": 0.33
+    },
+    "id": "meta-llama/llama-3.2-3b-instruct",
+    "max_output_tokens": 117964,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 0.1,
+     "output": 0.32
+    },
+    "id": "meta-llama/llama-3.3-70b-instruct",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 524288,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.05,
+     "input": 0.1875,
+     "output": 0.6525
+    },
+    "id": "meta-llama/llama-4-maverick",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1310720,
+    "cost_per_mtok_usd": {
+     "input": 0.1,
+     "output": 0.3
+    },
+    "id": "meta-llama/llama-4-scout",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 163840,
+    "cost_per_mtok_usd": {
+     "input": 0.18,
+     "output": 0.18
+    },
+    "id": "meta-llama/llama-guard-4-12b",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.04,
+     "input": 0.3,
+     "output": 1.2
+    },
+    "id": "meta/muse-glimmer-30b",
+    "max_output_tokens": 16384,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.15,
+     "input": 1.25,
+     "output": 4.25
+    },
+    "id": "meta/muse-spark-1.1",
+    "max_output_tokens": 943718,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.15,
+     "input": 1.25,
+     "output": 4.25
+    },
+    "id": "meta/muse-spark-1.2",
+    "max_output_tokens": 943718,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.002,
+     "input": 0.1,
+     "output": 0.2
+    },
+    "id": "meta/muse-spark-1.2-contributor",
+    "max_output_tokens": 943718,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.15,
+     "input": 1.25,
+     "output": 4.25
+    },
+    "id": "meta/muse-spark-1.3",
+    "max_output_tokens": 943718,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.002,
+     "input": 0.1,
+     "output": 0.2
+    },
+    "id": "meta/muse-spark-1.3-contributor",
+    "max_output_tokens": 943718,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.15,
+     "input": 1.25,
+     "output": 4.25
+    },
+    "id": "meta/muse-spark-open",
+    "max_output_tokens": 943718,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "input": 4.0,
+     "output": 20.0
+    },
+    "id": "meta/muse-wonder",
+    "max_output_tokens": 943718,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 16384,
+    "cost_per_mtok_usd": {
+     "input": 0.07,
+     "output": 0.14
+    },
+    "id": "microsoft/phi-4",
+    "max_output_tokens": 14745,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 1000192,
+    "cost_per_mtok_usd": {
+     "input": 0.2,
+     "output": 1.1
+    },
+    "id": "minimax/minimax-01",
+    "max_output_tokens": 40000,
+    "reasoning": false,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "input": 0.55,
+     "output": 2.2
+    },
+    "id": "minimax/minimax-m1",
+    "max_output_tokens": 40000,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 204800,
+    "cost_per_mtok_usd": {
+     "input": 0.255,
+     "output": 1.02
+    },
+    "id": "minimax/minimax-m2",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 65536,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.03,
+     "input": 0.3,
+     "output": 1.2
+    },
+    "id": "minimax/minimax-m2-her",
+    "max_output_tokens": 2048,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 204800,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.03,
+     "input": 0.3,
+     "output": 1.2
+    },
+    "id": "minimax/minimax-m2.1",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 204800,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.03,
+     "input": 0.3,
+     "output": 1.2
+    },
+    "id": "minimax/minimax-m2.5",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 204800,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.06,
+     "input": 0.3,
+     "output": 1.2
+    },
+    "id": "minimax/minimax-m2.7",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.06,
+     "input": 0.3,
+     "output": 1.2
+    },
+    "id": "minimax/minimax-m3",
+    "max_output_tokens": 512000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.015,
+     "input": 0.15,
+     "output": 0.6
+    },
+    "id": "minimax/minimax-m3.1-flash",
+    "max_output_tokens": 524288,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 256000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.03,
+     "input": 0.3,
+     "output": 0.9
+    },
+    "id": "mistralai/codestral-2508",
+    "max_output_tokens": 204800,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.04,
+     "input": 0.4,
+     "output": 2.0
+    },
+    "id": "mistralai/devstral-2512",
+    "max_output_tokens": 209715,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.02,
+     "input": 0.2,
+     "output": 0.2
+    },
+    "id": "mistralai/ministral-14b-2512",
+    "max_output_tokens": 209715,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.01,
+     "input": 0.1,
+     "output": 0.1
+    },
+    "id": "mistralai/ministral-3b-2512",
+    "max_output_tokens": 104857,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.015,
+     "input": 0.15,
+     "output": 0.15
+    },
+    "id": "mistralai/ministral-8b-2512",
+    "max_output_tokens": 209715,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "input": 2.0,
+     "output": 6.0
+    },
+    "id": "mistralai/mistral-large",
+    "max_output_tokens": 102400,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "input": 2.0,
+     "output": 6.0
+    },
+    "id": "mistralai/mistral-large-2407",
+    "max_output_tokens": 104857,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.05,
+     "input": 0.5,
+     "output": 1.5
+    },
+    "id": "mistralai/mistral-large-2512",
+    "max_output_tokens": 209715,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.14,
+     "input": 1.36,
+     "output": 4.18
+    },
+    "id": "mistralai/mistral-large-4-0",
+    "max_output_tokens": 262144,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.04,
+     "input": 0.4,
+     "output": 2.0
+    },
+    "id": "mistralai/mistral-medium-3",
+    "max_output_tokens": 104857,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 1.5,
+     "output": 7.5
+    },
+    "id": "mistralai/mistral-medium-3-5",
+    "max_output_tokens": 209715,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.04,
+     "input": 0.4,
+     "output": 2.0
+    },
+    "id": "mistralai/mistral-medium-3.1",
+    "max_output_tokens": 104857,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 0.029,
+     "output": 0.03
+    },
+    "id": "mistralai/mistral-nemo",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 32768,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.02,
+     "input": 0.2,
+     "output": 0.6
+    },
+    "id": "mistralai/mistral-saba",
+    "max_output_tokens": 26214,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 32768,
+    "cost_per_mtok_usd": {
+     "input": 0.05,
+     "output": 0.08
+    },
+    "id": "mistralai/mistral-small-24b-instruct-2501",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.015,
+     "input": 0.15,
+     "output": 0.6
+    },
+    "id": "mistralai/mistral-small-2603",
+    "max_output_tokens": 209715,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "input": 0.351,
+     "output": 0.555
+    },
+    "id": "mistralai/mistral-small-3.1-24b-instruct",
+    "max_output_tokens": 102400,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 256000,
+    "cost_per_mtok_usd": {
+     "input": 0.075,
+     "output": 0.2
+    },
+    "id": "mistralai/mistral-small-3.2-24b-instruct",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 65536,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "input": 2.0,
+     "output": 6.0
+    },
+    "id": "mistralai/mixtral-8x22b-instruct",
+    "max_output_tokens": 52428,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 32768,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.01,
+     "input": 0.1,
+     "output": 0.3
+    },
+    "id": "mistralai/voxtral-small-24b-2507",
+    "max_output_tokens": 26214,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 32000,
+    "cost_per_mtok_usd": {
+     "input": 0.3,
+     "output": 2.5
+    },
+    "id": "moondream/moondream3-preview",
+    "max_output_tokens": 4096,
+    "reasoning": true,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 32000,
+    "cost_per_mtok_usd": {
+     "input": 0.3,
+     "output": 2.5
+    },
+    "id": "moondream/moondream3.1-9b-a2b",
+    "max_output_tokens": 4096,
+    "reasoning": true,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 0.57,
+     "output": 2.3
+    },
+    "id": "moonshotai/kimi-k2",
+    "max_output_tokens": 98304,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.6,
+     "output": 2.5
+    },
+    "id": "moonshotai/kimi-k2-0905",
+    "max_output_tokens": 98304,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.15,
+     "input": 0.6,
+     "output": 2.5
+    },
+    "id": "moonshotai/kimi-k2-thinking",
+    "max_output_tokens": 98304,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.15,
+     "input": 0.5,
+     "output": 2.5
+    },
+    "id": "moonshotai/kimi-k2.5",
+    "max_output_tokens": 235929,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.15,
+     "input": 0.65,
+     "output": 3.41
+    },
+    "id": "moonshotai/kimi-k2.6",
+    "max_output_tokens": 235929,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.15,
+     "input": 0.6712,
+     "output": 3.35
+    },
+    "id": "moonshotai/kimi-k2.7-code",
+    "max_output_tokens": 235929,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.21,
+     "input": 0.239,
+     "output": 10.8
+    },
+    "id": "moonshotai/kimi-k3",
+    "max_output_tokens": 943718,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "input": 2.0,
+     "output": 10.0
+    },
+    "id": "moonshotai/kimi-k3.1-pro",
+    "max_output_tokens": 943718,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.8,
+     "output": 1.2
+    },
+    "id": "morph/morph-v3-fast",
+    "max_output_tokens": 131072,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.9,
+     "output": 1.9
+    },
+    "id": "morph/morph-v3-large",
+    "max_output_tokens": 131072,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.0025,
+     "input": 0.025,
+     "output": 0.1
+    },
+    "id": "nex-agi/nex-n2.5-mini",
+    "max_output_tokens": 235929,
+    "reasoning": true,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.015,
+     "input": 0.075,
+     "output": 0.25
+    },
+    "id": "nex-agi/nex-n2.5-pro",
+    "max_output_tokens": 235929,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 1.0,
+     "output": 1.0
+    },
+    "id": "nousresearch/hermes-3-llama-3.1-405b",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 0.7,
+     "output": 0.7
+    },
+    "id": "nousresearch/hermes-3-llama-3.1-70b",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 1.0,
+     "output": 3.0
+    },
+    "id": "nousresearch/hermes-4-405b",
+    "max_output_tokens": 117964,
+    "reasoning": true,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.06,
+     "output": 0.24
+    },
+    "id": "nvidia/nemotron-3-nano-30b-a3b",
+    "max_output_tokens": 235929,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 256000,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.15,
+     "input": 0.3,
+     "output": 2.4
+    },
+    "id": "nvidia/nemotron-3-super-120b-a12b",
+    "max_output_tokens": 235929,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "nvidia/nemotron-3-super-120b-a12b:free",
+    "max_output_tokens": 235929,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.12,
+     "input": 0.6,
+     "output": 2.4
+    },
+    "id": "nvidia/nemotron-3-ultra-550b-a55b",
+    "max_output_tokens": 182520,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 0.2,
+     "output": 0.2
+    },
+    "id": "nvidia/nemotron-3.5-content-safety",
+    "max_output_tokens": 117964,
+    "reasoning": true,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "nvidia/nemotron-3.5-content-safety:free",
+    "max_output_tokens": 8192,
+    "reasoning": true,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.04,
+     "input": 0.07,
+     "output": 0.2
+    },
+    "id": "nvidia/nemotron-3.5-lightning",
+    "max_output_tokens": 235929,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "nvidia/nemotron-3.5-lightning:free",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.02,
+     "input": 0.15,
+     "output": 0.5
+    },
+    "id": "nvidia/nemotron-3.5-super-vl",
+    "max_output_tokens": 235929,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "nvidia/nemotron-3.5-super-vl:free",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 4095,
+    "cost_per_mtok_usd": {
+     "input": 1.0,
+     "output": 2.0
+    },
+    "id": "openai/gpt-3.5-turbo-0613",
+    "max_output_tokens": 3685,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 16385,
+    "cost_per_mtok_usd": {
+     "input": 3.0,
+     "output": 4.0
+    },
+    "id": "openai/gpt-3.5-turbo-16k",
+    "max_output_tokens": 4096,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 8191,
+    "cost_per_mtok_usd": {
+     "input": 30.0,
+     "output": 60.0
+    },
+    "id": "openai/gpt-4",
+    "max_output_tokens": 4096,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "input": 10.0,
+     "output": 30.0
+    },
+    "id": "openai/gpt-4-turbo",
+    "max_output_tokens": 4096,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1047576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "input": 2.0,
+     "output": 8.0
+    },
+    "id": "openai/gpt-4.1",
+    "max_output_tokens": 32768,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1047576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.1,
+     "input": 0.4,
+     "output": 1.6
+    },
+    "id": "openai/gpt-4.1-mini",
+    "max_output_tokens": 32768,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1047576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.025,
+     "input": 0.1,
+     "output": 0.4
+    },
+    "id": "openai/gpt-4.1-nano",
+    "max_output_tokens": 32768,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "cache_read": 1.25,
+     "input": 2.5,
+     "output": 10.0
+    },
+    "id": "openai/gpt-4o",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "input": 5.0,
+     "output": 15.0
+    },
+    "id": "openai/gpt-4o-2024-05-13",
+    "max_output_tokens": 4096,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "cache_read": 1.25,
+     "input": 2.5,
+     "output": 10.0
+    },
+    "id": "openai/gpt-4o-2024-08-06",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "cache_read": 1.25,
+     "input": 2.5,
+     "output": 10.0
+    },
+    "id": "openai/gpt-4o-2024-11-20",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.075,
+     "input": 0.15,
+     "output": 0.6
+    },
+    "id": "openai/gpt-4o-mini",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.075,
+     "input": 0.15,
+     "output": 0.6
+    },
+    "id": "openai/gpt-4o-mini-2024-07-18",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.125,
+     "input": 1.25,
+     "output": 10.0
+    },
+    "id": "openai/gpt-5",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "cache_read": 1.25,
+     "input": 10.0,
+     "output": 10.0
+    },
+    "id": "openai/gpt-5-image",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.25,
+     "input": 2.5,
+     "output": 2.0
+    },
+    "id": "openai/gpt-5-image-mini",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.025,
+     "input": 0.25,
+     "output": 2.0
+    },
+    "id": "openai/gpt-5-mini",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.005,
+     "input": 0.05,
+     "output": 0.4
+    },
+    "id": "openai/gpt-5-nano",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "input": 15.0,
+     "output": 120.0
+    },
+    "id": "openai/gpt-5-pro",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.125,
+     "input": 1.25,
+     "output": 10.0
+    },
+    "id": "openai/gpt-5.1",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.13,
+     "input": 1.25,
+     "output": 10.0
+    },
+    "id": "openai/gpt-5.1-codex",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.125,
+     "input": 1.25,
+     "output": 10.0
+    },
+    "id": "openai/gpt-5.1-codex-max",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.03,
+     "input": 0.25,
+     "output": 2.0
+    },
+    "id": "openai/gpt-5.1-codex-mini",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.175,
+     "input": 1.75,
+     "output": 14.0
+    },
+    "id": "openai/gpt-5.2",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.175,
+     "input": 1.75,
+     "output": 14.0
+    },
+    "id": "openai/gpt-5.2-chat",
+    "max_output_tokens": 32000,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.175,
+     "input": 1.75,
+     "output": 14.0
+    },
+    "id": "openai/gpt-5.2-codex",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "input": 21.0,
+     "output": 168.0
+    },
+    "id": "openai/gpt-5.2-pro",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.175,
+     "input": 1.75,
+     "output": 14.0
+    },
+    "id": "openai/gpt-5.3-codex",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.25,
+     "input": 2.5,
+     "output": 15.0
+    },
+    "id": "openai/gpt-5.4",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 272000,
+    "cost_per_mtok_usd": {
+     "cache_read": 2.0,
+     "input": 8.0,
+     "output": 15.0
+    },
+    "id": "openai/gpt-5.4-image-2",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.075,
+     "input": 0.75,
+     "output": 4.5
+    },
+    "id": "openai/gpt-5.4-mini",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.02,
+     "input": 0.2,
+     "output": 1.25
+    },
+    "id": "openai/gpt-5.4-nano",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "input": 30.0,
+     "output": 180.0
+    },
+    "id": "openai/gpt-5.4-pro",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "input": 5.0,
+     "output": 30.0
+    },
+    "id": "openai/gpt-5.5",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "input": 30.0,
+     "output": 180.0
+    },
+    "id": "openai/gpt-5.5-pro",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.02,
+     "cache_write": 0.25,
+     "input": 0.2,
+     "output": 1.2
+    },
+    "id": "openai/gpt-5.6-luna",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.02,
+     "cache_write": 0.25,
+     "input": 0.2,
+     "output": 1.2
+    },
+    "id": "openai/gpt-5.6-luna-pro",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.4,
+     "cache_write": 5.0,
+     "input": 4.0,
+     "output": 20.0
+    },
+    "id": "openai/gpt-5.6-sol",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.4,
+     "cache_write": 5.0,
+     "input": 4.0,
+     "output": 20.0
+    },
+    "id": "openai/gpt-5.6-sol-pro",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "cache_write": 2.5,
+     "input": 2.0,
+     "output": 12.0
+    },
+    "id": "openai/gpt-5.6-terra",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "cache_write": 2.5,
+     "input": 2.0,
+     "output": 12.0
+    },
+    "id": "openai/gpt-5.6-terra-pro",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 1.0,
+     "cache_write": 12.5,
+     "input": 10.0,
+     "output": 50.0
+    },
+    "id": "openai/gpt-6-astra",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 1.0,
+     "cache_write": 12.5,
+     "input": 10.0,
+     "output": 50.0
+    },
+    "id": "openai/gpt-6-astra-pro",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.01,
+     "cache_write": 0.125,
+     "input": 0.1,
+     "output": 0.5
+    },
+    "id": "openai/gpt-6-luna",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.01,
+     "cache_write": 0.125,
+     "input": 0.1,
+     "output": 0.5
+    },
+    "id": "openai/gpt-6-luna-pro",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "cache_write": 2.5,
+     "input": 2.0,
+     "output": 10.0
+    },
+    "id": "openai/gpt-6-sol",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "cache_write": 2.5,
+     "input": 2.0,
+     "output": 10.0
+    },
+    "id": "openai/gpt-6-sol-pro",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.1,
+     "cache_write": 2.5,
+     "input": 2.0,
+     "output": 10.0
+    },
+    "id": "openai/gpt-6.1-sol",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.1,
+     "cache_write": 2.5,
+     "input": 2.0,
+     "output": 10.0
+    },
+    "id": "openai/gpt-6.1-sol-pro",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "input": 2.5,
+     "output": 10.0
+    },
+    "id": "openai/gpt-audio",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "input": 0.6,
+     "output": 2.4
+    },
+    "id": "openai/gpt-audio-mini",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 400000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "input": 5.0,
+     "output": 30.0
+    },
+    "id": "openai/gpt-chat-latest",
+    "max_output_tokens": 128000,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.075,
+     "input": 0.15,
+     "output": 0.6
+    },
+    "id": "openai/gpt-oss-120b",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.009,
+     "input": 0.018,
+     "output": 0.09
+    },
+    "id": "openai/gpt-oss-20b",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.0375,
+     "input": 0.075,
+     "output": 0.3
+    },
+    "id": "openai/gpt-oss-safeguard-20b",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "cache_read": 7.5,
+     "input": 15.0,
+     "output": 60.0
+    },
+    "id": "openai/o1",
+    "max_output_tokens": 100000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "input": 150.0,
+     "output": 600.0
+    },
+    "id": "openai/o1-pro",
+    "max_output_tokens": 100000,
+    "reasoning": true,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "input": 2.0,
+     "output": 8.0
+    },
+    "id": "openai/o3",
+    "max_output_tokens": 100000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.55,
+     "input": 1.1,
+     "output": 4.4
+    },
+    "id": "openai/o3-mini",
+    "max_output_tokens": 100000,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.55,
+     "input": 1.1,
+     "output": 4.4
+    },
+    "id": "openai/o3-mini-high",
+    "max_output_tokens": 100000,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "input": 20.0,
+     "output": 80.0
+    },
+    "id": "openai/o3-pro",
+    "max_output_tokens": 100000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.275,
+     "input": 1.1,
+     "output": 4.4
+    },
+    "id": "openai/o4-mini",
+    "max_output_tokens": 100000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.275,
+     "input": 1.1,
+     "output": 4.4
+    },
+    "id": "openai/o4-mini-high",
+    "max_output_tokens": 100000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 2000000,
+    "id": "openrouter/auto",
+    "max_output_tokens": 2000000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "id": "openrouter/bodybuilder",
+    "max_output_tokens": 128000,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "openrouter/free",
+    "max_output_tokens": 8000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "id": "openrouter/fusion",
+    "max_output_tokens": 128000,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 2000000,
+    "id": "openrouter/pareto-code",
+    "max_output_tokens": 200000,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 32768,
+    "cost_per_mtok_usd": {
+     "input": 0.15,
+     "output": 1.5
+    },
+    "id": "perceptron/perceptron-mk1",
+    "max_output_tokens": 8192,
+    "reasoning": true,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 36864,
+    "cost_per_mtok_usd": {
+     "input": 0.15,
+     "output": 1.5
+    },
+    "id": "perceptron/perceptron-mk1.5",
+    "max_output_tokens": 8192,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 127072,
+    "cost_per_mtok_usd": {
+     "input": 1.0,
+     "output": 1.0
+    },
+    "id": "perplexity/sonar",
+    "max_output_tokens": 114364,
+    "reasoning": false,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "input": 2.0,
+     "output": 8.0
+    },
+    "id": "perplexity/sonar-deep-research",
+    "max_output_tokens": 115200,
+    "reasoning": true,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "input": 3.0,
+     "output": 15.0
+    },
+    "id": "perplexity/sonar-pro",
+    "max_output_tokens": 8000,
+    "reasoning": false,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "input": 3.0,
+     "output": 15.0
+    },
+    "id": "perplexity/sonar-pro-search",
+    "max_output_tokens": 8000,
+    "reasoning": true,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "input": 2.0,
+     "output": 8.0
+    },
+    "id": "perplexity/sonar-reasoning-pro",
+    "max_output_tokens": 115200,
+    "reasoning": true,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.009,
+     "input": 0.09,
+     "output": 0.18
+    },
+    "id": "poolside/laguna-s-2.1",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "poolside/laguna-s-2.1:free",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.03,
+     "input": 0.06,
+     "output": 0.12
+    },
+    "id": "poolside/laguna-xs-2.1",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "poolside/laguna-xs-2.1:free",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.0375,
+     "input": 0.075,
+     "output": 0.5
+    },
+    "id": "prism-ml/ternary-bonsai-2-27b",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 32768,
+    "cost_per_mtok_usd": {
+     "input": 0.36,
+     "output": 0.4
+    },
+    "id": "qwen/qwen-2.5-72b-instruct",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 32768,
+    "cost_per_mtok_usd": {
+     "input": 0.1,
+     "output": 0.2
+    },
+    "id": "qwen/qwen-2.5-7b-instruct",
+    "max_output_tokens": 29491,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 32768,
+    "cost_per_mtok_usd": {
+     "input": 0.66,
+     "output": 1.0
+    },
+    "id": "qwen/qwen-2.5-coder-32b-instruct",
+    "max_output_tokens": 29491,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.052,
+     "cache_write": 0.325,
+     "input": 0.26,
+     "output": 0.78
+    },
+    "id": "qwen/qwen-plus",
+    "max_output_tokens": 32768,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.4,
+     "input": 0.8,
+     "output": 1.0
+    },
+    "id": "qwen/qwen2.5-vl-72b-instruct",
+    "max_output_tokens": 115200,
+    "reasoning": false,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 40960,
+    "cost_per_mtok_usd": {
+     "input": 0.12,
+     "output": 0.24
+    },
+    "id": "qwen/qwen3-14b",
+    "max_output_tokens": 16384,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.09,
+     "output": 0.55
+    },
+    "id": "qwen/qwen3-235b-a22b-2507",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 128000,
+    "cost_per_mtok_usd": {
+     "input": 0.45,
+     "output": 3.5
+    },
+    "id": "qwen/qwen3-235b-a22b-thinking-2507",
+    "max_output_tokens": 16384,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 40960,
+    "cost_per_mtok_usd": {
+     "input": 0.12,
+     "output": 0.5
+    },
+    "id": "qwen/qwen3-30b-a3b",
+    "max_output_tokens": 16384,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.09,
+     "output": 0.3
+    },
+    "id": "qwen/qwen3-30b-a3b-instruct-2507",
+    "max_output_tokens": 235929,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 0.08,
+     "output": 0.28
+    },
+    "id": "qwen/qwen3-32b",
+    "max_output_tokens": 16384,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.1,
+     "input": 0.3,
+     "output": 1.0
+    },
+    "id": "qwen/qwen3-coder",
+    "max_output_tokens": 65536,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.07,
+     "output": 0.28
+    },
+    "id": "qwen/qwen3-coder-30b-a3b-instruct",
+    "max_output_tokens": 235929,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.039,
+     "cache_write": 0.24375,
+     "input": 0.195,
+     "output": 0.975
+    },
+    "id": "qwen/qwen3-coder-flash",
+    "max_output_tokens": 65536,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.07,
+     "input": 0.12,
+     "output": 0.8
+    },
+    "id": "qwen/qwen3-coder-next",
+    "max_output_tokens": 235929,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.09,
+     "output": 1.1
+    },
+    "id": "qwen/qwen3-next-80b-a3b-instruct",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.15,
+     "output": 1.2
+    },
+    "id": "qwen/qwen3-next-80b-a3b-thinking",
+    "max_output_tokens": 235929,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.1,
+     "input": 0.21,
+     "output": 1.9
+    },
+    "id": "qwen/qwen3-vl-235b-a22b-instruct",
+    "max_output_tokens": 32768,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.15,
+     "output": 0.6
+    },
+    "id": "qwen/qwen3-vl-30b-a3b-instruct",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.29,
+     "output": 1.0
+    },
+    "id": "qwen/qwen3-vl-30b-a3b-thinking",
+    "max_output_tokens": 235929,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.12,
+     "input": 0.25,
+     "output": 0.75
+    },
+    "id": "qwen/qwen3-vl-8b-instruct",
+    "max_output_tokens": 235929,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.4,
+     "output": 3.2
+    },
+    "id": "qwen/qwen3.5-122b-a10b",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.27,
+     "input": 0.27,
+     "output": 2.16
+    },
+    "id": "qwen/qwen3.5-27b",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.05,
+     "input": 0.14,
+     "output": 1.0
+    },
+    "id": "qwen/qwen3.5-35b-a3b",
+    "max_output_tokens": 81920,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.3,
+     "input": 0.5,
+     "output": 3.6
+    },
+    "id": "qwen/qwen3.5-397b-a17b",
+    "max_output_tokens": 235929,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.17,
+     "output": 0.25
+    },
+    "id": "qwen/qwen3.5-9b",
+    "max_output_tokens": 235929,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "input": 0.065,
+     "output": 0.26
+    },
+    "id": "qwen/qwen3.5-flash-02-23",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "input": 0.26,
+     "output": 1.56
+    },
+    "id": "qwen/qwen3.5-plus-02-15",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_write": 0.375,
+     "input": 0.3,
+     "output": 1.8
+    },
+    "id": "qwen/qwen3.5-plus-20260420",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.32,
+     "output": 3.2
+    },
+    "id": "qwen/qwen3.6-27b",
+    "max_output_tokens": 81920,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.05,
+     "input": 0.1,
+     "output": 0.95
+    },
+    "id": "qwen/qwen3.6-35b-a3b",
+    "max_output_tokens": 235929,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_write": 0.234375,
+     "input": 0.1875,
+     "output": 1.125
+    },
+    "id": "qwen/qwen3.6-flash",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_write": 0.40625,
+     "input": 0.325,
+     "output": 1.95
+    },
+    "id": "qwen/qwen3.6-plus",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.006,
+     "cache_write": 0.038,
+     "input": 0.03,
+     "output": 0.13
+    },
+    "id": "qwen/qwen3.7-flash",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.295,
+     "cache_write": 1.84375,
+     "input": 1.475,
+     "output": 4.425
+    },
+    "id": "qwen/qwen3.7-max",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.064,
+     "cache_write": 0.4,
+     "input": 0.32,
+     "output": 1.28
+    },
+    "id": "qwen/qwen3.7-plus",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.25,
+     "input": 2.0,
+     "output": 6.0
+    },
+    "id": "qwen/qwen3.8-2.4t-a95b",
+    "max_output_tokens": 909000,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.09,
+     "input": 0.2,
+     "output": 2.5
+    },
+    "id": "qwen/qwen3.8-27b",
+    "max_output_tokens": 235929,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.016,
+     "input": 0.15,
+     "output": 0.47
+    },
+    "id": "qwen/qwen3.8-flash",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.25,
+     "input": 2.0,
+     "output": 6.0
+    },
+    "id": "qwen/qwen3.8-max-0902",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "input": 4.0,
+     "output": 12.0
+    },
+    "id": "qwen/qwen3.8-max-prime",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.016,
+     "input": 0.15,
+     "output": 0.47
+    },
+    "id": "qwen/qwen3.8-omni-flash",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "recursive/flint-v1.0:free",
+    "max_output_tokens": 235929,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.05,
+     "input": 0.25,
+     "output": 1.0
+    },
+    "id": "reflection/beam-1.0-501b-a23b",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 16384,
+    "cost_per_mtok_usd": {
+     "input": 0.1,
+     "output": 0.1
+    },
+    "id": "rekaai/reka-edge",
+    "max_output_tokens": 14745,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 65536,
+    "cost_per_mtok_usd": {
+     "input": 0.1,
+     "output": 0.2
+    },
+    "id": "rekaai/reka-flash-3",
+    "max_output_tokens": 58982,
+    "reasoning": true,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 256000,
+    "cost_per_mtok_usd": {
+     "input": 0.85,
+     "output": 1.25
+    },
+    "id": "relace/relace-apply-3",
+    "max_output_tokens": 128000,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 256000,
+    "cost_per_mtok_usd": {
+     "input": 1.0,
+     "output": 3.0
+    },
+    "id": "relace/relace-search",
+    "max_output_tokens": 128000,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.25,
+     "input": 2.0,
+     "output": 6.0
+    },
+    "id": "sakana/fugu-max",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "input": 5.0,
+     "output": 30.0
+    },
+    "id": "sakana/fugu-ultra",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "input": 5.0,
+     "output": 30.0
+    },
+    "id": "sakana/fugu-ultra-v2",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.15,
+     "input": 0.95,
+     "output": 4.0
+    },
+    "id": "sakana/sakana-namazu",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 8192,
+    "cost_per_mtok_usd": {
+     "input": 0.04,
+     "output": 0.05
+    },
+    "id": "sao10k/l3-lunaris-8b",
+    "max_output_tokens": 7372,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 0.85,
+     "output": 0.85
+    },
+    "id": "sao10k/l3.1-euryale-70b",
+    "max_output_tokens": 16384,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "input": 0.04,
+     "output": 0.0
+    },
+    "id": "scaledown/extract",
+    "max_output_tokens": 900000,
+    "reasoning": false,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "input": 0.04,
+     "output": 0.0
+    },
+    "id": "scaledown/summarize",
+    "max_output_tokens": 4000,
+    "reasoning": false,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.1,
+     "output": 0.3
+    },
+    "id": "stepfun/step-3.5-flash",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.04,
+     "input": 0.2,
+     "output": 1.15
+    },
+    "id": "stepfun/step-3.7-flash",
+    "max_output_tokens": 230400,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.1,
+     "input": 1.0,
+     "output": 2.7
+    },
+    "id": "stepfun/step-5-preview",
+    "max_output_tokens": 64000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 0.14,
+     "output": 0.57
+    },
+    "id": "tencent/hunyuan-a13b-instruct",
+    "max_output_tokens": 117964,
+    "reasoning": true,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 8192,
+    "cost_per_mtok_usd": {
+     "input": 0.044,
+     "output": 0.177
+    },
+    "id": "tencent/hy-mt2-1.8b",
+    "max_output_tokens": 4096,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 8192,
+    "cost_per_mtok_usd": {
+     "input": 0.074,
+     "output": 0.295
+    },
+    "id": "tencent/hy-mt2-30b-a3b",
+    "max_output_tokens": 4096,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 8192,
+    "cost_per_mtok_usd": {
+     "input": 0.074,
+     "output": 0.295
+    },
+    "id": "tencent/hy-mt2-7b",
+    "max_output_tokens": 4096,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.020625,
+     "input": 0.0825,
+     "output": 0.33
+    },
+    "id": "tencent/hy3",
+    "max_output_tokens": 128000,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.06,
+     "input": 0.18,
+     "output": 0.6
+    },
+    "id": "tencent/hy3-preview",
+    "max_output_tokens": 235929,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.0378,
+     "input": 0.7506,
+     "output": 2.2509
+    },
+    "id": "tencent/hy4-preview",
+    "max_output_tokens": 64000,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.15,
+     "input": 0.3,
+     "output": 0.5
+    },
+    "id": "thedrummer/cydonia-24b-v4.1",
+    "max_output_tokens": 117964,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 32768,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.25,
+     "input": 0.55,
+     "output": 0.8
+    },
+    "id": "thedrummer/skyfall-36b-v2",
+    "max_output_tokens": 29491,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 1024000,
+    "cost_per_mtok_usd": {
+     "input": 0.4,
+     "output": 0.4
+    },
+    "id": "thedrummer/unslopnemo-12b",
+    "max_output_tokens": 819200,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 524288,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.17,
+     "input": 1.0,
+     "output": 4.05
+    },
+    "id": "thinkingmachines/inkling",
+    "max_output_tokens": 471859,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 524288,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.1,
+     "input": 0.45,
+     "output": 1.2
+    },
+    "id": "thinkingmachines/inkling-small",
+    "max_output_tokens": 262144,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "thinkingmachines/inkling-small:free",
+    "max_output_tokens": 262144,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "thinkingmachines/inkling:free",
+    "max_output_tokens": 262144,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.03,
+     "input": 0.8,
+     "output": 3.2
+    },
+    "id": "unbiased/pareto-26.10",
+    "max_output_tokens": 131072,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.25,
+     "input": 2.5,
+     "output": 7.5
+    },
+    "id": "unbiased/pareto-26.9",
+    "max_output_tokens": 131072,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 6144,
+    "cost_per_mtok_usd": {
+     "input": 0.35,
+     "output": 0.65
+    },
+    "id": "undi95/remm-slerp-l2-13b",
+    "max_output_tokens": 5529,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 524288,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.005,
+     "input": 0.05,
+     "output": 0.2
+    },
+    "id": "upstage/solar-mini4",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.015,
+     "input": 0.15,
+     "output": 0.6
+    },
+    "id": "upstage/solar-pro-3",
+    "max_output_tokens": 117964,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 524288,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.03,
+     "input": 0.15,
+     "output": 0.6
+    },
+    "id": "upstage/solar-pro4",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1040000,
+    "cost_per_mtok_usd": {
+     "input": 0.6,
+     "output": 6.0
+    },
+    "id": "writer/palmyra-x5",
+    "max_output_tokens": 8192,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 2000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "input": 1.25,
+     "output": 2.5
+    },
+    "id": "x-ai/grok-4.20",
+    "max_output_tokens": 1800000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 2000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "input": 1.25,
+     "output": 2.5
+    },
+    "id": "x-ai/grok-4.20-multi-agent",
+    "max_output_tokens": 1800000,
+    "reasoning": true,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "input": 1.25,
+     "output": 2.5
+    },
+    "id": "x-ai/grok-4.3",
+    "max_output_tokens": 900000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 500000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.3,
+     "input": 2.0,
+     "output": 6.0
+    },
+    "id": "x-ai/grok-4.5",
+    "max_output_tokens": 450000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 500000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "input": 2.0,
+     "output": 6.0
+    },
+    "id": "x-ai/grok-4.6",
+    "max_output_tokens": 450000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 500000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "input": 2.0,
+     "output": 6.0
+    },
+    "id": "x-ai/grok-4.7",
+    "max_output_tokens": 450000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 256000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "input": 1.0,
+     "output": 2.0
+    },
+    "id": "x-ai/grok-build-0.1",
+    "max_output_tokens": 230400,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.00255,
+     "input": 0.119,
+     "output": 0.238
+    },
+    "id": "xiaomi/mimo-v2.5",
+    "max_output_tokens": 945000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.0028,
+     "input": 0.3045,
+     "output": 0.609
+    },
+    "id": "xiaomi/mimo-v2.5-pro",
+    "max_output_tokens": 945000,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.0028,
+     "input": 0.14,
+     "output": 0.28
+    },
+    "id": "xiaomi/mimo-v2.6-flash",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1050000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.0036,
+     "input": 0.435,
+     "output": 0.87
+    },
+    "id": "xiaomi/mimo-v2.6-pro",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.036,
+     "input": 4.35,
+     "output": 8.7
+    },
+    "id": "xiaomi/mimo-v2.6-pro-ultraspeed",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.0,
+     "output": 0.0
+    },
+    "id": "xingchen-agi/xing4.0-29b-a4b:free",
+    "max_output_tokens": 235929,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.11,
+     "input": 0.6,
+     "output": 2.2
+    },
+    "id": "z-ai/glm-4.5",
+    "max_output_tokens": 98304,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.025,
+     "input": 0.13,
+     "output": 0.85
+    },
+    "id": "z-ai/glm-4.5-air",
+    "max_output_tokens": 98304,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 65536,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.11,
+     "input": 0.6,
+     "output": 1.8
+    },
+    "id": "z-ai/glm-4.5v",
+    "max_output_tokens": 16384,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 204800,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.11,
+     "input": 0.55,
+     "output": 2.2
+    },
+    "id": "z-ai/glm-4.6",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.05,
+     "input": 0.3,
+     "output": 0.9
+    },
+    "id": "z-ai/glm-4.6v",
+    "max_output_tokens": 32768,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 204800,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.099,
+     "input": 0.54,
+     "output": 1.98
+    },
+    "id": "z-ai/glm-4.7",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 200000,
+    "cost_per_mtok_usd": {
+     "input": 0.0605,
+     "output": 0.4
+    },
+    "id": "z-ai/glm-4.7-flash",
+    "max_output_tokens": 117964,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 204800,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "input": 1.0,
+     "output": 3.2
+    },
+    "id": "z-ai/glm-5",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 202752,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.24,
+     "input": 1.2,
+     "output": 4.0
+    },
+    "id": "z-ai/glm-5-turbo",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 204800,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.26,
+     "input": 1.4,
+     "output": 4.4
+    },
+    "id": "z-ai/glm-5.1",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.033,
+     "input": 0.0341,
+     "output": 7.0
+    },
+    "id": "z-ai/glm-5.2",
+    "max_output_tokens": 943718,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.078,
+     "input": 0.079,
+     "output": 1.4
+    },
+    "id": "z-ai/glm-5.3",
+    "max_output_tokens": 943718,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.03,
+     "input": 0.15,
+     "output": 0.5
+    },
+    "id": "z-ai/glm-5.3-flash",
+    "max_output_tokens": 943717,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.09,
+     "input": 0.37,
+     "output": 1.25
+    },
+    "id": "z-ai/glm-5.3-flashx",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.56,
+     "input": 2.8,
+     "output": 8.8
+    },
+    "id": "z-ai/glm-5.3-prime",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 202752,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.24,
+     "input": 1.2,
+     "output": 4.0
+    },
+    "id": "z-ai/glm-5v-turbo",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   }
+  ],
+  "together": [
+   {
+    "context_length": 32768,
+    "cost_per_mtok_usd": {
+     "input": 0.03,
+     "output": 0.12
+    },
+    "id": "LiquidAI/LFM2-24B-A2B",
+    "max_output_tokens": 32768,
+    "reasoning": false,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 204800,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.06,
+     "input": 0.3,
+     "output": 1.2
+    },
+    "id": "MiniMaxAI/MiniMax-M2.5",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 196608,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.06,
+     "input": 0.3,
+     "output": 1.2
+    },
+    "id": "MiniMaxAI/MiniMax-M2.7",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 524288,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.06,
+     "input": 0.3,
+     "output": 1.2
+    },
+    "id": "MiniMaxAI/MiniMax-M3",
+    "max_output_tokens": 524288,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 32768,
+    "cost_per_mtok_usd": {
+     "input": 0.3,
+     "output": 0.3
+    },
+    "id": "Qwen/Qwen2.5-7B-Instruct-Turbo",
+    "max_output_tokens": 32768,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.2,
+     "output": 0.6
+    },
+    "id": "Qwen/Qwen3-235B-A22B-Instruct-2507-tput",
+    "max_output_tokens": 262144,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 2.0,
+     "output": 2.0
+    },
+    "id": "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
+    "max_output_tokens": 262144,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.5,
+     "output": 1.2
+    },
+    "id": "Qwen/Qwen3-Coder-Next-FP8",
+    "max_output_tokens": 262144,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.35,
+     "input": 0.6,
+     "output": 3.6
+    },
+    "id": "Qwen/Qwen3.5-397B-A17B",
+    "max_output_tokens": 130000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "input": 0.17,
+     "output": 0.25
+    },
+    "id": "Qwen/Qwen3.5-9B",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "input": 0.5,
+     "output": 3.0
+    },
+    "id": "Qwen/Qwen3.6-Plus",
+    "max_output_tokens": 65536,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "input": 2.5,
+     "output": 7.5
+    },
+    "id": "Qwen/Qwen3.7-Max",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 163839,
+    "cost_per_mtok_usd": {
+     "input": 3.0,
+     "output": 7.0
+    },
+    "id": "deepseek-ai/DeepSeek-R1",
+    "max_output_tokens": 163839,
+    "reasoning": true,
+    "tools": false,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 1.25,
+     "output": 1.25
+    },
+    "id": "deepseek-ai/DeepSeek-V3",
+    "max_output_tokens": 131072,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 0.6,
+     "output": 1.7
+    },
+    "id": "deepseek-ai/DeepSeek-V3-1",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.03,
+     "input": 0.14,
+     "output": 0.28
+    },
+    "id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+    "max_output_tokens": 384000,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.13,
+     "input": 1.32,
+     "output": 3.96
+    },
+    "id": "deepseek-ai/DeepSeek-V4-Pro-0813",
+    "max_output_tokens": 384000,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.006,
+     "input": 0.3,
+     "output": 1.2
+    },
+    "id": "deepseek-ai/DeepSeek-V4.1-Flash",
+    "max_output_tokens": 384000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 32768,
+    "cost_per_mtok_usd": {
+     "input": 0.15,
+     "output": 0.15
+    },
+    "id": "essentialai/Rnj-1-Instruct",
+    "max_output_tokens": 32768,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 1.04,
+     "output": 1.04
+    },
+    "id": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+    "max_output_tokens": 131072,
+    "reasoning": false,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.15,
+     "input": 1.25,
+     "output": 4.25
+    },
+    "id": "meta-models/Muse-Spark-Open-816B-A42B",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.3,
+     "input": 3.0,
+     "output": 15.0
+    },
+    "id": "moonshotai/Kimi-K3",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 262144,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.02,
+     "input": 0.15,
+     "output": 0.5
+    },
+    "id": "nvidia/NVIDIA-Nemotron-3.5-Super-VL",
+    "max_output_tokens": 262144,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 512300,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "input": 0.6,
+     "output": 3.6
+    },
+    "id": "nvidia/nemotron-3-ultra-550b-a55b",
+    "max_output_tokens": 512300,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 131072,
+    "cost_per_mtok_usd": {
+     "input": 0.15,
+     "output": 0.6
+    },
+    "id": "openai/gpt-oss-120b",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048576,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.04,
+     "input": 0.4,
+     "output": 1.2
+    },
+    "id": "reflection/Beam-1.0-501B-A23B",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 524288,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.17,
+     "input": 1.0,
+     "output": 4.05
+    },
+    "id": "thinkingmachines/Inkling",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 202752,
+    "cost_per_mtok_usd": {
+     "input": 1.0,
+     "output": 3.2
+    },
+    "id": "zai-org/GLM-5",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 202752,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.26,
+     "input": 1.4,
+     "output": 4.4
+    },
+    "id": "zai-org/GLM-5.1",
+    "max_output_tokens": 131072,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048575,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.26,
+     "input": 1.4,
+     "output": 4.4
+    },
+    "id": "zai-org/GLM-5.2",
+    "max_output_tokens": 164000,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048575,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.26,
+     "input": 1.4,
+     "output": 4.4
+    },
+    "id": "zai-org/GLM-5.3",
+    "max_output_tokens": 262144,
+    "reasoning": true,
+    "tools": true,
+    "vision": false
+   },
+   {
+    "context_length": 1048575,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.03,
+     "input": 0.15,
+     "output": 0.5
+    },
+    "id": "zai-org/GLM-5.3-Flash",
+    "max_output_tokens": 400000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   }
+  ],
+  "xai": [
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "input": 1.25,
+     "output": 2.5
+    },
+    "id": "grok-4.20-0309-non-reasoning",
+    "max_output_tokens": 30000,
+    "reasoning": false,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "input": 1.25,
+     "output": 2.5
+    },
+    "id": "grok-4.20-0309-reasoning",
+    "max_output_tokens": 30000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "input": 1.25,
+     "output": 2.5
+    },
+    "id": "grok-4.20-multi-agent-0309",
+    "max_output_tokens": 30000,
+    "reasoning": true,
+    "tools": false,
+    "vision": true
+   },
+   {
+    "context_length": 1000000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "input": 1.25,
+     "output": 2.5
+    },
+    "id": "grok-4.3",
+    "max_output_tokens": 30000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 500000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.3,
+     "input": 2.0,
+     "output": 6.0
+    },
+    "id": "grok-4.5",
+    "max_output_tokens": 500000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 500000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "input": 2.0,
+     "output": 6.0
+    },
+    "id": "grok-4.6",
+    "max_output_tokens": 500000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 500000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.5,
+     "input": 2.0,
+     "output": 6.0
+    },
+    "id": "grok-4.7",
+    "max_output_tokens": 500000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   },
+   {
+    "context_length": 256000,
+    "cost_per_mtok_usd": {
+     "cache_read": 0.2,
+     "input": 1.0,
+     "output": 2.0
+    },
+    "id": "grok-build-0.1",
+    "max_output_tokens": 256000,
+    "reasoning": true,
+    "tools": true,
+    "vision": true
+   }
+  ]
+ },
+ "schema_version": 1,
+ "source": "https://models.dev/api.json"
+}

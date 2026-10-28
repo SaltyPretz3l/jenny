@@ -92,7 +92,6 @@
       clearComposerStatusNotice = () => {},
       renderToastViewport = () => {},
       renderComposerPopover = () => {},
-      renderCommandPopover = () => {},
       renderHomePanel = () => {},
       shouldRenderHomePanel = () => false,
       renderContextPanel = null,
@@ -584,6 +583,7 @@
         resume: (row) => state.runtimeSendController?.resume?.(row.key),
         restartEngine: (row) => state.runtimeSendController?.restartEngine?.(row.key),
         openChat: (row) => state.runtimeSendController?.openChat?.(row.wait?.blockingSessionId),
+        putDraft: (texts) => globalRef.rendererRuntimeQueueView?.putBackInComposer?.(chatInput, texts),
       };
       return runtimeQueueActions;
     }
@@ -718,7 +718,8 @@
         || isSendPreflightPending()
         || pluginSessionReadOnly
         || !state.auth.authenticated
-        || !backendComposerUsable
+        // While the engine starts, Send queues into the outbox (renderer-send-utils.js).
+        || !(backendComposerUsable || (backendComposerPreparing && Boolean(currentSessionId)))
         || (!modelLoadingLine && (view.kind === 'noModel' || view.kind === 'downloading'))
         || (sendBusy && !queueEligible)
         || !hasComposerDraft;
@@ -850,11 +851,19 @@
         host: documentRef?.getElementById('sendOutbox'),
         actions: controllers.getSendOutboxActions?.(),
       });
+      // Option C: a queued send is its own greyed bubble in the conversation;
+      // the strip keeps only what has no bubble there.
+      const inBubbles = globalRef.rendererRuntimeQueueView?.syncQueuedBubbles?.({
+        timeline: chatTimeline,
+        rows: durablePending,
+        actions: getRuntimeQueueActions(),
+        closing: runtimeSessionState?.closing === true,
+      }) || new Set();
       globalRef.rendererRuntimeQueueView?.renderRuntimeQueue?.({
         state,
         host: documentRef?.getElementById('runtimeQueue'),
         // Idle direct Sends retain pending ownership without entering the queue strip.
-        rows: durablePending.filter(row => row.queued !== false),
+        rows: durablePending.filter(row => row.queued !== false && !inBubbles.has(row.key)),
         actions: getRuntimeQueueActions(),
         closing: runtimeSessionState?.closing === true,
       });
@@ -864,6 +873,7 @@
         state,
         rows: durablePending,
         onOpenChat: (sessionId) => state.runtimeSendController?.openChat?.(sessionId),
+        onStopChat: (sessionId) => state.runtimeSendController?.stopChat?.(sessionId),
       });
       syncComposerAccessoryVisibility();
       renderComposerEnhancements?.();
@@ -924,7 +934,6 @@
       renderToastViewport();
       renderComposerState();
       renderComposerPopover();
-      renderCommandPopover();
     }
 
     function dispose() {

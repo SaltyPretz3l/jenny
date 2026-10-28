@@ -30,6 +30,7 @@ from sidecar.ai.tools.workspace_restore import (
     restore_trash_entry,
     undo_change_set,
 )
+from tests.sidecar._platform_skips import requires_file_symlinks
 
 CHANGE_SET_ID = "01990f9a-8c51-7ad2-a8be-41190e0e2525"
 OTHER_CHANGE_SET_ID = "01990f9a-8c51-7ad2-a8be-41190e0e2526"
@@ -529,16 +530,14 @@ def test_skipped_operation_without_materialized_recovery_does_not_block_undo(
     assert second.read_text(encoding="utf-8") == "second before\n"
 
 
+@requires_file_symlinks()
 def test_directory_restore_preserves_relative_symlink(tmp_path: Path) -> None:
     root, guard, store, lifecycle = _setup(tmp_path)
     directory = root / "linked-dir"
     directory.mkdir()
     (directory / "target.txt").write_text("target\n", encoding="utf-8")
     link = directory / "relative-link.txt"
-    try:
-        os.symlink("target.txt", link)
-    except OSError as error:
-        pytest.skip(f"symlink unavailable: {error}")
+    os.symlink("target.txt", link)
     result = delete_file.delete_file_tool(
         _args("delete-linked", path="linked-dir", recursive=True),
         guard,

@@ -225,6 +225,18 @@ test('writeDocument validates base64, format, magic, and size before creating te
     service.writeDocument({ ...common, base64: 'not base64' }),
     WORKSPACE_FS_ERROR_CODES.UNSUPPORTED_ENCODING
   );
+  // Buffer.from silently skips these; the round-trip check must not.
+  for (const base64 of ['UEsD BA=', 'UEsDBA-_', 'UEsDBA=\n']) {
+    await rejectsWithCode(
+      service.writeDocument({ ...common, base64: base64.padEnd(Math.ceil(base64.length / 4) * 4, '=') }),
+      WORKSPACE_FS_ERROR_CODES.UNSUPPORTED_ENCODING
+    );
+  }
+  await rejectsWithCode(
+    service.writeDocument({ ...common, base64: 'A'.repeat(28) }),
+    WORKSPACE_FS_ERROR_CODES.DOCUMENT_TOO_LARGE,
+    'an oversized payload is refused before it is decoded'
+  );
   const tooLarge = Buffer.alloc(17, 0x20);
   tooLarge.write('PK\x03\x04', 0, 'binary');
   await rejectsWithCode(

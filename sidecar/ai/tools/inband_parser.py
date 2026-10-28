@@ -14,12 +14,15 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sys
+from bisect import bisect_right
 from dataclasses import dataclass, replace
-from typing import List, Tuple
+from typing import Iterator, List, Tuple
 from uuid import uuid4
 
 from .models import ToolCallRequest
 from .tool_call_healing import (
+    coerce_arguments,
     extract_balanced_json_objects,
     is_healing_enabled,
     record_repair,
@@ -33,34 +36,73 @@ def _gen_inband_call_id(tool_name: str) -> str:
     return f"inband_{tool_name}_{uuid4().hex[:10]}"
 
 
-# ---------------------------------------------------------------------------
-# Format 1: XML-style <tool_call>...</tool_call>
-# ---------------------------------------------------------------------------
-_TOOL_CALL_XML_RE = re.compile(
-    r"<tool_call>\s*(\{.*?\})\s*</tool_call>",
-    re.DOTALL,
-)
+@dataclass(frozen=True)
+class _WrappedFormat:
+    """An opener ending just before the payload ``{`` and a closer from its ``}``.
 
-# ---------------------------------------------------------------------------
+    The payload runs from the opener to the first ``}`` the closer follows, the
+    lazy ``{.*?}`` rule the old regexes used, found by one forward scan
+    instead of retrying the rest of the text from every unclosed opener (tool
+    review C4 #G: thousands of unclosed openers took seconds).
+    """
+
+    opener: "re.Pattern[str]"
+    closer: "re.Pattern[str]"
+
+
+# Format 1: XML-style <tool_call>{...}</tool_call>
+_XML_FORMAT = _WrappedFormat(
+    re.compile(r"<tool_call>\s*(?=\{)"), re.compile(r"\}\s*</tool_call>")
+)
 # Format 2: Markdown code block ```tool_call ... ``` or ```json ... ```
-# ---------------------------------------------------------------------------
-_TOOL_CALL_MD_RE = re.compile(
-    r"```(?:tool_call|json)\s*\n(\{.*?\})\s*\n```",
-    re.DOTALL,
+_MD_FORMAT = _WrappedFormat(
+    re.compile(r"```(?:tool_call|json)\s*\n(?=\{)"), re.compile(r"\}\s*\n```")
 )
+# Format 3: tool_name({"param": "value"}); group 1 is the name.
+_FUNC_FORMAT = _WrappedFormat(
+    re.compile(r"\b([a-z][a-z0-9_]*)\s*\(\s*(?=\{)"), re.compile(r"\}\s*\)")
+)
+_XML_OPEN = "<tool_call>"
+_XML_CLOSE = "</tool_call>"
 
-# ---------------------------------------------------------------------------
-# Format 3: tool_name({"param": "value"})
-# ---------------------------------------------------------------------------
-_TOOL_CALL_FUNC_RE = re.compile(
-    r"\b([a-z][a-z0-9_]*)\s*\(\s*(\{.*?\})\s*\)",
-    re.DOTALL,
-)
 
-_TOOL_CALL_XML_CANDIDATE_RE = re.compile(
-    r"<tool_call>\s*(.*?)\s*</tool_call>",
-    re.DOTALL,
-)
+@dataclass(frozen=True)
+class _Wrapped:
+    """One wrapped candidate: ``text[start:end]`` is the markup."""
+
+    start: int
+    end: int
+    payload: str
+    name: str = ""
+
+
+def _wrapped_candidates(text: str, fmt: _WrappedFormat) -> Iterator[_Wrapped]:
+    """Non-overlapping candidates in order; stops once no closer is left."""
+    position = 0
+    close: "re.Match[str] | None" = None
+    for opener in fmt.opener.finditer(text):
+        if opener.start() < position:
+            continue
+        if close is None or close.start() < opener.end():
+            close = fmt.closer.search(text, opener.end())
+            if close is None:
+                return  # no closer after here, so none after any later opener
+        name = opener.group(1) if fmt.opener.groups else ""
+        yield _Wrapped(opener.start(), close.end(), text[opener.end() : close.start() + 1], name)
+        position = close.end()
+
+
+def _xml_candidate_payloads(text: str) -> Iterator[str]:
+    """Each ``<tool_call>...</tool_call>`` body, stripped, by plain ``find`` scans."""
+    position = 0
+    while (start := text.find(_XML_OPEN, position)) >= 0:
+        close = text.find(_XML_CLOSE, start + len(_XML_OPEN))
+        if close < 0:
+            return
+        yield text[start + len(_XML_OPEN) : close].strip()
+        position = close + len(_XML_CLOSE)
+
+
 _MARKDOWN_CODE_RE = re.compile(r"```.*?```|`[^`\n]*`", re.DOTALL)
 _EXAMPLE_MARKER_RE = re.compile(r"\b(?:example|e\.g\.)", re.IGNORECASE)
 
@@ -81,8 +123,34 @@ def _shown_not_issued(text: str, start: int, *, fenced: bool = False) -> bool:
             or _EXAMPLE_MARKER_RE.search(line) is not None)
 
 
-# Whitespace and fence lines between a call and the JSON object that follows it.
-_RESULT_LEAD_RE = re.compile(r"(?:\s*(?:```|~~~)[^\n]*)*\s*(?=\{)")
+
+def _result_lead_end(text: str, end: int) -> int | None:
+    """Index of the ``{`` reached from ``end`` across whitespace and fence lines.
+
+    A hand-rolled scan: the regex it replaces (``(?:\\s*(?:```|~~~)[^\\n]*)*``
+    before the brace) backtracked exponentially on a run of fence markers, so
+    a degenerate model loop emitting a run of backtick fences after a call
+    blocked the sidecar thread for tens of seconds (tool review C4 #1).
+    """
+    position = end
+    length = len(text)
+    while True:
+        while position < length and text[position].isspace():
+            position += 1
+        if position < length and text[position] == "{":
+            return position
+        if not text.startswith(("```", "~~~"), position):
+            return None
+        newline = text.find("\n", position)
+        line_end = newline if newline >= 0 else length
+        brace = text.find("{", position + 3, line_end)
+        if brace >= 0:
+            return brace
+        if newline < 0:
+            return None
+        position = newline
+
+
 _CALL_NAME_KEYS = ("name", "tool", "function")
 _CALL_ARGS_KEYS = ("arguments", "parameters", "args", "input")
 
@@ -97,11 +165,11 @@ def _result_follows(text: str, end: int, known_tool_names: frozenset[str]) -> bo
     dialect, known tool or not, or an argument-free call to a known tool,
     keeps a multi-call reply issued.
     """
-    match = _RESULT_LEAD_RE.match(text, end)
-    if match is None:
+    lead_end = _result_lead_end(text, end)
+    if lead_end is None:
         return False
     try:
-        value, _end = json.JSONDecoder().raw_decode(text, match.end())
+        value, _end = json.JSONDecoder().raw_decode(text, lead_end)
     except ValueError:
         return False
     if not isinstance(value, dict):
@@ -120,18 +188,18 @@ def _is_call(raw_json: str, known_tool_names: frozenset[str]) -> bool:
 
 def _fenced_calls_shown(text: str, known_tool_names: frozenset[str]) -> int:
     """How many Format 2 candidates the reply shows next to a made-up result (0: issued)."""
-    matches = list(_TOOL_CALL_MD_RE.finditer(text))
+    matches = list(_wrapped_candidates(text, _MD_FORMAT))
     for match in matches:
         # A fence labelled as an example is never issued, so its result is no veto.
-        if _shown_not_issued(text, match.start(), fenced=True):
+        if _shown_not_issued(text, match.start, fenced=True):
             continue
-        payload = match.group(1)
+        payload = match.payload
         inner = extract_balanced_json_objects(payload)
         if not inner or not _is_call(inner[0], known_tool_names):
             continue
         after_call = payload.find(inner[0]) + len(inner[0])
         if (len(inner) > 1 and _result_follows(payload, after_call, known_tool_names)) \
-                or _result_follows(text, match.end(), known_tool_names):
+                or _result_follows(text, match.end, known_tool_names):
             return len(matches)
     return 0
 
@@ -144,7 +212,9 @@ def _code_spans(text: str) -> List[Tuple[int, int]]:
 def _starts_in_code(spans: List[Tuple[int, int]], position: int) -> bool:
     # Only the call's start is judged: backticks inside its JSON arguments
     # (code, Markdown) are file content and are parsed from the original text.
-    return any(start <= position < end for start, end in spans)
+    # The spans come from one finditer, so they are sorted and disjoint.
+    index = bisect_right(spans, (position, sys.maxsize)) - 1
+    return index >= 0 and spans[index][0] <= position < spans[index][1]
 
 
 @dataclass(frozen=True)
@@ -161,23 +231,55 @@ class InbandExtractionResult:
     failed_attempt: bool = False
 
 
+def _call_arguments(obj: dict) -> tuple[dict, tuple[str, ...]] | None:
+    """The call's arguments under the first declared key, with any repair tags.
+
+    A JSON-string value is parsed (tagged ``parsed_string_arguments``, plus the
+    heal tags when the net had to repair it); a missing, null or blank value is
+    no arguments. Anything else is not a call: ``None``, never a silent ``{}``.
+    """
+    # The first declared key with a value: ``"arguments": null`` beside a
+    # populated ``parameters`` must not hide the real arguments.
+    key = next((candidate for candidate in _CALL_ARGS_KEYS if obj.get(candidate) is not None), None)
+    value = obj[key] if key is not None else None
+    if isinstance(value, dict):
+        return value, ()
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return {}, ()
+    if not isinstance(value, str):
+        return None
+    if is_healing_enabled():
+        return coerce_arguments(value)
+    try:
+        parsed = json.loads(value)
+    except ValueError:
+        return None
+    return (parsed, ("parsed_string_arguments",)) if isinstance(parsed, dict) else None
+
+
 def _build_tool_call_from_dict(
     obj: object,
     known_tool_names: frozenset[str],
 ) -> ToolCallRequest | None:
-    """Same dict-shape/name-allowlist/arguments checks for any candidate dict."""
+    """Same dict-shape/name-allowlist/arguments checks for any candidate dict.
+
+    ``argument_repairs`` carries the tags from reading the arguments value;
+    callers prepend the tags from healing the envelope itself.
+    """
     if not isinstance(obj, dict):
         return None
     name = str(obj.get("name") or "").strip()
     if name not in known_tool_names:
         return None
-    arguments = obj.get("arguments", {})
-    if not isinstance(arguments, dict):
-        arguments = {}
+    resolved = _call_arguments(obj)
+    if resolved is None:
+        return None
+    arguments, argument_tags = resolved
     return ToolCallRequest(
         tool_id=name,
         arguments=arguments,
         call_id=_gen_inband_call_id(name),
+        argument_repairs=argument_tags,
     )
 
 
@@ -213,45 +315,34 @@ def _parse_tool_json_with_tags(
     if obj is None:
         return None, ()
     call = _build_tool_call_from_dict(obj, known_tool_names)
-    return (replace(call, argument_repairs=tags) if call is not None else None), tags
+    if call is None:
+        return None, tags
+    tags += call.argument_repairs
+    return replace(call, argument_repairs=tags), tags
 
 
 def _extract_wrapped_calls(
     text: str,
     remaining: str,
     known_tool_names: frozenset[str],
-    pattern: "re.Pattern[str]",
+    fmt: _WrappedFormat,
 ) -> Tuple[List[ToolCallRequest], str]:
-    """Shared pass for the XML/fence wrapper formats (payload in group 1)."""
+    """Shared pass for the XML/fence wrapper formats."""
     calls: List[ToolCallRequest] = []
     code_spans = _code_spans(text)
-    for match in pattern.finditer(text):
-        if pattern is _TOOL_CALL_XML_RE:
+    for match in _wrapped_candidates(text, fmt):
+        if fmt is _XML_FORMAT:
             # The instructed envelope always runs, unless it sits inside code.
-            if _starts_in_code(code_spans, match.start()):
+            if _starts_in_code(code_spans, match.start):
                 continue
-        elif _shown_not_issued(text, match.start(), fenced=True):
+        elif _shown_not_issued(text, match.start, fenced=True):
             continue
-        call, heal_tags = _parse_tool_json_with_tags(match.group(1), known_tool_names)
+        call, heal_tags = _parse_tool_json_with_tags(match.payload, known_tool_names)
         if call is not None:
             record_repair(heal_tags)
             calls.append(call)
-            remaining = remaining.replace(match.group(0), "", 1)
+            remaining = remaining.replace(text[match.start : match.end], "", 1)
     return calls, remaining
-
-
-def _parse_func_arguments(raw_json: str) -> tuple[dict | None, tuple[str, ...]]:
-    """Parse a func-syntax arguments object, with the gated heal second chance."""
-    try:
-        arguments = json.loads(raw_json)
-    except json.JSONDecodeError:
-        if not is_healing_enabled():
-            return None, ()
-        healed = repair_json_payload(raw_json)
-        if healed.value is None:
-            return None, ()
-        return healed.value, (healed.repairs or ("healed",))
-    return (arguments, ()) if isinstance(arguments, dict) else (None, ())
 
 
 def _extract_func_calls(
@@ -262,12 +353,12 @@ def _extract_func_calls(
     """Format 3: function-call syntax ``tool_name({...})``."""
     calls: List[ToolCallRequest] = []
     code_spans = _code_spans(text)
-    for match in _TOOL_CALL_FUNC_RE.finditer(text):
-        func_name = match.group(1)
-        if (func_name not in known_tool_names or _starts_in_code(code_spans, match.start())
-                or _shown_not_issued(text, match.start())):
+    for match in _wrapped_candidates(text, _FUNC_FORMAT):
+        func_name = match.name
+        if (func_name not in known_tool_names or _starts_in_code(code_spans, match.start)
+                or _shown_not_issued(text, match.start)):
             continue
-        arguments, heal_tags = _parse_func_arguments(match.group(2))
+        arguments, heal_tags = _parse_dict_with_tags(match.payload)
         if arguments is None:
             continue
         record_repair(heal_tags)
@@ -279,7 +370,7 @@ def _extract_func_calls(
                 argument_repairs=heal_tags,
             )
         )
-        remaining = remaining.replace(match.group(0), "", 1)
+        remaining = remaining.replace(text[match.start : match.end], "", 1)
     return calls, remaining
 
 
@@ -314,7 +405,7 @@ def _extract_balanced_calls(
         if _result_follows(text, position + len(candidate), known_tool_names):
             logger.info("Skipped %d bare tool call(s): a result follows the call", len(calls) + 1)
             return [], remaining_before
-        repair_tags = heal_tags or ("balanced_extraction",)
+        repair_tags = (heal_tags or ("balanced_extraction",)) + call.argument_repairs
         record_repair(repair_tags)
         calls.append(replace(call, argument_repairs=repair_tags))
         remaining = remaining.replace(candidate, "", 1)
@@ -330,10 +421,12 @@ def _failed_explicit_attempt(text: str, known_tool_names: frozenset[str]) -> boo
     ``edit_file(normalize_bom=true) succeeded`` is deliberately excluded.
     """
     non_code_text = _MARKDOWN_CODE_RE.sub("", text)
-    for match in _TOOL_CALL_XML_CANDIDATE_RE.finditer(non_code_text):
-        parsed, _tags = _parse_dict_with_tags(match.group(1))
+    for payload in _xml_candidate_payloads(non_code_text):
+        parsed, _tags = _parse_dict_with_tags(payload)
         if parsed is None:
             return True
+        if "name" in parsed and _call_arguments(parsed) is None:
+            return True  # a named envelope whose arguments value is unusable
 
     stripped = non_code_text.strip()
     for tool_name in known_tool_names:
@@ -347,7 +440,7 @@ def _failed_explicit_attempt(text: str, known_tool_names: frozenset[str]) -> boo
         raw_arguments = function_match.group(1).rstrip()
         if raw_arguments.endswith(")"):
             raw_arguments = raw_arguments[:-1].rstrip()
-        arguments, _tags = _parse_func_arguments(raw_arguments)
+        arguments, _tags = _parse_dict_with_tags(raw_arguments)
         if arguments is None:
             return True
     return False
@@ -370,9 +463,7 @@ def extract_inband_tool_calls_detailed(
         return InbandExtractionResult((), text)
 
     # --- Format 1: XML-style tags (highest priority — instructed format) ---
-    calls, remaining = _extract_wrapped_calls(
-        text, text, known_tool_names, _TOOL_CALL_XML_RE
-    )
+    calls, remaining = _extract_wrapped_calls(text, text, known_tool_names, _XML_FORMAT)
 
     # --- Format 2: Markdown code blocks ---
     if not calls:
@@ -380,9 +471,7 @@ def extract_inband_tool_calls_detailed(
         if shown:
             logger.info("Skipped %d fenced tool call(s): a result follows the call", shown)
         else:
-            calls, remaining = _extract_wrapped_calls(
-                text, remaining, known_tool_names, _TOOL_CALL_MD_RE
-            )
+            calls, remaining = _extract_wrapped_calls(text, remaining, known_tool_names, _MD_FORMAT)
 
     # --- Format 3: function-call syntax tool_name({...}) ---
     if not calls:

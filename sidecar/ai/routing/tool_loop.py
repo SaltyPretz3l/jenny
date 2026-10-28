@@ -25,12 +25,8 @@ from sidecar.ai.context.builder import looks_like_current_info_request
 from sidecar.ai.context.messages import (
     build_generation_messages,  # noqa: F401
     normalize_history_for_loop,  # noqa: F401
-    normalize_messages_for_model,  # noqa: F401
 )
-from sidecar.ai.context.token_budget import (
-    BudgetTracker,
-    estimate_messages_tokens,  # noqa: F401
-)
+from sidecar.ai.context.token_budget import BudgetTracker
 from sidecar.ai.error_codes import (
     CMP_LOOP_ENGINE_STALLED,  # noqa: F401
     CMP_LOOP_INVALID_TOOL_CALL,
@@ -46,11 +42,13 @@ from sidecar.ai.feature_flags import (
 from sidecar.ai.routing import (  # noqa: F401
     heuristic_fires,
     loop_event_emit,
+    mutation_change_set_lifecycle,
     plan_presentation,
     promise_nudge,
     propose_presentation,
     thinking_checkpoint,
     tool_loop_compaction,
+    tool_loop_cycle_recovery,
     tool_loop_recovery,
     tool_loop_text_tool_calls,
     write_progress,
@@ -58,16 +56,15 @@ from sidecar.ai.routing import (  # noqa: F401
 from sidecar.ai.routing.auto_checkpoint import maybe_create_auto_checkpoint  # noqa: F401
 from sidecar.ai.routing.loop_events import (
     IterationStartEvent,  # noqa: F401
+    MailConsumedEvent,  # noqa: F401
     TokenDeltaEvent,
 )
 from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.ai.routing.loop_stop import (
-    CYCLE_HISTORY_DEPTH,  # noqa: F401
     LoopState,  # noqa: F401
     StopController,  # noqa: F401
     StopDecision,  # noqa: F401
     StopReason,
-    _tool_call_signature,  # noqa: F401
     advance_cycle_history,  # noqa: F401
 )
 from sidecar.ai.routing.route_policy_runtime import (
@@ -391,9 +388,12 @@ _POST_TOOL_CONTINUATION_NUDGE = (
     "Continue the user's current request using the tool results you just received. "
     "Do not greet the user or restart the conversation. Produce the requested deliverable."
 )
+# Names itself: template-based local engines relabel it as a ``user`` row
+# (demote_non_leading_system_messages), and an unmarked copy reads as the user's.
 _TOOL_FAILURE_CONTEXT_NUDGE = (
-    "Tool failure context: one or more tool calls failed. Treat the failed tool result "
-    "messages as authoritative context. Do not claim that no context or no tool results "
+    "[Harness note, not a message from the user] Tool failure context: one or more "
+    "tool calls failed. Treat the failed tool result messages as authoritative context; "
+    "the user has not sent anything new. Do not claim that no context or no tool results "
     "were provided; explain the failure plainly and avoid fabricating successful tool output."
 )
 _NO_CONTEXT_AFTER_TOOL_RE = re.compile(
@@ -496,17 +496,11 @@ def _looks_like_post_tool_empty_chat_menu(response_text: str) -> bool:
     return _EMPTY_CHAT_MENU_RE.search(text) is not None
 
 
-def _post_tool_invalid_response_reason(
-    *,
-    response_text: str,
-    harness_inventory_invalid: bool,
-) -> str:
+def _post_tool_invalid_response_reason(*, response_text: str) -> str:
     if _looks_like_generic_greeting_only(response_text):
         return "generic_greeting"
     if _looks_like_post_tool_empty_chat_menu(response_text):
         return "empty_chat_menu"
-    if harness_inventory_invalid:
-        return "harness_inventory"
     return ""
 
 
@@ -516,7 +510,6 @@ def _post_tool_invalid_log_data(
     response_text: str,
     invalid_reason: str,
     successful_outcome_count: int,
-    harness_summary_available: bool,
     outcome_count: int | None = None,
 ) -> dict[str, Any]:
     data: dict[str, Any] = {
@@ -524,7 +517,6 @@ def _post_tool_invalid_log_data(
         "response_length": len(response_text),
         "invalid_reason": invalid_reason,
         "successful_outcome_count": successful_outcome_count,
-        "harness_summary_available": harness_summary_available,
     }
     if outcome_count is not None:
         data["outcome_count"] = outcome_count
@@ -655,17 +647,19 @@ def _quota_block_guidance(reason: str, cap: int) -> str:
     return f"resource discipline quota '{reason}' is exhausted for this request."
 
 
+def _failed_tool_summary_response(failed_summary: str) -> str:
+    return (
+        "I did receive tool context, but the requested tool call failed or was unavailable:\n"
+        f"{failed_summary}\n\n"
+        "I can't treat that as a successful live result."
+    )
+
+
 def _failed_tool_context_response(outcomes: list[Any], response_text: str) -> str | None:
     if not outcomes or not _NO_CONTEXT_AFTER_TOOL_RE.search(str(response_text or "")):
         return None
     summary = _summarize_failed_tool_outcomes(outcomes)
-    if not summary:
-        return None
-    return (
-        "I did receive tool context, but the requested tool call failed or was unavailable:\n"
-        f"{summary}\n\n"
-        "I can't treat that as a successful live result."
-    )
+    return _failed_tool_summary_response(summary) if summary else None
 
 
 def _summarize_successful_tool_outcomes(outcomes: list[Any]) -> str:
@@ -689,9 +683,26 @@ def _successful_tool_context_response(outcomes: list[Any]) -> str | None:
     )
 
 
-def _empty_post_tool_context_response(outcomes: list[Any]) -> str | None:
+def _empty_post_tool_context_response(
+    outcomes: list[Any], *, lead: str | None = None
+) -> str | None:
+    """Summarize tool results when the model wrote no final reply.
+
+    ``lead`` replaces the "model did not produce a visible final response"
+    opening when the caller knows why the turn ended (a budget stop).
+    """
     failed_summary = _summarize_failed_tool_outcomes(outcomes)
     successful_summary = _summarize_successful_tool_outcomes(outcomes)
+    if lead is not None:
+        sections = [
+            f"{label}:\n{summary}"
+            for label, summary in (
+                ("Successful tool results", successful_summary),
+                ("Failed tool results", failed_summary),
+            )
+            if summary
+        ]
+        return "\n\n".join([lead, *sections]) if sections else None
     if failed_summary and successful_summary:
         return (
             "I ran the requested tool calls, but the model did not produce a visible "
@@ -700,12 +711,7 @@ def _empty_post_tool_context_response(outcomes: list[Any]) -> str | None:
             f"Failed tool results:\n{failed_summary}"
         )
     if failed_summary:
-        return (
-            "I did receive tool context, but the requested tool call failed or was "
-            "unavailable:\n"
-            f"{failed_summary}\n\n"
-            "I can't treat that as a successful live result."
-        )
+        return _failed_tool_summary_response(failed_summary)
     if successful_summary:
         return (
             "I ran the requested tool call, but the model did not produce a visible "
@@ -943,10 +949,9 @@ def run_tool_loop(
     """Run the agent tool loop, emitting typed events via *runtime*.
 
     This is a pure extraction of the loop body that was previously inline
-    in ``AgentKernel.build_chat_decision()`` (router.py lines 745-1073).
-    The ``kernel`` parameter is the ``AgentKernel`` instance, used to call
-    its existing helper methods (``_generate_step``, ``_execute_tool``,
-    etc.) without duplicating them.
+    in ``AgentKernel.build_chat_decision()``. The ``kernel`` parameter is the
+    ``AgentKernel`` instance, used to call its existing helper methods
+    (``_generate_step``, ``_execute_tool``, etc.) without duplicating them.
     """
     run = _ToolLoopRun(
         runtime=runtime,
@@ -980,26 +985,7 @@ def run_tool_loop(
         initial_change_set_id=initial_change_set_id,
     )
     try:
+        # execute() settles the change set itself on every exit, raising ones included.
         return run.execute()
-    except Exception as error:
-        # Cancellation and provider failures escape execute() without _finish;
-        # settle the journal so the set is never stranded in_progress.
-        from sidecar.ai.routing.mutation_change_set_lifecycle import (
-            finish_run_change_set,
-        )
-        from sidecar.ai.routing.tool_resource_deferral import ToolLoopSuspended
-
-        try:
-            finish_run_change_set(
-                run,
-                approval_paused=isinstance(error, ToolLoopSuspended),
-                reason=f"exception:{type(error).__name__}",
-            )
-        except Exception as settle_error:  # noqa: BLE001 - preserve the original exception.
-            logger.warning(
-                "workspace_change_set_exception_settlement_failed",
-                extra={"reason": type(settle_error).__name__},
-            )
-        raise
     finally:
         runtime.preview_images.clear()

@@ -40,9 +40,9 @@ def budget_meter_fields(budget_tracker: BudgetTracker | None) -> dict[str, int |
     """ChatDecision's context-meter fields for the request's budget.
 
     ``compact_threshold_tokens`` is the compaction trigger in whole-prompt
-    tokens (``TokenBudget.meter_compact_threshold``) and
-    ``context_tool_overhead_tokens`` the tool reserve inside it; both ``None``
-    when the request is unbudgeted or the trigger is empty.
+    tokens (``BudgetTracker.meter_compact_threshold``) and
+    ``context_tool_overhead_tokens`` the tool-schema tokens inside it; both
+    ``None`` when the request is unbudgeted or the trigger is empty.
     """
     fields: dict[str, int | None] = {
         "compact_threshold_tokens": None,
@@ -51,9 +51,8 @@ def budget_meter_fields(budget_tracker: BudgetTracker | None) -> dict[str, int |
     if budget_tracker is None or budget_tracker.budget is None:
         return fields
     try:
-        num_tools = int(budget_tracker.num_tools or 0)
-        threshold = int(budget_tracker.budget.meter_compact_threshold(num_tools))
-        tool_overhead = int(budget_tracker.budget.tool_overhead(num_tools))
+        threshold = int(budget_tracker.meter_compact_threshold())
+        tool_overhead = int(budget_tracker.meter_tool_tokens())
     except Exception:  # noqa: BLE001 — meter hint must never break a turn
         return fields
     if threshold > 0:

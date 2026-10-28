@@ -421,7 +421,8 @@ def _finish_pending_batch(
         if run.runtime.remaining_tool_calls > 0 else []
     )
     if run.budget_tracker is not None:
-        run.budget_tracker.num_tools = _tool_loop.count_full_tool_schemas(next_payload)
+        tracker = run.budget_tracker
+        tracker.charge_tool_schemas(next_payload, _tool_loop.count_full_tool_schemas(next_payload))
         current_tokens = _tool_loop.tool_loop_compaction.compact_tool_loop_context(
             run, num_tools=run.budget_tracker.num_tools
         )

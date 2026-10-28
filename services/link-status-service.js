@@ -55,6 +55,7 @@ class LinkStatusService extends EventEmitter {
     this._stopped = false;
     this._generation = 0;
     this._lastEmitKey = '';
+    this._targetsKey = null;
     this._handleConfigChanged = this._handleConfigChanged.bind(this);
   }
 
@@ -64,6 +65,7 @@ class LinkStatusService extends EventEmitter {
     }
     this._stopped = false;
     this._generation += 1;
+    this._targetsKey = JSON.stringify(this._readTargets());
     this.configService.on('changed', this._handleConfigChanged);
     this._timer = this.setIntervalImpl(() => {
       void this.refresh();
@@ -95,10 +97,18 @@ class LinkStatusService extends EventEmitter {
     return cloneLinkStatusState(this.state);
   }
 
+  // Every home write (each scratchpad autosave included) carries this reason,
+  // so re-probe only when the monitored target list itself changed.
   _handleConfigChanged(_state, context = {}) {
-    if (String(context?.reason || '') === 'home_config_updated') {
-      void this.refresh();
+    if (String(context?.reason || '') !== 'home_config_updated') {
+      return;
     }
+    const targetsKey = JSON.stringify(this._readTargets());
+    if (targetsKey === this._targetsKey) {
+      return;
+    }
+    this._targetsKey = targetsKey;
+    void this.refresh();
   }
 
   _readTargets() {

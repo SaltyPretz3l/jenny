@@ -263,6 +263,21 @@ test('a config change during refresh queues one pass for the latest targets', as
   service.stop();
 });
 
+test('a home write that leaves the monitored targets unchanged does not re-probe', () => {
+  const links = tileGroup([
+    { id: 'pi', name: 'Pi', href: 'https://pi.local/', siteMonitor: 'https://pi.local/health' },
+  ]);
+  const configService = new FakeHomeConfigService(links);
+  const { calls, fetchImpl } = createFetchRecorder(() => ({ ok: true, status: 200 }));
+  const { service } = createService({ configService, fetchImpl });
+  service.start({ deferInitialRefresh: true });
+  // A scratchpad autosave re-emits the same links.
+  configService.setLinks(links);
+  assert.equal(service._refreshPromise, null);
+  assert.equal(calls.length, 0);
+  service.stop();
+});
+
 test('stop prevents an in-flight refresh from mutating or emitting', async () => {
   const request = createDeferred();
   const { service } = createService({

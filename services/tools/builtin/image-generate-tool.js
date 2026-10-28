@@ -7,9 +7,12 @@ const defaultFs = require('node:fs');
 const modelSets = require('../../image-model-sets');
 const { ChatGpuHandoffError } = require('../../backend/chat-gpu-handoff');
 const { readPngStructure } = require('../../backend/png-validator');
+const { PROGRESS_PHASES } = require('../../backend/chat-stream-tool-progress');
 const { encodePreviewImage } = require('../../preview-vision-image');
+const renderPreview = require('../../image-render-preview');
 const { TOOL_ERROR_CODES } = require('../../backend/error-codes');
 const { t } = require('../../i18n-main');
+const { manifestSchema } = require('./tool-result');
 
 const IMAGE_GENERATE_BUDGET_MS = 900_000;
 // Restore = kill proof (up to ~30 s) + relaunch readiness (90 s) + margin.
@@ -82,14 +85,17 @@ function validateParameters(input, family, randomUUID) {
   return { prompt, title, negative, width, height, steps, seed, cfgScale };
 }
 
-function renderArguments(family, paths, params, outputPath) {
+function renderArguments(family, paths, params, outputPath, previewPattern = '') {
   const { prompt, negative, width, height, steps, cfgScale, seed } = params;
   return [family.diffusion_flag, paths.diffusion, family.encoder_flag, paths.text_encoder,
     family.vae_flag, paths.vae, ...(params.referencePath ? [family.vision_flag, paths.vision_projector, '-r', params.referencePath] : []),
     '-p', params.reference?.region ? 'Edit only the region outlined in magenta in the reference. Remove the magenta guide. Preserve the rest of the image. ' + prompt : prompt, ...(negative ? ['-n', negative] : []),
     '-W', String(width), '-H', String(height), '--steps', String(steps), '--cfg-scale', String(cfgScale),
     '--sampling-method', family.defaults.sampler, '--flow-shift', String(family.defaults.flow_shift),
-    '-s', String(seed), ...family.extra_args, '-o', outputPath];
+    '-s', String(seed), ...family.extra_args,
+    ...(previewPattern ? ['--preview', family.preview, '--preview-interval', String(renderPreview.previewInterval(steps)),
+      '--preview-path', previewPattern] : []),
+    '-o', outputPath];
 }
 
 // Best effort: without Electron's nativeImage the model simply gets no copy.
@@ -220,7 +226,7 @@ function createImageGenerateTool({
 
   return {
     name: 'image_generate',
-    description: 'Generate an image from a prompt using the installed local image engine and a saved model set. The image is saved as a workspace artifact.',
+    ...manifestSchema('image_generate'),
     // Approval-row and transcript label: the prompt's first words, never a path.
     summarize(input) {
       const prompt = typeof input?.prompt === 'string' ? cleanText(input.prompt).replace(/\s+/g, ' ') : '';
@@ -291,8 +297,8 @@ function createImageGenerateTool({
           { failure_class: 'bad_arguments', effects: 'none', remediation: t('imageEdit.sizeRemediation', 'Use a source with one of these sizes: {sizes}. Keep its dimensions.', { sizes: family.resolutions.join(', ') }) });
       }
       const params = validateParameters(reference ? { width: reference.width, height: reference.height, ...input } : input || {}, family, randomUUID);
-      if (reference) params.reference = reference;
       if (params.error) return params.error;
+      if (reference) params.reference = reference;
       // The render must finish inside the sidecar's wait with the restore
       // reserve intact, counted from when this call actually began.
       const budgetMs = Number.isFinite(context.timeoutMs) && context.timeoutMs > 0
@@ -302,6 +308,17 @@ function createImageGenerateTool({
         return failure('image_invalid_params', t('error.imageGen.budgetTooSmall',
           'Not enough time budget is left for an image in this turn.'));
       }
+      // The chat row shows the render's phase, step and newest preview frame. A
+      // report never steps back, and only sampling repeats its phase.
+      let reachedPhase = -1;
+      const report = (event) => {
+        const rank = PROGRESS_PHASES.indexOf(event?.phase);
+        if (typeof context.onProgress !== 'function' || rank < reachedPhase
+          || (rank === reachedPhase && event.phase !== 'sample')) return;
+        reachedPhase = rank;
+        try { context.onProgress(event); } catch (_error) { /* Progress display never interrupts a render. */ }
+      };
+      report({ phase: 'gpu' });
       try {
         await handoff.suspend({ kind: 'builtin', tool_name: 'image_generate', call_id: context.callId, stream_id: context.streamId }, {
           minTotalVramMb: family.min_total_vram_mb,
@@ -321,6 +338,7 @@ function createImageGenerateTool({
       let settled;
       let controller;
       let running = null;
+      let previews = null;
       const abort = () => controller.abort();
       // close() needs the runner's own settlement: an abort is a request, the
       // tree-death proof is the answer.
@@ -358,20 +376,35 @@ function createImageGenerateTool({
           } else if (renderDeadline() < MIN_RENDER_DEADLINE_MS) {
             result = { status: 'budget', exitCode: null, stderrTail: [] };
           } else {
+            // A custom engine may predate --preview; only the pinned build gets it.
+            const previewPattern = family.preview && engine.source === 'managed'
+              ? renderPreview.previewPathPattern(scratchDir, opId) : '';
+            if (previewPattern) previews = renderPreview.createPreviewReader({ scratchDir, opId, fsImpl: fs });
+            report({ phase: 'load' });
             running = Promise.resolve(runImageGeneration({
-              exePath: engine.path, argv: renderArguments(family, paths, params, outputPath),
+              exePath: engine.path, argv: renderArguments(family, paths, params, outputPath, previewPattern),
               scratchDir, outputPath, opId, userDataPath, deadlineMs: renderDeadline(),
               abortSignal: controller.signal, expectedWidth: params.width, expectedHeight: params.height, log: context.logger,
+              onProgress: (event) => {
+                if (event?.phase !== 'sample') return report(event);
+                let preview = '';
+                try { preview = previews?.next() || ''; } catch (_error) { /* A missing frame is skipped. */ }
+                report({ phase: 'sample', step: event.step, steps: event.steps, ...(preview ? { preview } : {}) });
+              },
             }));
             result = await running;
           }
         } catch (_error) {
           result = { status: 'failed', exitCode: null, stderrTail: [] };
         } finally {
-          settled = await handoff.restoreAndRelease({
-            cleanupConfirmed: result.status !== 'unconfirmed', reason: result.status, recorded: result.recorded !== false,
-          });
-          context.abortSignal?.removeEventListener('abort', abort);
+          try {
+            settled = await handoff.restoreAndRelease({
+              cleanupConfirmed: result.status !== 'unconfirmed', reason: result.status, recorded: result.recorded !== false,
+            });
+          } finally {
+            // A throwing restore must not leave the call's signal holding this listener.
+            context.abortSignal?.removeEventListener('abort', abort);
+          }
         }
         // A turn lost during the restore can no longer reference the picture.
         if (result.status === 'ok' && controller?.signal.aborted) result = { ...result, status: 'cancelled', png: null };
@@ -386,6 +419,11 @@ function createImageGenerateTool({
         }
         if (outputPath && result.status !== 'unconfirmed') {
           try { await fs.promises.unlink(outputPath); } catch (_error) { /* scratch cleanup is best effort */ }
+        }
+        if (previews && result.status !== 'unconfirmed') {
+          for (const frame of renderPreview.listPreviewFrames(path.dirname(outputPath), opId, fs)) {
+            try { await fs.promises.unlink(frame); } catch (_error) { /* scratch cleanup is best effort */ }
+          }
         }
       }
     },

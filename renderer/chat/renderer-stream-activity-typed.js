@@ -191,6 +191,63 @@
     return true;
   }
 
+  const TASK_BOARD_NAMES = {
+    add: jt('chat.streamActivity.addingTask', 'Adding a task'),
+    update: jt('chat.streamActivity.updatingTask', 'Updating a task'),
+    complete: jt('chat.streamActivity.completingTask', 'Completing a task'),
+    list: jt('chat.streamActivity.readingTaskBoard', 'Reading the task board'),
+  };
+
+  // Name + label for a typed tool_input row. Checklist tools say what the
+  // list work is; every other tool uses its transcript display name.
+  function describeToolInput(typed, resolveDisplayName) {
+    const composing = jt('chat.streamActivity.composingArguments', 'Composing…');
+    if (typed.toolName === 'todo_write') {
+      return {
+        name: jt('chat.streamActivity.updatingChecklist', 'Updating checklist'),
+        copy: checklistValue(typed.scanner, 'content') || composing,
+        isPath: false,
+      };
+    }
+    if (typed.toolName === 'task_board') {
+      const action = checklistValue(typed.scanner, 'action');
+      return {
+        name: TASK_BOARD_NAMES[action] || jt('chat.streamActivity.updatingTaskBoard', 'Updating the task board'),
+        copy: checklistValue(typed.scanner, 'title') || composing,
+        isPath: false,
+      };
+    }
+    if (typed.toolName === 'exit_plan_mode') {
+      return {
+        name: jt('chat.streamActivity.preparingPlan', 'Preparing the plan'),
+        copy: checklistValue(typed.scanner, 'title') || composing,
+        isPath: false,
+      };
+    }
+    let name = typed.toolName;
+    try {
+      name = String(resolveDisplayName(typed.toolName) || typed.toolName);
+    } catch (_error) { /* raw id fallback */ }
+    return { name, copy: typed.path || composing, isPath: Boolean(typed.path) };
+  }
+
+  // Right-hand meta for a typed row: checklist rows count items, argument
+  // rows show size, compaction shows elapsed only.
+  function typedElapsedText(typed, timestamp, formatElapsed) {
+    const elapsed = formatElapsed(timestamp - typed.startedAt);
+    if (typed.kind !== 'tool_input') return elapsed;
+    if (typed.checklist) {
+      const itemCount = checklistCount(typed.scanner, 'content');
+      return itemCount > 0
+        ? jt('chat.streamActivity.itemAndElapsed', 'item {count} · {elapsed}', { count: itemCount, elapsed })
+        : elapsed;
+    }
+    const size = typed.bytes < 1024
+      ? jt('chat.streamActivity.bytes', '{count} B', { count: typed.bytes })
+      : jt('chat.streamActivity.kilobytes', '{count} KB', { count: (typed.bytes / 1024).toFixed(1) });
+    return jt('chat.streamActivity.sizeAndElapsed', '{size} · {elapsed}', { size, elapsed });
+  }
+
   function renderPrefill(node, typed, timestamp, formatElapsed) {
     const fresh = typed.total - typed.cached;
     const done = typed.processed - typed.cached;
@@ -229,6 +286,6 @@
     node.style.setProperty('--prefill-done', String(typed.processed / typed.total));
   }
 
-  return { createTypedActivityTracker, applyPrefill, renderPrefill,
+  return { createTypedActivityTracker, applyPrefill, renderPrefill, describeToolInput, typedElapsedText,
     createChecklistScanner, scanChecklistArguments, checklistValue, checklistCount };
 });

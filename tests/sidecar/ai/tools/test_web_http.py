@@ -4,17 +4,20 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import urllib.request
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from sidecar.ai.tools.builtins.web_http import (
+    HostResolutionError,
     RedirectBlockedError,
     RedirectPolicyBlockedError,
     RedirectTargetInvalidError,
     UrlReadResult,
     ValidatedUrl,
     WebRateLimiter,
+    _build_opener,
     _is_public_ip,
     _open_url_once,
     _SingleFetchResult,
@@ -102,13 +105,11 @@ class TestIsPublicIp:
         assert _is_public_ip(addr) is False
 
     def test_ipv6_6to4_public_stays_public(self) -> None:
-        if ipaddress.ip_address("2002::").is_private:
-            pytest.skip(
-                "Python 3.11.10+ (gh-113171) classifies all of 2002::/16 as private; "
-                "that upstream verdict is fail-closed and supersedes this pin."
-            )
+        # An embedded public IPv4 falls through to the stdlib range checks. Python
+        # 3.11.10+ (gh-113171) classifies all of 2002::/16 as private, older patch
+        # levels do not; Jenny follows whichever verdict the running stdlib gives.
         addr = ipaddress.ip_address("2002:808:808::")
-        assert _is_public_ip(addr) is True
+        assert _is_public_ip(addr) is (not ipaddress.ip_address("2002::").is_private)
 
     def test_ipv6_teredo_private_client(self) -> None:
         addr = ipaddress.ip_address("2001:0:4136:e378:8000:0:3f57:fefe")
@@ -140,6 +141,30 @@ class TestIsPublicIp:
     def test_ipv6_public_global_unicast(self) -> None:
         addr = ipaddress.ip_address("2606:4700::1111")
         assert _is_public_ip(addr) is True
+
+    # Ranges Python 3.11.9's stdlib scores as public.
+    @pytest.mark.parametrize(
+        "literal",
+        [
+            "fec0::1",  # deprecated site-local fec0::/10
+            "febf:ffff::1",  # top of fe80::/10 stays link-local (non-public)
+            "fec0:ffff::1",
+            "feff::1",  # last site-local block
+            "192.0.0.100",  # inside 192.0.0.0/24, beyond the /29 the stdlib knows
+            "192.0.0.254",
+            "64:ff9b:1::1",  # local-use NAT64 64:ff9b:1::/48
+            "64:ff9b:1:ffff::1",
+        ],
+    )
+    def test_ranges_the_stdlib_scores_public_are_blocked(self, literal: str) -> None:
+        assert _is_public_ip(ipaddress.ip_address(literal)) is False
+
+    @pytest.mark.parametrize(
+        "literal",
+        ["192.0.1.1", "192.0.3.1", "2606:4700::1111", "8.8.8.8"],
+    )
+    def test_neighbours_of_the_extra_blocked_ranges_stay_public(self, literal: str) -> None:
+        assert _is_public_ip(ipaddress.ip_address(literal)) is True
 
     # ISATAP needs no stub wrapper the way 6to4 and Teredo do: the form carries no
     # reserved prefix, so a public-prefixed ISATAP address reaches the branch with
@@ -319,6 +344,73 @@ class TestValidatePublicUrl:
         mock_getaddrinfo.side_effect = socket.gaierror("DNS failed")
         with pytest.raises(ValueError, match="resolution failed"):
             validate_public_url("https://nonexistent.example.com")
+
+    @patch("sidecar.ai.tools.builtins.web_http.socket.getaddrinfo")
+    def test_dns_failure_is_a_dedicated_error_type(self, mock_getaddrinfo: MagicMock) -> None:
+        mock_getaddrinfo.side_effect = socket.gaierror("DNS failed")
+        with pytest.raises(HostResolutionError):
+            validate_public_url("https://nonexistent.example.com")
+        # Still a ValueError, so every existing `except ValueError` keeps working.
+        assert issubclass(HostResolutionError, ValueError)
+
+    @patch("sidecar.ai.tools.builtins.web_http.socket.getaddrinfo")
+    def test_malformed_url_is_not_a_resolution_error(self, mock_getaddrinfo: MagicMock) -> None:
+        with pytest.raises(ValueError) as caught:
+            validate_public_url("ftp://example.com")
+        assert not isinstance(caught.value, HostResolutionError)
+        mock_getaddrinfo.assert_not_called()
+
+
+class TestBuildOpener:
+    @staticmethod
+    def _set_proxy_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+        for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+            monkeypatch.setenv(name, "http://proxy.invalid:3128")
+        monkeypatch.delenv("NO_PROXY", raising=False)
+        monkeypatch.delenv("no_proxy", raising=False)
+        assert urllib.request.getproxies().get("http")  # the env really is set
+
+    @pytest.mark.parametrize("pinned_ip", ["93.184.216.34", ""])
+    def test_environment_proxy_handler_is_replaced_by_an_empty_one(
+        self, monkeypatch: pytest.MonkeyPatch, pinned_ip: str
+    ) -> None:
+        self._set_proxy_environment(monkeypatch)
+        built: list[dict[str, str]] = []
+
+        class _RecordingProxyHandler(urllib.request.ProxyHandler):
+            def __init__(self, proxies: dict[str, str] | None = None) -> None:
+                super().__init__(proxies)
+                built.append(dict(self.proxies))
+
+        monkeypatch.setattr(urllib.request, "ProxyHandler", _RecordingProxyHandler)
+
+        opener = _build_opener(pinned_ip)
+
+        # An empty ProxyHandler registers no *_open methods, so it is absent from
+        # `handlers`; what matters is that it displaces the env-reading default.
+        assert built == [{}]
+        assert not any(isinstance(h, urllib.request.ProxyHandler) for h in opener.handlers)
+
+    def test_pinned_connection_dials_the_target_not_the_environment_proxy(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._set_proxy_environment(monkeypatch)
+        dialed: list[tuple[object, ...]] = []
+
+        def fake_create_connection(address: tuple[str, int], *_args: object, **_kwargs: object):
+            dialed.append(address)
+            raise OSError("stop before any bytes are sent")
+
+        monkeypatch.setattr(
+            "sidecar.ai.tools.builtins.web_http.socket.create_connection",
+            fake_create_connection,
+        )
+        opener = _build_opener("93.184.216.34")
+
+        with pytest.raises(OSError):
+            opener.open(urllib.request.Request("http://example.com/"), timeout=1)
+
+        assert dialed == [("93.184.216.34", 80)]
 
 
 class TestReadUrlResponse:

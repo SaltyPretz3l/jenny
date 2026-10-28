@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from sidecar.ai.tools.tool_search import (
+    JENNY_HELP_DEFER_FLAG,
     TOOL_SEARCH_RESULT_KIND,
     TOOL_SEARCH_TOOL_NAME,
     DeferralMode,
@@ -283,6 +284,42 @@ class TestComputeDeferralSet:
         )
         assert result == frozenset({"mcp__rea__list_procedures", "mcp__rea2__binary_session"})
 
+    def test_tst_auto_always_defers_jenny_help_under_the_threshold(self) -> None:
+        # Row 69 Q6 (owner, 2026-10-20): the app guide waits behind tool_search.
+        descriptors = [
+            _descriptor("read_file"),
+            _descriptor("jenny_help"),
+            _descriptor("mcp__small"),
+        ]
+        for window in (100000, 0):
+            result = compute_deferral_set(
+                DeferralMode.TST_AUTO,
+                descriptors,
+                BUILTIN_NAMES,
+                context_window=window,
+                tool_token_threshold_pct=10,
+            )
+            assert result == frozenset({"jenny_help"})
+
+    def test_always_deferred_needs_defer_eligibility_and_honours_the_kill_switch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        descriptors = [_descriptor("jenny_help")]
+        kwargs = {"context_window": 100000, "tool_token_threshold_pct": 10}
+        not_eligible = BUILTIN_NAMES | {"jenny_help"}
+        assert (
+            compute_deferral_set(DeferralMode.TST_AUTO, descriptors, not_eligible, **kwargs)
+            == frozenset()
+        )
+        assert (
+            compute_deferral_set(DeferralMode.STANDARD, descriptors, BUILTIN_NAMES) == frozenset()
+        )
+        monkeypatch.setenv(JENNY_HELP_DEFER_FLAG, "0")
+        assert (
+            compute_deferral_set(DeferralMode.TST_AUTO, descriptors, BUILTIN_NAMES, **kwargs)
+            == frozenset()
+        )
+
 
 def test_normalize_deferral_mode_defaults_to_tst() -> None:
     assert normalize_deferral_mode("tst-auto") is DeferralMode.TST_AUTO
@@ -449,7 +486,7 @@ class TestHandleToolSearch:
         result = handle_tool_search(
             {"query": "git"},
             search_index=index,
-            full_schema_map=schemas,
+            schema_for=schemas.get,
             un_deferred_set=un_deferred,
         )
         assert "mcp__git__commit" in result.output
@@ -460,7 +497,7 @@ class TestHandleToolSearch:
         result = handle_tool_search(
             {"query": "select:mcp__db__query"},
             search_index=index,
-            full_schema_map=schemas,
+            schema_for=schemas.get,
             un_deferred_set=un_deferred,
         )
         assert "mcp__db__query" in result.output
@@ -471,7 +508,7 @@ class TestHandleToolSearch:
         result = handle_tool_search(
             {"query": ""},
             search_index=index,
-            full_schema_map=schemas,
+            schema_for=schemas.get,
             un_deferred_set=un_deferred,
         )
         assert result.error_code == "CMP-TSRCH-0002"
@@ -481,7 +518,7 @@ class TestHandleToolSearch:
         result = handle_tool_search(
             {"query": "zzzznonexistent"},
             search_index=index,
-            full_schema_map=schemas,
+            schema_for=schemas.get,
             un_deferred_set=un_deferred,
         )
         assert result.success is True
@@ -498,7 +535,7 @@ class TestHandleToolSearch:
         result = handle_tool_search(
             {"query": "git"},
             search_index=index,
-            full_schema_map=schemas,
+            schema_for=schemas.get,
             un_deferred_set=un_deferred,
         )
         assert result.metadata is not None
@@ -528,7 +565,7 @@ class TestHandleToolSearch:
         result = handle_tool_search(
             {"query": "search", "max_results": 1_000_000},
             search_index=index,
-            full_schema_map=schemas,
+            schema_for=schemas.get,
             un_deferred_set=un_deferred,
         )
 
@@ -541,9 +578,100 @@ class TestHandleToolSearch:
         result = handle_tool_search(
             {"query": "x" * 513},
             search_index=index,
-            full_schema_map=schemas,
+            schema_for=schemas.get,
             un_deferred_set=un_deferred,
         )
 
         assert result.success is False
         assert result.error_code == "CMP-TSRCH-0002"
+
+    def test_select_dedupes_repeated_names(self) -> None:
+        index, schemas, un_deferred = self._setup()
+
+        result = handle_tool_search(
+            {"query": "select:mcp__db__query,MCP__DB__QUERY,mcp__db__query"},
+            search_index=index,
+            schema_for=schemas.get,
+            un_deferred_set=un_deferred,
+        )
+
+        assert result.output.count("mcp__db__query") == 1
+        assert result.metadata["discovered_tools"] == ["mcp__db__query"]
+
+    def test_select_honors_max_results(self) -> None:
+        index, schemas, un_deferred = self._setup()
+
+        result = handle_tool_search(
+            {"query": "select:mcp__git__commit,mcp__db__query", "max_results": 1},
+            search_index=index,
+            schema_for=schemas.get,
+            un_deferred_set=un_deferred,
+        )
+
+        assert result.metadata["discovered_tools"] == ["mcp__git__commit"]
+        assert un_deferred == {"mcp__git__commit"}
+        assert len(index.search("select:mcp__git__commit,mcp__db__query", max_results=1)) == 1
+
+    def test_found_count_matches_match_count_when_a_schema_is_missing(self) -> None:
+        index, schemas, un_deferred = self._setup()
+        del schemas["mcp__db__query"]
+
+        result = handle_tool_search(
+            {"query": "select:mcp__git__commit,mcp__db__query"},
+            search_index=index,
+            schema_for=schemas.get,
+            un_deferred_set=un_deferred,
+        )
+
+        assert result.output.splitlines()[0] == "Found 1 tool(s):"
+        assert result.metadata["match_count"] == 1
+        assert "- mcp__db__query: Query DB (not available)" in result.output
+        assert un_deferred == {"mcp__git__commit"}
+
+    def test_schema_lookup_is_lazy_and_excluded_names_never_match(self) -> None:
+        index, schemas, un_deferred = self._setup()
+        looked_up: list[str] = []
+
+        def schema_for(name: str) -> dict | None:
+            looked_up.append(name)
+            return schemas.get(name)
+
+        miss = handle_tool_search(
+            {"query": "zzzznonexistent"},
+            search_index=index,
+            schema_for=schema_for,
+            un_deferred_set=un_deferred,
+        )
+        retired = handle_tool_search(
+            {"query": "select:mcp__git__commit"},
+            search_index=index,
+            schema_for=schema_for,
+            un_deferred_set=un_deferred,
+            excluded_names=frozenset({"mcp__git__commit"}),
+        )
+
+        assert miss.metadata["match_count"] == 0
+        assert retired.metadata["match_count"] == 0
+        assert looked_up == []
+        assert un_deferred == set()
+
+
+def test_manifest_descriptors_defer_only_jenny_help_under_the_threshold() -> None:
+    # The manifest's defer_eligible reaches the canonical descriptor, and no other
+    # manifest tool joins the always-deferred set.
+    from sidecar.ai.tools.catalog import manifest_descriptors
+
+    descriptors = manifest_descriptors()
+    jenny_help = next(d for d in descriptors if d.name == "jenny_help")
+    assert jenny_help.availability.defer_eligible is True
+    not_eligible = frozenset(
+        d.name for d in descriptors if d.availability.defer_eligible is not True
+    )
+    result = compute_deferral_set(
+        DeferralMode.TST_AUTO,
+        descriptors,
+        not_eligible,
+        context_window=10_000_000,
+        tool_token_threshold_pct=10,
+    )
+    assert result == frozenset({"jenny_help"})

@@ -68,3 +68,16 @@ test('stripInlineMarkdownLabel unwraps whole-label single emphasis and parenthes
   assert.equal(stripInlineMarkdownLabel('compare *args and **kwargs'), 'compare *args and **kwargs');
   assert.equal(stripInlineMarkdownLabel('Fix _leading underscore ids'), 'Fix _leading underscore ids');
 });
+
+test('isPrimarySession and isPrimarySessionId match only the primary role', () => {
+  const { isPrimarySession, isPrimarySessionId } = require('../renderer/shared/string-utils');
+  assert.equal(isPrimarySession({ id: 'a', session_role: 'primary' }), true);
+  assert.equal(isPrimarySession({ id: 'a', session_role: 'worker' }), false);
+  assert.equal(isPrimarySession(null), false);
+  assert.equal(isPrimarySession('primary'), false);
+  const sessions = [null, { id: 'a' }, { id: 'b', session_role: 'primary' }];
+  assert.equal(isPrimarySessionId(sessions, 'b'), true);
+  assert.equal(isPrimarySessionId(sessions, 'a'), false);
+  assert.equal(isPrimarySessionId(sessions, ''), false);
+  assert.equal(isPrimarySessionId(null, 'b'), false);
+});

@@ -6,7 +6,7 @@ import json
 import math
 import re
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from sidecar.ai.error_codes import CMP_TOOL_COERCED_ARGS_REJECTED
 from sidecar.ai.execution_policy import BUILTIN_MCP_SERVER_NAME
@@ -176,6 +176,11 @@ def canonicalize_tool_arguments(
     return normalized, tuple(aliases)
 
 
+def strip_private_arguments(arguments: Mapping[str, object]) -> dict[str, object]:
+    """Drop runtime-bookkeeping ``_jenny_*`` keys the model must not see or sign."""
+    return {str(k): v for k, v in arguments.items() if not str(k).startswith("_jenny_")}
+
+
 def _validate_value(
     tool_name: str,
     value: object,
@@ -207,38 +212,77 @@ def _validate_value(
         raise _validation_error(tool_name, f"{_describe_path(path)} must be one of: {allowed}")
 
     schema_type = schema.get("type")
-    if not isinstance(schema_type, str):
-        if "properties" in schema or "required" in schema:
-            schema_type = "object"
-        else:
+    if schema_type is None:
+        if "properties" not in schema and "required" not in schema:
             return
+        schema_type = "object"
+    if isinstance(schema_type, list):
+        _validate_type_union(tool_name, value, schema, schema_type, path=path)
+        return
+    validator = _TYPE_VALIDATORS.get(schema_type) if isinstance(schema_type, str) else None
+    if validator is None:
+        # An unknown or malformed type must not wave every value through.
+        raise _validation_error(
+            tool_name, f"{_describe_path(path)} has an unsupported schema type: {schema_type!r}"
+        )
+    validator(tool_name, value, schema, path=path)
 
-    if schema_type == "object":
-        _validate_object(tool_name, value, schema, path=path)
-        return
-    if schema_type == "array":
-        _validate_array(tool_name, value, schema, path=path)
-        return
-    if schema_type == "string":
-        if not isinstance(value, str):
-            raise _validation_error(tool_name, f"{_describe_path(path)} must be a string")
-        _validate_string_constraints(tool_name, value, schema, path=path)
-        return
-    if schema_type == "boolean":
-        if not isinstance(value, bool):
-            raise _validation_error(tool_name, f"{_describe_path(path)} must be a boolean")
-        return
-    if schema_type == "integer":
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise _validation_error(tool_name, f"{_describe_path(path)} must be an integer")
-        _validate_numeric_bounds(tool_name, value, schema, path=path)
-        return
-    if schema_type == "number":
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise _validation_error(tool_name, f"{_describe_path(path)} must be a number")
-        if not math.isfinite(float(value)):
-            raise _validation_error(tool_name, f"{_describe_path(path)} must be finite")
-        _validate_numeric_bounds(tool_name, float(value), schema, path=path)
+
+def _validate_null(tool_name: str, value: object, schema: dict[str, Any], *, path: str) -> None:
+    if value is not None:
+        raise _validation_error(tool_name, f"{_describe_path(path)} must be null")
+
+
+def _validate_string(tool_name: str, value: object, schema: dict[str, Any], *, path: str) -> None:
+    if not isinstance(value, str):
+        raise _validation_error(tool_name, f"{_describe_path(path)} must be a string")
+    _validate_string_constraints(tool_name, value, schema, path=path)
+
+
+def _validate_boolean(tool_name: str, value: object, schema: dict[str, Any], *, path: str) -> None:
+    if not isinstance(value, bool):
+        raise _validation_error(tool_name, f"{_describe_path(path)} must be a boolean")
+
+
+def _validate_integer(tool_name: str, value: object, schema: dict[str, Any], *, path: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise _validation_error(tool_name, f"{_describe_path(path)} must be an integer")
+    _validate_numeric_bounds(tool_name, value, schema, path=path)
+
+
+def _validate_number(tool_name: str, value: object, schema: dict[str, Any], *, path: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise _validation_error(tool_name, f"{_describe_path(path)} must be a number")
+    try:
+        numeric = float(value)
+    except OverflowError:
+        # A several-hundred-digit int has no float: for the schema it is
+        # not finite, not an escaping exception (tool review C1 #2).
+        raise _validation_error(tool_name, f"{_describe_path(path)} must be finite") from None
+    if not math.isfinite(numeric):
+        raise _validation_error(tool_name, f"{_describe_path(path)} must be finite")
+    _validate_numeric_bounds(tool_name, numeric, schema, path=path)
+
+
+def _validate_type_union(
+    tool_name: str,
+    value: object,
+    schema: dict[str, Any],
+    members: list[Any],
+    *,
+    path: str,
+) -> None:
+    """``"type": [...]``: the value must satisfy at least one member type."""
+    # enum / anyOf already ran against the whole schema; re-check only the type.
+    base_schema = {key: item for key, item in schema.items() if key not in {"anyOf", "enum"}}
+    for member in members:
+        try:
+            _validate_value(tool_name, value, {**base_schema, "type": member}, path=path)
+            return
+        except ToolExecutionFailure:
+            continue
+    allowed = ", ".join(str(member) for member in members) or "none"
+    raise _validation_error(tool_name, f"{_describe_path(path)} must be one of types: {allowed}")
 
 
 def _validate_object(
@@ -311,6 +355,17 @@ def _validate_array(
     for index, item in enumerate(value):
         item_path = f"{path}[{index}]" if path else f"[{index}]"
         _validate_value(tool_name, item, item_schema, path=item_path)
+
+
+_TYPE_VALIDATORS: dict[str, Callable[..., None]] = {
+    "null": _validate_null,
+    "object": _validate_object,
+    "array": _validate_array,
+    "string": _validate_string,
+    "boolean": _validate_boolean,
+    "integer": _validate_integer,
+    "number": _validate_number,
+}
 
 
 def _validate_string_constraints(

@@ -352,3 +352,52 @@ test('falls open when window.localStorage access throws (storage disabled)', () 
     if (hadWindow) { global.window = originalWindow; } else { delete global.window; }
   }
 });
+
+test('a legacy sidebar value of null seeds defaults instead of throwing', () => {
+  const storage = createFakeStorage({ 'jenny.sidebar.v1': 'null' });
+  const registry = createRegistry({ storage });
+  assert.equal(registry.getViewPanelState('chat').collapsed, false);
+});
+
+test('a live drag (persist:false) moves only the width; the persisting call runs the full apply', () => {
+  const storage = createFakeStorage();
+  const workspace = createFakeWorkspace({ width: 1400 });
+  const layoutCalls = [];
+  const registry = createRegistry({
+    storage,
+    workspace,
+    callbacks: {
+      updateComposerSafeOffset: () => layoutCalls.push('composer'),
+      onLayoutChanged: (change) => layoutCalls.push(change.live ? `live:${change.currentWidth}` : 'layout'),
+    },
+  });
+  registry.applyPanelForView('chat');
+  layoutCalls.length = 0;
+  const writesBefore = storage.writes().length;
+
+  registry.setPanelWidth('chat', 330, { persist: false });
+  assert.equal(workspace.styleProps.get('--view-panel-current-width'), '330px');
+  assert.equal(workspace.styleProps.get('--sidebar-current-width'), '330px');
+  assert.deepEqual(layoutCalls, ['live:330'], 'no forced relayout per drag frame, only a live layout notice');
+  assert.equal(storage.writes().length, writesBefore, 'nothing persisted mid-drag');
+
+  registry.setPanelWidth('chat', 330, { persist: true });
+  assert.deepEqual(layoutCalls, ['live:330', 'composer', 'layout'], 'the drag end applies once in full');
+});
+
+test('a narrow window clamps the rendered width without losing the chosen width', () => {
+  const storage = createFakeStorage();
+  const workspace = createFakeWorkspace({ width: 1400 });
+  const registry = createRegistry({ storage, workspace });
+  registry.setPanelWidth('chat', 400);
+
+  workspace.setWidth(900);
+  registry.applyPanelForView('chat');
+  assert.equal(workspace.styleProps.get('--view-panel-current-width'), '248px', 'rendered at the narrow max');
+  assert.equal(registry.getViewPanelState('chat').width, 400, 'the chosen width survives the clamp');
+
+  workspace.setWidth(1400);
+  registry.applyPanelForView('chat');
+  assert.equal(workspace.styleProps.get('--view-panel-current-width'), '400px', 'widening restores it');
+  assert.equal(JSON.parse(storage.dump()['jenny.panels.v2']).byView.chat.width, 400);
+});

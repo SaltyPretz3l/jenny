@@ -2,7 +2,7 @@
 
 const DEFAULT_OLLAMA_PS_URL = 'http://127.0.0.1:11434/api/ps';
 const DEFAULT_TIMEOUT_MS = 3_000;
-const GPU_FREE_BY_DESIGN_ENGINES = new Set(['chatgpt', 'codex-cli', 'mock', 'replay']);
+const GPU_FREE_BY_DESIGN_ENGINES = new Set(['chatgpt', 'codex-cli', 'api-provider', 'mock', 'replay']);
 
 function errorCode(error) {
   return String(error?.code || error?.cause?.code || '').trim().toUpperCase();

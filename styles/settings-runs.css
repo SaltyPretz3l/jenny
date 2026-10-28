@@ -281,7 +281,7 @@
 /* Runtime limits: one settings row per limit (label and the shared Default /
    Modified / Revert meta on the left, the number field on the right, the
    machine-cap note under it). Row chrome and the hairline come from
-   .settings-field--row in settings-controls.css. */
+   .settings-field--row in settings-rows.css. */
 .limits-grid {
   margin-top: var(--space-6);
 }

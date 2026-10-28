@@ -22,7 +22,6 @@ from sidecar.ai.tools.catalog import (
 )
 from sidecar.ai.tools.policy import (
     approval_presentation_for_call,
-    approval_presentation_for_descriptor,
     evaluate_tool_policy,
 )
 
@@ -122,10 +121,10 @@ class TestApprovalPresentationPerCall:
         presentation = approval_presentation_for_call(descriptor, {"action": "explode"})
         assert presentation.policy_consequence == "May change data in this scope."
 
-    def test_unactioned_tool_matches_descriptor_presentation(self) -> None:
+    def test_unactioned_tool_ignores_non_action_arguments(self) -> None:
         descriptor = _descriptor(actions=None)
         assert approval_presentation_for_call(descriptor, {"path": "a.txt"}) == (
-            approval_presentation_for_descriptor(descriptor)
+            approval_presentation_for_call(descriptor, {})
         )
 
 

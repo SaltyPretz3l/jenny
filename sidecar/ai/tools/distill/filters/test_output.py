@@ -52,6 +52,10 @@ _KEEP_RE = re.compile(
     re.IGNORECASE,
 )
 
+# pytest's assertion detail: `E   ` diff/explanation lines and the `>   `
+# failing source line. Case-sensitive: lowercase `e ` is ordinary prose.
+_PYTEST_DETAIL_RE = re.compile(r"^E\s|^>\s")
+
 _SUMMARY_RE = re.compile(
     r"^[=_\-]{3,}.*[=_\-]{3,}$"  # pytest banners / failure headers
     r"|\b\d+\s+(passed|failed|error|errors|skipped|deselected|xfailed|xpassed|warnings?)\b"
@@ -99,6 +103,7 @@ class TestOutputFilter:
     def _keep(line: str) -> bool:
         return (
             bool(_KEEP_RE.search(line))
+            or bool(_PYTEST_DETAIL_RE.match(line))
             or bool(_SUMMARY_RE.search(line))
             or bool(_TEST_FAILURE_HEADLINE_RE.search(line))
         )

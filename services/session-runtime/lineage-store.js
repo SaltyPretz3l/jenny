@@ -84,6 +84,9 @@ class RuntimeLineageStore {
     this.readOnly = false;
     this.reason = null;
     this.pendingWrite = null;
+    // Bumped before every write that may change root records or children, so
+    // readers can reuse a derived view while it is unchanged (in-process only).
+    this.generation = 0;
     try {
       fs.mkdirSync(this.root, { recursive: true, mode: 0o700 });
       this.identity = captureDirectory(this.root);
@@ -97,7 +100,7 @@ class RuntimeLineageStore {
 
   snapshot() {
     return { schema_version: 1, read_only: this.readOnly, reason: this.reason,
-      root_record_count: this.rootIds.size, max_root_records: MAX_LINEAGE_ROOTS };
+      root_record_count: this.rootIds.size, max_root_records: MAX_LINEAGE_ROOTS, generation: this.generation };
   }
 
   get(rootRunId) {
@@ -129,6 +132,7 @@ class RuntimeLineageStore {
       try {
         const directory = rootDirectory(this.root, document.root_run_id);
         if (stableJson(this._read(document.root_run_id)) !== stableJson(document)) fail('lineage_publication_conflict');
+        this.generation += 1;
         this.io.remove(path.join(directory, 'record.json'));
         assertDirectory(this.root, this.identity);
         fs.rmdirSync(directory);
@@ -234,6 +238,7 @@ class RuntimeLineageStore {
   recover() {
     if (!this.pendingWrite) return this.snapshot();
     const { next, previous } = this.pendingWrite;
+    this.generation += 1;
     try {
       const actual = this._read(next.root_run_id, { allowEmpty: previous === null });
       if (stableJson(actual) !== stableJson(next)) {
@@ -272,6 +277,7 @@ class RuntimeLineageStore {
   _write(next, previous) {
     const checked = validateLineageRecord(next);
     this.pendingWrite = { next: checked, previous: previous ? copy(previous) : null };
+    this.generation += 1;
     try {
       if (stableJson(this._read(next.root_run_id, { allowEmpty: previous === null })) !== stableJson(previous)) {
         fail('lineage_publication_conflict');

@@ -25,12 +25,19 @@ const eventSeqOf = (message) => (Number.isInteger(message?.event_seq) && message
 // present (idempotent); else {patch} for the session update. `normalizeRow` is the store's
 // message normalizer. Inserted rows take event_seq values from the anchor's old seq upward
 // and the anchor is re-stamped after them, so the row order and the seq order agree.
+// A failure retry keeps its failed attempt after the anchor (preserveSupersededTurn): when every
+// row after the last user anchor belongs to another turn, the rows go after that superseded tail
+// at fresh seqs instead (re-stamping the anchor past it would break the seq order), so the retried
+// turn reads anchor, failed attempt, mail, reply.
 function planInsertBefore(session, anchorMessageId, rows, normalizeRow) {
   const messages = Array.isArray(session?.messages) ? session.messages : [];
   const anchorId = String(anchorMessageId || '').trim();
-  const anchor = messages[messages.length - 1];
-  if (!anchorId || !anchor || String(anchor.id || '') !== anchorId || anchor.role !== 'user') return null;
+  const anchorIndex = messages.findIndex((message) => String(message?.id || '') === anchorId);
+  const anchor = messages[anchorIndex];
+  if (!anchorId || !anchor || anchor.role !== 'user') return null;
   if (messages.filter((message) => String(message?.id || '') === anchorId).length !== 1) return null;
+  const tail = messages.slice(anchorIndex + 1);
+  if (tail.some((message) => message?.role === 'user' || !message?.turn_id || message.turn_id === anchor.turn_id)) return null;
   if (!Array.isArray(rows) || rows.some((row) => !validateAnyContextRow(row))) return null;
   const ids = new Set();
   const fresh = [];
@@ -42,6 +49,13 @@ function planInsertBefore(session, anchorMessageId, rows, normalizeRow) {
     if (!matches.length) fresh.push(row);
   }
   if (!fresh.length) return { patch: null };
+  if (tail.length) {
+    const appendSeq = Math.max(Number(session.message_seq_counter) || 0, messages.length);
+    const appended = fresh.map((row, index) => normalizeRow({ ...row, event_seq: appendSeq + index }));
+    if (appended.includes(null)) return null;
+    const next = [...messages, ...appended];
+    return { patch: { messages: next, message_count: next.length, message_seq_counter: appendSeq + appended.length } };
+  }
   const startSeq = eventSeqOf(anchor) ?? messages.length - 1;
   const inserted = fresh.map((row, index) => normalizeRow({ ...row, event_seq: startSeq + index }));
   if (inserted.includes(null)) return null;

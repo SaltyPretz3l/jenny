@@ -158,7 +158,9 @@
       const height = imgEl.naturalHeight || 0;
       if (width * height > MAX_DECODE_PIXELS) {
         // Release the oversized decoded bitmap rather than leaving it live.
-        imgEl.src = '';
+        // Removing src (not assigning '') queues no error event, and the error
+        // handler ignores a released source so the message below stands.
+        imgEl.removeAttribute('src');
         showError(jt('ide.imageHost.tooLarge', 'Image is too large to preview ({width}×{height} decodes past the size budget).', { width, height }));
         return;
       }
@@ -168,7 +170,7 @@
     }
 
     function handleImageError() {
-      if (!currentDoc) {
+      if (!currentDoc || !imgEl?.getAttribute('src')) {
         return;
       }
       showError(jt('ide.imageHost.loadFailed', 'Could not load this image — the file may be corrupted or an unsupported format.'));
@@ -217,10 +219,6 @@
       paneEl?.classList.add('hidden');
     }
 
-    function isVisible() {
-      return Boolean(paneEl && !paneEl.classList.contains('hidden'));
-    }
-
     function dispose() {
       imgEl?.removeEventListener('load', handleImageLoad);
       imgEl?.removeEventListener('error', handleImageError);
@@ -236,7 +234,6 @@
     return {
       dispose,
       hide,
-      isVisible,
       show,
     };
   }

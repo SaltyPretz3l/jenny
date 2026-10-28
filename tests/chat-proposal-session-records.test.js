@@ -536,8 +536,9 @@ test('the projection: session display, options, group, links and ungated actions
   assert.equal(p.options_editable, true);
   assert.deepEqual(p.links, {
     continuation_turn_id: null, continuation_work_id: null, command_tool_call_id: null, child_session_id: null,
-    first_turn_turn_id: null, first_turn_work_id: null, preparation_turn_id: null,
+    first_turn_turn_id: null, first_turn_work_id: null, preparation_turn_id: null, reply_turn_id: null,
   });
+  assert.equal(p.child, null, 'no child view without one in the context (F3b)');
   assert.deepEqual(Object.keys(p.actions).sort(), ['cancel', 'dismiss', 'do_it_here', 'new_session', 'retry']);
   assert.deepEqual(p.actions.do_it_here, { available: true, reason: null });
   assert.deepEqual(p.actions.new_session, { available: true, reason: null });

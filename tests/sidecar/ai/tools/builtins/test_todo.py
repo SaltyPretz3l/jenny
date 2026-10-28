@@ -10,8 +10,11 @@ from types import ModuleType
 
 import pytest
 
+from sidecar.ai.error_codes import CMP_TOOL_TODO_INVALID
 from sidecar.ai.tools.builtins import todo as todo_module
 from sidecar.ai.tools.builtins.todo import (
+    MAX_PERSISTED_BYTES,
+    MAX_TODO_CONTENT_CHARS,
     MAX_TODO_ITEMS,
     _reset_todos,
     todo_read_tool,
@@ -163,6 +166,19 @@ def test_missing_content_rejected() -> None:
             {"todos": [{"status": "pending"}]},
             _guard(None),
         )
+
+
+def test_oversized_item_content_rejected() -> None:
+    too_long = [{"content": "x" * (MAX_TODO_CONTENT_CHARS + 1), "status": "pending"}]
+    with pytest.raises(ToolExecutionFailure, match="maximum of 500") as caught:
+        todo_write_tool({"todos": too_long}, _guard(None))
+    assert caught.value.code == CMP_TOOL_TODO_INVALID
+    assert _read()["count"] == 0
+
+
+def test_content_at_the_cap_is_accepted() -> None:
+    at_cap = [{"content": "x" * MAX_TODO_CONTENT_CHARS, "status": "pending"}]
+    assert todo_write_tool({"todos": at_cap}, _guard(None)).success is True
 
 
 def test_non_array_rejected() -> None:
@@ -391,3 +407,18 @@ def test_no_profile_root_keeps_the_list_in_memory_only(tmp_path: Path) -> None:
     )
     assert data == {"count": 0, "todos": []}
     assert list(tmp_path.iterdir()) == []
+
+
+def test_worst_case_accepted_list_stays_loadable_after_restart(tmp_path: Path) -> None:
+    # 50 items x 500 four-byte characters is the largest list validation accepts;
+    # it must stay under the persisted-size cap so it is never written then refused.
+    guard = _profile_guard(tmp_path)
+    item = {"content": "\U0001F600" * MAX_TODO_CONTENT_CHARS, "status": "pending"}
+    todo_write_tool({"_jenny_session_id": "sess-big", "todos": [item] * MAX_TODO_ITEMS}, guard)
+
+    (persisted,) = (tmp_path / "profile" / "todo-lists").iterdir()
+    assert persisted.stat().st_size < MAX_PERSISTED_BYTES
+
+    fresh = _restart()
+    data = json.loads(fresh.todo_read_tool({"_jenny_session_id": "sess-big"}, guard))
+    assert data["count"] == MAX_TODO_ITEMS

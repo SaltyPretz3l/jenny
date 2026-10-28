@@ -84,6 +84,7 @@ from sidecar.runtime.request_dispatch_chat_support import (
 from sidecar.runtime.rpc import error_response, result_response, validate_accept_version
 from sidecar.runtime.turn_retry import InnerRetryableTurnError
 from sidecar.runtime.turn_state import (
+    TERMINAL_SUBCODE_DENIED_POLICY_DANGEROUS_TOOL,
     TERMINAL_SUBCODE_DENIED_USER_EXPLICIT,
     TERMINAL_SUBCODE_TIMEOUT_APPROVAL,
     TURN_STATE_CANCELLED,
@@ -94,6 +95,45 @@ from sidecar.runtime.turn_state import (
     build_turn_result,
     current_live_run_mode_state,
 )
+
+
+def _approval_unavailable_outcome(
+    *, initialized: bool, message_id: Any, chat_response: Any, brain_container: Any,
+    logger: logging.Logger, started_at: float,
+) -> ProcessOutcome:
+    """No approval channel means nobody can say yes: deny, never pre-grant."""
+    import sidecar.runtime.request_dispatch as _rd_hub
+    from sidecar.ai.routing.mutation_run_settlement import discard_approval_mutations
+
+    discard_approval_mutations(chat_response.approval_plan, config=brain_container.stack.config)
+    _rd_hub.log_event(
+        logger,
+        logging.WARNING,
+        component="runtime.request_dispatch",
+        event="sidecar.runtime.chat_send.approval_unavailable",
+        message="A tool call needs approval but this chat.send has no approval channel.",
+        status=TURN_STATE_DENIED,
+        duration_ms=(perf_counter() - started_at) * 1000.0,
+        data={
+            "tool_name": str(chat_response.approval_request.get("tool_name") or "") or None,
+            "terminal_subcode": TERMINAL_SUBCODE_DENIED_POLICY_DANGEROUS_TOOL,
+        },
+    )
+    turn_result = chat_result_with_tool_observations(
+        build_turn_result(
+            request_id=chat_response.request_id,
+            status=TURN_STATE_DENIED,
+            terminal_subcode=TERMINAL_SUBCODE_DENIED_POLICY_DANGEROUS_TOOL,
+        ),
+        brain_container.stack,
+        request_id=chat_response.request_id,
+    )
+    return ProcessOutcome(
+        initialized=initialized,
+        shutdown_requested=False,
+        response=result_response(message_id, turn_result),
+        notifications=list(chat_response.notifications),
+    )
 
 
 def _context_with_plan_approval(context: Any, resolution: ApprovalResolution) -> Any:
@@ -439,14 +479,14 @@ def process_chat_send_request(
             chat_response = _rd_hub._build_chat_response(
                 message_id=message_id,
                 params=params,
-                # INVARIANT (W4.2, 2026-06-10): when interactive approval is on,
-                # the FIRST pass always runs with approvals_pre_granted=False --
-                # side-effecting tools detour through ApprovalPlanCache and the
-                # approval/resume round-trip (approvals_pre_granted=True only on
-                # the approved resume below); read-only tools run inline as
-                # approvalState 'auto'. This is the intended approval
-                # architecture, not a missed enablement.
-                approvals_pre_granted=not interactive_approval,
+                # INVARIANT (W4.2, 2026-06-10): the FIRST pass always runs with
+                # approvals_pre_granted=False -- side-effecting tools detour
+                # through ApprovalPlanCache and the approval/resume round-trip
+                # (approvals_pre_granted=True only on the approved resume below);
+                # read-only tools run inline as approvalState 'auto'. A
+                # non-interactive send has no channel to ask, so a gated call
+                # ends the turn denied below; it is never pre-granted.
+                approvals_pre_granted=False,
                 brain_container=brain_container,
                 stream_notifications=stream_notifications,
                 write_message=write_message,
@@ -486,6 +526,12 @@ def process_chat_send_request(
                 params=params,
                 message="chat.send failed while preparing response",
                 logger=logger,
+            )
+
+        if not interactive_approval and chat_response.approval_request is not None:
+            return _approval_unavailable_outcome(
+                initialized=initialized, message_id=message_id, chat_response=chat_response,
+                brain_container=brain_container, logger=logger, started_at=started_at,
             )
 
         # A turn can need MORE than one approval: the resumed leg may reach a

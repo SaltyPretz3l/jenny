@@ -461,3 +461,13 @@ test('dispose stops the listeners and the push subscription', async () => {
   await flush();
   assert.deepEqual(ctx.calls.undo, []);
 });
+
+test('the notes row rebuilds identically from the metadata a cold reopen keeps', () => {
+  const { cloneSubagentReportMetadata } = require('../renderer/chat/renderer-turn-tree-projector-message-utils');
+  const live = appendMetadata({ headings: ['Launch', 'Risks'], note_text: 'never persisted into the row' });
+  const reopened = cloneSubagentReportMetadata(live, {});
+  assert.equal('note_text' in reopened, false, 'only the bounded allow-list survives');
+  assert.deepEqual(reopened.headings, ['Launch', 'Risks']);
+  assert.ok(markup(reopened).includes('Updated project notes'));
+  assert.equal(markup(reopened), markup(live));
+});

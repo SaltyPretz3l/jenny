@@ -1,0 +1,206 @@
+/* styles/ide-file-map-atlas-fit.css - the File Map Atlas fit and legibility
+ * pass (docs/plans/FILE_MAP_ATLAS_FIT_2026-10-26.md). Imported directly after
+ * ide-file-map.css so equal-specificity rules here win over the base atlas.
+ *
+ * One tray level: only depth-1 folders draw a box; deeper folders are a
+ * header label over their tiles. Headers never fall below tile text, the dot
+ * under a materialized tile is hidden, the layer toggles read as toggles, and
+ * one footer row owns the bottom edge (findings chips, key, not-mapped). */
+
+/* ---- Districts: one tray level ------------------------------------------ */
+
+.ide-atlas-district--d2,
+.ide-atlas-district--d3,
+.ide-atlas-district--d2:hover,
+.ide-atlas-district--d3:hover {
+  border-color: transparent;
+  background: transparent;
+}
+
+.ide-atlas-district--d2 > .ide-atlas-district-header,
+.ide-atlas-district--d3 > .ide-atlas-district-header {
+  padding-inline-start: 0.5em;
+}
+
+/* A folder header is never smaller than the file names inside it; the base
+ * rule's 12px/zoom compensation still governs zoomed-out tiers. */
+.ide-atlas-district-header {
+  font-size: clamp(var(--font-size-caption), calc(12px * var(--font-scale, 1) / var(--atlas-zoom, 1)), 64px);
+}
+
+.ide-atlas-district--d2 > .ide-atlas-district-header .ide-atlas-district-name,
+.ide-atlas-district--d3 > .ide-atlas-district-header .ide-atlas-district-name {
+  font-weight: 500;
+}
+
+/* The name keeps its width; the language bar gives way first. */
+.ide-atlas-district-name {
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+
+.ide-atlas-langbar { min-width: 1.5em; }
+
+/* "Top level" is a group, not a folder path: body font, secondary ink. */
+.ide-atlas-district[data-map-district="."] .ide-atlas-district-name {
+  font-family: var(--font-family-body);
+  color: var(--text-secondary);
+}
+
+/* ---- Tiles --------------------------------------------------------------- */
+
+/* A materialized tile covers its own dot; hide it so it never shows through. */
+.ide-atlas-dot.is-under-tile { display: none; }
+
+/* The git dot sits in the corner so it never takes width from the name. */
+.ide-atlas-tile-git {
+  position: absolute;
+  inset-block-start: 4px;
+  inset-inline-end: 4px;
+}
+
+.ide-atlas-tile--test .ide-atlas-tile-name { color: var(--text-muted); }
+
+.ide-atlas-tile--test .ide-atlas-tile-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--atlas-lang, var(--text-muted));
+}
+
+/* ---- Controls: layer toggles as pills ------------------------------------ */
+
+.ide-map-layers {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ide-map-controls .ide-map-layer-chip {
+  padding: 3px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  box-shadow: none;
+}
+
+.ide-map-controls .ide-map-layer-chip[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text-primary);
+  box-shadow: none;
+}
+
+.ide-map-controls .ide-map-overview-toggle[aria-pressed='true'] { box-shadow: none; }
+
+/* ---- Footer row: findings chips, key, not-mapped ------------------------- */
+
+.ide-map-footer {
+  position: absolute;
+  inset-inline: 14px;
+  bottom: 10px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  pointer-events: none;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+}
+
+.ide-map-footer > * { pointer-events: auto; }
+
+.ide-map-footer-start {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  min-width: 0;
+}
+
+/* Adopted findings chips sit in the row instead of floating over it. */
+.ide-map-footer .ide-map-findings {
+  position: static;
+  inset: auto;
+}
+
+.ide-map-key {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+
+.ide-map-key-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.ide-map-key-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--atlas-lang, var(--text-muted));
+}
+
+.ide-map-key-dot.is-ring {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--text-muted);
+}
+
+.ide-map-key-dot.is-ok { background: color-mix(in srgb, var(--state-success) 70%, transparent); }
+.ide-map-key-dot.is-amber { background: var(--state-warning); }
+.ide-map-key-dot.is-red { background: var(--state-danger); }
+
+.ide-map-footer .ide-map-footer-unmapped {
+  flex: none;
+  padding: 2px 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
+  white-space: nowrap;
+}
+
+.ide-map-footer .ide-map-footer-unmapped:hover,
+.ide-map-footer .ide-map-footer-unmapped[aria-expanded='true'] { color: var(--text-primary); }
+
+/* Rows heat up when an ignored directory sees activity; the trigger follows. */
+.ide-map-footer:has(.ide-map-footer-pop-row.is-heat) .ide-map-footer-unmapped,
+.ide-map-footer-pop-row.is-heat { color: var(--state-warning); }
+
+/* Chrome comes from .inv-popover; this places it above the trigger. */
+.ide-map-footer-pop {
+  inset-inline-end: 0;
+  bottom: calc(100% + 8px);
+  min-width: 260px;
+  max-width: min(360px, 100%);
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+}
+
+.ide-map-footer-pop-title {
+  margin-bottom: 6px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.ide-map-footer-pop-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 3px 0;
+  font-family: var(--font-family-mono, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+}
+
+.ide-map-footer-pop-note {
+  margin-top: 8px;
+  color: var(--text-muted);
+}

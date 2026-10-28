@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from sidecar.ai.error_codes import CMP_TOOL_EXECUTION_FAILED, CMP_TOOL_PRECONDITION_UNMET
+from sidecar.ai.error_codes import (
+    CMP_TOOL_CAP_EXCEEDED,
+    CMP_TOOL_EXECUTION_FAILED,
+    CMP_TOOL_PRECONDITION_UNMET,
+)
 from sidecar.ai.mcp import builtin_server
 from sidecar.ai.tools.builtins import artifacts as artifacts_module
 from sidecar.ai.tools.contracts import ToolExecutionFailure
@@ -382,3 +386,47 @@ def test_text_artifact_paths_preserve_matching_persistence_metadata(
     }
     assert (tool_root / str(tool_metadata["display_path"])).read_text(encoding="utf-8") == content
     assert (helper_root / str(helper_metadata["display_path"])).read_text(encoding="utf-8") == content
+
+
+def _create_text_artifact(workspace_root, session_id: str, title: str):  # type: ignore[no-untyped-def]
+    return artifacts_module.create_artifact_tool(
+        {"_jenny_session_id": session_id, "title": title, "content": "x", "language": "markdown"},
+        WorkspaceGuard(str(workspace_root)),
+    )
+
+
+def test_text_artifacts_stop_at_the_per_session_cap(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(artifacts_module, "MAX_ARTIFACTS_PER_SESSION", 3)
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    for index in range(3):
+        _create_text_artifact(workspace_root, "session-cap", f"Doc {index}")
+
+    with pytest.raises(ToolExecutionFailure) as excinfo:
+        _create_text_artifact(workspace_root, "session-cap", "Doc 3")
+
+    assert excinfo.value.code == CMP_TOOL_CAP_EXCEEDED
+    assert excinfo.value.retryable is False
+    assert len(list((workspace_root / ".jenny" / "artifacts" / "session-cap").iterdir())) == 3
+    # The cap is per session: another session is unaffected.
+    _create_text_artifact(workspace_root, "session-other", "Doc 0")
+
+
+def test_per_session_cap_also_bounds_the_shared_text_helper(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(artifacts_module, "MAX_ARTIFACTS_PER_SESSION", 1)
+    workspace = WorkspaceGuard(str(tmp_path))
+
+    def build(title: str) -> dict[str, object]:
+        return artifacts_module.build_text_artifact_metadata(
+            workspace=workspace,
+            session_id="session-helper",
+            title=title,
+            content="graph TD A --> B",
+            language="mermaid",
+            file_extension=".mmd",
+        )
+
+    build("First")
+    with pytest.raises(ToolExecutionFailure) as excinfo:
+        build("Second")
+    assert excinfo.value.code == CMP_TOOL_CAP_EXCEEDED

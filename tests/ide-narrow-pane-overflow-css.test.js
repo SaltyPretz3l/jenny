@@ -28,13 +28,15 @@ function getRuleBody(css, selector) {
 
 test('document panes clip to the editor column', () => {
   const panes = [
-    ['ide-pdf-pane.css', '.ide-pdf-pane'],
-    ['ide-docx-pane.css', '.ide-docx-pane'],
+    // The PDF and DOCX panes share one rule (`.ide-pdf-pane, .ide-docx-pane`).
+    ['ide-document-pane.css', '.ide-docx-pane'],
     ['ide-chrome.css', '.ide-image-pane'],
   ];
   for (const [file, selector] of panes) {
     assert.match(getRuleBody(readStyle(file), selector), /overflow:\s*hidden;/, `${selector} must clip`);
   }
+  assert.match(readStyle('ide-document-pane.css'), /(?:^|\n)\.ide-pdf-pane,\s*\.ide-docx-pane\s*\{/,
+    'the PDF pane shares the clipping rule');
 });
 
 test('PDF and DOCX toolbars wrap by pane width, not window width', () => {

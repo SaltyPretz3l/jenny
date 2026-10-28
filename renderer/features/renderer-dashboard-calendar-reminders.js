@@ -241,7 +241,6 @@
     computeJournalDigest,
     computeRemindersDigest,
     foldHomeAiPayload,
-    isLiveJournalEntry,
     listStandingReminders,
     reminderInstanceForDay,
     remindersForDay,

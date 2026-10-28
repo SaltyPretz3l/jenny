@@ -60,6 +60,17 @@ function applyAuthoritativeTerminalText(
   // identical to assistantText on every other path.
   const streamedTail = String(ctx.currentSegmentText || '');
   const normalizedCompletionSource = String(completionSource || '').trim();
+  // A turn-ending tool (propose_session, complete_session_handoff) runs no later generation, so
+  // chat.done repeats the preamble its tool boundary already persisted as a segment. Nothing is
+  // left to show; applying it again stored the same text twice (2026-10-27).
+  if (!streamedTail && ctx.hasPersistedSegments && authoritativeText === priorText) {
+    ctx.terminalTextAuthoritySource = normalizedAuthority;
+    ctx.terminalTextAlreadyPersisted = true;
+    ctx.service._emitServiceLog?.('INFO', 'chat.terminal_response_text_already_persisted', {
+      sessionId: ctx.resolvedSessionId, streamId: ctx.streamId, responseTextLength: authoritativeText.length,
+    });
+    return true;
+  }
   const textChanged = streamedTail !== authoritativeText;
   if (
     priorText
@@ -100,6 +111,13 @@ function applyAuthoritativeTerminalText(
   return true;
 }
 
+// The renderer writes the complete event's content into the bubble after the last tool boundary,
+// so text the boundary already persisted (and painted) is not sent again; observers that read
+// onVisibleCompletion still get the whole reply.
+function rendererCompleteContent(ctx) {
+  return ctx.terminalTextAlreadyPersisted === true ? '' : ctx.assistantText;
+}
+
 function emitDeterministicCompletion(ctx, content) {
   const normalizedContent = String(content || '').trim();
   if (!normalizedContent) {
@@ -115,4 +133,5 @@ module.exports = {
   emitDeterministicCompletion,
   logThinkingOnlyCompletion,
   recoverToolworkOnlyCompletion,
+  rendererCompleteContent,
 };

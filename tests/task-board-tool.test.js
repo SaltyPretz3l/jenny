@@ -292,3 +292,61 @@ test('reopening a resolved task counts against the open cap like add', async () 
   const retitled = await taskBoardTool.execute({ action: 'update', id: 'task-500', title: 'Still resolved' }, ctx(configService));
   assert.equal(retitled.isError, false, retitled.content);
 });
+
+test('add with status resolved is held to the resolved-history bound', async () => {
+  const resolved = Array.from({ length: 200 }, (_, index) => task(index + 1, {
+    status: 'resolved',
+    resolvedAt: `2026-01-01T00:${String(Math.floor(index / 60)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}Z`,
+  }));
+  const service = createConfigService(resolved);
+  const result = await taskBoardTool.execute({ action: 'add', title: 'Done already', status: 'resolved' }, ctx(service));
+  assert.equal(result.isError, false);
+  assert.deepEqual(service.deletedIds, ['task-1'], 'the oldest resolved task is pruned');
+  const kept = service.getState().followUps.filter((entry) => entry.status === 'resolved');
+  assert.equal(kept.length, 200);
+  assert.ok(kept.some((entry) => entry.id === result.metadata.task_id));
+});
+
+test('update refuses to reactivate a task the user deferred', async () => {
+  const service = createConfigService([task(1, { status: 'deferred' })]);
+  const result = await taskBoardTool.execute({ action: 'update', id: 'task-1', status: 'active', notes: 'x' }, ctx(service));
+  assert.equal(result.isError, true);
+  assert.equal(result.metadata.reason, 'deferred_by_user');
+  assert.equal(service.getState().followUps[0].status, 'deferred');
+  assert.equal(service.getState().followUps[0].body, '', 'nothing was written');
+});
+
+test('list shows a bounded notes excerpt so updates do not overwrite blind', async () => {
+  const service = createConfigService([
+    task(1, { body: 'line one\nline two' }),
+    task(2, { body: 'n'.repeat(500) }),
+    task(3),
+  ]);
+  const result = await taskBoardTool.execute({ action: 'list' }, ctx(service));
+  const [first, second, third] = result.content.split('\n');
+  assert.match(first, /\| notes=line one line two \|/);
+  assert.match(second, /\| notes=n{119}… \|/);
+  assert.doesNotMatch(third, /notes=/);
+});
+
+test('prototype keys are not task board actions and reads stay per call', async () => {
+  const service = createConfigService([task(1)]);
+  let reads = 0;
+  const getState = service.getState;
+  service.getState = () => { reads += 1; return getState(); };
+  for (const action of ['constructor', '__proto__', 'toString']) {
+    const result = await taskBoardTool.execute({ action }, ctx(service));
+    assert.equal(result.metadata.reason, 'unsupported_action', action);
+    assert.equal(taskBoardTool.summarize({ action }), 'Task board: action');
+  }
+  // The stub's mutators build their returned snapshot through getState too.
+  let writes = 0;
+  for (const name of ['updateFollowUp', 'resolveFollowUp']) {
+    const original = service[name];
+    service[name] = (...args) => { writes += 1; return original(...args); };
+  }
+  reads = 0;
+  await taskBoardTool.execute({ action: 'update', id: 'task-1', title: 'Renamed', status: 'resolved' }, ctx(service));
+  assert.equal(writes, 2);
+  assert.equal(reads - writes, 1, 'one snapshot read; mutators return the next state');
+});

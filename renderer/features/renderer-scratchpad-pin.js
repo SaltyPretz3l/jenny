@@ -84,6 +84,9 @@
     let expandedId = null;
     let focusEditorNext = false;
     let lastSig = null;
+    // The tab strip's own key (ids, titles, expanded pin): a text-only edit
+    // refreshes the tooltips in place instead of rebuilding every pill.
+    let lastStripSig = null;
     let bound = false;
     let disposed = false;
 
@@ -120,9 +123,18 @@
 
     // Collapsed pin = a compact titlebar pill (title only; the body preview rides
     // along as the hover tooltip). The active pin's tab is marked aria-selected.
-    function buildTab(note) {
-      const title = String(note.title || '').trim() || jt('scratchpad.pin.untitledNote', 'Untitled note');
+    function tabTitle(note) {
+      return String(note.title || '').trim() || jt('scratchpad.pin.untitledNote', 'Untitled note');
+    }
+
+    function tabTooltip(note) {
+      const title = tabTitle(note);
       const preview = previewOf(note.text);
+      return preview ? `${title} — ${preview}` : title;
+    }
+
+    function buildTab(note) {
+      const title = tabTitle(note);
       const isActive = note.id === expandedId;
       const inner = '<span class="pin-tab__icon" aria-hidden="true">📌</span>'
         + `<span class="pin-tab__title">${escapeHtml(title)}</span>`;
@@ -136,7 +148,7 @@
         role: 'tab',
         ariaSelected: isActive,
         ariaLabel: jt('scratchpad.pin.noteLabel', 'Pinned note {title}', { title }),
-        title: preview ? `${title} — ${preview}` : title,
+        title: tabTooltip(note),
         dataset: { 'pin-expand': note.id },
       });
     }
@@ -170,7 +182,7 @@
         + '<span class="scratchpad-pin__header-actions">'
         + headerBtn('open', '⤤', jt('scratchpad.pin.openInHome', 'Open in Home'))
         + headerBtn('unpin', '✕', jt('scratchpad.pin.unpinNote', 'Unpin note'))
-        + headerBtn('collapse', '▾', 'Collapse')
+        + headerBtn('collapse', '▾', jt('scratchpad.pin.collapse', 'Collapse'))
         + '</span>'
         + '</div>'
         + `<div class="scratchpad-pin__editor-wrap">${editor}</div>`
@@ -261,6 +273,7 @@
       }
       lastSig = sig;
       if (pinned.length === 0) {
+        lastStripSig = null;
         tabsEl.innerHTML = '';
         tabsEl.hidden = true;
         layerEl.innerHTML = '';
@@ -271,7 +284,16 @@
       // session never attaches the global document/view listeners.
       bind();
       // Tab strip — one pill per pin, in pin order (the strip is the index).
-      tabsEl.innerHTML = pinned.map((note) => buildTab(note)).join('');
+      const stripSig = JSON.stringify([expandedId, pinned.map((note) => [note.id, note.title])]);
+      if (stripSig !== lastStripSig) {
+        tabsEl.innerHTML = pinned.map((note) => buildTab(note)).join('');
+        lastStripSig = stripSig;
+      } else {
+        for (const tab of tabsEl.querySelectorAll('[data-pin-expand]')) {
+          const note = pinned.find((entry) => entry.id === tab.getAttribute('data-pin-expand'));
+          if (note) tab.setAttribute('title', tabTooltip(note));
+        }
+      }
       tabsEl.hidden = false;
       // Editor popover — only the single expanded note, dropped below its tab.
       const active = expandedId ? pinned.find((note) => note.id === expandedId) : null;

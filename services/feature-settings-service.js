@@ -299,17 +299,18 @@ async function runFeatureSettingsTransaction({
     (key) => JSON.stringify(previousConfigState[key]) !== JSON.stringify(nextConfigState[key])
   );
   const revision = runtimeSettingsChanged ? bumpFeatureSettingsRevision(backendService) : 0;
+  const buildPayload = () => buildFeatureStatePayload({
+    shellConfigService,
+    backendService,
+    env,
+    platform,
+  });
   try {
     if (runtimeSettingsChanged) {
       await Promise.resolve(backendService?.setFeatureFlags?.(nextFlags));
       await refreshUntilPublished(backendService, revision);
     }
-    const payload = buildFeatureStatePayload({
-      shellConfigService,
-      backendService,
-      env,
-      platform,
-    });
+    const payload = buildPayload();
     sendToWindow?.(getBridgeChannel('features.onChanged', 'subscribe'), payload);
     return payload;
   } catch (error) {
@@ -333,15 +334,7 @@ async function runFeatureSettingsTransaction({
         });
       }
     }
-    sendToWindow?.(
-      getBridgeChannel('features.onChanged', 'subscribe'),
-      buildFeatureStatePayload({
-        shellConfigService,
-        backendService,
-        env,
-        platform,
-      })
-    );
+    sendToWindow?.(getBridgeChannel('features.onChanged', 'subscribe'), buildPayload());
     throw error;
   }
 }
@@ -376,6 +369,8 @@ function buildWebSearchSecretStatus({ backendService } = {}) {
 // AFTER a successful write does not: the key already persisted, so we log the
 // refresh failure (WARN, keyId/error name only - NEVER the key value) and
 // still resolve success, flagging that the sidecar hasn't picked it up yet.
+const MAX_WEB_SEARCH_SECRET_CHARS = 4096;
+
 async function applyWebSearchSecret({ backendService, payload } = {}) {
   const source = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {};
   const keyId = String(source.keyId || '').trim().toLowerCase();
@@ -386,23 +381,25 @@ async function applyWebSearchSecret({ backendService, payload } = {}) {
   if (!secureStore || typeof secureStore.setWebSearchProviderKey !== 'function') {
     throw new Error('Credential storage is unavailable.');
   }
-  secureStore.setWebSearchProviderKey(keyId, String(source.value || ''));
+  const value = String(source.value || '');
+  if (value.length > MAX_WEB_SEARCH_SECRET_CHARS) {
+    throw new Error('Web search provider key is too long.');
+  }
+  secureStore.setWebSearchProviderKey(keyId, value);
   let configRefreshed = true;
   try {
     await backendService.refreshManagedConfig('web_search_provider_keys_updated');
   } catch (error) {
     configRefreshed = false;
+    // The key is already saved: a log failure (closed stdio) must not fail the call.
     try {
       console.warn(
         'applyWebSearchSecret: managed config refresh failed after key save.',
         { keyId, errorName: error?.name || 'Error' }
       );
-    } catch (_logError) {
-      void _logError;
-    }
+    } catch (_logError) { /* ignore */ }
   }
-  const status = await buildWebSearchSecretStatus({ backendService });
-  return { ...status, configRefreshed };
+  return { ...buildWebSearchSecretStatus({ backendService }), configRefreshed };
 }
 
 function registerFeatureIpcHandlers({

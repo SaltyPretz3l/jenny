@@ -238,6 +238,8 @@
         if (fullMessageApproval && typeof fullMessageApproval === 'object' && !Array.isArray(fullMessageApproval)) {
           payload.session_message_approval = fullMessageApproval;
         }
+        const stopApproval = toolUsePayload.session_stop_approval;
+        if (stopApproval && typeof stopApproval === 'object' && !Array.isArray(stopApproval)) payload.session_stop_approval = stopApproval;
       }
       for (const event of events) {
         if (event.kind !== 'approval_requested') {
@@ -263,6 +265,11 @@
         if (!payload.session_message_approval && sessionMessageApproval && typeof sessionMessageApproval === 'object'
           && !Array.isArray(sessionMessageApproval)) {
           payload.session_message_approval = sessionMessageApproval;
+        }
+        const sessionStopApproval = event.payload && event.payload.session_stop_approval;
+        if (!payload.session_stop_approval && sessionStopApproval && typeof sessionStopApproval === 'object'
+          && !Array.isArray(sessionStopApproval)) {
+          payload.session_stop_approval = sessionStopApproval;
         }
       }
       row.tool_call_id = payload.tool_call_id;

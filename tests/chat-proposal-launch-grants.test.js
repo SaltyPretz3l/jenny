@@ -9,6 +9,8 @@ const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 
 const { PROPOSAL_ERROR_CODES: CODES } = require('../services/backend/error-codes');
+const { normalizeLaunchGrant } = require('../services/backend/session-coordination-records');
+const { isLiveGrant } = require('../services/chat-proposal-launch-grants');
 const { createSessionFixture } = require('./helpers/chat-proposal-session-fixture');
 
 const HOUR = 60 * 60 * 1000;
@@ -213,4 +215,146 @@ test('a grant expired more than thirty days ago is pruned on the next authorize'
   withMessage(fx, 'msg_2', 'turn_2');
   await fx.authorize('msg_2');
   assert.deepEqual(fx.grants().map((grant) => grant.source_user_message_id), ['msg_2']);
+});
+
+// ---------- standing launch permission (row 76, S4) ----------
+
+const PERMISSION_ID = `lp_${'a'.repeat(32)}`;
+
+function permissionFixture(t, { cap = 1, permission = true, serviceOptions = {} } = {}) {
+  const calls = [];
+  const fx = createSessionFixture(t, {
+    serviceOptions: {
+      matchLaunchPermission: (args) => {
+        calls.push(args);
+        return permission ? { permission_id: PERMISSION_ID, max_children_per_turn: cap } : null;
+      },
+      ...serviceOptions,
+    },
+  });
+  fx.matchCalls = calls;
+  return fx;
+}
+
+test('a standing permission mints a valid spent v1 grant and accepts the record in the same mutation', async (t) => {
+  const fx = permissionFixture(t);
+  const done = await fx.publishSession(1, { initiation: 'user_asked' });
+  assert.equal(done.ok, true, JSON.stringify(done));
+  assert.deepEqual([done.proposal.decision_state, done.proposal.action_state, done.proposal.decision.choice], ['accepted', 'queued', 'new_session']);
+  assert.deepEqual(done.proposal.display, { title: 'Fix the build', description: null, initiation: 'user_asked', authorization_required: false });
+  const [grant] = fx.grants();
+  assert.notEqual(normalizeLaunchGrant(grant), null, 'the stored entry is a valid v1 grant');
+  assert.deepEqual(
+    [grant.remaining, grant.max_children, grant.source_user_message_id, grant.source_turn_id, grant.destination_project_ids, grant.revoked_at, grant.source_session_incarnation],
+    [0, 1, `standing.${PERMISSION_ID}`, 'turn_1', ['proj_1'], null, fx.sessionIncarnation],
+  );
+  assert.equal(Date.parse(grant.expires_at) - Date.parse(grant.created_at), HOUR);
+  assert.equal(isLiveGrant(grant, new Date(fx.clock.ms)), false, 'a minted grant is spent: never live');
+  assert.equal(fx.record(done.proposal.proposal_id).binding.session.launch_grant_ref, grant.authorization_ref);
+  assert.deepEqual(fx.matchCalls, [{ sessionId: fx.sessionId, destinationProjectId: 'proj_1', runMode: 'ask' }]);
+  assert.equal(fx.runtime.submits.length, 0, 'the dispatch runs after the call returns');
+  await fx.service.idle();
+  assert.equal(fx.runtime.submits.length, 1);
+});
+
+test('a wake turn never mints: a message from another chat grants no launch, and a throwing port fails closed', async (t) => {
+  const fx = permissionFixture(t, { serviceOptions: { isWakeTurn: (_sessionId, turnId) => turnId === 'turn_1' } });
+  const woken = await fx.publishSession(1, { initiation: 'user_asked', turn: 'turn_1' });
+  assert.deepEqual([woken.proposal.decision_state, woken.proposal.display.authorization_required], ['pending', true]);
+  assert.equal(fx.grants().length, 0);
+  assert.deepEqual(fx.matchCalls, [], 'the permission is not consulted in a wake turn');
+  assert.equal((await fx.publishSession(2, { initiation: 'user_asked', turn: 'turn_2' })).proposal.decision_state, 'accepted');
+  const throwing = permissionFixture(t, { serviceOptions: { isWakeTurn: () => { throw new Error('boom'); } } });
+  assert.equal((await throwing.publishSession(1, { initiation: 'user_asked' })).proposal.decision_state, 'pending');
+  assert.deepEqual(throwing.matchCalls, []);
+});
+
+test('minted audit rows are capped at 32: the oldest standing rows drop first, newest kept', async (t) => {
+  const fx = permissionFixture(t, { cap: 1 });
+  assert.equal((await fx.publishSession(1, { initiation: 'user_asked', turn: 'turn_1' })).proposal.decision_state, 'accepted');
+  const [first] = fx.grants();
+  // 31 older audit rows of earlier turns (the unresolved-proposal cap of 20 keeps a live loop from minting that many).
+  const older = Array.from({ length: 31 }, (_, index) => {
+    const created = new Date(Date.parse(first.created_at) - (32 - index) * 60_000).toISOString();
+    return {
+      ...first, authorization_ref: randomUUID(), action_id: randomUUID(), source_turn_id: `turn_old_${index + 1}`,
+      created_at: created, expires_at: new Date(Date.parse(created) + HOUR).toISOString(),
+    };
+  });
+  assert.equal(fx.proposalStore.mutate(fx.sessionId, ({ records }) => ({ records, launch_grants: [...older, first] })).ok, true);
+  assert.equal(fx.grants().length, 32);
+  assert.equal((await fx.publishSession(2, { initiation: 'user_asked', turn: 'turn_2' })).proposal.decision_state, 'accepted');
+  const turns = fx.grants().map((grant) => grant.source_turn_id);
+  assert.equal(turns.length, 32);
+  assert.deepEqual([turns[0], turns.at(-2), turns.at(-1)], ['turn_old_2', 'turn_1', 'turn_2'], 'the oldest standing row dropped');
+});
+
+test('a standing permission is capped per turn; the next turn mints again', async (t) => {
+  const fx = permissionFixture(t, { cap: 1 });
+  assert.equal((await fx.publishSession(1, { initiation: 'user_asked', turn: 'turn_1' })).proposal.decision_state, 'accepted');
+  const over = await fx.publishSession(2, { initiation: 'user_asked', turn: 'turn_1' });
+  assert.deepEqual([over.proposal.decision_state, over.proposal.display.authorization_required], ['pending', true]);
+  assert.equal(fx.grants().length, 1);
+  const next = await fx.publishSession(3, { initiation: 'user_asked', turn: 'turn_2' });
+  assert.equal(next.proposal.decision_state, 'accepted');
+  assert.deepEqual(fx.grants().map((grant) => grant.source_turn_id), ['turn_1', 'turn_2']);
+  const capThree = permissionFixture(t, { cap: 3 });
+  for (let n = 1; n <= 3; n += 1) {
+    assert.equal((await capThree.publishSession(n, { initiation: 'user_asked', turn: 'turn_1' })).proposal.decision_state, 'accepted', `child ${n}`);
+  }
+  assert.equal((await capThree.publishSession(4, { initiation: 'user_asked', turn: 'turn_1' })).proposal.decision_state, 'pending');
+  assert.equal(capThree.grants().length, 3);
+});
+
+test('a turn grant is preferred over a standing permission; nothing is minted', async (t) => {
+  const fx = permissionFixture(t);
+  withMessage(fx);
+  const { authorization_ref: ref } = await fx.authorize('msg_1');
+  const done = await fx.publishSession(1, { initiation: 'user_asked' });
+  assert.equal(done.proposal.decision_state, 'accepted');
+  assert.equal(fx.grants().length, 1);
+  assert.equal(fx.grants()[0].remaining, 0);
+  assert.equal(fx.record(done.proposal.proposal_id).binding.session.launch_grant_ref, ref);
+  assert.equal(fx.matchCalls.length, 0, 'the permission is not consulted when a turn grant matched');
+});
+
+test('without a permission a user_asked request stays an offer that needs authorization', async (t) => {
+  const fx = permissionFixture(t, { permission: false });
+  const done = await fx.publishSession(1, { initiation: 'user_asked' });
+  assert.deepEqual([done.proposal.decision_state, done.proposal.display.authorization_required], ['pending', true]);
+  assert.equal(fx.grants().length, 0);
+  const plain = createSessionFixture(t);
+  assert.equal((await plain.publishSession(1, { initiation: 'user_asked' })).proposal.display.authorization_required, true);
+});
+
+test('a permission is never consulted for offers, suggestions, an unnegotiated handoff or an explicit authorization_ref', async (t) => {
+  const fx = permissionFixture(t);
+  assert.equal((await fx.publishSession(1, { initiation: 'offer' })).proposal.decision_state, 'pending');
+  assert.equal((await fx.publishSession(2, { initiation: 'own_initiative' })).proposal.decision_state, 'pending');
+  assert.equal(fx.matchCalls.length, 0);
+  const named = await fx.publishSession(3, { initiation: 'user_asked', authorization_ref: randomUUID() });
+  assert.equal(named.proposal.display.authorization_required, true, 'a ref names a turn grant only');
+  fx.ctl.handoffSupported = false;
+  assert.equal((await fx.publishSession(4, { initiation: 'user_asked', turn: 'turn_9' })).proposal.display.authorization_required, true);
+  assert.equal(fx.matchCalls.length, 0);
+  assert.equal(fx.grants().length, 0);
+});
+
+test('project_id is honored only when the port allows a project choice and the project exists', async (t) => {
+  const honored = permissionFixture(t, { serviceOptions: { allowsProjectChoice: () => true, projectExists: (id) => id === 'proj_2' } });
+  const offer = await honored.publishSession(1, { initiation: 'offer', project_id: 'proj_2' });
+  assert.equal(offer.proposal.options.destination_project_id, 'proj_2');
+  const asked = await honored.publishSession(2, { initiation: 'user_asked', project_id: 'proj_2' });
+  assert.equal(asked.proposal.options.destination_project_id, 'proj_2');
+  assert.deepEqual(honored.matchCalls[0], { sessionId: honored.sessionId, destinationProjectId: 'proj_2', runMode: 'ask' });
+  assert.deepEqual(honored.grants()[0].destination_project_ids, ['proj_2']);
+  const unknown = await honored.publishSession(3, { initiation: 'offer', project_id: 'proj_3' });
+  assert.equal(unknown.proposal.options.destination_project_id, 'proj_1', 'an unknown project falls back to the source project');
+
+  const refused = permissionFixture(t, { serviceOptions: { allowsProjectChoice: () => false, projectExists: () => true } });
+  const ignored = await refused.publishSession(1, { initiation: 'offer', project_id: 'proj_2' });
+  assert.equal(ignored.proposal.options.destination_project_id, 'proj_1');
+  const askedIgnored = await refused.publishSession(2, { initiation: 'user_asked', project_id: 'proj_2' });
+  assert.deepEqual(refused.matchCalls[0], { sessionId: refused.sessionId, destinationProjectId: 'proj_1', runMode: 'ask' });
+  assert.equal(askedIgnored.proposal.options.destination_project_id, 'proj_1');
 });

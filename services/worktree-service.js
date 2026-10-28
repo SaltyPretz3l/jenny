@@ -7,92 +7,24 @@ const { TOOL_ERROR_CODES } = require('./backend/error-codes');
 const { runGit } = require('./git-runner');
 const { normalizeString } = require('./shared/normalize');
 const {
+  baseRefIsSafe,
+  branchNameIsSafe,
+  canonicalRepositoryRootFromWorktreeList,
+  clipText,
+  dirtySummaryHasChanges,
+  normalizeBaseRef,
+  normalizeBranchName,
+  parseGitStatusPorcelainSummary,
+  parsePorcelainWorktreeList,
+  slugify,
+} = require('./worktree-service-git');
+const {
   WorktreePathPolicy,
   normalizeComparablePath,
 } = require('./worktree-path-policy');
 
 const DEFAULT_GIT_TIMEOUT_MS = 30000;
 const GIT_OUTPUT_LIMIT_BYTES = 1024 * 1024;
-const MAX_ERROR_CHARS = 800;
-const MAX_BRANCH_NAME_CHARS = 200;
-const MAX_BASE_REF_CHARS = 200;
-const SAFE_BRANCH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
-const SAFE_BASE_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/@-]*$/;
-
-function clipText(value, limit = MAX_ERROR_CHARS) {
-  const text = normalizeString(value).replace(/[\r\n]+/g, ' ');
-  return text.length > limit ? `${text.slice(0, limit - 3).trim()}...` : text;
-}
-
-function slugify(value, fallback = 'worktree') {
-  const slug = normalizeString(value)
-    .replace(/\\/g, '/')
-    .split('/')
-    .filter(Boolean)
-    .pop();
-  const normalized = normalizeString(slug || value)
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^[._-]+|[._-]+$/g, '');
-  return normalized || fallback;
-}
-
-function normalizeBranchName({ branch, name }) {
-  const explicit = normalizeString(branch);
-  if (explicit) {
-    return explicit;
-  }
-  return `jenny/${slugify(name, `worktree-${Date.now().toString(36)}`)}`;
-}
-
-function refNameHasSafeShape(value, { maxLength, pattern }) {
-  const refName = normalizeString(value);
-  if (!refName || refName.length > maxLength) {
-    return false;
-  }
-  if (
-    refName.includes('\0')
-    || refName.startsWith('-')
-    || refName.startsWith('/')
-    || refName.endsWith('/')
-    || refName.includes('\\')
-    || refName.includes('..')
-    || refName.includes('//')
-    || refName.includes('@{')
-    || refName.endsWith('.')
-    || refName.endsWith('.lock')
-  ) {
-    return false;
-  }
-  if (!pattern.test(refName)) {
-    return false;
-  }
-  return refName.split('/').every((part) => (
-    part
-    && part !== '.'
-    && part !== '..'
-    && !part.endsWith('.lock')
-  ));
-}
-
-function branchNameIsSafe(value) {
-  return refNameHasSafeShape(value, {
-    maxLength: MAX_BRANCH_NAME_CHARS,
-    pattern: SAFE_BRANCH_PATTERN,
-  });
-}
-
-function baseRefIsSafe(value) {
-  return refNameHasSafeShape(value, {
-    maxLength: MAX_BASE_REF_CHARS,
-    pattern: SAFE_BASE_REF_PATTERN,
-  });
-}
-
-function normalizeBaseRef(value) {
-  return normalizeString(value) || 'HEAD';
-}
 
 function worktreeId() {
   return `wt_${Date.now().toString(36)}_${crypto.randomBytes(4).toString('hex')}`;
@@ -104,101 +36,6 @@ function registryOwner(value = {}) {
     session_id: normalizeString(source.session_id || source.sessionId) || null,
     task_id: normalizeString(source.task_id || source.taskId) || null,
   };
-}
-
-function parsePorcelainWorktreeList(output) {
-  const entries = [];
-  let current = null;
-  for (const line of String(output || '').split(/\r?\n/)) {
-    if (!line.trim()) {
-      if (current) {
-        entries.push(current);
-        current = null;
-      }
-      continue;
-    }
-    const [key, ...rest] = line.split(' ');
-    const value = rest.join(' ').trim();
-    if (key === 'worktree') {
-      if (current) {
-        entries.push(current);
-      }
-      current = {
-        path: path.resolve(value),
-        head: '',
-        branch: '',
-        detached: false,
-        bare: false,
-      };
-      continue;
-    }
-    if (!current) {
-      continue;
-    }
-    if (key === 'HEAD') {
-      current.head = value;
-    } else if (key === 'branch') {
-      current.branch = value.replace(/^refs\/heads\//, '');
-    } else if (key === 'detached') {
-      current.detached = true;
-    } else if (key === 'bare') {
-      current.bare = true;
-    } else if (key === 'prunable') {
-      // Git still lists a worktree whose directory is gone until it is pruned.
-      current.prunable = true;
-    }
-  }
-  if (current) {
-    entries.push(current);
-  }
-  return entries;
-}
-
-function parseGitStatusPorcelainSummary(output) {
-  const summary = {
-    modified_count: 0,
-    staged_count: 0,
-    untracked_count: 0,
-    ignored_count: 0,
-  };
-  for (const rawLine of String(output || '').split(/\r?\n/)) {
-    if (!rawLine) continue;
-    const x = rawLine[0] || ' ';
-    const y = rawLine[1] || ' ';
-    if (x === '?' && y === '?') {
-      summary.untracked_count += 1;
-      continue;
-    }
-    if (x === '!' && y === '!') {
-      summary.ignored_count += 1;
-      continue;
-    }
-    if (x && x !== ' ') {
-      summary.staged_count += 1;
-    }
-    if (y && y !== ' ') {
-      summary.modified_count += 1;
-    }
-  }
-  return summary;
-}
-
-function canonicalRepositoryRootFromWorktreeList(output, fallbackRoot) {
-  const entries = parsePorcelainWorktreeList(output);
-  const primary = entries.find((entry) => entry.path && !entry.bare) || entries[0] || null;
-  return primary?.path ? path.resolve(primary.path) : path.resolve(fallbackRoot);
-}
-
-function dirtySummaryHasChanges(summary) {
-  return Boolean(
-    summary
-    && (
-      summary.modified_count > 0
-      || summary.staged_count > 0
-      || summary.untracked_count > 0
-      || summary.ignored_count > 0
-    )
-  );
 }
 
 function normalizeAbortSignal({ signal = null, abortSignal = null } = {}) {
@@ -247,16 +84,7 @@ class WorktreeService {
     if (!repo.success) {
       return repo;
     }
-    const gitList = repo.worktree_list_stdout
-      ? {
-        success: true,
-        stdout: repo.worktree_list_stdout,
-        stderr: '',
-        message: '',
-      }
-      : await this._runGit(repo.repository_root, ['worktree', 'list', '--porcelain'], {
-        signal: gitSignal,
-      });
+    const gitList = await this._worktreeListFor(repo, { signal: gitSignal });
     if (!gitList.success) {
       return this._failure('git worktree list failed.', {
         reason: gitResultWasAborted(gitList) ? 'aborted' : 'git_list_failed',
@@ -318,27 +146,8 @@ class WorktreeService {
     );
     worktrees.push(...registryOnlyWorktrees);
 
-    if (registryEntries.length && typeof this._registryService?.saveAll === 'function') {
-      const reconciledStatusById = new Map(
-        worktrees
-          .filter((entry) => entry.registry_id)
-          .map((entry) => [entry.registry_id, entry.status])
-      );
-      try {
-        this._registryService.saveAll(allRegistryEntries.map((entry) => (
-          reconciledStatusById.has(entry.id)
-            ? {
-              ...entry,
-              status: reconciledStatusById.get(entry.id),
-              last_checked_at: now,
-            }
-            : entry
-        )));
-      } catch (error) {
-        this._logger('WARN', 'worktree.registry_reconcile_failed', {
-          message: error?.message || String(error),
-        });
-      }
+    if (registryEntries.length) {
+      this._reconcileRegistryStatuses(worktrees, now);
     }
 
     return {
@@ -530,7 +339,7 @@ class WorktreeService {
         errorCode: TOOL_ERROR_CODES.DISABLED,
       });
     }
-    const gitList = await this._runGit(repo.repository_root, ['worktree', 'list', '--porcelain'], {
+    const gitList = await this._worktreeListFor(repo, {
       signal: normalizeAbortSignal({ signal, abortSignal }),
     });
     if (!gitList.success) {
@@ -559,7 +368,18 @@ class WorktreeService {
     };
   }
 
-  async deleteWorktree({ workspaceRoot, worktreeId, signal = null, abortSignal = null } = {}) {
+  // `beforeRemove` (optional) runs after the ownership, path-policy and dirty
+  // checks pass and before any registry or disk mutation. It receives
+  // `{ worktree, worktree_path, repository_root }` and may veto the delete by
+  // returning `{ proceed: false, message?, reason?, extra? }`; a throw vetoes
+  // with reason `before_remove_failed`.
+  async deleteWorktree({
+    workspaceRoot,
+    worktreeId,
+    beforeRemove = null,
+    signal = null,
+    abortSignal = null,
+  } = {}) {
     const gitSignal = normalizeAbortSignal({ signal, abortSignal });
     const normalizedId = normalizeString(worktreeId);
     if (!normalizedId) {
@@ -674,6 +494,11 @@ class WorktreeService {
         };
       }
 
+      const veto = await this._runBeforeRemove(beforeRemove, entry, repo.repository_root);
+      if (veto) {
+        return veto;
+      }
+
       const registryRemoved = this._removeRegistryEntry(entry.id);
       if (!registryRemoved) {
         return this._failure('Worktree registry entry could not be removed.', {
@@ -719,6 +544,74 @@ class WorktreeService {
         this._deletePromisesByWorktreeId.delete(normalizedId);
       }
     }
+  }
+
+  // Re-read the registry synchronously after the awaits above so a concurrent
+  // add/remove is never overwritten by the pre-await snapshot, and write only
+  // when a reconciled status actually changed (listing is a read-only tool).
+  _reconcileRegistryStatuses(worktrees, now) {
+    if (typeof this._registryService?.saveAll !== 'function') {
+      return;
+    }
+    const reconciledStatusById = new Map(
+      worktrees
+        .filter((entry) => entry.registry_id)
+        .map((entry) => [entry.registry_id, entry.status])
+    );
+    try {
+      const freshEntries = this._registryService.listAll();
+      let changed = false;
+      const nextEntries = freshEntries.map((entry) => {
+        if (!reconciledStatusById.has(entry.id)) {
+          return entry;
+        }
+        const status = reconciledStatusById.get(entry.id);
+        if (entry.status === status) {
+          return entry;
+        }
+        changed = true;
+        return { ...entry, status, last_checked_at: now };
+      });
+      if (changed) {
+        this._registryService.saveAll(nextEntries);
+      }
+    } catch (error) {
+      this._logger('WARN', 'worktree.registry_reconcile_failed', {
+        message: error?.message || String(error),
+      });
+    }
+  }
+
+  async _runBeforeRemove(beforeRemove, entry, repositoryRoot) {
+    if (typeof beforeRemove !== 'function') {
+      return null;
+    }
+    let outcome;
+    try {
+      outcome = await beforeRemove({
+        worktree: entry,
+        worktree_path: path.resolve(entry.worktree_path),
+        repository_root: repositoryRoot,
+      });
+    } catch (error) {
+      return {
+        ...this._failure('Worktree delete was blocked before filesystem mutation.', {
+          reason: 'before_remove_failed',
+          details: error?.message || String(error),
+        }),
+        result_kind: 'worktree_delete',
+      };
+    }
+    if (outcome && outcome.proceed === false) {
+      return {
+        ...this._failure(outcome.message || 'Worktree delete was blocked before filesystem mutation.', {
+          reason: outcome.reason || 'before_remove_blocked',
+          extra: outcome.extra,
+        }),
+        result_kind: 'worktree_delete',
+      };
+    }
+    return null;
   }
 
   _restoreRegistryEntry(entry) {
@@ -788,6 +681,20 @@ class WorktreeService {
       });
     }
     return false;
+  }
+
+  // `_resolveRepositoryRoot` already ran `git worktree list --porcelain`; reuse
+  // its stdout and only spawn again when that capture failed or was empty.
+  _worktreeListFor(repo, { signal = null } = {}) {
+    if (repo.worktree_list_stdout) {
+      return Promise.resolve({
+        success: true,
+        stdout: repo.worktree_list_stdout,
+        stderr: '',
+        message: '',
+      });
+    }
+    return this._runGit(repo.repository_root, ['worktree', 'list', '--porcelain'], { signal });
   }
 
   async _resolveRepositoryRoot(workspaceRoot, { signal = null } = {}) {

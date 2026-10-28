@@ -14,6 +14,7 @@ from sidecar.ai.routing import subagent_scheduler as scheduler_module
 from sidecar.ai.routing.delegate import execute_delegate_tool
 from sidecar.ai.routing.delegate_contracts import (
     CANONICAL_DELEGATE_EXAMPLE_JSON,
+    MAX_DELEGATE_ANSWER_CHARS,
     MAX_DELEGATE_OUTPUT_CHARS,
     build_compact_delegate_settlement,
     extract_tool_observed_evidence,
@@ -28,6 +29,7 @@ from sidecar.ai.routing.subagent_scheduler import (
     schedule_delegate_tasks,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure
+from sidecar.ai.tools.phase_trace import execution_duration_ms
 from sidecar.runtime.chat_models import ChatRequestContext, TerminalChatStateError
 from sidecar.runtime.multiplexer import SubAgentSlotAllocator, TurnCancellationHandle
 
@@ -172,10 +174,36 @@ def test_compact_output_drops_high_ordinal_evidence_before_answers() -> None:
     )
 
     assert len(settlement.output) <= MAX_DELEGATE_OUTPUT_CHARS
-    assert all(len(result["answer"]) <= 1_000 for result in settlement.report["results"])
+    assert all(
+        len(result["answer"]) <= MAX_DELEGATE_ANSWER_CHARS
+        for result in settlement.report["results"]
+    )
     assert len(settlement.report["results"][2]["evidence"]) <= len(
         settlement.report["results"][0]["evidence"]
     )
+
+
+def test_three_full_budget_answers_fit_the_parent_output_cap() -> None:
+    assert MAX_DELEGATE_ANSWER_CHARS == 2_500
+    assert 3 * MAX_DELEGATE_ANSWER_CHARS < MAX_DELEGATE_OUTPUT_CHARS
+    reports = [
+        {"ordinal": ordinal, "status": "completed", "summary": "a" * 2_400, "evidence": []}
+        for ordinal in (1, 2, 3)
+    ]
+    reports.append(
+        {"ordinal": 4, "status": "completed", "summary": "b" * 3_000, "evidence": []}
+    )
+
+    settlement = build_compact_delegate_settlement(
+        execution="parallel", task_reports=reports[:3]
+    )
+    clipped = build_compact_delegate_settlement(execution="single", task_reports=reports[3:])
+
+    assert len(settlement.output) <= MAX_DELEGATE_OUTPUT_CHARS
+    assert [len(result["answer"]) for result in settlement.report["results"]] == [2_400] * 3
+    clipped_answer = clipped.report["results"][0]["answer"]
+    assert len(clipped_answer) == MAX_DELEGATE_ANSWER_CHARS
+    assert clipped_answer.endswith("…")
 
 
 def test_evidence_is_derived_only_from_successful_supported_tool_outcomes() -> None:
@@ -794,9 +822,47 @@ def test_execute_delegate_returns_compact_output_and_rich_metadata(
     }
     rich = outcome.metadata["subagent_batch_report"]
     assert rich["source_tool"] == "delegate"
+    assert execution_duration_ms(outcome.metadata) == rich["budget"]["elapsed_ms"]
     assert rich["tasks"][0]["task_id"].startswith("delegate:")
     assert "batch_id" not in payload
     assert "usage" not in payload
+
+
+def test_execute_delegate_passes_the_full_answer_budget_to_the_parent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = validate_delegate_arguments({"tasks": ["inspect"]}).tasks[0]
+    identity = scheduler_module.build_sub_agent_identity(
+        parent_request_id="parent-request",
+        canonical_call_id="call",
+        parent_agent_id="main@parent-request",
+        ordinal=1,
+        operation="delegate",
+    )
+    answer = "row " * 500
+    result = SubAgentInvocationResult(
+        status="completed",
+        response_text=answer,
+        decision=_decision(answer),
+        iterations_used=2,
+    )
+    schedule = DelegateSchedule(
+        execution="single",
+        invocations=(ScheduledInvocation(task, identity, result, 49_000, 8, 120_000, True),),
+        effective_max_total_runtime_ms=120_000,
+        parent_synthesis_reserve_ms=0,
+    )
+    monkeypatch.setattr(delegate_module, "schedule_delegate_tasks", lambda **_kwargs: schedule)
+
+    outcome = execute_delegate_tool(
+        router=SimpleNamespace(_config=parse_runtime_config({})),
+        arguments={"tasks": ["inspect"]},
+        runtime=_runtime(),
+        outcome_type=ToolExecutionOutcome,
+        call_id="call",
+    )
+
+    assert json.loads(outcome.output)["results"][0]["answer"] == answer.strip()
 
 
 def test_execute_delegate_does_not_emit_terminal_success_after_parent_cancel(

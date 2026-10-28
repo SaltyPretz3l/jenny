@@ -31,30 +31,22 @@
       : null;
   }
 
-  function addLocalDays(date, days) {
-    return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
-  }
+  const { addLocalDays, startOfLocalDay } = windowRef.rendererDashboardWidgetsCore
+    || (typeof require === 'function' ? require('./renderer-dashboard-widgets-core') : {});
 
-  function startOfLocalDay(date) {
-    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  // Shared event helpers live in the grid module; resolved lazily so a harness
+  // that assigns the global after this factory runs still gets it.
+  function resolveGridModule() {
+    return windowRef.rendererDashboardCalendarGrid
+      || (typeof require === 'function' ? require('./renderer-dashboard-calendar-grid') : null);
   }
 
   function categoryClass(instance) {
-    const id = /^[a-z][a-z0-9-]*$/.test(String(instance?.categoryId || ''))
-      ? instance.categoryId
-      : 'default';
-    return `cal-event--${id}`;
+    return resolveGridModule().categoryClass(instance);
   }
 
   function instanceOverlapsDay(instance, day, gridModule) {
-    const start = gridModule.parseLocalDateTime(instance?.start);
-    const end = gridModule.parseLocalDateTime(instance?.end);
-    if (!start || !end) {
-      return false;
-    }
-    const dayStart = startOfLocalDay(day).getTime();
-    const dayEnd = addLocalDays(day, 1).getTime();
-    return end.getTime() > dayStart && start.getTime() < dayEnd;
+    return gridModule.instanceOverlapsRange(instance, startOfLocalDay(day).getTime(), addLocalDays(day, 1).getTime());
   }
 
   function findUpNext(instances, now, gridModule) {
@@ -70,12 +62,7 @@
   }
 
   function formatRelative(now, start) {
-    const minutes = Math.round((start.getTime() - now.getTime()) / 60000);
-    if (minutes <= 0) return 'now';
-    if (minutes < 60) return `in ${minutes}m`;
-    const hours = Math.floor(minutes / 60);
-    const rest = minutes % 60;
-    return rest ? `in ${hours}h ${rest}m` : `in ${hours}h`;
+    return resolveGridModule().formatRelative(now, start);
   }
 
   function buildUpNextMarkup({ instances, now, gridModule, compact = false } = {}) {
@@ -91,7 +78,7 @@
     if (!start || !end) {
       return '';
     }
-    const title = String(instance.title || '').trim() || jt('dashboard.calendar.agenda.noTitle', '(no title)');
+    const title = resolveGridModule().instanceTitle(instance);
     const time = `${gridModule.formatTimeShort(start)} – ${gridModule.formatTimeShort(end)}`;
     if (compact) {
       return '<div class="cal-compact-up-next">'
@@ -123,6 +110,30 @@
     return best?.instance || null;
   }
 
+  // Instances per mini-month cell in start order: one stable sort, then each
+  // instance walks only the days it covers (half-open end, as in
+  // instanceOverlapsDay), so a cell never re-filters the whole snapshot.
+  function bucketMiniMonthDays(instances, gridStart, dayCount, gridModule) {
+    const buckets = Array.from({ length: dayCount }, () => []);
+    const gridStartMs = startOfLocalDay(gridStart).getTime();
+    const sorted = (Array.isArray(instances) ? instances : []).slice()
+      .sort((a, b) => String(a.start).localeCompare(String(b.start)));
+    for (const instance of sorted) {
+      const start = gridModule.parseLocalDateTime(instance?.start);
+      const end = gridModule.parseLocalDateTime(instance?.end);
+      if (!start || !end) {
+        continue;
+      }
+      const endMs = end.getTime();
+      let index = Math.max(0, Math.round((startOfLocalDay(start).getTime() - gridStartMs) / 86400000));
+      while (index < dayCount && addLocalDays(gridStart, index).getTime() < endMs) {
+        buckets[index].push(instance);
+        index += 1;
+      }
+    }
+    return buckets;
+  }
+
   function buildMiniMonth({ weekStart, instances, now, selectedDayKey, actionButton, gridModule } = {}) {
     const button = resolveActionButton(actionButton);
     if (!button || !gridModule || !(weekStart instanceof Date)) {
@@ -135,13 +146,12 @@
     const finalWeekStart = gridModule.computeWeekStart(monthEnd, 0);
     const dayCount = Math.round((startOfLocalDay(finalWeekStart) - startOfLocalDay(gridStart)) / 86400000) + 7;
     const todayKey = gridModule.formatLocalDate(now);
+    const buckets = bucketMiniMonthDays(instances, gridStart, dayCount, gridModule);
     const days = [];
     for (let index = 0; index < dayCount; index += 1) {
       const day = addLocalDays(gridStart, index);
       const dayKey = gridModule.formatLocalDate(day);
-      const dayInstances = (Array.isArray(instances) ? instances : [])
-        .filter((instance) => instanceOverlapsDay(instance, day, gridModule))
-        .sort((a, b) => String(a.start).localeCompare(String(b.start)));
+      const dayInstances = buckets[index];
       const dotInstance = chooseDayCategory(dayInstances);
       const outside = day.getMonth() !== monthDate.getMonth();
       const fullLabel = gridModule.formatFullDateLabel(day);
@@ -325,11 +335,8 @@
     });
     const allDay = safeInstances.filter((instance) => instance.allDay === true);
     const allDayRows = allDay.map((instance) => {
-      const title = String(instance.title || '').trim() || jt('dashboard.calendar.agenda.noTitle', '(no title)');
-      const dataset = { 'cal-instance': '1' };
-      if (instance.instanceId) dataset['cal-instance-id'] = String(instance.instanceId);
-      if (instance.readonly === true) dataset['cal-readonly'] = '1';
-      else if (instance.eventId) dataset['cal-event-id'] = String(instance.eventId);
+      const title = resolveGridModule().instanceTitle(instance);
+      const dataset = resolveGridModule().eventDataset(instance);
       return button({
         plain: true,
         className: `cal-rail__allday-row ${categoryClass(instance)}`,
@@ -381,15 +388,16 @@
     }
     const rangeAnchor = weekStart instanceof Date ? addLocalDays(weekStart, 3) : null;
     const monthKey = rangeAnchor ? `${rangeAnchor.getFullYear()}-${rangeAnchor.getMonth() + 1}` : '';
-    const visibleMonthInstances = mode === 'agenda' && rangeAnchor
-      ? (Array.isArray(instances) ? instances : []).filter((instance) => {
+    let visibleMonthInstances = [];
+    if (mode === 'agenda' && rangeAnchor) {
+      const monthKeyOf = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      const fromKey = monthKeyOf(new Date(rangeAnchor.getFullYear(), rangeAnchor.getMonth() - 1, 1));
+      const toKey = monthKeyOf(new Date(rangeAnchor.getFullYear(), rangeAnchor.getMonth() + 1, 1));
+      visibleMonthInstances = (Array.isArray(instances) ? instances : []).filter((instance) => {
         const key = String(instance.start || '').slice(0, 7);
-        const adjacentStart = new Date(rangeAnchor.getFullYear(), rangeAnchor.getMonth() - 1, 1);
-        const adjacentEnd = new Date(rangeAnchor.getFullYear(), rangeAnchor.getMonth() + 1, 1);
-        return key >= `${adjacentStart.getFullYear()}-${String(adjacentStart.getMonth() + 1).padStart(2, '0')}`
-          && key <= `${adjacentEnd.getFullYear()}-${String(adjacentEnd.getMonth() + 1).padStart(2, '0')}`;
-      })
-      : [];
+        return key >= fromKey && key <= toKey;
+      });
+    }
     const upNext = now instanceof Date ? findUpNext(instances, now, gridModule) : null;
     return [
       monthKey,
@@ -413,6 +421,5 @@
     computeRailDigest,
     computeWeekStripDigest,
     findUpNext,
-    formatBookedMinutes,
   };
 });

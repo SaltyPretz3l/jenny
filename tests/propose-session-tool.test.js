@@ -81,6 +81,8 @@ function makeHarness({
           value: {
             schema_version: 1, initiation: args.initiation, title: args.title, description: args.description ?? null,
             group_key: args.group_key ?? null, authorization_ref: args.authorization_ref ?? null,
+            project_id: args.project_id ?? null,
+            ...(typeof args.preferred_model === 'string' ? { preferred_model: args.preferred_model } : {}),
           },
         };
       },
@@ -441,10 +443,111 @@ test('both tools are manifest-backed, workspace-free, read-only runtime tools wi
     assert.equal(entry.side_effecting, false);
     assert.equal(entry.availability.workspace_required, false);
     assert.equal(entry.parameters.additionalProperties, false);
+    if (name === 'propose_session') {
+      assert.deepEqual(entry.parameters.properties.project_id, { type: 'string', minLength: 1, maxLength: 128, description: entry.parameters.properties.project_id.description });
+      assert.deepEqual(entry.parameters.required, ['initiation', 'title']);
+    }
     assert.deepEqual(entry.surfaces, ['managed_sidecar']);
     const tool = registry.getTool(name);
     assert.equal(tool.workspaceRequired, false);
     assert.deepEqual(tool.parameters, entry.parameters);
   }
   assert.equal(registry.getTool('propose_session').summarize({ initiation: 'own_initiative' }), 'Suggest a separate chat');
+});
+
+// ---------- project_id (row 76, S4) ----------
+
+function withPrimary(harness, { primary = true, projects = ['proj_9'] } = {}) {
+  const summary = { id: 'sess_1', session_role: primary ? 'primary' : null };
+  harness.backendService.sessionStore.peekSessionSummary = () => summary;
+  harness.backendService.projectService = { get: (id) => (projects.includes(id) ? { id } : null) };
+  return harness;
+}
+
+test('propose_session project_id from the primary reaches publish in the input', async () => {
+  const harness = withPrimary(makeHarness());
+  const result = await proposeSessionTool.execute({ ...OFFER_ARGS, project_id: 'proj_9' }, harness.context);
+  assert.equal(result.isError, false);
+  assert.equal(harness.calls.published.length, 1);
+  assert.equal(harness.calls.published[0].input.project_id, 'proj_9');
+  const plain = await proposeSessionTool.execute(OFFER_ARGS, harness.context);
+  assert.equal(plain.isError, false);
+  assert.equal(harness.calls.published[1].input.project_id, null);
+});
+
+test('propose_session project_id from any other chat is refused before publish', async () => {
+  const harness = withPrimary(makeHarness(), { primary: false });
+  const result = await proposeSessionTool.execute({ ...OFFER_ARGS, project_id: 'proj_9' }, harness.context);
+  assert.equal(result.isError, true);
+  assert.match(result.content, /Only the Jenny chat can choose a project; omit project_id\./u);
+  assert.equal(harness.calls.published.length, 0);
+  assert.equal(harness.calls.captured.length, 0);
+  assert.equal(String(result.errorCode).startsWith('CMP-PROPOSAL-'), true);
+  assertNoEcho(result);
+});
+
+test('propose_session project_id naming an unknown project is refused for the primary', async () => {
+  const harness = withPrimary(makeHarness());
+  const result = await proposeSessionTool.execute({ ...OFFER_ARGS, project_id: 'proj_missing' }, harness.context);
+  assert.equal(result.isError, true);
+  assert.match(result.content, /No project with that id\. Use a project\.id from sessions_list, or omit project_id\./u);
+  assert.equal(harness.calls.published.length, 0);
+  assert.equal(result.content.includes('proj_missing'), false);
+  const noService = withPrimary(makeHarness());
+  delete noService.backendService.projectService;
+  assert.match((await proposeSessionTool.execute({ ...OFFER_ARGS, project_id: 'proj_9' }, noService.context)).content, /No project with that id/u);
+});
+
+// 2026-10-27: a launch grant starts the chat without anyone seeing the card, so the preferred_model
+// pre-fill must be an installed id; the alias `ornith15:9b` reached a child whose first turn failed.
+test('propose_session refuses a preferred_model the catalog does not carry, listing installed ids closest first', async () => {
+  const harness = makeHarness();
+  harness.backendService.listModels = async () => ({ data: [
+    { id: 'qwen3.8-27b-nvfp4', engine_type: 'openai-compatible' }, { id: 'ornith15:9b-q6-256k', engine_type: 'ollama' },
+    { id: 'ornith15:9b-q4-k-m', engine_type: 'ollama' }, { id: 'gone:1b', engine_type: 'ollama', available: false },
+  ] });
+  // Two installed tags extend the short name, so nothing is guessed.
+  const refused = await proposeSessionTool.execute({ ...OFFER_ARGS, preferred_model: 'ornith15:9b' }, harness.context);
+  assert.equal(refused.isError, true);
+  assert.match(refused.content, /preferred_model is not an installed model\. Installed: ornith15:9b-q6-256k, ornith15:9b-q4-k-m, qwen3\.8-27b-nvfp4\./u);
+  assert.equal(refused.content.includes('gone:1b'), false, 'an unavailable entry is not offered');
+  assert.equal(harness.calls.published.length, 0);
+  assertNoEcho(refused);
+
+  const accepted = await proposeSessionTool.execute({ ...OFFER_ARGS, preferred_model: 'ornith15:9b-q6-256k' }, harness.context);
+  assert.equal(accepted.isError, false);
+  assert.equal(harness.calls.published.length, 1);
+});
+
+// Owner run 2026-10-27: the refusal drew a failed tool row, and the model retried with the one
+// installed tag anyway. A short name with exactly one installed extension now resolves to it.
+test('propose_session resolves a short name to its one installed extension and says so', async () => {
+  const harness = makeHarness();
+  harness.backendService.listModels = async () => ({ data: [
+    { id: 'qwen3.8-27b-nvfp4', engine_type: 'openai-compatible' }, { id: 'ornith15:9b-q6-256k', engine_type: 'ollama' },
+    { id: 'solo:7b', engine_type: 'ollama' },
+  ] });
+  const result = await proposeSessionTool.execute({ ...OFFER_ARGS, preferred_model: 'ornith15:9b' }, harness.context);
+  assert.equal(result.isError, false);
+  assert.equal(harness.calls.published[0].input.preferred_model, 'ornith15:9b-q6-256k');
+  assert.match(result.content, / preferred_model is set to the installed ornith15:9b-q6-256k\.$/u);
+  assertNoEcho(result);
+  const untagged = await proposeSessionTool.execute({ ...OFFER_ARGS, preferred_model: 'solo' }, harness.context);
+  assert.equal(untagged.isError, false);
+  assert.equal(harness.calls.published[1].input.preferred_model, 'solo:7b');
+  // `ornith15:9` is not a tag the installed id extends at a separator.
+  const partial = await proposeSessionTool.execute({ ...OFFER_ARGS, preferred_model: 'ornith15:9' }, harness.context);
+  assert.equal(partial.isError, true);
+  const exact = await proposeSessionTool.execute({ ...OFFER_ARGS, preferred_model: 'qwen3.8-27b-nvfp4' }, harness.context);
+  assert.equal(exact.content.includes('preferred_model is set'), false);
+});
+
+test('propose_session accepts the model when the catalog cannot be read or lists nothing', async () => {
+  for (const listModels of [async () => { throw new Error('sidecar down'); }, async () => ({ data: [] }), undefined]) {
+    const harness = makeHarness();
+    if (listModels) harness.backendService.listModels = listModels;
+    const result = await proposeSessionTool.execute({ ...OFFER_ARGS, preferred_model: 'ornith15:9b' }, harness.context);
+    assert.equal(result.isError, false);
+    assert.equal(harness.calls.published.length, 1);
+  }
 });

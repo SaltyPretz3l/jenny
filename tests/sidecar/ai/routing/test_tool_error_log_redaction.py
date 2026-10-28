@@ -107,3 +107,72 @@ def test_model_keeps_the_path_but_router_logs_redact_it(caplog) -> None:
     )
     assert "<path>" in recovered[0].__dict__["data"]["error_message"]
     assert "<path>" in recovered[0].getMessage()
+
+
+class _BadHeadingMCPClient(_StubMCPClient):
+    def execute_tool(self, tool_name, arguments, **_kwargs):
+        self.executions.append((tool_name, dict(arguments)))
+        raise MCPError(
+            code="CMP-TOOL-0004",
+            message="none of the requested Markdown headings were found",
+            response_received=True,
+        )
+
+
+# Owner run 2026-10-27: one missed Markdown heading wrote three WARN lines though the model got the
+# reason and carried on. A failure the model caused with its arguments logs at INFO; a denial
+# (the CMP-TOOL-0003 run above) stays a warning.
+def test_a_model_argument_miss_logs_info_and_a_denial_stays_warning(caplog) -> None:
+    _run_failing_read(caplog)
+    denied = _records(caplog, "ai.router.tool_call_failed") + _records(
+        caplog, "ai.router.tool_execution_recovered"
+    )
+    assert denied and all(record.levelno == logging.WARNING for record in denied)
+
+    caplog.clear()
+    caplog.set_level(logging.INFO)
+    engine = _ToolLoopEngine(
+        plans=[
+            _ToolPlan(
+                result=GenerationResult(
+                    content="",
+                    finish_reason="tool_calls",
+                    tool_calls=(
+                        ToolCallRequest(
+                            tool_id="probe_read",
+                            arguments={"path": "README.md"},
+                            call_id="call_probe_heading",
+                        ),
+                    ),
+                )
+            ),
+            _ToolPlan(result=GenerationResult(content="No such heading.", finish_reason="stop")),
+        ]
+    )
+    _build_router(
+        engine=engine,
+        mcp_client=_BadHeadingMCPClient(
+            (
+                MCPToolDescriptor(
+                    name="probe_read",
+                    description="Read a file",
+                    input_schema={"type": "object"},
+                    side_effecting=False,
+                    server_name="tools",
+                ),
+            )
+        ),
+        extra_snapshot_tools=("probe_read",),
+    ).build_chat_decision(
+        request_id="req_heading_miss",
+        messages=[{"role": "user", "content": "Read the Setup section."}],
+        latest_user_content="Read the Setup section.",
+        mode="assist",
+        approvals_pre_granted=True,
+        runtime=LoopRuntime(emit=lambda _event: None, request_id="req_heading_miss"),
+    )
+    missed = _records(caplog, "ai.router.tool_call_failed") + _records(
+        caplog, "ai.router.tool_execution_recovered"
+    )
+    assert len(missed) == 2
+    assert all(record.levelno == logging.INFO for record in missed)

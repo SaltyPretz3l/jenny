@@ -28,7 +28,8 @@ def _pdf_tool():
 
 
 def _write_pdf(path: Path) -> None:
-    fitz = pytest.importorskip("fitz")
+    import fitz
+
     document = fitz.open()
     page = document.new_page(width=160, height=90)
     page.insert_text((20, 40), "Hello rich PDF")
@@ -36,7 +37,7 @@ def _write_pdf(path: Path) -> None:
     document.close()
 
 
-def test_pdf_inspect_returns_page_summary_and_preview_artifact(tmp_path: Path) -> None:
+def test_pdf_inspect_returns_page_summary_and_ignores_preview_arguments(tmp_path: Path) -> None:
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
     source_path = workspace_root / "sample.pdf"
@@ -53,35 +54,15 @@ def test_pdf_inspect_returns_page_summary_and_preview_artifact(tmp_path: Path) -
     )
 
     assert result.success is True
-    assert result.generated_artifacts
-    preview = result.generated_artifacts[0]
-    assert preview["artifact_kind"] == "image"
-    assert preview["editable"] is False
-    assert preview["mime_type"] == "image/png"
-    _assert_pdf_preview_artifact_has_pixels(workspace_root, preview)
+    # The preview path was never forwarded by any caller and is gone.
+    assert result.generated_artifacts == ()
+    assert "previews" not in result.metadata
+    assert result.metadata["warnings"] == []
     assert result.metadata["result_kind"] == "pdf_inspect"
     assert result.metadata["summary"]["page_count"] == 1
     assert result.metadata["summary"]["selected_pages"] == [1]
-    assert result.metadata["previews"][0]["page"] == 1
     assert "Hello rich PDF" in result.output
     assert str(workspace_root) not in result.output
-
-
-def test_pdf_inspect_skips_preview_without_session_id(tmp_path: Path) -> None:
-    workspace_root = tmp_path / "workspace"
-    workspace_root.mkdir()
-    source_path = workspace_root / "sample.pdf"
-    _write_pdf(source_path)
-
-    result = _pdf_tool()(
-        {"path": "sample.pdf", "pages": "1", "create_preview": True},
-        WorkspaceGuard(str(workspace_root)),
-    )
-
-    assert result.success is True
-    assert result.generated_artifacts == ()
-    assert result.metadata["previews"] == []
-    assert "preview skipped" in result.metadata["warnings"][0].lower()
 
 
 def test_pdf_inspect_fails_with_pdf_addon_missing(
@@ -136,7 +117,8 @@ def test_pdf_inspect_corrupt_pdf_returns_unsupported(tmp_path: Path) -> None:
 
 def test_pdf_complete_page_is_not_marked_truncated(tmp_path: Path) -> None:
     """A page whose numbered lines all fit the budget carries no continuation."""
-    fitz = pytest.importorskip("fitz")
+    import fitz
+
     module = importlib.import_module("sidecar.ai.tools.builtins.rich_files.pdf")
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
@@ -163,7 +145,8 @@ def test_pdf_complete_page_is_not_marked_truncated(tmp_path: Path) -> None:
 
 
 def test_pdf_inspect_reads_first_pages_of_an_over_limit_range(tmp_path: Path) -> None:
-    fitz = pytest.importorskip("fitz")
+    import fitz
+
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
     document = fitz.open()
@@ -183,98 +166,10 @@ def test_pdf_inspect_reads_first_pages_of_an_over_limit_range(tmp_path: Path) ->
     assert summary["note"].endswith(pdf_text.SOURCES_NOTE)
 
 
-def test_pdf_preview_skips_oversized_render_without_pixmap(tmp_path: Path) -> None:
-    module = importlib.import_module("sidecar.ai.tools.builtins.rich_files.pdf")
-
-    class Rect:
-        width = 100_000
-        height = 100_000
-
-    class Page:
-        rect = Rect()
-
-        def get_pixmap(self, **_kwargs: object) -> object:
-            raise AssertionError("oversized preview should not render")
-
-    context = module.PdfPreviewContext(
-        workspace=WorkspaceGuard(str(tmp_path)),
-        session_id="session-rich",
-        source_path=Path("sample.pdf"),
-        fitz=object(),
-    )
-
-    result = module._create_pdf_page_preview(
-        context=context,
-        page=Page(),
-        page_number=1,
-    )
-
-    assert result.previews == ()
-    assert "preview skipped" in result.warnings[0]
-
-
-def _assert_pdf_preview_artifact_has_pixels(
-    workspace_root: Path,
-    preview: dict[str, object],
-) -> None:
-    Image = pytest.importorskip("PIL.Image")
-    preview_path = workspace_root / Path(str(preview["display_path"]))
-    with Image.open(preview_path) as image:
-        assert image.width > 0
-        assert image.height > 0
-        extrema = image.convert("L").getextrema()
-        assert extrema[0] < extrema[1]
-
-
-def test_pdf_preview_skips_oversized_png_bytes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    module = importlib.import_module("sidecar.ai.tools.builtins.rich_files.pdf")
-
-    class Rect:
-        width = 10
-        height = 10
-
-    class Pixmap:
-        width = 10
-        height = 10
-
-        def tobytes(self, _format: str) -> bytes:
-            return b"x" * 16
-
-    class Page:
-        rect = Rect()
-
-        def get_pixmap(self, **_kwargs: object) -> Pixmap:
-            return Pixmap()
-
-    class Fitz:
-        @staticmethod
-        def Matrix(_x_scale: float, _y_scale: float) -> object:
-            return object()
-
-    monkeypatch.setattr(module.filesystem_content, "MAX_MEDIA_FILE_BYTES", 8)
-    context = module.PdfPreviewContext(
-        workspace=WorkspaceGuard(str(tmp_path)),
-        session_id="session-rich",
-        source_path=Path("sample.pdf"),
-        fitz=Fitz(),
-    )
-
-    result = module._create_pdf_page_preview(
-        context=context,
-        page=Page(),
-        page_number=1,
-    )
-
-    assert result.previews == ()
-    assert "preview skipped" in result.warnings[0]
-
-
 def test_pdf_inspect_page_without_text_layer_uses_ocr(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    fitz = pytest.importorskip("fitz")
+    import fitz
 
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
@@ -333,7 +228,8 @@ def test_pdf_inspect_page_without_text_layer_uses_ocr(
 
 
 def _write_dense_pdf(path: Path) -> None:
-    fitz = pytest.importorskip("fitz")
+    import fitz
+
     document = fitz.open()
     for _page_number in range(3):
         page = document.new_page(width=612, height=792)
@@ -377,7 +273,7 @@ def _follow_page_cursors(
 
 
 def _expected_numbered_pages(path: Path) -> list[str]:
-    fitz = pytest.importorskip("fitz")
+    import fitz
 
     expected: list[str] = []
     with fitz.open(path) as document:
@@ -508,7 +404,8 @@ def test_pdf_inspect_scanned_page_uses_ocr_textpage_lines(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fitz = pytest.importorskip("fitz")
+    import fitz
+
     workspace_root = tmp_path / "workspace"
     workspace_root.mkdir()
 

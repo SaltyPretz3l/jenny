@@ -3,6 +3,7 @@ const {
   normalizeCompanionMode,
 } = require('./companion-mode');
 const { normalizeString } = require('./backend/path-utils');
+const { CONFIG_ERROR_CODES } = require('./backend/error-codes');
 const { normalizeFeatureOverrides } = require('./feature-flags');
 const {
   DEFAULT_TOOL_SETTINGS,
@@ -124,11 +125,17 @@ function normalizeMemorySettings(value = {}) {
 }
 
 // The settings write path: takeNotesSince is main-owned (a patch never sets
-// it) and is stamped `now` when takeNotes turns from off to on.
+// it) and is stamped `now` when takeNotes turns from off to on. A non-boolean
+// switch value is rejected like an invalid subagent-routing patch, not coerced.
+const MEMORY_SWITCH_KEYS = Object.freeze(['takeNotes', 'askBeforeSaving', 'pauseSaving', 'useInChats']);
+
 function applyMemorySettingsPatch(current, patch, now = new Date()) {
   const previous = normalizeMemorySettings(current);
   const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
   const { takeNotesSince: _ignored, ...changes } = source;
+  if (MEMORY_SWITCH_KEYS.some((key) => Object.hasOwn(changes, key) && typeof changes[key] !== 'boolean')) {
+    throw Object.assign(new Error('Memory settings are invalid.'), { code: CONFIG_ERROR_CODES.INVALID });
+  }
   const next = normalizeMemorySettings({ ...previous, ...changes });
   if (previous.takeNotes === false && next.takeNotes === true) next.takeNotesSince = now.toISOString();
   return next;

@@ -1,0 +1,4 @@
+data: {"id":"e1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"Partial"},"finish_reason":null}]}
+
+data: {"object":"error","error":"upstream provider disconnected"}
+

@@ -28,6 +28,7 @@ from sidecar.ai.mcp.exceptions import (
     CMP_MCP_PROTOCOL_FAILED,
     CMP_MCP_SERVER_FAILED,
     MCPError,
+    failure_log_level,
 )
 from sidecar.ai.mcp.mcp_http_auth import ClientCredentialsTokenSource
 from sidecar.ai.mcp.sse_http_client import SSEHttpError, post_jsonrpc, post_notification
@@ -572,5 +573,8 @@ class SSEMCPTransport(MCPTransport):
                     and re.fullmatch(r"CMP-[A-Z]+-[0-9]{4}", data["code"])):
                 error_code = str(data["code"])
             retryable = data.get("retryable") is True
-        logger.warning("mcp call failed on server=%s message=%s", self.server_name, message)
+        logger.log(
+            failure_log_level(error_code, retryable=retryable),
+            "mcp call failed on server=%s message=%s", self.server_name, message,
+        )
         raise MCPError(code=error_code, message=message, retryable=retryable)

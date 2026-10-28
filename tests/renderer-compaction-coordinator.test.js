@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  createAppCompactionCoordinator,
   createCompactionCoordinator,
   describeCompactionResult,
   getCompactionActivity,
@@ -143,4 +144,53 @@ test('coordinator bounds settled session activity and clears only settled entrie
   assert.equal(getCompactionActivity(state, 's0'), null);
   assert.equal(coordinator.clearSettled('s39'), true);
   assert.equal(getCompactionActivity(state, 's39'), null);
+});
+
+test('one compaction view: the inline row follows pending, a saved result is the divider, anything else is told once', async () => {
+  const events = [];
+  const results = [
+    { status: 'ok', compacted: true, tokens_before: 5000, tokens_after: 900, snapshot_persisted: true },
+    { status: 'ok', compacted: false },
+    { status: 'error', reason: 'session_busy' },
+  ];
+  const coordinator = createCompactionCoordinator({
+    state: {},
+    getChatApi: () => ({ compactNow: async () => results.shift() }),
+    callbacks: {
+      onActivityChange: (sessionId, activity) => events.push(['row', sessionId, activity.pending]),
+      notifySettled: (activity) => events.push(['told', activity.sessionId, activity.reason, activity.tone]),
+    },
+  });
+  await coordinator.invoke('s1');
+  await coordinator.invoke('s1');
+  await coordinator.invoke('s1');
+  assert.deepEqual(events, [
+    ['row', 's1', true], ['row', 's1', false],
+    ['row', 's1', true], ['row', 's1', false], ['told', 's1', 'not_needed', 'default'],
+    ['row', 's1', true], ['row', 's1', false], ['told', 's1', 'session_busy', 'warning'],
+  ]);
+});
+
+// The composer is disabled while a compaction is pending (isSendBusy), so the
+// settle must re-render it: a missing ctx.renderComposerState kept it locked
+// until a chat switch. The app wiring passes it through a ctx overlay
+// (renderer-app-controller-composition.js; guarded in renderer-app-split.test.js).
+test('the app coordinator re-renders the composer, the activity row and the timeline when a compaction settles', async () => {
+  const calls = [];
+  const noted = [];
+  const state = { streamWaits: { noteSessionCompaction: (sessionId, pending) => noted.push([sessionId, pending]) } };
+  const coordinator = createAppCompactionCoordinator({
+    state,
+    window: { jennyShell: { chat: { compactNow: async () => ({ status: 'ok', compacted: true, tokens_before: 4000, tokens_after: 800, snapshot_persisted: true }) } } },
+    renderComposerState: () => calls.push('composer'),
+    renderMessages: () => calls.push('messages'),
+    refreshSessionSummaries: async () => calls.push('summaries'),
+    showToastMessage: () => calls.push('toast'),
+  });
+  const settled = await coordinator.invoke('s1', { source: 'slash' });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(settled.activity.reason, 'persisted');
+  assert.deepEqual(noted, [['s1', true], ['s1', false]]);
+  assert.equal(calls.filter((entry) => entry === 'composer').length, 2, 'pending and settled both re-render the composer');
+  assert.deepEqual(calls.filter((entry) => entry !== 'composer'), ['summaries', 'messages'], 'the divider repaints after the summary refresh; no toast');
 });

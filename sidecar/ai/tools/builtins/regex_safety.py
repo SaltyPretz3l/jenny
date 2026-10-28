@@ -12,6 +12,10 @@ import re
 
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 
+# Checked before the heuristic, whose own regexes slow down roughly cubically
+# with pattern length.
+MAX_PATTERN_CHARS = 2000
+
 
 def looks_like_catastrophic_regex(pattern: str) -> bool:
     """Heuristic PRE-FILTER for patterns prone to catastrophic backtracking.
@@ -50,6 +54,12 @@ def compile_safe_pattern(
         raise ToolExecutionFailure(
             code=error_code,
             message="regex pattern must be a non-empty string",
+            retryable=False,
+        )
+    if len(pattern) > MAX_PATTERN_CHARS:
+        raise ToolExecutionFailure(
+            code=error_code,
+            message=f"regex pattern exceeds {MAX_PATTERN_CHARS} characters",
             retryable=False,
         )
     if looks_like_catastrophic_regex(pattern):

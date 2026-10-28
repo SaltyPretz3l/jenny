@@ -18,6 +18,7 @@ const { ProjectStore } = require('../../services/projects/project-store');
 const { ProjectWorkspacePool } = require('../../services/projects/project-workspace-pool');
 const { ToolPermissionStore } = require('../../services/tools/tool-permission-store');
 const { cleanupTrackedResources, createTrackedTempDir } = require('../helpers/resource-cleanup');
+const { linkDirectory, windowsOnly } = require('../helpers/platform-skips');
 
 test.afterEach(async () => cleanupTrackedResources());
 
@@ -142,7 +143,7 @@ test('a read-only project store refuses the delete before any chat is moved', as
   assert.equal(fixture.sessionStore.getSessionSummary(session.id).project_id, created.id);
 });
 
-test('workspace_bound is judged by canonical root identity, not string equality (Windows casing)', { skip: process.platform !== 'win32' ? 'case-insensitive roots are a Windows contract' : false }, async () => {
+test('workspace_bound is judged by canonical root identity, not string equality (Windows casing)', { skip: windowsOnly('case-insensitive root identity') }, async () => {
   const fixture = createFixture();
   const shouted = createFixture({ workspaceRoot: fixture.folder.toUpperCase() });
   const created = shouted.application.createProject({ name: 'Ascend' }).project;
@@ -184,15 +185,10 @@ test('a failed project-store write puts the already-moved chats back: a refused 
   assert.ok(fixture.projectService.get(created.id));
 });
 
-test('workspace_bound follows the real path: a Workspace opened through a junction is the deleted project', async (t) => {
+test('workspace_bound follows the real path: a Workspace opened through a junction is the deleted project', async () => {
   const fixture = createFixture();
   const link = path.join(fixture.root, 'AscendLink');
-  try {
-    fs.symlinkSync(fixture.folder, link, process.platform === 'win32' ? 'junction' : 'dir');
-  } catch (error) {
-    t.skip(`directory link unavailable: ${error.code || error.message}`);
-    return;
-  }
+  linkDirectory(fixture.folder, link);
   const linked = createFixture({ workspaceRoot: link });
   const created = linked.application.createProject({ name: 'Ascend' }).project;
   assert.equal(linked.application.bindProjectRoot({

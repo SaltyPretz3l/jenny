@@ -156,3 +156,29 @@ test('flag-on file and directory Delete items use danger styling', async (t) => 
     assert.equal(findMenuItem(doc, 'Delete')?.classList.contains('inv-context-menu-item--danger'), true);
   }
 });
+
+test('file row menu offers Open to the Side after Open in New Tab plus the shared path rows', async (t) => {
+  const harness = createHarness();
+  t.after(() => harness.dispose());
+  const panel = await expandSourceFolder(harness);
+  const doc = harness.dom.window.document;
+
+  openContextMenu(harness, panel.querySelector('[data-ide-tree-path="src/app.js"]'));
+  const labels = menuLabels(doc);
+
+  assert.equal(labels.indexOf('Open to the Side'), labels.indexOf('Open in New Tab') + 1);
+  for (const label of ['Copy Path', 'Copy Relative Path', 'Reveal in File Explorer', 'Open in Default App', 'Copy Name']) {
+    assert.ok(labels.includes(label), `file menu is missing ${label}`);
+  }
+  assert.match(findMenuItem(doc, 'Open to the Side')?.closest('.inv-context-menu-item')?.textContent || '', /Ctrl\+Enter/);
+});
+
+test('directory row menu does not offer Open to the Side', async (t) => {
+  const harness = createHarness();
+  t.after(() => harness.dispose());
+  const panel = await expandSourceFolder(harness);
+
+  openContextMenu(harness, panel.querySelector('[data-ide-tree-path="src"]'));
+
+  assert.equal(menuLabels(harness.dom.window.document).includes('Open to the Side'), false);
+});

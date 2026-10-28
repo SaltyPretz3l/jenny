@@ -114,8 +114,15 @@ def _indentation_match(
     offsets = [0]
     for line in lines:
         offsets.append(offsets[-1] + len(line) + 1)
+    # Cheap necessary condition: a window's dedented first line equals the
+    # target's only if their stripped forms match, so most positions skip the
+    # whole-window dedent below.
+    first_target = target[0].strip()
+    stripped_lines = [line.strip() for line in normal_lines]
     matches: list[tuple[int, int, str]] = []
     for index in range(len(lines) - len(target) + 1):
+        if stripped_lines[index] != first_target:
+            continue
         run = normal_lines[index:index + len(target)]
         indent = _indent(run)
         if _dedent(run, indent) == target:

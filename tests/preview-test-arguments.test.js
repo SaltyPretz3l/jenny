@@ -77,6 +77,23 @@ test('unknown top-level arguments fail before opening a browser', async () => {
   }
 });
 
+test('an oversized event selector or text fails the argument before a browser opens', async () => {
+  const root = makeWorkspace();
+  for (const event of [
+    { action: 'click', selector: `#${'a'.repeat(200)}` },
+    { action: 'type', selector: '#name', text: 'x'.repeat(10_001) },
+  ]) {
+    const { result, opened } = await execute(root, { path: 'index.html', events: [event] });
+    assert.equal(result.isError, true);
+    assert.equal(result.metadata.reason, 'invalid_event');
+    assert.equal(opened.length, 0);
+  }
+  const atLimit = await execute(root, { path: 'index.html', events: [
+    { action: 'type', selector: `#${'a'.repeat(199)}`, text: 'x'.repeat(10_000) },
+  ] });
+  assert.equal(atLimit.result.isError, false, atLimit.result.content);
+});
+
 test('unknown event arguments cannot silently change the requested interaction', async () => {
   const root = makeWorkspace();
   const { result, opened } = await execute(root, {

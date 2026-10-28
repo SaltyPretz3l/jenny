@@ -21,6 +21,7 @@ from sidecar.ai.tools.builtins.owned_process_settlement import OwnedProcessClean
 from sidecar.ai.tools.builtins.temp_script import run_temp_script_tool
 from sidecar.ai.tools.contracts import ToolHandlerResult
 from sidecar.ai.tools.workspace import WorkspaceGuard
+from tests.sidecar._platform_skips import requires_file_symlinks, windows_only
 
 
 @pytest.mark.parametrize("enabled", [True, False])
@@ -68,7 +69,7 @@ _SCRIPTS = {
 
 @pytest.mark.parametrize("language", ["python", "powershell", "javascript"])
 @pytest.mark.parametrize("exit_code", [0, 7])
-@pytest.mark.skipif(os.name != "nt", reason="real Windows cmd and interpreter integration")
+@windows_only("real cmd and interpreter integration")
 def test_real_windows_scripts_keep_streams_exit_and_interpreter(tmp_path, language, exit_code):
     name = {"python": "python", "powershell": "powershell", "javascript": "node"}[language]
     if shutil.which(name) is None:
@@ -95,7 +96,7 @@ def test_real_windows_scripts_keep_streams_exit_and_interpreter(tmp_path, langua
 
 
 @pytest.mark.parametrize("exit_code", [0, 9])
-@pytest.mark.skipif(os.name != "nt", reason="actual Windows executable stream semantics")
+@windows_only("actual executable stream semantics")
 def test_real_windows_executable_stderr_does_not_replace_exit_status(tmp_path, exit_code):
     command = f'"{sys.executable}" -c "import sys; print(\'native-out\'); '
     command += f'print(\'native-err\', file=sys.stderr); sys.exit({exit_code})"'
@@ -275,7 +276,7 @@ def test_unavailable_probe_results_are_metadata_only(monkeypatch, changes, reaso
     assert details["interpreter_version_probe"]["reason"] == reason
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows bounded discovery and real interpreter")
+@windows_only("bounded discovery and real interpreter")
 def test_real_scripts_run_with_constructed_desktop_path(tmp_path, monkeypatch):
     from sidecar.ai.config import MCPServerConfig
     from sidecar.ai.mcp.process_containment import _minimal_env
@@ -314,12 +315,10 @@ def test_script_timeout_does_not_launch_version_probe(tmp_path, monkeypatch):
     assert result.metadata["resource_cleanup"] == CONFIRMED.metadata()
 
 
+@requires_file_symlinks()
 def test_selected_interpreter_symlink_preserves_invocation_identity(tmp_path, monkeypatch):
     selected = tmp_path / ("selected-python.exe" if os.name == "nt" else "selected-python")
-    try:
-        selected.symlink_to(sys.executable)
-    except OSError:
-        pytest.skip("interpreter symlinks unavailable on this host")
+    selected.symlink_to(sys.executable)
     monkeypatch.setenv("PATH", str(tmp_path))
     monkeypatch.setattr(shell.shutil, "which", lambda *_args, **_kwargs: str(selected))
     executable = interpreters.resolve_script_interpreter("python")
@@ -330,7 +329,7 @@ def test_selected_interpreter_symlink_preserves_invocation_identity(tmp_path, mo
     assert command.startswith(f'"{selected.absolute()}" ')
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell 5.1 Unicode decoding")
+@windows_only("PowerShell 5.1 Unicode decoding")
 def test_powershell_51_preserves_unicode_literals(tmp_path):
     result = run_temp_script_tool({"script": "$s='caf\u00e9 \u2713'; [Console]::Out.WriteLine($s.Length)",
         "language": "powershell", "timeout_seconds": 30}, WorkspaceGuard(str(tmp_path)))
@@ -378,7 +377,7 @@ def test_interpreter_resolution_rejects_cwd_fallback(tmp_path, monkeypatch):
         interpreters.resolve_script_interpreter("python")
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows cmd explicit PATH discovery")
+@windows_only("cmd explicit PATH discovery")
 def test_outer_cmd_resolution_rejects_cwd_fallback(tmp_path, monkeypatch):
     shell_settings.configure_shell_security({"shell_noninteractive_env": False})
     allowed = tmp_path / "allowed"

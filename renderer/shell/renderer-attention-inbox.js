@@ -46,8 +46,6 @@
   var ROW_CLASS = 'attention-inbox__row';
   var ACTION_CLASS = 'attention-inbox__action';
   var TITLE_CLASS = 'attention-inbox__open';
-  /* One muted line, joined the way the Chats panel joins facts. */
-  var LINE_SEPARATOR = ' · ';
   /* The kicker's own disclosure marks, as the Chats panel writes them. */
   var CHEVRON_OPEN = '▾';
   var CHEVRON_CLOSED = '▸';
@@ -161,7 +159,7 @@
         // The intro, clipped as the model clips it: revised under one batch id.
         return String(summary.id || '') + PART + String(summary.title || '')
           + PART + String((batch && batch.batch_id) || '') + PART + questions
-          + PART + String((batch && batch.intro_text) || '').slice(0, 120);
+          + PART + String((batch && batch.intro_text) || '').slice(0, 120) + PART + String(summary.failed_delivery_count || 0);
       }).join(FIELD);
       return [
         readCollapsed() ? '1' : '0', String(state.currentSessionId || ''), approvalKeys, sessionKeys,
@@ -309,6 +307,8 @@
       return node;
     }
 
+    function model() { return inboxModel || globalThis.rendererAttentionInboxModel; }
+
     // Line 2 of an approval: the tool, then exactly what it was called with.
     function renderApprovalDetail(row, node) {
       var detail = element('div', 'attention-inbox__detail');
@@ -324,7 +324,7 @@
     // Line 3: what this call may do (renderer-attention-inbox-model.js policyLine).
     function renderApprovalRow(row, node) {
       renderApprovalDetail(row, node);
-      node.appendChild(muted('attention-inbox__policy', (inboxModel || globalThis.rendererAttentionInboxModel).policyLine(row)));
+      node.appendChild(muted('attention-inbox__policy', model().policyLine(row)));
     }
 
     // Restart engine frees a model whose last reply's cleanup is unconfirmed;
@@ -410,17 +410,18 @@
           onClick: function onRestart() { restartEngine(row); } });
         return;
       }
-      // A plan is read in its conversation, and a question batch is answered in
-      // the transcript that holds it: both buttons open the chat.
-      var isPlan = row.kind === 'plan_review';
+      // A plan is read in its conversation, a question batch is answered in the
+      // transcript that holds it, and a failed send is retried or cancelled in
+      // the chat that sent it: every one of these buttons opens the chat.
+      var isQuestion = row.kind === 'question';
       control(actions, {
-        action: isPlan ? 'open' : 'answer',
+        action: isQuestion ? 'answer' : 'open',
         domId: 'attention-inbox-open-' + id,
-        className: ACTION_CLASS, modifier: isPlan ? 'attention-inbox__action--open' : 'attention-inbox__action--answer',
-        label: isPlan ? jt('chat.attentionInbox.open', 'Open') : jt('chat.attentionInbox.answer', 'Answer'),
-        title: isPlan
-          ? jt('chat.attentionInbox.openTitle', 'Open this chat to read the plan')
-          : jt('chat.attentionInbox.answerTitle', 'Open this chat to answer'),
+        className: ACTION_CLASS, modifier: isQuestion ? 'attention-inbox__action--answer' : 'attention-inbox__action--open',
+        label: isQuestion ? jt('chat.attentionInbox.answer', 'Answer') : jt('chat.attentionInbox.open', 'Open'),
+        title: isQuestion ? jt('chat.attentionInbox.answerTitle', 'Open this chat to answer')
+          : row.kind === 'delivery_failed' ? jt('chat.attentionInbox.deliveryFailedTitle', 'Open this chat to retry or cancel the send')
+            : jt('chat.attentionInbox.openTitle', 'Open this chat to read the plan'),
         onClick: function onOpen() { openSession(row.sessionId); },
       });
     }
@@ -430,20 +431,8 @@
       node.classList.add(ROW_CLASS + '--' + row.kind);
       node.dataset.attentionKey = row.key;
       renderTitle(row, node);
-      if (row.kind === 'approval') {
-        renderApprovalRow(row, node);
-      } else if (row.kind === 'stuck_send') {
-        node.appendChild(muted('attention-inbox__note', jt('chat.attentionInbox.stuckSend',
-          "Message waiting to start · last reply's cleanup unconfirmed")));
-      } else if (row.kind === 'plan_review') {
-        node.appendChild(muted('attention-inbox__note',
-          jt('chat.attentionInbox.planReady', 'Plan ready for review')));
-      } else {
-        var waiting = jtn('chat.attentionInbox.questionsWaiting', row.questionCount, { count: String(row.questionCount) },
-          '{count} question waiting', '{count} questions waiting');
-        node.appendChild(muted('attention-inbox__note',
-          row.introText ? waiting + LINE_SEPARATOR + row.introText : waiting));
-      }
+      if (row.kind === 'approval') renderApprovalRow(row, node);
+      else node.appendChild(muted('attention-inbox__note', model().rowNote(row)));
       renderRowActions(row, node);
       list.appendChild(node);
     }
@@ -553,7 +542,7 @@
       // moved without changing a word still touches no DOM.
       var next = JSON.stringify([readCollapsed(), answerable, rows.map(function rowContent(row) {
         return [row.key, row.sessionTitle, row.toolName, row.preview, row.canAlwaysAllow, row.questionCount,
-          row.introText, row.consequence, row.policyScope,
+          row.introText, row.consequence, row.policyScope, row.failedCount,
           (row.facts || []).map(function labelOf(fact) { return fact.label; }),
           stale.has(row.key), inFlight.has(row.key)];
       })]);

@@ -26,3 +26,10 @@ test('number bounds are ignored for text fields and unknown types still fall bac
   assert.equal(b.type, 'text');
   dom.window.close();
 });
+
+test('a multiline value that starts with a line break keeps it through the HTML parser', () => {
+  const dom = new JSDOM(`<div>${textField({ id: 'pad', label: 'Pad', multiline: true, value: '\n\nbody' })}${textField({ id: 'plain', label: 'Plain', multiline: true, value: 'body' })}</div>`);
+  assert.equal(dom.window.document.getElementById('pad').value, '\n\nbody');
+  assert.equal(dom.window.document.getElementById('plain').value, 'body');
+  assert.match(textField({ id: 'plain', label: 'Plain', multiline: true, value: 'body' }), />body<\/textarea>/);
+});

@@ -20,6 +20,8 @@ const { normalizeRunMode } = require('./session-preferences-patch');
 const { resolveSessionToolDenyList } = require('./backend-service-utils');
 const { resolveDefaultSessionProjectId } = require('../projects/workspace-project-provisioner');
 const { createWorkspaceViewStore, normalizeSpawnedFrom } = require('./session-coordination-records');
+const { updateLinkedSessionIds } = require('./session-branching');
+const { PRIMARY_PROTECTED, PRIMARY_SESSION_ROLE, isPrimaryRole, isPrimarySession, normalizeSessionRole } = require('./primary-session');
 const {
   MAX_FOLLOW_UP_BODY_CHARS,
   MAX_FOLLOW_UP_LABEL_CHARS,
@@ -50,8 +52,29 @@ async function listSessions(service) {
     };
 }
 
+// /handoff: the new, empty chat links to its source as a fork does (both sides'
+// linked_session_ids) and carries a branch_origin so it reads "Continued from".
+// Nothing is copied; an empty or unknown source id is ignored.
+function linkHandoffSource(store, session, sourceId) {
+  const source = typeof sourceId === 'string' && sourceId.trim() ? store.getSession(sourceId.trim()) : null;
+  if (!source || !session?.id || source.id === session.id) return session;
+  const messages = Array.isArray(source.messages) ? source.messages : [];
+  const branchOrigin = {
+    source_session_id: source.id,
+    source_message_id: String(messages[messages.length - 1]?.id || '') || 'session_start',
+    source_title: String(source.title || '').trim(),
+    created_at: new Date().toISOString(),
+  };
+  const updated = store.updateSession(session.id, { branch_origin: branchOrigin, linked_session_ids: [source.id] });
+  updateLinkedSessionIds(store, source.id, session.id);
+  return updated || session;
+}
+
+// `sessionRole` comes only from the internal primary-session ensure path: BackendService.createSession
+// (the sessions.create IPC entry) never forwards it, so no renderer payload can mint a primary chat.
 async function createSession(service, {
   title, preferences, sessionType, providerAuthority, initialPrompt, linkedTaskId, projectId, draftImageAttachments,
+  handoffFromSessionId, sessionRole,
 } = {}) {
     // No explicit project: the configured Workspace folder's project (provisioned
     // on demand), General only when no folder is configured.
@@ -72,6 +95,14 @@ async function createSession(service, {
         normalizedPreferences = { ...normalizedPreferences, run_mode: normalizeRunMode(configuredMode) };
       }
     }
+    // Row 69: a handoff from the primary Jenny chat would carry its cross-project note into an
+    // ordinary General chat; refused like a branch.
+    if (typeof handoffFromSessionId === 'string' && handoffFromSessionId.trim()
+      && isPrimaryRole(service.sessionStore.getSessionSummary?.(handoffFromSessionId.trim()))) {
+      const error = new Error('The Jenny chat cannot hand off to a new chat.');
+      error.code = PRIMARY_PROTECTED;
+      throw error;
+    }
     const wantsPluginSession = providerAuthority != null
       || ['plugin', 'image'].includes(String(sessionType || '').trim().toLowerCase());
     if (wantsPluginSession) {
@@ -91,6 +122,7 @@ async function createSession(service, {
       ...(composerDraft ? { composerDraft } : {}),
       ...(normalizedLinkedTaskId ? { linkedTaskId: normalizedLinkedTaskId } : {}),
       projectId: authority.project_id,
+      ...(normalizeSessionRole(sessionRole) ? { sessionRole: PRIMARY_SESSION_ROLE } : {}),
     };
     let session;
     if (draftImageAttachments?.length) {
@@ -117,7 +149,7 @@ async function createSession(service, {
     }
     return {
       object: 'session',
-      data: session,
+      data: linkHandoffSource(service.sessionStore, session, handoffFromSessionId),
     };
 }
 
@@ -486,6 +518,9 @@ async function cleanupDeletedSession(
 }
 
 async function deleteSession(service, sessionId) {
+  if (isPrimarySession(service.sessionStore, sessionId)) {
+    return { object: 'session', id: sessionId, deleted: false, reason: PRIMARY_PROTECTED };
+  }
   let artifactDeletion = null;
   let artifactPreparationError = null;
   if (service.artifactService?.forSessionAuthority) {
@@ -716,6 +751,11 @@ function pauseSessionAutoRun(service, sessionId, {
 async function setSessionMeta(service, sessionId, meta = {}) {
   if (!sessionId) {
     return null;
+  }
+  // Row 69: the primary chat is never archived (unarchive and pin changes stay allowed). No `id`
+  // in the refusal, so the renderer's acknowledgement check reads it as a failed write.
+  if (meta?.archived_at && isPrimarySession(service.sessionStore, sessionId)) {
+    return { ok: false, session_id: sessionId, reason: PRIMARY_PROTECTED };
   }
   return service.sessionStore.setSessionMeta(sessionId, meta);
 }

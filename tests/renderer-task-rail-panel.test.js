@@ -43,12 +43,33 @@ test('renders agent task details and excludes non-agent follow-ups', async (t) =
     row('manual-1', 'Manual row', { sourceKind: 'manual', sourceBadge: 'Manual' }),
   ] });
   t.after(() => app.dispose());
-  const panel = await openTasks(app);
+  let panel = await openTasks(app);
   assert.ok(panel.querySelector('[data-inv-checkbox][data-follow-up-id="agent-1"]'));
-  assert.match(panel.textContent, /Agent task/);
-  assert.match(panel.textContent, /from Origin chat/);
   assert.doesNotMatch(panel.textContent, /Manual row/);
-  assert.match(panel.textContent, /Refreshes automatically when the model files a task\./);
+  assert.doesNotMatch(panel.textContent, /from Origin chat|Agent row notes/, 'details wait for the title');
+  assert.equal(panel.querySelector('.task-rail-footer'), null, 'no footer');
+
+  // The title opens the row in place and keeps keyboard focus on it.
+  panel.querySelector('[data-action="task-rail-toggle"][data-task-id="agent-1"]').click();
+  await waitForUi(app.window, 10);
+  panel = app.window.document.getElementById('artifactReviewPanel');
+  const title = panel.querySelector('[data-action="task-rail-toggle"][data-task-id="agent-1"]');
+  assert.equal(title.getAttribute('aria-expanded'), 'true');
+  assert.equal(app.window.document.activeElement, title);
+  assert.match(panel.querySelector('.task-rail-detail').textContent, /Agent row notes[\s\S]*from Origin chat[\s\S]*Start a session[\s\S]*Edit/);
+
+  // Edit from the opened row swaps in the editor; the title closes it again.
+  panel.querySelector('[data-action="task-rail-edit"][data-task-id="agent-1"]').click();
+  await waitForUi(app.window, 10);
+  panel = app.window.document.getElementById('artifactReviewPanel');
+  assert.ok(panel.querySelector('#taskRailEditTitle-agent-1'), 'the editor opens');
+  panel.querySelector('[data-action="task-rail-edit-cancel"]').click();
+  await waitForUi(app.window, 10);
+  panel = app.window.document.getElementById('artifactReviewPanel');
+  panel.querySelector('[data-action="task-rail-toggle"][data-task-id="agent-1"]').click();
+  await waitForUi(app.window, 10);
+  panel = app.window.document.getElementById('artifactReviewPanel');
+  assert.equal(panel.querySelector('.task-rail-detail'), null);
 });
 
 test('checkbox mutations resolve and reactivate tasks', async (t) => {
@@ -61,6 +82,12 @@ test('checkbox mutations resolve and reactivate tasks', async (t) => {
   await waitForUi(openApp.window, 30);
   assert.deepEqual(openApp.shell.__state.companionCalls.resolveFollowUp, ['resolve-me']);
   panel = openApp.window.document.getElementById('artifactReviewPanel');
+  // All is the default: a checked-off task stays in the list, marked done.
+  const resolvedRow = panel.querySelector('.task-rail-row[data-task-id="resolve-me"]');
+  assert.ok(resolvedRow.classList.contains('task-rail-row--resolved'));
+  assert.equal(resolvedRow.querySelector('[data-follow-up-id="resolve-me"]').checked, true);
+  panel.querySelector('.inv-segmented-option[data-value="open"]').click();
+  await waitForUi(openApp.window, 10);
   assert.equal(panel.querySelector('[data-task-id="resolve-me"]'), null);
 
   const doneApp = await boot({ recentResolved: [row('reopen-me', 'Reopen me', { status: 'resolved' })] });
@@ -83,17 +110,20 @@ test('filters partition active, resolved, and archived rows', async (t) => {
   });
   t.after(() => app.dispose());
   const panel = await openTasks(app);
+  // All leads the filter and is the default.
+  const options = Array.from(panel.querySelectorAll('.task-rail-filters .inv-segmented-option'));
+  assert.deepEqual(options.map((option) => option.dataset.value), ['all', 'open', 'done']);
+  assert.equal(panel.querySelector('.inv-segmented-option[aria-checked="true"]').dataset.value, 'all');
+  assert.match(panel.textContent, /Open task[\s\S]*Done task/);
+  assert.match(panel.textContent, /Archived task/);
+  panel.querySelector('.inv-segmented-option[data-value="open"]').click();
+  await waitForUi(app.window, 10);
   assert.match(panel.textContent, /Open task/);
   assert.doesNotMatch(panel.textContent, /Done task|Archived task/);
   panel.querySelector('.inv-segmented-option[data-value="done"]').click();
   await waitForUi(app.window, 10);
   assert.match(panel.textContent, /Done task/);
   assert.doesNotMatch(panel.textContent, /Open task|Archived task/);
-  panel.querySelector('.inv-segmented-option[data-value="all"]').click();
-  await waitForUi(app.window, 10);
-  assert.match(panel.textContent, /Open task/);
-  assert.match(panel.textContent, /Done task/);
-  assert.match(panel.textContent, /Archived task/);
 });
 
 test('add trims titles and ignores blank drafts', async (t) => {
@@ -233,7 +263,10 @@ test('overflow exposes task actions and delete invokes companion IPC', async (t)
   const panel = await openTasks(app);
   panel.querySelector('.inv-segmented-option[data-value="done"]').click();
   await waitForUi(app.window, 10);
-  panel.querySelector('[data-action="task-rail-overflow"]').click();
+  const overflow = panel.querySelector('[data-action="task-rail-overflow"]');
+  overflow.click();
+  // The hover-only button stays visible while its menu is open.
+  assert.equal(overflow.getAttribute('aria-expanded'), 'true');
   const menu = app.window.document.querySelector('.inv-context-menu');
   assert.match(menu.textContent, /Edit/);
   assert.match(menu.textContent, /Archive/);
@@ -280,9 +313,31 @@ test('checklist refresh is exposed, rerenders visible content, and contributes o
 
   assert.equal(typeof app.window.rendererTaskRailActions.refreshChecklist, 'function');
   app.window.rendererTaskRailActions.refreshChecklist();
+  assert.match(panel.textContent, /Model pending[\s\S]*Model active[\s\S]*Model done/, 'All shows finished steps too');
+  panel.querySelector('.inv-segmented-option[data-value="open"]').click();
+  await waitForUi(app.window, 10);
   assert.match(panel.textContent, /Model pending/);
   assert.match(panel.textContent, /Model active/);
+  assert.doesNotMatch(panel.textContent, /Model done/, 'finished steps fold in Open');
   assert.equal(app.window.document.querySelector('[data-task-count]').textContent, '3');
+  panel.querySelector('[data-action="task-rail-checklist-fold"]').click();
+  await waitForUi(app.window, 10);
+  const unfolded = app.window.document.getElementById('artifactReviewPanel');
+  assert.match(unfolded.textContent, /Model done/);
+  const fold = unfolded.querySelector('[data-action="task-rail-checklist-fold"]');
+  assert.equal(fold.getAttribute('aria-expanded'), 'true');
+  // The fold belongs to this chat: another chat starts folded, and this one folds back.
+  setSessionChecklist(app, 'other-chat', [{ content: 'Other pending', status: 'pending' }, { content: 'Other done', status: 'completed' }]);
+  app.window.__rendererState.currentSessionId = 'other-chat';
+  app.window.rendererTaskRailActions.refreshChecklist();
+  const other = app.window.document.getElementById('artifactReviewPanel');
+  assert.equal(other.querySelector('[data-action="task-rail-checklist-fold"]').getAttribute('aria-expanded'), 'false');
+  assert.doesNotMatch(other.textContent, /Other done/);
+  app.window.__rendererState.currentSessionId = sessionId;
+  app.window.rendererTaskRailActions.refreshChecklist();
+  app.window.document.getElementById('artifactReviewPanel').querySelector('[data-action="task-rail-checklist-fold"]').click();
+  await waitForUi(app.window, 10);
+  assert.doesNotMatch(app.window.document.getElementById('artifactReviewPanel').textContent, /Model done/);
 });
 
 test('checklist refresh skips other sessions and never discards an open editor or draft', async (t) => {
@@ -386,7 +441,7 @@ test('Tasks mode shows the shared 36px header with its Close and no second "Task
   assert.equal(header.querySelector('.artifact-panel-title-text').textContent, 'Tasks');
   assert.equal(header.querySelector('#artifactReviewCollapseButton').getAttribute('aria-label'), 'Close panel');
   assert.equal(panel.querySelector('.task-rail-title-text'), null, 'the rail body does not repeat the title');
-  assert.ok(panel.querySelector('.task-rail-summary'), 'the summary stays');
+  assert.ok(panel.querySelector('.task-rail-header .task-rail-filters'), 'the toolbar row holds the filter');
 });
 
 test('the strip Artifacts toggle is named Artifacts with its own glyph', async (t) => {

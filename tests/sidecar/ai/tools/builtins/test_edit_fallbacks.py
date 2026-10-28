@@ -185,9 +185,12 @@ def test_propose_mode_matches_without_writing(tmp_path: Path) -> None:
     content = "    a\n        b\n"
     target = tmp_path / "sample.txt"
     target.write_bytes(content.encode())
-    assert match_replace(
+    matched = match_replace(
         content, "a\n    b", "a\n    c", relative_path="sample.txt", max_bytes=1000
-    ) == "    a\n        c\n"
+    )
+    assert not isinstance(matched, ToolHandlerResult)
+    assert matched.new_text == "    a\n        c\n"
+    assert matched.span == (0, len(content) - 1), "the indentation fallback's span"
     result = propose_change_tool(
         {
             "path": "sample.txt", "kind": "replace", "old_string": "a\n    b",

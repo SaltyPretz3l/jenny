@@ -504,6 +504,27 @@ test('a submission refused because the GPU is leased to an image render keeps it
   assert.equal(JSON.stringify(result).includes('privileged'), false);
 });
 
+// A store latched read-only (here: an index from another view of the profile
+// that disagrees with the work records) refused every send with the generic
+// "didn't accept" copy. Both submission entries now name it.
+test('a read-only run store refuses a submission by name, not as the generic refusal', async () => {
+  const { submitApplicationTurn } = require('../../services/session-runtime/application-submissions');
+  const store = createStore('jenny-runtime-application-submit-read-only-');
+  store._setReadOnly('index_record_mismatch');
+  // As SessionRuntimeService.submit: a throw before any commit is a rejection.
+  const runtime = { store, submit: async () => {
+    try { return store.submit({}); } catch (error) { error.submissionOutcome ||= 'rejected'; throw error; }
+  } };
+  const result = await new RuntimeApplicationService({ getRuntime: () => runtime }).submit({ ...SUBMISSION_PAYLOAD });
+  assert.equal(result.ok, false);
+  assert.equal(result.acceptance, 'rejected');
+  assert.equal(result.error.reason, 'runtime_store_read_only');
+  assert.equal(JSON.stringify(result).includes('index_record_mismatch'), false, 'the latch detail stays in the log');
+  const applicationTurn = await submitApplicationTurn(runtime, { sessionId: 'sess_a', prompt: 'continue' },
+    { idempotencyKey: 'proposal_key_1' });
+  assert.deepEqual({ ...applicationTurn }, { ok: false, reason: 'runtime_store_read_only', acceptance: 'rejected' });
+});
+
 test('the refusal reason never changes the acceptance verdict', async () => {
   const store = createStore('jenny-runtime-application-submit-acceptance-');
   const unknown = { store, submit: async () => { throw Object.assign(new Error('runtime_closing'), { code: 'runtime_closing' }); } };

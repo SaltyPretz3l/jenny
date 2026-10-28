@@ -1,7 +1,7 @@
 ---
 name: Claude Code Delegation
 description: Prepare clear, bounded handoff prompts for external Claude Code or similar coding sessions.
-command: handoff
+command: delegate
 whenToUse: Use when the user asks to delegate coding work, prepare a Claude Code prompt, split implementation slices, or write a handoff for another coding agent.
 ---
 # Claude Code Delegation

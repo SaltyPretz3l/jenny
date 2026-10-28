@@ -5,6 +5,10 @@ const Module = require('module');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+// main.js claims the desktop profile under userData at load: keep that marker out of the repo.
+const USER_DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-workspace-ipc-userdata-'));
+test.after(() => fs.rmSync(USER_DATA, { recursive: true, force: true }));
+
 function loadWithElectronMock(modulePath, electronMock) {
   const resolvedPath = require.resolve(modulePath);
   const originalLoad = Module._load;
@@ -26,7 +30,7 @@ function loadWithElectronMock(modulePath, electronMock) {
 function createElectronMock() {
   return {
     app: {
-      getPath: () => path.join(process.cwd(), 'tmp'),
+      getPath: () => USER_DATA,
       // Real Electron has setPath, and main.js calls it when JENNY_USER_DATA_DIR
       // is set -- which dev:agent, smoke:gui and capture-ui all export. getPath
       // stays fixed on purpose: nothing here tests profile overriding.
@@ -57,7 +61,7 @@ function createElectronMock() {
 
 test('workspace IPC handlers delegate round-trip state through shell config service', async () => {
   const handlers = new Map();
-  const mainModule = loadWithElectronMock('../main.js', createElectronMock());
+  const ipcRegistration = require('../services/main/ipc-handler-registration');
   const shellConfigService = {
     getWorkspaceState() {
       return { activeSessionId: 'sess_1', openSessionIds: ['sess_1'] };
@@ -74,7 +78,7 @@ test('workspace IPC handlers delegate round-trip state through shell config serv
     },
   };
 
-  mainModule.registerWorkspaceIpcHandlers({
+  ipcRegistration.registerWorkspaceIpcHandlers({
     handle(channel, handler) {
       handlers.set(channel, handler);
     },
@@ -95,11 +99,11 @@ test('workspace IPC handlers delegate round-trip state through shell config serv
 
 test('workspace-root IPC exposes two-phase transitions and legacy aliases stay prepare-only', async () => {
   const handlers = new Map();
-  const mainModule = loadWithElectronMock('../main.js', createElectronMock());
+  const ipcRegistration = require('../services/main/ipc-handler-registration');
   const calls = [];
   const context = { rootPath: 'G:/workspace/project', rootId: 'root-1', generation: 4, phase: 'ready' };
 
-  mainModule.registerWorkspaceRootIpcHandlers({
+  ipcRegistration.registerWorkspaceRootIpcHandlers({
     handle(channel, handler) {
       handlers.set(channel, handler);
     },

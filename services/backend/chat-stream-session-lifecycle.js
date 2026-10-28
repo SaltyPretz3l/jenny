@@ -385,6 +385,7 @@ function persistUserTurn(adapter, {
   content,
   attachments,
   skill_invocation = null,
+  application_turn = '',
   timestamp = new Date().toISOString(),
   model = '',
 }) {
@@ -397,6 +398,7 @@ function persistUserTurn(adapter, {
       client_message_id: String(messageId || ''),
       attachments: normalizeAttachmentMetadataList(attachments),
       skill_invocation,
+      ...(application_turn ? { application_turn } : {}),
     },
     { model }
   );

@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   applySingleInstance,
+  revealExistingWindow,
   startWhenSingleInstanceAvailable,
 } = require('../services/apply-single-instance');
 
@@ -98,4 +99,36 @@ test('startup guard runs bootstrap work when the single-instance lock is availab
 
   assert.equal(startedApp, true);
   assert.equal(startCalls, 1);
+});
+
+function fakeWindow({ destroyed = false, minimized = false, visible = true } = {}) {
+  const calls = [];
+  return {
+    calls,
+    isDestroyed: () => destroyed,
+    isMinimized: () => minimized,
+    isVisible: () => visible,
+    restore: () => calls.push('restore'),
+    show: () => calls.push('show'),
+    focus: () => calls.push('focus'),
+  };
+}
+
+test('a second launch shows a hidden window before focusing it', () => {
+  const win = fakeWindow({ visible: false });
+  assert.equal(revealExistingWindow(win), true);
+  assert.deepEqual(win.calls, ['show', 'focus']);
+});
+
+test('a second launch restores a minimized window, then focuses it', () => {
+  const win = fakeWindow({ minimized: true });
+  assert.equal(revealExistingWindow(win), true);
+  assert.deepEqual(win.calls, ['restore', 'focus']);
+});
+
+test('a second launch ignores a missing or destroyed window', () => {
+  assert.equal(revealExistingWindow(null), false);
+  const win = fakeWindow({ destroyed: true, visible: false });
+  assert.equal(revealExistingWindow(win), false);
+  assert.deepEqual(win.calls, []);
 });

@@ -358,3 +358,30 @@ test('review #10: a pane disposed while a decide is in flight does not leave the
   await flush();
   assert.equal(ctx.store.isBusy(SID, PID), false);
 });
+
+test("F3b: Retry on a failed child runs the child's own Retry turn once, never a proposal method", async () => {
+  const child = 'sess_child';
+  const proposal = {
+    schema_version: 1, proposal_id: PID, revision: 7, kind: 'session', decision_state: 'accepted', action_state: 'succeeded',
+    display: { title: 'Review latest commits', description: '', initiation: 'offer', authorization_required: false },
+    group_id: null, options: null, options_editable: false,
+    decision: { choice: 'new_session', accepted_at: '2026-10-27T13:16:24Z', accepted_revision: 6 },
+    links: { ...LINKS, child_session_id: child, first_turn_turn_id: 't1', first_turn_work_id: 'w1', preparation_turn_id: null },
+    execution: null, last_error: null,
+    actions: { do_it_here: NO, new_session: NO, dismiss: NO, cancel: NO, retry: NO },
+    child: { phase: 'failed', error_class: 'model_busy', failed_turn_is_first: true, retry: { message_id: 'a_t1' }, key: 'k' },
+  };
+  const retries = [];
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const bridge = makeBridge();
+  const ctx = setup(proposal, { bridge, extraDeps: { retryChildTurn: async (...args) => { retries.push(args); await gate; } } });
+  ctx.byAction('retry-child').click();
+  ctx.byAction('retry-child').click();
+  await flush();
+  assert.deepEqual(retries, [[child, 'a_t1']], 'one retry while the first is in flight');
+  release();
+  await flush();
+  assert.equal(bridge.calls.length, 0, 'no proposal bridge call');
+  ctx.dispose();
+});

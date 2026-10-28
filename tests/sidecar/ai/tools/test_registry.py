@@ -231,7 +231,7 @@ def test_build_default_registry_include_shell_override_takes_precedence(
 def test_build_default_registry_includes_python_runtime_when_enabled_on_windows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("sidecar.ai.tools.registry.sys.platform", "win32")
+    monkeypatch.setattr("sys.platform", "win32")
 
     registry = build_default_registry(config={"tools_python_runtime_enabled": True})
 
@@ -241,7 +241,7 @@ def test_build_default_registry_includes_python_runtime_when_enabled_on_windows(
 def test_build_default_registry_excludes_python_runtime_when_not_supported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("sidecar.ai.tools.registry.sys.platform", "linux")
+    monkeypatch.setattr("sys.platform", "linux")
 
     registry = build_default_registry(config={"tools_python_runtime_enabled": True})
 

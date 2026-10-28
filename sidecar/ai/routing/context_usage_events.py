@@ -62,20 +62,19 @@ def _context_window(engine: Any) -> int:
 
 
 def _compact_threshold(budget_tracker: Any) -> tuple[int, int]:
-    """Compaction trigger in whole-prompt tokens, and the tool reserve inside it.
+    """Compaction trigger in whole-prompt tokens, and the tool tokens inside it.
 
-    Same quantities the terminal lane publishes (``meter_compact_threshold`` /
-    ``tool_overhead``). Recomputed per emission rather than cached:
+    Same quantities the terminal lane and ``context.preview`` publish
+    (``BudgetTracker.meter_compact_threshold`` / ``meter_tool_tokens``: the
+    measured tool schemas). Recomputed per emission rather than cached:
     ``tool_search`` can promote deferred schemas between iterations, which
     moves the denominator.
     """
-    budget = getattr(budget_tracker, "budget", None)
-    if budget is None:
+    if getattr(budget_tracker, "budget", None) is None:
         return 0, 0
     try:
-        num_tools = _positive_int(getattr(budget_tracker, "num_tools", 0))
-        threshold = _positive_int(budget.meter_compact_threshold(num_tools))
-        return threshold, (_positive_int(budget.tool_overhead(num_tools)) if threshold else 0)
+        threshold = _positive_int(budget_tracker.meter_compact_threshold())
+        return threshold, (_positive_int(budget_tracker.meter_tool_tokens()) if threshold else 0)
     except Exception:  # noqa: BLE001 — a meter hint must never break a turn
         return 0, 0
 

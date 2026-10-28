@@ -21,6 +21,7 @@ from sidecar.ai.mcp.exceptions import (
     CMP_MCP_SERVER_FAILED,
     OBSERVED_CHANGES_KEY,
     MCPError,
+    failure_log_level,
     mcp_error_data_detail,
 )
 from sidecar.ai.mcp.transport_base import (
@@ -229,7 +230,7 @@ class StdioMCPTransport(StdioPromptsMixin, MCPTransport):
         spawn_kwargs = self._containment.popen_kwargs()
         try:
             self._process = subprocess.Popen(
-                [config.command, *config.args],
+                [self._containment.spawn_command(), *config.args],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -988,13 +989,12 @@ class StdioMCPTransport(StdioPromptsMixin, MCPTransport):
         message = _sanitize_mcp_detail(error.get("message") or "mcp server returned an error")
         error_code = CMP_MCP_SERVER_FAILED
         data = error.get("data")
-        retryable = False
         if isinstance(data, dict) and isinstance(data.get("code"), str):
             error_code = str(data["code"])
-        if isinstance(data, dict):
-            retryable = data.get("retryable") is True
+        retryable = isinstance(data, dict) and data.get("retryable") is True
         logged = redact_error_paths(message)  # HB-017: the log never keeps real paths.
-        logger.warning("mcp call failed on server=%s message=%s", self.server_name, logged)
+        level = failure_log_level(error_code, retryable=retryable)  # a model's own miss is INFO
+        logger.log(level, "mcp call failed on server=%s message=%s", self.server_name, logged)
         raise MCPError(
             code=error_code,
             message=message,

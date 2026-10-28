@@ -125,7 +125,8 @@
       let legacy = {};
       try {
         const raw = storage.getItem(SIDEBAR_STORAGE_KEY);
-        legacy = raw ? JSON.parse(raw) : {};
+        const parsed = raw ? JSON.parse(raw) : null;
+        legacy = parsed && typeof parsed === 'object' ? parsed : {};
       } catch (error) {
         logPanelWarning('viewpanel.legacy_preferences_read_failed', error);
       }
@@ -202,9 +203,27 @@
       }
       const { min, max } = getPanelWidthBounds(viewId);
       const normalizedWidth = Number.isFinite(width) ? Math.round(width) : min;
-      getViewPanelState(viewId).width = mathUtilsRef.clamp(normalizedWidth, min, max);
+      const viewState = getViewPanelState(viewId);
+      viewState.width = mathUtilsRef.clamp(normalizedWidth, min, max);
       if (persist) savePanelState();
-      if (apply) applyPanelForView(viewId);
+      if (!apply) return;
+      // A live drag (persist:false) runs every pointermove frame: only the width
+      // moves, so skip the forced composer/viewport relayout (the chat view's
+      // ResizeObserver re-measures) and send a `live` layout notice, which only
+      // an open side panel acts on; the persisting call that ends the drag runs
+      // the full apply once.
+      if (!persist && workspace.classList.contains('panel-collapsed') === false
+        && workspace.classList.contains('panel-none') === false) {
+        const width = `${viewState.width}px`;
+        workspace.style.setProperty('--view-panel-current-width', width);
+        workspace.style.setProperty('--sidebar-current-width', width);
+        sidebarResizer?.setAttribute('aria-valuenow', String(Math.round(viewState.width)));
+        if (typeof onLayoutChanged === 'function') {
+          onLayoutChanged({ viewId, currentWidth: viewState.width, live: true });
+        }
+        return;
+      }
+      applyPanelForView(viewId);
     }
 
     function resetPanelWidth(viewId, { apply = true, persist = true } = {}) {
@@ -237,12 +256,13 @@
       const hasPanel = Boolean(descriptor.panel);
       const viewState = getViewPanelState(viewId);
       const { min, max, defaultWidth } = getPanelWidthBounds(viewId);
+      // Render the width clamped to the current window, but keep the chosen
+      // width: a narrow window or a zoom-in must not shrink it for good.
       const expandedWidth = mathUtilsRef.clamp(
         Number.isFinite(viewState.width) ? viewState.width : defaultWidth,
         min,
         max
       );
-      viewState.width = expandedWidth;
       const workspaceWidth = getWorkspaceWidth();
       if (workspaceWidth > AUTO_COLLAPSE_MAX_WIDTH) forceExpandedViews.delete(viewId);
       const autoCollapsed = hasPanel

@@ -56,20 +56,6 @@ from sidecar.ai.repo_delta.service import (
 # ---------------------------------------------------------------------------
 
 
-def _git_available() -> bool:
-    return (
-        subprocess.run(
-            ["git", "--version"], capture_output=True, text=True, check=False
-        ).returncode
-        == 0
-    )
-
-
-def _skip_if_no_git() -> None:
-    if not _git_available():
-        pytest.skip("git is unavailable in this environment")
-
-
 def _init_repo(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "init"], cwd=path, capture_output=True, text=True, check=True)
@@ -192,7 +178,6 @@ def test_safe_session_dirname_accepts_well_formed_ids(session_id: str) -> None:
 def test_hostile_session_id_writes_no_file_anywhere_not_even_inside_the_sanctioned_base(
     tmp_path: Path, anchors_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "a.txt", "one\n", "initial")
@@ -320,7 +305,6 @@ def test_tampered_non_hex_head_sha_same_root_yields_none_with_no_extra_git_spawn
     git call is made with it (see git_delta.py `compute_repo_delta`
     docstring). Only the single combined snapshot-read spawn should occur.
     """
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "a.txt", "one\n", "initial")
@@ -368,7 +352,6 @@ def test_tampered_foreign_anchor_root_is_never_used_as_a_git_cwd(
     not where to run git") is narrower and is what's verified here: the
     foreign root string is never handed to git as a `-C` argument.
     """
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "a.txt", "one\n", "initial")
@@ -412,7 +395,6 @@ def test_tampered_foreign_anchor_root_is_never_used_as_a_git_cwd(
 def test_corrupt_anchor_read_never_leaks_payload_and_logs_a_fixed_reason_code(
     tmp_path: Path, anchors_root: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "a.txt", "one\n", "initial")
@@ -467,7 +449,6 @@ def test_corrupt_anchor_read_never_leaks_payload_and_logs_a_fixed_reason_code(
 def test_build_repository_delta_block_no_anchor_yet_returns_none_bootstrap(
     tmp_path: Path, anchors_root: Path
 ) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "a.txt", "one\n", "initial")
@@ -483,7 +464,6 @@ def test_build_repository_delta_block_no_anchor_yet_returns_none_bootstrap(
 def test_build_repository_delta_block_unchanged_position_short_circuits_to_none(
     tmp_path: Path, anchors_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "a.txt", "one\n", "initial")
@@ -504,7 +484,6 @@ def test_build_repository_delta_block_unchanged_position_short_circuits_to_none(
 def test_build_repository_delta_block_diverged_returns_a_rendered_block(
     tmp_path: Path, anchors_root: Path
 ) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "a.txt", "one\n", "initial")
@@ -530,7 +509,6 @@ def test_delta_detected_log_on_firing_path_is_counts_only_and_leaks_no_repo_stri
     # `delta_detected` must fire on the positive path with a counts/bool-only
     # payload and leak none of those strings. The existing suite only asserts
     # this event's ABSENCE (all-zero delta) -- never its content when it fires.
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "a.txt", "one\n", "initial")
@@ -577,7 +555,6 @@ def test_build_repository_delta_block_suppresses_content_free_delta(
     # yields an all-zero RepoDelta. has_signal() must suppress it -- no
     # content-free <repository-delta> block and no delta_detected log. Force
     # compute to return an all-zero delta to drive the guard deterministically.
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "a.txt", "one\n", "initial")
@@ -624,7 +601,6 @@ def test_build_repository_delta_block_suppresses_content_free_delta(
 def test_refresh_repo_anchor_writes_the_current_position(
     tmp_path: Path, anchors_root: Path
 ) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     sha = _commit(repo, "a.txt", "one\n", "initial")
@@ -643,7 +619,6 @@ def test_refresh_repo_anchor_writes_the_current_position(
 def test_refresh_repo_anchor_overwrites_not_appends_on_a_second_call(
     tmp_path: Path, anchors_root: Path
 ) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "a.txt", "one\n", "initial")
@@ -666,7 +641,6 @@ def test_refresh_repo_anchor_overwrites_not_appends_on_a_second_call(
 
 
 def test_flag_off_build_and_refresh_are_no_ops(tmp_path: Path, anchors_root: Path) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "a.txt", "one\n", "initial")
@@ -691,7 +665,6 @@ def test_flag_off_build_and_refresh_are_no_ops(tmp_path: Path, anchors_root: Pat
 def test_build_repository_delta_block_fail_closed_when_git_never_runs(
     tmp_path: Path, anchors_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "a.txt", "one\n", "initial")
@@ -718,7 +691,6 @@ def test_build_repository_delta_block_fail_closed_when_git_never_runs(
 def test_refresh_repo_anchor_fail_closed_when_git_never_runs(
     tmp_path: Path, anchors_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "a.txt", "one\n", "initial")
@@ -745,7 +717,6 @@ def test_refresh_repo_anchor_fail_closed_when_git_never_runs(
 def test_build_repository_delta_block_exception_is_fail_closed_and_logs_error_type_only(
     tmp_path: Path, anchors_root: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "a.txt", "one\n", "initial")
@@ -776,7 +747,6 @@ def test_build_repository_delta_block_exception_is_fail_closed_and_logs_error_ty
 def test_refresh_repo_anchor_exception_is_fail_closed_and_logs_error_type_only(
     tmp_path: Path, anchors_root: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "a.txt", "one\n", "initial")
@@ -836,7 +806,6 @@ def test_atomic_write_anchor_oserror_logs_write_failed_reason_code(
 def test_build_and_refresh_skip_when_session_id_is_none_or_empty(
     session_id: str | None, tmp_path: Path, anchors_root: Path
 ) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "a.txt", "one\n", "initial")
@@ -854,7 +823,6 @@ def test_build_and_refresh_skip_when_session_id_is_none_or_empty(
 def test_build_repository_delta_block_workspace_root_no_longer_exists_returns_none(
     tmp_path: Path, anchors_root: Path
 ) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "a.txt", "one\n", "initial")
@@ -873,7 +841,6 @@ def test_build_repository_delta_block_workspace_root_no_longer_exists_returns_no
 def test_build_repository_delta_block_empty_workspace_root_returns_none(
     tmp_path: Path, anchors_root: Path
 ) -> None:
-    _skip_if_no_git()
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "a.txt", "one\n", "initial")

@@ -43,6 +43,9 @@
   ];
 
   const DEFAULT_LIMIT = 20;
+  // Row 82 G1: file lists of expanded cards, cached per commit (FIFO).
+  const MAX_CACHED_FILE_LISTS = 20;
+  const MAX_LISTED_FILES = 300;
 
   // Inline SVG carets (CSP-safe: no external src; fill=currentColor inherits the
   // toggle's themed text colour).
@@ -140,6 +143,16 @@
     // Optional: open a commit's read-only diff tab. When wired the cards become
     // clickable; absent -> the cards render as static (read-only) cards.
     const onGetCommitDiff = typeof options.onGetCommitDiff === 'function' ? options.onGetCommitDiff : null;
+    // Row 82 G1 (all optional): a card expands to the commit's files instead of
+    // opening the whole-commit text diff; a file opens its own Monaco diff tab.
+    const onGetCommitFiles = typeof options.onGetCommitFiles === 'function' ? options.onGetCommitFiles : null;
+    const onOpenCommitFile = typeof options.onOpenCommitFile === 'function' ? options.onOpenCommitFile : null;
+    const onCopyText = typeof options.onCopyText === 'function' ? options.onCopyText : null;
+    // The panel's file-row inner markup (badge, name, folder), fed a name-status entry.
+    const fileRowInner = typeof options.fileRowInner === 'function' ? options.fileRowInner : null;
+    const filesGate = asyncFence.createGenerationGate();
+    const fileLists = new Map(); // sha -> { files, truncated } | { error: true } | { loading: true }
+    let expandedRef = '';
     const getMount = typeof options.getMount === 'function' ? options.getMount : () => null;
     const escapeHtml = typeof options.escapeHtml === 'function' ? options.escapeHtml : defaultEscapeHtml;
     const actionButton = typeof options.actionButton === 'function' ? options.actionButton : null;
@@ -163,6 +176,9 @@
     // re-renders collapses into at most one trailing fetch.
     let inFlight = null;
     let refreshAgain = false;
+    // Set when HEAD moved while the panel was hidden: the cached cards stay
+    // visible, but the next ensureLoaded() re-pulls the log.
+    let stale = false;
 
     function applyLogResult(result) {
       if (!result || result.available === false || result.isRepo === false) {
@@ -216,12 +232,22 @@
       // Clickable only when both a diff opener is wired and we have a ref to
       // pass; the panel's click delegation routes the data-ide-scm-action.
       const ref = String(modelEntry.sha || modelEntry.shortHash || '').trim();
-      const clickable = onGetCommitDiff && ref;
+      const expandable = Boolean(onGetCommitFiles && fileRowInner && ref);
+      const clickable = (onGetCommitDiff || expandable) && ref;
+      const expanded = expandable && expandedRef === ref;
       const cardAttrs = clickable
-        ? ` class="ide-scm-card ide-scm-card--clickable" role="button" tabindex="0"`
+        ? ` class="ide-scm-card ide-scm-card--clickable${expanded ? ' ide-scm-card--expanded' : ''}" role="button" tabindex="0"`
           + ` data-ide-scm-action="history-open" data-ide-scm-hash="${escapeHtml(ref)}"`
-          + ` aria-label="${escapeHtml(jt('ide.commitHistory.viewCommit', 'View changes in commit {ref}', { ref: modelEntry.shortHash || ref }))}"`
+          + (expandable ? ` aria-expanded="${expanded ? 'true' : 'false'}"` : '')
+          + ` aria-label="${escapeHtml(expandable
+            ? jt('ide.commitHistory.showCommitFiles', 'Show the files changed in commit {ref}', { ref: modelEntry.shortHash || ref })
+            : jt('ide.commitHistory.viewCommit', 'View changes in commit {ref}', { ref: modelEntry.shortHash || ref }))}"`
         : ' class="ide-scm-card"';
+      const card = cardBody(cardAttrs, modelEntry, mergeTag, hash);
+      return expandable ? `<div class="ide-scm-card-wrap">${card}${expanded ? filesMarkup(ref) : ''}</div>` : card;
+    }
+
+    function cardBody(cardAttrs, modelEntry, mergeTag, hash) {
       return `<div${cardAttrs}>`
         + `<div class="ide-scm-card-subject" title="${escapeHtml(modelEntry.subject)}">${escapeHtml(modelEntry.subject)}</div>`
         + '<div class="ide-scm-card-meta">'
@@ -232,6 +258,88 @@
         + hash
         + '</div>'
         + '</div>';
+    }
+
+    function fileRowMarkup(ref, entry, index) {
+      const path = String(entry.path || '');
+      return actionButton({
+        plain: true,
+        className: 'ide-scm-file ide-scm-card-file',
+        title: entry.origPath ? `${entry.origPath} → ${path}` : path,
+        dataset: { 'ide-scm-action': 'history-file', 'ide-scm-hash': ref, 'ide-scm-file-index': String(index) },
+        trustedHtml: fileRowInner(entry),
+      });
+    }
+
+    function filesMarkup(ref) {
+      const list = fileLists.get(ref);
+      let body;
+      if (!list || list.loading) {
+        body = `<div class="ide-scm-history-loading">${escapeHtml(jt('ide.commitHistory.loadingFiles', 'Loading files…'))}</div>`;
+      } else if (list.error) {
+        body = `<div class="ide-scm-history-error" role="status">${escapeHtml(jt('ide.commitHistory.filesFailed', 'Couldn’t load the files in this commit.'))}</div>`;
+      } else if (!list.files.length) {
+        body = `<div class="ide-scm-history-empty">${escapeHtml(jt('ide.commitHistory.noFiles', 'No file changes (an empty or merge commit).'))}</div>`;
+      } else {
+        body = list.files.map((entry, index) => fileRowMarkup(ref, entry, index)).join('')
+          + (list.truncated ? `<div class="ide-scm-history-empty">${escapeHtml(jt('ide.commitHistory.moreFiles', 'More files are not listed. View the full diff to see them.'))}</div>` : '');
+      }
+      const footer = (onGetCommitDiff ? actionButton({
+        plain: true, className: 'ide-scm-action', label: jt('ide.commitHistory.viewFullDiff', 'View full diff'),
+        dataset: { 'ide-scm-action': 'history-commit-diff', 'ide-scm-hash': ref },
+      }) : '') + (onCopyText ? actionButton({
+        plain: true, className: 'ide-scm-action', label: jt('ide.commitHistory.copyHash', 'Copy hash'),
+        title: jt('ide.commitHistory.copyHashTitle', 'Copy the full commit hash'),
+        dataset: { 'ide-scm-action': 'history-copy-hash', 'ide-scm-hash': ref },
+      }) : '');
+      return `<div class="ide-scm-card-files" role="group" aria-label="${escapeHtml(jt('ide.commitHistory.filesLabel', 'Files in this commit'))}">${body}`
+        + (footer ? `<div class="ide-scm-card-files-actions">${footer}</div>` : '') + '</div>';
+    }
+
+    async function loadFiles(ref) {
+      if (fileLists.has(ref) && !fileLists.get(ref).error) return;
+      const token = filesGate.capture();
+      fileLists.set(ref, { loading: true });
+      let result = null;
+      try {
+        result = await onGetCommitFiles(ref);
+      } catch (error) {
+        appendClientLog('WARN', 'ide.scm_history_files_failed', { message: String((error && error.message) || error || '').slice(0, 200) });
+      }
+      if (disposalFence.isDisposed() || !filesGate.isCurrent(token)) return;
+      fileLists.set(ref, result && result.ok === true && Array.isArray(result.files)
+        ? { files: result.files.slice(0, MAX_LISTED_FILES), truncated: result.truncated === true || result.files.length > MAX_LISTED_FILES }
+        : { error: true });
+      while (fileLists.size > MAX_CACHED_FILE_LISTS) fileLists.delete(fileLists.keys().next().value);
+      render();
+    }
+
+    function toggleExpanded(ref) {
+      expandedRef = expandedRef === ref ? '' : ref;
+      render();
+      return expandedRef ? loadFiles(expandedRef) : Promise.resolve();
+    }
+
+    // Every history-* click (the panel delegates them here). Returns true when handled.
+    function handleAction(action, actionEl) {
+      const ref = String(actionEl?.dataset?.ideScmHash || '');
+      if (action === 'history-toggle') { toggle(); return true; }
+      if (action === 'history-retry') { refresh(); return true; }
+      if (action === 'history-open') { openCommit(ref); return true; }
+      if (action === 'history-file') {
+        const entry = fileLists.get(ref)?.files?.[Number(actionEl.dataset.ideScmFileIndex)];
+        if (entry && onOpenCommitFile) onOpenCommitFile({ hash: ref, path: entry.path, origPath: entry.origPath, status: entry.status });
+        return true;
+      }
+      if (action === 'history-commit-diff') {
+        if (ref && onGetCommitDiff) onGetCommitDiff({ hash: ref });
+        return true;
+      }
+      if (action === 'history-copy-hash') {
+        if (ref && onCopyText) onCopyText(ref);
+        return true;
+      }
+      return false;
     }
 
     function cardsMarkup() {
@@ -347,10 +455,15 @@
     // re-pulls come from the events that move HEAD - a commit and onGitMetaChange
     // (the same signal the tree/statusbar/gutter trust).
     function ensureLoaded() {
-      if (commits === null && !inFlight) {
+      if ((commits === null || stale) && !inFlight) {
+        stale = false;
         return refresh();
       }
       return Promise.resolve();
+    }
+
+    function markStale() {
+      stale = true;
     }
 
     // Root switch (JCA-002): forget the previous root's log entirely so the
@@ -359,7 +472,11 @@
     // more loop run so its stale result is re-pulled before the final paint.
     function reset() {
       refreshGate.bump();
+      filesGate.bump();
+      fileLists.clear();
+      expandedRef = '';
       commits = null;
+      stale = false;
       silenced = false;
       loadError = false;
       if (inFlight) {
@@ -369,6 +486,7 @@
 
     function dispose() {
       refreshGate.bump();
+      filesGate.bump();
       refreshAgain = false;
       disposalFence.dispose();
     }
@@ -383,6 +501,9 @@
     // only forwards the ref and logs an unexpected throw. Never throws.
     async function openCommit(hash) {
       const ref = String(hash || '').trim();
+      if (ref && onGetCommitFiles) {
+        return toggleExpanded(ref);
+      }
       if (!ref || !onGetCommitDiff) {
         return;
       }
@@ -399,10 +520,12 @@
       render,
       refresh,
       ensureLoaded,
+      markStale,
       reset,
       dispose,
       toggle,
       openCommit,
+      handleAction,
     };
   }
 

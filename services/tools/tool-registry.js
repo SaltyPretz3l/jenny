@@ -76,24 +76,6 @@ class ToolRegistry {
   getAllTools() {
     return Array.from(this._tools.values());
   }
-
-  getToolSchemas({ planMode = false, proposeMode = false } = {}) {
-    const tools = this.getAllTools();
-    const filtered = tools.filter((tool) => (
-      (planMode
-        ? tool.readOnly
-        : !tool.planModeOnly)
-      && (proposeMode || !tool.proposeModeOnly)
-    ));
-    return filtered.map((t) => ({
-      type: 'function',
-      function: {
-        name: t.name,
-        description: t.description,
-        parameters: t.parameters,
-      },
-    }));
-  }
 }
 
 module.exports = { ToolRegistry };

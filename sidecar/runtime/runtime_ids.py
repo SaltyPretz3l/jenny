@@ -6,6 +6,7 @@ import contextlib
 import os
 import re
 import stat as stat_module
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,8 @@ _SESSION_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,128}")
 _MONITOR_ID_PATTERN = re.compile(r"mon_[0-9a-f]{12}")
 _SAFE_COMPONENT_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,180}")
 _CURRENT_DIRECTORY_TOKENS = frozenset({".", ".."})
+# Bounded os.replace retry (about 0.2 s worst case) for a transiently open target.
+_REPLACE_RETRY_DELAYS = (0.01, 0.02, 0.05, 0.1)
 
 
 class RuntimeIdError(ValueError):
@@ -23,6 +26,10 @@ class RuntimeIdError(ValueError):
 
 class RuntimePathError(OSError):
     """An app-owned runtime path is unsafe or changed during use."""
+
+
+class RuntimeFileChangedError(RuntimePathError):
+    """A file's identity changed between inspection and read (e.g. an atomic replace)."""
 
 
 @dataclass(frozen=True)
@@ -176,11 +183,11 @@ class GuardedRuntimeDirectory:
             fd = os.open(str(target), flags)
             opened = os.fstat(fd)
             if _NodeIdentity.from_stat(opened) != _NodeIdentity.from_stat(captured):
-                raise RuntimePathError("runtime file changed before read")
+                raise RuntimeFileChangedError("runtime file changed before read")
             data = _read_fd_bounded(fd, max_bytes)
             final = os.fstat(fd)
             if _NodeIdentity.from_stat(final) != _NodeIdentity.from_stat(captured):
-                raise RuntimePathError("runtime file changed during read")
+                raise RuntimeFileChangedError("runtime file changed during read")
             return RuntimeFileRead(data=data, mtime_ns=max(int(final.st_mtime_ns), 0))
         except RuntimePathError:
             raise
@@ -215,7 +222,7 @@ class GuardedRuntimeDirectory:
             fd = None
             self.validate()
             self.validate_file_target(name)
-            os.replace(temp_path, target)
+            _replace_with_retry(temp_path, target)
             self.validate()
             return target
         except RuntimePathError:
@@ -290,6 +297,22 @@ def is_runtime_link_object(path: Path, value: os.stat_result | None = None) -> b
     return bool(int(attributes) & _WINDOWS_REPARSE_POINT_ATTRIBUTE)
 
 
+def _replace_with_retry(source: Path, target: Path) -> None:
+    """``os.replace`` with a short bounded retry for a transiently open target.
+
+    Windows refuses to replace a file another handle (a lock-free reader) has
+    open; that reader closes within milliseconds, so a few short retries turn
+    the race into a brief wait instead of a write failure.
+    """
+    for delay in _REPLACE_RETRY_DELAYS:
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            time.sleep(delay)
+    os.replace(source, target)
+
+
 def _read_fd_bounded(fd: int, limit: int) -> bytes:
     chunks: list[bytes] = []
     total = 0
@@ -305,6 +328,7 @@ def _read_fd_bounded(fd: int, limit: int) -> bytes:
 
 __all__ = [
     "GuardedRuntimeDirectory",
+    "RuntimeFileChangedError",
     "RuntimeFileRead",
     "RuntimeIdError",
     "RuntimePathError",

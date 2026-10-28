@@ -85,6 +85,13 @@ _DEFAULT_TOOL_OVERHEAD = 500
 # window (e.g. a 2K-4K model) still plans for *some* generation room.
 _MIN_OUTPUT_RESERVATION = 1_024
 
+# Most of a window that budgeting holds back for the answer. A model's advertised
+# answer + thinking allowance (Qwen3.8: 32k + 32k) is generation headroom, not
+# prompt headroom: engines shrink the request's ``max_tokens`` to the room left,
+# so reserving all of it made a 262k window compact at ~122k. This floor matches
+# Claude Code's ~20k summary-sized buffer.
+_ANSWER_RESERVATION_FLOOR = 20_480
+
 # Chat templates wrap each schema in framing text the JSON size does not show.
 # Measured on llama-server (Qwen3.8 template, 29 Jenny tools): the provider
 # prompt exceeded the message estimate by ~1.2x the schemas' chars//4 size.
@@ -93,6 +100,8 @@ _TOOL_SCHEMA_FRAMING_FACTOR = 1.25
 _WARNING_RATIO = 0.80
 _AUTO_COMPACT_RATIO = 0.90
 _ERROR_RATIO = 0.95
+# Auto-compact never reaches the error threshold, however high the ratio is set.
+_MAX_AUTO_COMPACT_RATIO = round(_ERROR_RATIO - 0.02, 4)
 
 _TOOL_SCHEMA_BUDGET_CAPS = {
     "warning": 12,
@@ -112,22 +121,34 @@ class TokenBudget:
     tool_overhead_per_tool: int = _DEFAULT_TOOL_OVERHEAD
     warning_ratio: float = _WARNING_RATIO
     auto_compact_ratio: float = _AUTO_COMPACT_RATIO
+    # The engine clamps the wire max_tokens to the room the prompt leaves, so
+    # the budget need not hold the whole answer + thinking allowance back.
+    fitted_output: bool = False
 
     def _output_reservation(self) -> int:
         # Cap the output reservation used for budgeting so a model's advertised
         # final + thinking allowance cannot consume nearly the whole prompt
-        # window. Budgeting only: the generation num_predict sent to the model
-        # is computed independently and is NOT reduced here.
+        # window: never more than a quarter of the window, and for an engine
+        # that fits max_tokens to the room the prompt leaves
+        # (``fitted_output``), at most the larger of the summary share and the
+        # answer floor. Budgeting only: the generation max_tokens sent to the
+        # model is computed independently and is NOT reduced here.
         quarter = self.context_window // 4
         output_reservation_cap = min(
             self.context_window,
             max(quarter, _MIN_OUTPUT_RESERVATION),
         )
-        return (
-            min(max(int(self.output_reservation_tokens), 0), output_reservation_cap)
-            if self.output_reservation_tokens is not None
-            else min(self.max_output_tokens, output_reservation_cap)
+        requested = max(
+            int(
+                self.output_reservation_tokens
+                if self.output_reservation_tokens is not None
+                else self.max_output_tokens
+            ),
+            0,
         )
+        if self.fitted_output:
+            requested = min(requested, max(self.summary_reservation(), _ANSWER_RESERVATION_FLOOR))
+        return min(requested, output_reservation_cap)
 
     def tool_overhead(self, num_tools: int = 0) -> int:
         """Tokens reserved for the request's tool schemas (capped at a quarter)."""
@@ -396,11 +417,45 @@ class BudgetTracker:
     # provider's own prompt count needs no headroom, so the tool loop judges
     # it against this (0 when unknown: the estimate path only).
     raw_context_window: int = 0
+    # Where ``backend``'s counts come from: "estimate" (the plain estimator) or
+    # "exact" / "calibrated" (an estimator rescaled to the provider's own count).
+    count_source: str = "estimate"
+    # The request's full tool schemas counted with ``backend`` (0 when unmeasured).
+    # The context meter's whole-prompt figures add these real tokens, the way
+    # ``context.preview`` counts them; the budget keeps its per-tool reserve.
+    tool_schema_tokens: int = 0
+    # The last model request's provider-vs-estimate pair ({provider_tokens,
+    # estimate_tokens, estimator}), the calibration the terminal usage block
+    # carries to the next turn (tool_loop_compaction.note_request_measurement).
+    calibration_reading: dict[str, Any] | None = None
     _progress_tokens: list[int | None] = field(default_factory=list)
     _made_tool_progress: list[bool] = field(default_factory=list)
     _cumulative_progress_tokens: int = 0
     _current_context_tokens: int = 0
     _iteration_total_count: int = 0
+
+    def charge_tool_schemas(
+        self, tool_payload: Iterable[Mapping[str, Any]], num_tools: int
+    ) -> None:
+        """Record the request's full tool schemas: their count and their size."""
+        self.num_tools = max(0, int(num_tools or 0))
+        self.tool_schema_tokens = (
+            estimate_tool_schema_tokens(tool_payload, self.backend) if self.num_tools else 0
+        )
+
+    def meter_tool_tokens(self) -> int:
+        """Tool tokens inside the meter's whole-prompt figures: the measured
+        schemas, else the budget's reserve for them."""
+        if self.tool_schema_tokens > 0:
+            return self.tool_schema_tokens
+        return self.budget.tool_overhead(self.num_tools) if self.budget is not None else 0
+
+    def meter_compact_threshold(self) -> int:
+        """The auto-compact point in whole-prompt tokens: compaction fires when the
+        message estimate reaches the threshold, and the prompt then also carries
+        the tool schemas (``context.preview``'s ``compact_at_tokens``)."""
+        threshold = self.budget.auto_compact_threshold(self.num_tools) if self.budget else 0
+        return threshold + self.meter_tool_tokens() if threshold > 0 else 0
 
     def record_iteration(
         self,
@@ -496,7 +551,8 @@ def resolve_auto_compact_ratio(config: Any, *, model_id: str | None) -> float:
 
     Precedence: per-model entry in ``token_budget_auto_compact_ratio_by_model``
     > ``token_budget_auto_compact_ratio`` (existing global override)
-    > ``_AUTO_COMPACT_RATIO`` (module default).
+    > ``_AUTO_COMPACT_RATIO`` (module default). The result is capped at
+    ``_MAX_AUTO_COMPACT_RATIO`` so auto-compact never meets the error threshold.
     """
     def valid_ratio(value: Any) -> float | None:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -509,10 +565,10 @@ def resolve_auto_compact_ratio(config: Any, *, model_id: str | None) -> float:
     if normalized_model_id and isinstance(by_model, dict):
         per_model = valid_ratio(by_model.get(normalized_model_id))
         if per_model is not None:
-            return per_model
+            return min(per_model, _MAX_AUTO_COMPACT_RATIO)
     global_ratio = valid_ratio(getattr(config, "token_budget_auto_compact_ratio", None))
     if global_ratio is not None:
-        return global_ratio
+        return min(global_ratio, _MAX_AUTO_COMPACT_RATIO)
     return _AUTO_COMPACT_RATIO
 
 
@@ -649,6 +705,8 @@ def apply_budget_check(  # noqa: PLR0913 - keyword-only budget inputs.
     num_tools: int = 0,
     reasoning_effort: str | None = None,
     tool_schema_tokens: int | None = None,
+    token_scale: float | None = None,
+    scale_source: str = "estimate",
 ) -> tuple[list[dict[str, Any]], TokenBudget | None, BudgetTracker | None]:
     """Construct a budget from engine/config and check the current context.
 
@@ -660,6 +718,11 @@ def apply_budget_check(  # noqa: PLR0913 - keyword-only budget inputs.
     When given (and no config override is set), the per-tool reserve is that
     measurement plus a framing margin instead of the flat default, which was
     about 2.5x Jenny's real schema cost and took ~14.5k of a 64k window.
+
+    ``token_scale`` / ``scale_source`` carry a count-source ladder result
+    (``context_count.resolve_token_scale``). For an "exact" or "calibrated"
+    scale the estimator is rescaled to the provider's own units, so the window
+    is judged without the estimator's 30% headroom.
     """
     # NOT engine.get_model_context_length(): that is the model's NATIVE window,
     # while every request is served with the configured num_ctx clamp. See
@@ -674,6 +737,12 @@ def apply_budget_check(  # noqa: PLR0913 - keyword-only budget inputs.
         max_output_tokens=int(max_output),
     )
     backend = _create_best_backend(config)
+    count_source = "estimate"
+    if token_scale is not None and scale_source in ("exact", "calibrated"):
+        from sidecar.ai.context.context_count import ScaledTokenizerBackend
+
+        backend = ScaledTokenizerBackend(backend, token_scale, exact=scale_source == "exact")
+        count_source = scale_source
     headroom = getattr(backend, "headroom_factor", 0.0)
     # Optional per-config overrides (None => fall back to module defaults).
     budget_kwargs: dict[str, Any] = {}
@@ -701,6 +770,7 @@ def apply_budget_check(  # noqa: PLR0913 - keyword-only budget inputs.
         context_window=window,
         max_output_tokens=int(max_output),
         output_reservation_tokens=explicit_output_reservation,
+        fitted_output=engine_fits_output_to_window(engine),
         **budget_kwargs,
     )
     tracker = BudgetTracker(
@@ -708,8 +778,14 @@ def apply_budget_check(  # noqa: PLR0913 - keyword-only budget inputs.
         num_tools=num_tools,
         backend=backend,
         raw_context_window=int(context_window),
+        count_source=count_source,
     )
     return working_messages, budget, tracker
+
+
+def engine_fits_output_to_window(engine: Any) -> bool:
+    """True when the engine clamps max_tokens to the prompt's leftover room."""
+    return getattr(engine, "fits_output_to_window", False) is True
 
 
 def resolve_tokenizer_backend(config: Any) -> "TokenizerBackend":

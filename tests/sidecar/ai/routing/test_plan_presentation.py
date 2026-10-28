@@ -146,10 +146,47 @@ def test_plan_pending_without_request_context() -> None:
         "Steps:\n- read a\n* edit b\n+ test c",
         "\N{BULLET} read a\n\N{BULLET} edit b\n\N{BULLET} test c",
         "Here it is.\n\nPlan\nDo the thing.",
+        "1. **Read** the module.\n2. Then edit the parser.\n3. Run the focused tests.",
+        "- `config.py`: add the flag\n- Update the docs\n- Run the tests",
     ],
 )
 def test_looks_like_plan(text: str) -> None:
     assert looks_like_plan(text) is True
+
+
+# The shape of the 2026-10-20 read-only analysis the nudge discarded.
+_FINDINGS_ANSWER = (
+    "## Anomalies\n"
+    "1. **Loss-making growth.** Premiums +35% while the UW loss widened to $3.42M.\n"
+    "2. **Net loss masked by capital injections.** Surplus grew on $942,500 of capital.\n"
+    "3. **Tax charge on a pre-tax loss.** $161,161 incurred on a $(302,545) loss.\n"
+    "4. Reinsurance payable up 166% to $3,321,626.\n"
+    "5. Operating cash flow flipped negative."
+)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        _FINDINGS_ANSWER,
+        "- Bonds fell 30%\n- Common stocks tripled\n- Check the reserve note\n- Cash is flat",
+    ],
+    ids=["findings_list", "mostly_findings"],
+)
+def test_findings_list_is_an_answer(text: str) -> None:
+    assert looks_like_plan(text) is False
+
+
+def test_findings_answer_is_not_nudged() -> None:
+    loop = _loop()
+
+    assert final_prose_nudge(loop, _reply(_FINDINGS_ANSWER), 3) is False
+    assert loop.events == []
+    assert len(loop.working_messages) == 1
+
+
+def test_nudge_tells_the_model_the_user_never_saw_the_reply() -> None:
+    assert "never saw that reply" in PLAN_PROSE_NUDGE
 
 
 @pytest.mark.parametrize(

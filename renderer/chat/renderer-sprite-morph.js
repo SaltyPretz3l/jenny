@@ -27,7 +27,13 @@
   const DONE_HOLD_MS = 1000;
   const NIB_SAMPLES = 28;
   const URGENT = new Set(['approve', 'stopped', 'error']);
-  const TRANSIENT = new Set(['compose', 'search', 'tool', 'check']);
+  // Composing forms must outlast a 200 ms flicker before they leave think.
+  const TRANSIENT = new Set(['compose', 'check']);
+  // A running tool's form shows at once and holds at least FORM_HOLD_MS, so a
+  // 30 ms write still registers; only these change states cut a hold short.
+  const TOOL_FORMS = new Set(['search', 'make', 'run', 'tool']);
+  const FORM_HOLD_MS = 800;
+  const HOLD_BYPASS = new Set(['approve', 'stopped', 'error', 'wait', 'stuck', 'done', 'rest']);
   const RING_SIZE = ['width', 'height', 'border-radius'];
 
   function parseMs(value, fallback) {
@@ -119,6 +125,8 @@
     let settleTimer = null;
     let holdTimer = null;
     let pending = null;
+    // { timer, next }: a tool form's minimum hold and the latest change it deferred.
+    let formHold = null;
     let nibAnims = [];
     let checkAnims = [];
 
@@ -146,10 +154,16 @@
       pending = null;
     }
 
+    function clearFormHold() {
+      if (formHold) clearTimer(formHold.timer);
+      formHold = null;
+    }
+
     function cancelTimers() {
       clearSettle();
       clearHold();
       clearPending();
+      clearFormHold();
     }
 
     function cancelNib() {
@@ -376,10 +390,11 @@
         dot.setAttribute('data-suspended', '');
         pauseAnims();
         clearHold();
-        // Nothing morphs while hidden: a debounced form is taken now, statically,
-        // so resume re-applies the form the pipeline last asked for.
-        const deferred = pending?.activity;
+        // Nothing morphs while hidden: a debounced or held-back form is taken now,
+        // statically, so resume re-applies the form the pipeline last asked for.
+        const deferred = pending?.activity || formHold?.next;
         clearPending();
+        clearFormHold();
         if (deferred) jumpTo(deferred);
         return;
       }
@@ -387,9 +402,23 @@
       resumeActivity();
     }
 
+    function startFormHold() {
+      const entry = { timer: null, next: '' };
+      entry.timer = setTimer(() => {
+        if (formHold !== entry || disposed) return;
+        formHold = null;
+        if (entry.next) setActivity(entry.next);
+      }, FORM_HOLD_MS);
+      formHold = entry;
+    }
+
     function setActivity(next) {
       if (disposed || !ACTIVITIES.has(next)) return;
       if (doneActive && next === 'rest') return; // the hold always ends in rest
+      if (formHold && !HOLD_BYPASS.has(next)) {
+        formHold.next = next === current ? '' : next; // the latest change waits out the hold
+        return;
+      }
       if (pending) {
         if (pending.activity === next) return;
         clearPending();
@@ -406,6 +435,7 @@
         return;
       }
       transition(next);
+      if (TOOL_FORMS.has(next) && !suspended) startFormHold();
     }
 
     function onVisibility() {

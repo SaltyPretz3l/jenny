@@ -66,7 +66,7 @@ test('pointer-only Scratchpad acknowledgement rejects sibling note content loss'
   const currentHome = {
     links: [{ id: 'docs', name: 'Docs', tiles: [] }],
     widgets: { order: [], hidden: [] },
-    scratchpad: twoNotesActive('note-1'),
+    scratchpad: { ...twoNotesActive('note-1'), pins: [] },
     calendar: { feeds: [] },
     focusMode: false,
     showContextualTips: true,
@@ -140,6 +140,7 @@ test('promoteToLoop flushes pending saves and posts a manual follow-up', async (
   const companionPayloads = [];
   const actions = createScratchpadActions({
     shell,
+    getScratchpad: () => scratch(''),
     applyCompanionPayload: (payload) => companionPayloads.push(payload),
     nowProvider: () => FIXED_NOW,
     setTimeoutImpl: timers.setTimeoutImpl,
@@ -963,4 +964,26 @@ test('markdown preview: a repaint with unchanged text reuses the preview DOM (ke
   widget.render(body, flagOnCtx(scratchpad));
   assert.equal(body.querySelector('[data-scratchpad-check="0"]'), rowBefore, 'preview node is reused, not reparsed');
   assert.equal(body.ownerDocument.activeElement, rowBefore, 'focus is preserved across the repaint');
+});
+
+test('a placeholder (incomplete) home config is not loaded: an unreadable pad refuses the write', async () => {
+  const timers = createTimerStub();
+  const writes = [];
+  // The Home manager seeds a one-note placeholder before its prime lands.
+  const placeholder = { links: [], widgets: { order: [], hidden: [] }, scratchpad: scratch('seed'), calendar: { feeds: [] }, focusMode: false };
+  const actions = createScratchpadActions({
+    shell: { home: {
+      getConfig: async () => { throw new Error('main busy'); },
+      updateConfig: async (patch) => { writes.push(patch); return null; },
+    } },
+    getScratchpad: () => placeholder.scratchpad,
+    getHomeConfig: () => placeholder,
+    appendClientLog: () => {},
+    nowProvider: () => FIXED_NOW,
+    setTimeoutImpl: timers.setTimeoutImpl,
+    clearTimeoutImpl: timers.clearTimeoutImpl,
+  });
+  actions.queueSave('typed before the prime');
+  await timers.fire();
+  assert.deepEqual(writes, [], 'never writes the placeholder over the persisted notes');
 });

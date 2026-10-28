@@ -157,3 +157,37 @@ def test_push_with_pr_url_in_stderr() -> None:
 def test_empty_output_returns_empty() -> None:
     ops = detect_git_operations("git commit --allow-empty -m 'empty'", "", "")
     assert ops == []
+
+
+def test_detect_root_commit() -> None:
+    stdout = "[main (root-commit) abc1234] initial\n 1 file changed"
+    ops = detect_git_operations("git commit -m initial", stdout, "")
+    assert len(ops) == 1
+    assert ops[0].branch == "main"
+    assert ops[0].sha == "abc1234"
+
+
+def test_detect_commit_on_detached_head() -> None:
+    stdout = "[detached HEAD abc1234] experiment\n 1 file changed"
+    ops = detect_git_operations("git commit -m experiment", stdout, "")
+    assert len(ops) == 1
+    assert ops[0].branch is None
+    assert ops[0].sha == "abc1234"
+    assert ops[0].summary == "committed abc1234 on detached HEAD"
+
+
+def test_detect_cherry_pick_on_detached_head() -> None:
+    stdout = "[detached HEAD 1234567] picked\n Date: today\n 1 file changed"
+    ops = detect_git_operations("git cherry-pick 1234567", stdout, "")
+    assert len(ops) == 1
+    assert ops[0].kind == "cherry_pick"
+    assert ops[0].branch is None
+
+
+def test_commit_pattern_stays_linear_on_a_long_bracketed_line() -> None:
+    import time
+
+    stdout = "[" + " " * 50_000 + "x"
+    started = time.perf_counter()
+    assert detect_git_operations("git commit -m x", stdout, "") == []
+    assert time.perf_counter() - started < 2.0

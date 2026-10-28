@@ -46,6 +46,7 @@ function row(harness, path) {
 async function createHarness({
   files = {}, dirs = [], expanded = [], showError, showUndoToast,
   preflightMutation = async () => ({ ready: true, paths: [] }),
+  mutationContext = { rootId: 'root-test', generation: 1, phase: 'ready' },
 } = {}) {
   const domHarness = buildIdeDom();
   const bridge = createBridgeStub({ files, dirs });
@@ -65,7 +66,7 @@ async function createHarness({
     getMountEl: () => domHarness.getDom().ideRailPanel,
     isActivePanel: () => true,
     getWorkspaceFsApi: () => bridge.jennyShell.workspaceFs,
-    getMutationContext: async () => ({ rootId: 'root-test', generation: 1, phase: 'ready' }),
+    getMutationContext: async () => mutationContext,
     preflightMutation,
     commitMutationPreflight: () => ({ committed: true }),
     cancelMutationPreflight: () => {},
@@ -76,15 +77,12 @@ async function createHarness({
   tree.refreshRoot();
   await settle(30);
   const dnd = createIdeTreeDnd({
-    getDom: domHarness.getDom,
     getMountEl: () => domHarness.getDom().ideRailPanel,
     isActivePanel: () => true,
-    getIde: () => ide,
     getRootEpoch: tree.getRootEpoch,
     selection: tree.selection,
     moveEntry: tree.moveEntry,
-    getApi: () => bridge.jennyShell.workspaceFs,
-    getMutationContext: async () => ({ rootId: 'root-test', generation: 1, phase: 'ready' }),
+    copyEntry: tree.copyEntry,
     refreshDirectory: tree.refreshDirectory,
     showError: showError || ((message, meta) => errors.push({ message, meta })),
     showToast: (message, options) => toasts.push({ message, options }),
@@ -384,4 +382,49 @@ test('wiring supplies one multi-delete confirmation for three selected rows', as
   assert.equal(confirmations.length, 1);
   assert.equal(confirmations[0].title, 'Delete 3 items?');
   assert.equal(bridge.calls.delete.length, 3);
+});
+
+test('Ctrl-drop refuses to copy without a ready root context', async (t) => {
+  const harness = await createHarness({ files: { 'a.js': 'a' }, dirs: ['dst'], mutationContext: null });
+  t.after(() => harness.dispose());
+  const transfer = createTransfer();
+  dispatchDrag(harness, row(harness, 'a.js'), 'dragstart', transfer);
+  dispatchDrag(harness, row(harness, 'dst'), 'drop', transfer, { ctrlKey: true });
+  await settle(80);
+
+  assert.deepEqual(harness.bridge.calls.copyEntry, []);
+  assert.equal(harness.errors.length, 1);
+  assert.match(harness.errors[0].message, /workspace root changed or is unavailable/);
+  assert.deepEqual(harness.toasts, []);
+});
+
+test('drag state clears after a spring-load repaint detaches the drag source', async (t) => {
+  const harness = await createHarness({ files: { 'a.js': 'a', 'b.js': 'b' }, dirs: ['dst'] });
+  t.after(() => harness.dispose());
+  const doc = harness.dom.window.document;
+  harness.tree.selection.replace(['a.js', 'b.js'], 'a.js');
+  let transfer = createTransfer();
+  const source = row(harness, 'a.js');
+  dispatchDrag(harness, source, 'dragstart', transfer);
+  assert.equal(doc.querySelectorAll('.ide-tree-drag-ghost').length, 1);
+  dispatchDrag(harness, row(harness, 'dst'), 'dragover', transfer);
+  await settle(640);
+  assert.equal(harness.ide.expandedDirs.has('dst'), true);
+  assert.equal(source.isConnected, false, 'the spring repaint detached the source row');
+
+  dispatchDrag(harness, source, 'dragend', transfer);
+  assert.equal(doc.querySelectorAll('.ide-tree-drag-ghost').length, 0, 'dragend on the detached source clears the ghost');
+  assert.equal(harness.panel.querySelectorAll('.ide-tree-row--dragging').length, 0);
+
+  transfer = createTransfer();
+  dispatchDrag(harness, row(harness, 'a.js'), 'dragstart', transfer);
+  dispatchDrag(harness, doc.body, 'drop', transfer);
+  await settle(10);
+  assert.equal(doc.querySelectorAll('.ide-tree-drag-ghost').length, 0, 'a drop anywhere in the document clears the ghost');
+
+  transfer = createTransfer();
+  dispatchDrag(harness, row(harness, 'a.js'), 'dragstart', transfer);
+  transfer = createTransfer();
+  dispatchDrag(harness, row(harness, 'a.js'), 'dragstart', transfer);
+  assert.equal(doc.querySelectorAll('.ide-tree-drag-ghost').length, 1, 'a new dragstart drops the stale ghost');
 });

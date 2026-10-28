@@ -66,7 +66,11 @@ test('v2 tool rows no longer enumerate terminal statuses per selector', () => {
 test('minimal-row path chips shrink and truncate without displacing status metadata', () => {
   const css = readRepoFile('styles/chat-machinery.css');
   const rule = css.match(/\.tool-call-row--minimal \.tool-path-chip\s*\{([^}]+)\}/)?.[1] || '';
-  assert.match(rule, /flex:\s*0 1 50%/);
+  // Content-sized with a cap: a 50% basis reserved half the header for a
+  // short path and parked the status cluster mid-row. It shrinks ahead of
+  // the toggle so a narrow row ellipsizes the path before the tool name.
+  assert.match(rule, /flex:\s*0 4 auto/);
+  assert.match(rule, /max-width:\s*40%/);
   assert.match(rule, /min-width:\s*0/);
   assert.match(rule, /overflow:\s*hidden/);
   assert.match(rule, /text-overflow:\s*ellipsis/);

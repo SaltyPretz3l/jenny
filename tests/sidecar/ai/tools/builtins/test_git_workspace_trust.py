@@ -159,6 +159,39 @@ def test_git_status_and_diff_neutralize_clean_filter(
     assert not marker.exists()
 
 
+@pytest.mark.parametrize("handler", [git_ops.git_status_tool, git_ops.git_diff_tool])
+def test_git_status_and_diff_never_run_a_submodule_clean_filter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    handler,
+) -> None:
+    # Security review 2026-10-25 item 16: the parent's -c overrides cannot name a
+    # filter that only the submodule's own config defines, so its worktree is skipped.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_committed_repo(repo)
+    (repo / "a.txt").write_text("a\n", encoding="utf-8")
+    sub = repo / "sub"
+    sub.mkdir()
+    _init_committed_repo(sub)
+    (sub / ".gitattributes").write_text("* filter=evil\n", encoding="utf-8")
+    tracked = sub / "f.txt"
+    tracked.write_text("hello\n", encoding="utf-8")
+    _commit_all(sub, "sub")
+    marker = tmp_path / f"submodule-{handler.__name__}.marker"
+    subprocess.run(["git", "config", "filter.evil.clean", _marker_command(marker)], cwd=sub, check=True)
+    _commit_all(repo, "parent with a gitlink")
+    # Same content, newer mtime: the submodule's status must re-read it through the filter.
+    stat = tracked.stat()
+    os.utime(tracked, ns=(stat.st_atime_ns, stat.st_mtime_ns + 5_000_000_000))
+    commands = _install_real_process_adapter(monkeypatch, assume_different_owner=False)
+
+    handler({"cwd": "repo"}, WorkspaceGuard(str(tmp_path)))
+
+    assert not marker.exists()
+    assert any("--ignore-submodules=dirty" in command for command in commands)
+
+
 @pytest.mark.parametrize("config_key", ["diff.evil.command", "diff.evil.textconv"])
 @pytest.mark.parametrize("handler", [git_ops.git_diff_tool, git_ops.git_show_tool])
 def test_git_diff_and_show_neutralize_diff_drivers(
@@ -216,6 +249,7 @@ def test_neutralizing_config_arguments_are_stable_and_unique() -> None:
         "-c", "credential.helper=",
         "-c", "core.pager=cat",
         "-c", "log.showSignature=false",
+        "-c", "core.quotePath=false",
         "-c", "credential.https://example.com.helper=",
         "-c", "diff.alpha.command=",
         "-c", "diff.zed.textconv=",
@@ -359,3 +393,120 @@ def test_unverifiable_git_config_refuses_read_only_command(
     assert "read-only command was not run" in exc_info.value.message
     assert len(calls) == 1
     assert not marker.exists()
+
+
+def test_repository_core_worktree_cannot_redirect_status_outside_the_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    repo = workspace_root / "repo"
+    repo.mkdir(parents=True)
+    _init_committed_repo(repo)
+    (repo / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+    _commit_all(repo, "initial")
+    (repo / "inside-only.txt").write_text("inside\n", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "outside-only.txt").write_text("outside\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "config", "core.worktree", str(outside)], cwd=repo, check=True
+    )
+    (repo / "nested").mkdir()
+    _install_real_process_adapter(monkeypatch, assume_different_owner=False)
+
+    for cwd in ("repo", "repo/nested"):
+        output = git_ops.git_status_tool({"cwd": cwd}, WorkspaceGuard(str(workspace_root)))
+        assert "outside-only.txt" not in output
+        assert "inside-only.txt" in output
+
+
+def test_non_ascii_file_names_are_reported_literally(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_committed_repo(repo)
+    (repo / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+    _commit_all(repo, "initial")
+    (repo / "café.txt").write_text("cafe\n", encoding="utf-8")
+    _install_real_process_adapter(monkeypatch, assume_different_owner=False)
+
+    output = git_ops.git_status_tool({"cwd": "repo"}, WorkspaceGuard(str(tmp_path)))
+
+    assert "?? café.txt" in output
+
+
+def _discovery_count(commands: list[list[str]]) -> int:
+    return sum(1 for command in commands if "--list" in command)
+
+
+def test_config_key_discovery_is_reused_until_a_config_file_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    git_process.reset_config_keys_cache()
+    repo = tmp_path / "repo"
+    marker = tmp_path / "cached.marker"
+    repo.mkdir()
+    _init_committed_repo(repo)
+    tracked = repo / "tracked.txt"
+    tracked.write_text("before\n", encoding="utf-8")
+    (repo / ".gitattributes").write_text("* filter=evil\n", encoding="utf-8")
+    _commit_all(repo, "initial")
+    tracked.write_text("after!\n", encoding="utf-8")
+    commands = _install_real_process_adapter(monkeypatch, assume_different_owner=False)
+    guard = WorkspaceGuard(str(tmp_path))
+
+    git_ops.git_status_tool({"cwd": "repo"}, guard)
+    git_ops.git_diff_tool({"cwd": "repo"}, guard)
+    assert _discovery_count(commands) == 1
+
+    # A filter configured after the first discovery changes .git/config, so the
+    # next command rediscovers and neutralizes it.
+    subprocess.run(
+        ["git", "config", "filter.evil.clean", _marker_command(marker)], cwd=repo, check=True
+    )
+    git_ops.git_status_tool({"cwd": "repo"}, guard)
+    assert _discovery_count(commands) == 2
+    assert not marker.exists()
+
+
+def test_config_key_discovery_naming_an_include_is_never_cached(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    git_process.reset_config_keys_cache()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_committed_repo(repo)
+    (repo / "extra.cfg").write_text("[user]\n\tname = Included\n", encoding="utf-8")
+    subprocess.run(["git", "config", "include.path", "../extra.cfg"], cwd=repo, check=True)
+    commands = _install_real_process_adapter(monkeypatch, assume_different_owner=False)
+    guard = WorkspaceGuard(str(tmp_path))
+
+    git_ops.git_status_tool({"cwd": "repo"}, guard)
+    git_ops.git_status_tool({"cwd": "repo"}, guard)
+
+    assert _discovery_count(commands) == 2
+
+
+def test_config_key_cache_entries_expire(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    git_process.reset_config_keys_cache()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_committed_repo(repo)
+    commands = _install_real_process_adapter(monkeypatch, assume_different_owner=False)
+    guard = WorkspaceGuard(str(tmp_path))
+
+    git_ops.git_status_tool({"cwd": "repo"}, guard)
+    cache = git_process._CONFIG_KEYS_CACHE
+    for key, (stored_at, keys) in list(cache.items()):
+        cache[key] = (stored_at - git_process.CONFIG_KEYS_TTL_SECONDS - 1, keys)
+    git_ops.git_status_tool({"cwd": "repo"}, guard)
+
+    assert _discovery_count(commands) == 2

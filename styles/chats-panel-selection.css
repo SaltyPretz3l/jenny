@@ -90,7 +90,8 @@
 
 .sidebar-bulk-control:disabled { opacity: 0.45; cursor: default; }
 .sidebar-bulk-control--delete { color: var(--state-danger); }
-.sidebar-bulk-control--select,
+.sidebar-bulk-control--select { color: var(--text-secondary); }
+.sidebar-bulk-control--select:is(:hover, :focus-visible) { color: var(--text-primary); }
 .sidebar-bulk-control--done { color: var(--accent); }
 .sidebar-bulk-control--done {
   margin-inline-start: var(--space-3);
@@ -137,7 +138,7 @@
   max-width: 100%;
 }
 
-/* Dedicated checkbox affordance: dots yield the leading edge to selection. */
+/* Dedicated checkbox affordance at the leading edge; the status dot steps aside while selecting. */
 .session-row__selection {
   display: none;
   position: relative;
@@ -158,7 +159,6 @@
   gap: var(--space-4);
 }
 .sidebar-bulk-selecting .session-row__dot { display: none; }
-.session-row.sidebar-bulk-selecting { grid-template-columns: minmax(0, 1fr); }
 .sidebar-bulk-selecting .session-row__menu { display: none; }
 
 .session-row.sidebar-bulk-selected,

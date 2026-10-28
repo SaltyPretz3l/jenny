@@ -10,19 +10,14 @@
   function createSettingsSectionBinders(deps) {
     const state = deps.state;
     const callbacks = deps.callbacks || {};
-    const constants = deps.constants || {};
+    const windowRef = deps.windowRef || globalThis;
     const getLazySectionDom = deps.getLazySectionDom || function noopGetLazySectionDom() { return {}; };
-    // Tier C JSON advanced editor (JENNY_UIUX_OVERHAUL_PLAN.md item 8): the
-    // offline section's slice, built lazily on first bind so a test harness
-    // that never calls bindSection('offline') never touches window.jennyShell.
     const {
-      renderAll,
       renderSettings,
       renderPersonalityEditor,
       handlePersonalitySave,
       handlePersonalityReset,
       handlePersonalityOpenFolder,
-      showShellErrorToast,
       toErrorMessage,
       showSessionActionError,
       openSettingsSection,
@@ -34,9 +29,6 @@
       getProjectSwitcher,
       setSidebarCollapsed,
     } = callbacks;
-    const {
-      TOAST_SOURCE = {},
-    } = constants;
 
     // One adapter per persisted object; both are after-ack because the owning
     // controllers (skills, offline) apply the echoed state and repaint.
@@ -159,7 +151,6 @@
 
     let sessionRuntimeController = null;
     function bindRuntime(_registerSectionListener, finalizeSectionBindings, context = {}) {
-      const windowRef = deps.windowRef || globalThis;
       const runtimeDom = getLazySectionDom('runtime');
       sessionRuntimeController = sessionRuntimeController
         || windowRef.rendererSettingsSessionRuntime?.createSessionRuntimeSettingsController?.({
@@ -196,7 +187,7 @@
     let runtimeConsole = null;
     let runtimeConsoleLoading = null;
     const runtimeConsoleSections = new Set();
-    function loadRuntimeConsole(windowRef) {
+    function loadRuntimeConsole() {
       if (runtimeConsole) return Promise.resolve(runtimeConsole);
       if (runtimeConsoleLoading) return runtimeConsoleLoading;
       runtimeConsoleLoading = (async () => {
@@ -216,16 +207,15 @@
     }
     // Attaches one view ('runs' or 'limits') to the shared console; returns its release.
     function attachRuntimeConsole(kind, host) {
-      const windowRef = deps.windowRef || globalThis;
       const token = {};
       let disposed = false;
       const button = (config) => (typeof windowRef.inventoryActionButton === 'function' ? windowRef.inventoryActionButton(config) : '');
       async function load() {
         if (disposed || !host) return;
         try {
-          const controller = await loadRuntimeConsole(windowRef);
+          const controller = await loadRuntimeConsole();
           if (disposed || !controller) return;
-          if (kind === 'limits') getAdvancedTuningSection(windowRef)?.render(getLazySectionDom('advanced'));
+          if (kind === 'limits') getAdvancedTuningSection()?.render(getLazySectionDom('advanced'));
           controller.attach(kind, host);
         } catch (_error) {
           const status = kind === 'limits' && host.closest('.settings-card')?.querySelector('[data-limits-status]');
@@ -255,7 +245,6 @@
       runtimeConsole?.resume?.();
     }
     function bindRuntimeLimits(_registerSectionListener, finalizeSectionBindings, context = {}) {
-      const windowRef = deps.windowRef || globalThis;
       const host = getLazySectionDom('advanced').advancedTuningFields || windowRef.document?.getElementById?.('advancedTuningFields') || null;
       context.addCleanup?.(attachRuntimeConsole('limits', host));
       context.markSectionBound?.();
@@ -282,22 +271,21 @@
       diagnosticsRuns.host = host;
       diagnosticsRuns.release = attachRuntimeConsole('runs', host);
     }
-    const consoleWindow = deps.windowRef || globalThis;
-    consoleWindow.rendererRuntimeConsole?.dispose?.();
+    windowRef.rendererRuntimeConsole?.dispose?.();
     const runtimeConsoleSeam = Object.freeze({ showRuns: showDiagnosticsRuns, dispose: releaseDiagnosticsRuns });
-    consoleWindow.rendererRuntimeConsole = runtimeConsoleSeam;
+    windowRef.rendererRuntimeConsole = runtimeConsoleSeam;
     // Renderer teardown: the board stops polling and the seam goes with it
     // (unless a newer binder set already replaced it).
     function dispose() {
       releaseDiagnosticsRuns();
-      if (consoleWindow.rendererRuntimeConsole === runtimeConsoleSeam) consoleWindow.rendererRuntimeConsole = null;
+      if (windowRef.rendererRuntimeConsole === runtimeConsoleSeam) windowRef.rendererRuntimeConsole = null;
     }
 
     // Advanced engine tuning. Built lazily on first bind so a harness that never
     // opens the section never reaches for window.jennyShell or the inventory.
     let advancedTuningSection = null;
     let advancedBoundDom = null;
-    function getAdvancedTuningSection(windowRef) {
+    function getAdvancedTuningSection() {
       const factory = windowRef.rendererSettingsAdvancedSection?.createAdvancedTuningSection;
       if (typeof factory !== 'function') return null;
       if (!advancedTuningSection) {
@@ -312,8 +300,7 @@
       return advancedTuningSection;
     }
     function bindAdvanced(registerSectionListener, finalizeSectionBindings, context = {}) {
-      const windowRef = deps.windowRef || globalThis;
-      const section = getAdvancedTuningSection(windowRef);
+      const section = getAdvancedTuningSection();
       const advancedDom = getLazySectionDom('advanced');
       let disposed = false;
       if (section) context.markSectionBound?.();
@@ -339,7 +326,6 @@
     }
 
     function createConfirmDialog(hostId) {
-      const windowRef = deps.windowRef || (typeof globalThis !== 'undefined' ? globalThis : {});
       const factory = windowRef.rendererIdeConfirmDialog?.createIdeConfirmDialog;
       const helpOverlayFactory = windowRef.inventoryHelpOverlay?.createHelpOverlay;
       if (typeof factory !== 'function' || typeof helpOverlayFactory !== 'function') return null;
@@ -358,29 +344,27 @@
       // are owned by the personality controller, which owns those hosts. The
       // binder keeps the two shell-dependent affordances: the Clear confirm
       // dialog and the section-scoped Ctrl+S save.
+      const showStatus = (status) => {
+        state.personality.actionStatus = status;
+        renderPersonalityEditor();
+      };
+      const save = () => handlePersonalitySave().catch((error) => showStatus(jt('settings.personality.saveFailed', 'Save failed: {error}', { error: toErrorMessage(error, 'unknown error') })));
       registerSectionListener(personalityDom.personalityActions, 'click', (event) => {
         const target = event.target;
         if (!target?.closest) return;
         if (target.closest('[data-action="personality-save"]')) {
-          handlePersonalitySave().catch((error) => {
-            state.personality.actionStatus = jt('settings.personality.saveFailed', 'Save failed: {error}', { error: toErrorMessage(error, 'unknown error') });
-            renderPersonalityEditor();
-          });
+          save();
           return;
         }
         if (target.closest('[data-action="personality-open-folder"]')) {
-          handlePersonalityOpenFolder().catch((error) => {
-            state.personality.actionStatus = jt('settings.personality.openFolderFailed', 'Open folder failed: {error}', { error: toErrorMessage(error, 'unknown error') });
-            renderPersonalityEditor();
-          });
+          handlePersonalityOpenFolder().catch((error) => showStatus(jt('settings.personality.openFolderFailed', 'Open folder failed: {error}', { error: toErrorMessage(error, 'unknown error') })));
           return;
         }
         if (!target.closest('[data-action="personality-clear"]')) return;
         if (!confirmDialog?.confirm) {
           // Never destroy both files without a confirm: say so instead of
           // silently doing nothing when the dialog could not be built.
-          state.personality.actionStatus = jt('settings.personality.clearUnavailable', 'Clear is unavailable.');
-          renderPersonalityEditor();
+          showStatus(jt('settings.personality.clearUnavailable', 'Clear is unavailable.'));
           return;
         }
         Promise.resolve(confirmDialog.confirm({
@@ -392,10 +376,7 @@
         })).then((confirmed) => {
           if (!confirmed) return undefined;
           return handlePersonalityReset();
-        }).catch((error) => {
-          state.personality.actionStatus = jt('settings.personality.clearFailed', 'Clear failed: {error}', { error: toErrorMessage(error, 'unknown error') });
-          renderPersonalityEditor();
-        });
+        }).catch((error) => showStatus(jt('settings.personality.clearFailed', 'Clear failed: {error}', { error: toErrorMessage(error, 'unknown error') })));
       });
       const formHost = personalityDom.personalityFormHost;
       const personalitySection = (formHost && typeof formHost.closest === 'function'
@@ -409,23 +390,14 @@
         // `dirty` stays true for the whole in-flight save, so guarding on it
         // alone lets a second Ctrl+S start a concurrent write.
         if (state.personality?.saving === true || state.personality?.dirty !== true) return;
-        handlePersonalitySave().catch((error) => {
-          state.personality.actionStatus = jt('settings.personality.saveFailed', 'Save failed: {error}', { error: toErrorMessage(error, 'unknown error') });
-          renderPersonalityEditor();
-        });
+        save();
       });
       context.addCleanup?.(() => confirmDialog?.dispose?.());
       return finalizeSectionBindings();
     }
 
-    // The Memory page binds its own events (renderer-memory-actions-utils.js).
-    function bindMemories(_registerSectionListener, finalizeSectionBindings) {
-      return finalizeSectionBindings();
-    }
-
     let subagentRoutingController = null;
     function bindTools(_registerSectionListener, finalizeSectionBindings, context = {}) {
-      const windowRef = deps.windowRef || globalThis;
       const module = windowRef.rendererSettingsSubagents || (typeof require === 'function' ? require('./renderer-settings-subagents') : null);
       const container = windowRef.document?.getElementById?.('toolsConfigFieldList');
       if (!container || !module || subagentRoutingController) return finalizeSectionBindings();
@@ -449,11 +421,12 @@
       advanced: bindAdvanced,
       offline: bindOffline,
       personality: bindPersonality,
-      memories: bindMemories,
       runtime: bindRuntime,
       runtimeLimits: bindRuntimeLimits,
     });
 
+    // A section without a binder here (Memories binds its own events in
+    // renderer-memory-actions-utils.js) only finalizes.
     function bindSection(sectionId, context) {
       const normalizedSectionId = String(sectionId || '').trim();
       const registerSectionListener = context.registerSectionListener;
@@ -471,7 +444,7 @@
       if (advancedBoundDom) void advancedTuningSection?.refresh?.(advancedBoundDom);
     }
     const sectionShownHandlers = Object.freeze({
-      tools: () => { void subagentRoutingController?.refresh(); },
+      tools: () => { subagentRoutingController?.refreshIfStale(); },
       runtimeLimits: runtimeConsoleShown, advanced: advancedShown,
     });
     function sectionShown(sectionId) {

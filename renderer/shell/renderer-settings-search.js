@@ -7,12 +7,9 @@
  * so the index deliberately never reads live markup — it is built once from
  * the two data sources that already describe every setting up front.
  *
- * Two exports:
- *   - buildSettingsSearchIndex(): pure data -> index[] (unit-testable, no DOM)
- *   - searchSettingsIndex(index, query): pure match -> ordered hits
- *   - createSettingsSearchController(deps): DOM wiring (box markup, filtering
- *     the nav rail, results list, keyboard nav, jump-and-flash) — kept
- *     separate from the pure logic above so tests can exercise either half.
+ * Pure halves (buildSettingsSearchIndex: data -> index[]; searchSettingsIndex:
+ * index + query -> ordered hits) stay apart from createSettingsSearchController
+ * (box markup, rail filter, results list, keyboard nav, jump-and-flash).
  *
  * The merged skills section resolves to its Extensions host in the index;
  * `rawSectionId` keeps the original copy-map sectionId for reference.
@@ -42,13 +39,7 @@
 
   function resolveHostSectionId(sectionId) {
     var id = String(sectionId || '').trim();
-    if (!id) {
-      return id;
-    }
-    if (typeof registry.normalizeSettingsSectionId === 'function') {
-      return registry.normalizeSettingsSectionId(id);
-    }
-    return id;
+    return id && typeof registry.normalizeSettingsSectionId === 'function' ? registry.normalizeSettingsSectionId(id) : id;
   }
 
   function sectionLabel(sectionId) {
@@ -58,10 +49,18 @@
     return (definition && definition.label) || sectionId;
   }
 
+  // The lowercase text a query is matched against, built once per entry.
+  function withHaystack(entry) {
+    var keywords = Array.isArray(entry.keywords) ? entry.keywords.join(' ') : '';
+    entry.haystack = [entry.label, entry.description, entry.sectionLabel, keywords]
+      .map(function (part) { return String(part || ''); }).join(' ').toLowerCase();
+    return entry;
+  }
+
   /**
    * Build the static search index: one entry per section (matches on the
    * section's own label) plus one entry per field-copy toggle/select.
-   * @returns {Array<{id:string,kind:'section'|'field',label:string,description:string,sectionId:string,rawSectionId:string,sectionLabel:string}>}
+   * @returns {Array<{id:string,kind:'section'|'field',label:string,description:string,sectionId:string,rawSectionId:string,sectionLabel:string,haystack:string}>}
    */
   function buildSettingsSearchIndex() {
     var entries = [];
@@ -69,7 +68,7 @@
     for (var i = 0; i < sections.length; i++) {
       var section = sections[i];
       var hostId = resolveHostSectionId(section.id);
-      entries.push({
+      entries.push(withHaystack({
         id: 'section:' + section.id,
         kind: 'section',
         label: section.label,
@@ -78,14 +77,14 @@
         rawSectionId: section.id,
         sectionLabel: sectionLabel(hostId),
         keywords: Array.isArray(section.keywords) ? section.keywords : [],
-      });
+      }));
     }
     var fields = typeof copy.listSettingsSearchEntries === 'function' ? copy.listSettingsSearchEntries()
       : (typeof copy.listSettingsFieldCopyEntries === 'function' ? copy.listSettingsFieldCopyEntries() : []);
     for (var j = 0; j < fields.length; j++) {
       var field = fields[j];
       var fieldHostId = resolveHostSectionId(field.sectionId);
-      entries.push({
+      entries.push(withHaystack({
         id: field.id,
         kind: 'field',
         label: field.label,
@@ -94,26 +93,13 @@
         rawSectionId: field.sectionId,
         sectionLabel: sectionLabel(fieldHostId),
         keywords: field.keywords || [],
-      });
+      }));
     }
     return entries;
   }
 
   function normalizeQuery(query) {
     return String(query == null ? '' : query).trim().toLowerCase();
-  }
-
-  function entryMatches(entry, needle) {
-    if (!needle) {
-      return false;
-    }
-    var haystack = (
-      String(entry.label || '') + ' '
-      + String(entry.description || '') + ' '
-      + String(entry.sectionLabel || '')
-      + ' ' + (Array.isArray(entry.keywords) ? entry.keywords.join(' ') : '')
-    ).toLowerCase();
-    return haystack.indexOf(needle) !== -1;
   }
 
   /**
@@ -133,7 +119,7 @@
     var sectionHits = [];
     for (var i = 0; i < index.length; i++) {
       var entry = index[i];
-      if (!entryMatches(entry, needle)) {
+      if (entry.haystack.indexOf(needle) === -1) {
         continue;
       }
       if (entry.kind === 'field') {
@@ -145,9 +131,8 @@
     return fieldHits.concat(sectionHits);
   }
 
-  /** Distinct section ids (nav-reachable, already host-resolved) hit by a query. */
-  function searchSettingsSectionIds(index, query) {
-    var hits = searchSettingsIndex(index, query);
+  /** Distinct section ids (nav-reachable, already host-resolved) of a hit list. */
+  function sectionIdsOfHits(hits) {
     var seen = Object.create(null);
     var ids = [];
     for (var i = 0; i < hits.length; i++) {
@@ -159,6 +144,11 @@
       ids.push(id);
     }
     return ids;
+  }
+
+  /** Distinct section ids (nav-reachable, already host-resolved) hit by a query. */
+  function searchSettingsSectionIds(index, query) {
+    return sectionIdsOfHits(searchSettingsIndex(index, query));
   }
 
   // ── DOM wiring ─────────────────────────────────────────────────────────
@@ -217,12 +207,9 @@
     var doc = options.documentRef || (typeof document !== 'undefined' ? document : null);
     var settingsNav = options.settingsNav || null;
     var navigateToSection = typeof options.navigateToSection === 'function' ? options.navigateToSection : function () {};
-    // Queued-flash hardening: for a not-yet-initialized lazy section, the
-    // content render only happens after refreshSettingsSection()'s in-flight
-    // promise settles — flashing immediately then blinks an empty card. When
-    // present, this accessor lets activateHit() defer the flash to the
-    // section's own ready signal instead of the next animation frame. Absent
-    // (older deps) falls back to the original single-rAF behavior.
+    // Queued-flash hardening: a lazy section renders only once its refresh
+    // settles, so activateHit() defers the flash to that promise (flashing at
+    // once blinks an empty card). Absent, the flash waits a single rAF.
     var getSectionRefreshPromise = typeof options.getSectionRefreshPromise === 'function'
       ? options.getSectionRefreshPromise
       : null;
@@ -239,19 +226,19 @@
     var bound = false;
     var activeHits = [];
     var activeIndex = -1;
+    // The result row painted active; renderResults repaints every row inactive.
+    var highlightedIndex = -1;
     var flashTimer = null;
+    var flashTarget = null;
+    var clearFlashTimer = clearTimeout;
     var bindingFence = null;
     var bindingGate = asyncFence.createGenerationGate();
     var queuedAnimationFrames = [];
 
     // UIUX-038: `queryActive` (not sectionIds.length) decides whether an
-    // allow-list is built at all. A blank query -> queryActive=false ->
-    // allow=null -> every item visible (no filter). A NONBLANK query that
-    // matched zero sections -> queryActive=true -> allow={} (empty) -> every
-    // item's `allow[id]` lookup misses -> every item hidden. Previously this
-    // used `sectionIds.length` as the sole signal, so a real zero-hit query
-    // was indistinguishable from "no query" and silently restored the full
-    // nav instead of filtering to nothing.
+    // allow-list is built at all: a blank query shows every item, while a
+    // nonblank query that matched nothing gets an empty allow-list and hides
+    // every item (it used to restore the full nav instead).
     function applyNavFilter(sectionIds, queryActive) {
       var items = getNavItems();
       var allow = queryActive ? Object.create(null) : null;
@@ -272,12 +259,15 @@
       applyNavFilter(null, false);
     }
 
-    function clearFlash(el) {
-      if (!el) {
-        return;
+    // Ends the running flash: its timer and its target's hit mark.
+    function stopFlash() {
+      if (flashTimer) {
+        clearFlashTimer(flashTimer);
+        flashTimer = null;
       }
-      if (el.removeAttribute) {
-        el.removeAttribute('data-search-hit');
+      if (flashTarget) {
+        flashTarget.removeAttribute('data-search-hit');
+        flashTarget = null;
       }
     }
 
@@ -290,10 +280,7 @@
     }
 
     function flashRow(sectionId, fieldId, rawSectionId) {
-      if (flashTimer) {
-        clearTimeout(flashTimer);
-        flashTimer = null;
-      }
+      stopFlash();
       if (!doc) {
         return;
       }
@@ -316,10 +303,14 @@
       if (typeof target.scrollIntoView === 'function') {
         target.scrollIntoView({ block: 'center' });
       }
+      // Re-picking the row that still flashes restarts its fade: stopFlash
+      // removed the mark, and the layout read commits that before it returns.
+      void target.offsetWidth;
       target.setAttribute('data-search-hit', 'true');
+      flashTarget = target;
       var win = (target.ownerDocument && target.ownerDocument.defaultView) || (typeof window !== 'undefined' ? window : null);
       var setTimer = win && typeof win.setTimeout === 'function' ? win.setTimeout : setTimeout;
-      var clearTimer = win && typeof win.clearTimeout === 'function' ? win.clearTimeout : clearTimeout;
+      clearFlashTimer = win && typeof win.clearTimeout === 'function' ? win.clearTimeout : clearTimeout;
       var flashMs = HIT_FLASH_MS;
       if (win && typeof win.getComputedStyle === 'function') {
         // The target may run several animations (e.g. the active card's
@@ -340,11 +331,9 @@
         }
       }
       flashTimer = setTimer(function () {
-        clearFlash(target);
         flashTimer = null;
+        stopFlash();
       }, flashMs);
-      // stash for dispose-time cleanup without leaking a second closure ref
-      flashRow._clearTimer = clearTimer;
     }
 
     // `rawQuery` is the trimmed query text, or '' for a cleared/blank query
@@ -362,6 +351,7 @@
       if (!resultsEl) {
         return;
       }
+      highlightedIndex = -1;
       if (!hits.length) {
         resultsEl.innerHTML = '';
         resultsEl.hidden = true;
@@ -377,23 +367,45 @@
       highlightActiveResult();
     }
 
+    function paintResultRow(row, isActive) {
+      if (!row) {
+        return;
+      }
+      row.classList.toggle('active', isActive);
+      row.setAttribute('aria-selected', String(isActive));
+    }
+
+    // Repaints only the row leaving and the row taking the active state.
     function highlightActiveResult() {
       if (!resultsEl) {
         return;
       }
-      var items = [].slice.call(resultsEl.querySelectorAll('.settings-search-result'));
-      for (var i = 0; i < items.length; i++) {
-        var isActive = i === activeIndex;
-        items[i].classList.toggle('active', isActive);
-        items[i].setAttribute('aria-selected', String(isActive));
-      }
+      var rows = resultsEl.children;
+      paintResultRow(rows[highlightedIndex], false);
+      paintResultRow(rows[activeIndex], true);
+      highlightedIndex = activeIndex;
       if (inputEl) {
-        if (activeIndex >= 0 && items[activeIndex]) {
-          inputEl.setAttribute('aria-activedescendant', items[activeIndex].id);
+        if (activeIndex >= 0 && rows[activeIndex]) {
+          inputEl.setAttribute('aria-activedescendant', rows[activeIndex].id);
         } else {
           inputEl.removeAttribute('aria-activedescendant');
         }
       }
+    }
+
+    // The host's pending refresh plus its companions' (a Skills hit lands
+    // under Extensions): the flash waits for all of them.
+    function pendingSectionRefresh(sectionId) {
+      if (!getSectionRefreshPromise) {
+        return null;
+      }
+      var ids = [sectionId].concat((registry.getSettingsCompanionSectionIds?.(sectionId) || []));
+      var pending = ids.map(function (id) { return getSectionRefreshPromise(id); })
+        .filter(function (promise) { return promise && typeof promise.then === 'function'; });
+      if (pending.length < 2) {
+        return pending[0] || null;
+      }
+      return Promise.all(pending.map(function (promise) { return Promise.resolve(promise).catch(function () {}); }));
     }
 
     function activateHit(hit) {
@@ -404,7 +416,10 @@
       renderResults([], '');
       var token = bindingGate.capture();
       var activeFence = bindingFence;
-      navigateToSection(hit.sectionId);
+      // A vetoed switch (unsaved personality changes) stays put: nothing to flash.
+      if (navigateToSection(hit.sectionId) === false) {
+        return;
+      }
       var fieldId = hit.kind === 'field' ? hit.id : '';
       var win = (doc && doc.defaultView) || (typeof window !== 'undefined' ? window : null);
       var raf = win && typeof win.requestAnimationFrame === 'function' ? win.requestAnimationFrame : function (cb) { cb(); };
@@ -425,8 +440,8 @@
       // navigateToSection() may have just kicked off (synchronously, via the
       // shell controller) the lazy section's refresh — check immediately
       // after so a still-pending promise is caught before this call returns.
-      var pendingRefresh = getSectionRefreshPromise ? getSectionRefreshPromise(hit.sectionId) : null;
-      if (pendingRefresh && typeof pendingRefresh.then === 'function') {
+      var pendingRefresh = pendingSectionRefresh(hit.sectionId);
+      if (pendingRefresh) {
         Promise.resolve(pendingRefresh).then(queueFlash, queueFlash).catch(function () {});
         return;
       }
@@ -441,11 +456,8 @@
         return;
       }
       var hits = searchSettingsIndex(index, query);
-      var sectionIds = searchSettingsSectionIds(index, query);
-      // queryActive=true even when sectionIds is [] -- a real query that
-      // matched nothing must filter the nav to nothing, not leave it
-      // unfiltered (UIUX-038).
-      applyNavFilter(sectionIds, true);
+      // queryActive=true even with no hits: a real miss filters the nav to nothing (UIUX-038).
+      applyNavFilter(sectionIdsOfHits(hits), true);
       renderResults(hits, query);
     }
 
@@ -555,11 +567,7 @@
       if (resultsEl) {
         resultsEl.removeEventListener('click', handleResultsClick);
       }
-      if (flashTimer) {
-        var clearTimer = flashRow._clearTimer || clearTimeout;
-        clearTimer(flashTimer);
-        flashTimer = null;
-      }
+      stopFlash();
       while (queuedAnimationFrames.length) {
         var frame = queuedAnimationFrames.pop();
         frame.cancel(frame.handle);

@@ -323,17 +323,19 @@ class ProviderCapabilityProfileStore:
         *,
         profile_id: str,
         kind: str,
+        count: int = 1,
     ) -> ReliabilityCounters | None:
-        """Increment one reliability counter on the named profile.
+        """Add ``count`` (default one) to a reliability counter on the named profile.
 
         ``kind`` is one of the eight string constants exported by
         :mod:`sidecar.ai.routing.route_policy`. Returns the updated counters,
-        or ``None`` when the profile_id is unknown or the kind is unknown.
+        or ``None`` when the profile_id, the kind or the count is unusable.
         Unknown ``kind`` values silently no-op so future call sites can be
-        rolled out without breaking the store.
+        rolled out without breaking the store; a batch caller passes ``count``
+        to add many outcomes under one lock.
         """
         field_name = _COUNTER_KIND_TO_FIELD.get(kind)
-        if field_name is None:
+        if field_name is None or isinstance(count, bool) or not isinstance(count, int) or count < 1:
             return None
         with self._lock:
             stored = self._profiles.get(profile_id)
@@ -342,7 +344,7 @@ class ProviderCapabilityProfileStore:
             current = stored.reliability_counters
             updated_counters = replace(
                 current,
-                **{field_name: getattr(current, field_name) + 1},
+                **{field_name: getattr(current, field_name) + count},
             )
             self._profiles[profile_id] = replace(
                 stored, reliability_counters=updated_counters

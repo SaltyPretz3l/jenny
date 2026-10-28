@@ -50,7 +50,8 @@ PLAN_PROSE_NUDGE = (
     "Plan Mode is still on and no plan has been submitted. Your last reply wrote the "
     "plan as prose, which the user cannot approve. Call `exit_plan_mode` now with a "
     "concise title, 1-20 flat steps, and optional notes and verification taken from "
-    "that reply. Do not repeat the plan as text."
+    "that reply. Do not repeat the plan as text. The user never saw that reply, so "
+    "do not refer to it as something already shown."
 )
 _DEADLINE_TEMPLATE = (
     "Plan Mode: this planning turn is close to its {limit} limit and no plan has been "
@@ -59,9 +60,27 @@ _DEADLINE_TEMPLATE = (
     "verification."
 )
 
-_LIST_LINE = re.compile(r"^\s*(?:[-*+\u2022]|\d+[.)])\s+\S", re.MULTILINE)
+_LIST_ITEM = re.compile(r"^\s*(?:[-*+\u2022]|\d+[.)])\s+(\S.*)$", re.MULTILINE)
 # "Plan:" or a bare "Plan" heading line; "Plan Mode is read-only..." is an answer.
 _PLAN_LINE = re.compile(r"^[ \t]*(?:#{1,6}[ \t]*|\*\*)?Plan(?:\*\*)?[ \t]*(?::|$)", re.MULTILINE)
+_ITEM_LEAD = re.compile(r"^[\s*_`~\[(]*(?:(?:then|next|first|finally|also|and)\s+)?([A-Za-z]+)")
+# Words a plan step opens with. A list without a "Plan" heading counts as a plan
+# only when most items start with one; a findings list ("1. **Loss-making
+# growth.** ...") is an answer, and discarding it hid a finished read-only
+# analysis from the user (2026-10-20 session review). A missed prose plan
+# still finalizes as a visible reply, so the cheaper error is a miss.
+_STEP_VERBS = frozenset(
+    """
+    add adjust apply audit build bump call change check clean compare configure confirm
+    convert copy create cross debug define delete deploy document draft drop edit enable
+    disable ensure expand extend extract fetch find fix gather generate implement import
+    inspect install introduce investigate keep list load look map measure merge migrate
+    modify move open patch port prepare profile pull read rebuild reconcile record
+    refactor remove rename reorder replace reproduce rerun restore review revise rewrite
+    run save scan search set ship simplify split start stop summarize switch tally test
+    tidy trace trim try update upgrade use validate verify wire write
+    """.split()
+)
 
 
 def _assist_enabled() -> bool:
@@ -94,16 +113,29 @@ def plan_pending(loop: Any) -> bool:
     return decision in {"", "rejected"} and _no_plan_since_rejection(loop.outcomes)
 
 
+def _opens_with_step_verb(item: str) -> bool:
+    match = _ITEM_LEAD.match(item)
+    return match is not None and match.group(1).lower() in _STEP_VERBS
+
+
 def looks_like_plan(reply: str) -> bool:
-    """A "Plan" heading or at least three list lines, and no question in the reply.
+    """A "Plan" heading, or a list of steps; never a reply with a question.
 
     Any line ending in "?" keeps the reply as it is: a clarifying question
     followed by its options is a list too, and the user has to answer it first.
+    A list counts when it has at least three items and most open with a step
+    verb, so a list of findings stays an answer.
     """
     text = reply.strip()
     if not text or any(line.rstrip().endswith("?") for line in text.splitlines()):
         return False
-    return bool(_PLAN_LINE.search(text)) or len(_LIST_LINE.findall(text)) >= MIN_LIST_LINES
+    if _PLAN_LINE.search(text):
+        return True
+    items = _LIST_ITEM.findall(text)
+    if len(items) < MIN_LIST_LINES:
+        return False
+    steps = sum(1 for item in items if _opens_with_step_verb(item))
+    return steps * 2 > len(items)
 
 
 def _steps_left(loop: Any, iteration: int) -> bool:

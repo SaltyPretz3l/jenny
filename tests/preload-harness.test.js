@@ -226,6 +226,23 @@ test('preload exposes updater bridge on jennyShell', async () => {
   ]);
 });
 
+test('preload exposes the command-line tool PATH bridge on jennyShell', async () => {
+  const captured = captureJennyShellPreload();
+  const cliPath = captured.api.api.cli.path;
+  assert.equal(typeof cliPath.getState, 'function');
+  assert.equal(typeof cliPath.install, 'function');
+  assert.equal(typeof cliPath.remove, 'function');
+
+  await cliPath.getState();
+  await cliPath.install();
+  await cliPath.remove();
+  assert.deepEqual(captured.invokeCalls, [
+    { channel: 'cli:path:get-state', args: [] },
+    { channel: 'cli:path:install', args: [] },
+    { channel: 'cli:path:remove', args: [] },
+  ]);
+});
+
 test('preload exposes setup contract bridge on jennyShell', async () => {
   const captured = captureJennyShellPreload();
 
@@ -430,4 +447,33 @@ test('preload exposes the Settings memory page bridge on jennyShell', async () =
   for (const name of ['listArchived', 'erase', 'clearForgotten', 'listOperations', 'setAlwaysOn', 'exportMarkdown', 'openContextFile']) {
     assert.equal(typeof captured.api.api.memory[name], 'function', name);
   }
+});
+
+test('preload exposes the primary chat bridge with only its closed methods and a disposable subscription', async () => {
+  const captured = captureJennyShellPreload();
+  const primaryChat = captured.api.api.primaryChat;
+  assert.deepEqual(Object.keys(primaryChat).sort(), [
+    'activity',
+    'forgetPreview',
+    'getState',
+    'grantLaunch',
+    'onChanged',
+    'pause',
+    'permissions',
+    'reset',
+    'resume',
+    'revokeLaunch',
+  ]);
+  await primaryChat.getState({ schema_version: 1 });
+  await primaryChat.activity({ schema_version: 1, limit: 10 });
+  await primaryChat.reset({ schema_version: 1, forget: true });
+  assert.deepEqual(captured.invokeCalls.map((call) => call.channel), [
+    'primary-chat:get-state',
+    'primary-chat:activity',
+    'primary-chat:reset',
+  ]);
+  const unsubscribe = primaryChat.onChanged(() => {});
+  assert.equal(captured.subscriptions.at(-1).channel, 'primary-chat:changed');
+  unsubscribe();
+  assert.equal(captured.subscriptions.at(-1).removed, true);
 });

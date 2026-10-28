@@ -18,6 +18,8 @@ from sidecar.ai.execution_policy import (
 from sidecar.ai.host_policy import host_execution_worker_enabled
 from sidecar.ai.routing.request_safety import current_request_safety, resolve_safety_mode
 from sidecar.ai.tools.assembly import (
+    RUNTIME_UNAVAILABLE_REASON,
+    AssembledToolEntry,
     ToolAssemblyContext,
     tool_preference_set,
 )
@@ -437,3 +439,35 @@ def log_request_tool_preferences(
         request_id=request_id,
         session_id=session_id,
     )
+
+
+def contract_entry_for_call(
+    kernel: Any, tool_contract: Any | None, tool_id: str
+) -> tuple[Any | None, Any | None]:
+    """``(entry, descriptor)`` for a call, with legacy bare MCP names resolved.
+
+    The MCP client resolves a bare server tool name (``lookup``) to its
+    namespaced descriptor (``mcp__remote_docs__lookup``), but the request
+    contract is keyed by the namespaced name only, so a bare-name call used
+    to skip every contract gate (request preferences, Plan/read-only
+    blocking, offline lockdown) and dispatch anyway (tool review C2 #1). The
+    namespaced entry is authoritative; a bare name whose namespaced tool is
+    absent from the contract gets an unavailable entry, so the call settles
+    as blocked instead of reaching the transport.
+    """
+    entry = tool_contract.entry(tool_id) if tool_contract is not None else None
+    if entry is not None:
+        return entry, entry.descriptor
+    client = getattr(kernel, "_mcp_client", None)
+    descriptor = client.tool_descriptor(tool_id) if client is not None else None
+    if tool_contract is None or descriptor is None:
+        return None, descriptor
+    resolved_name = str(getattr(descriptor, "name", "") or "")
+    if resolved_name == str(tool_id):
+        return None, descriptor
+    entry = tool_contract.entry(resolved_name)
+    if entry is None:
+        entry = AssembledToolEntry(
+            descriptor=descriptor, available=False, reason=RUNTIME_UNAVAILABLE_REASON
+        )
+    return entry, entry.descriptor

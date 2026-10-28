@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 
 const { createHarness, settle } = require('./helpers/renderer-ide-harness');
 const { buildIdeShortcutsHtml, IDE_SHORTCUTS } = require('../renderer/features/renderer-ide-shortcuts');
+const { createIdeCommandRegistry } = require('../renderer/features/renderer-ide-command-registry');
 const { createChooseWorkspaceRoot, createIdeWelcome } = require('../renderer/features/renderer-ide-welcome');
 
 function ctrlF4(harness) {
@@ -16,13 +17,17 @@ function ctrlF4(harness) {
   }));
 }
 
-test('shortcuts catalog: builds sections with kbd chiclets and reopen binding', () => {
+test('shortcuts catalog: builds sections with kbd chiclets and the registry bindings first', () => {
   const html = buildIdeShortcutsHtml();
   assert.ok(IDE_SHORTCUTS.length >= 3, 'expected at least three shortcut sections');
   assert.match(html, /chat-help-overlay-section/);
   assert.match(html, /<kbd class="chat-help-overlay-kbd">Ctrl<\/kbd>/);
-  assert.match(html, /Reopen the last closed tab/);
   assert.match(html, /Open the command palette/);
+  const registry = createIdeCommandRegistry();
+  registry.register({ id: 'ide:reopen-closed-tab', label: 'View: Reopen Closed Editor', keys: ['ctrl+shift+t'], run() {} });
+  const withRegistry = buildIdeShortcutsHtml(registry);
+  assert.ok(withRegistry.indexOf('View: Reopen Closed Editor') < withRegistry.indexOf('Open the command palette'), 'bindings lead');
+  assert.match(withRegistry, /<kbd class="chat-help-overlay-kbd">T<\/kbd>/);
   // No raw primitives leak through — kbd/dl/section only.
   assert.doesNotMatch(html, /<button|<input/);
 });
@@ -217,4 +222,21 @@ test('welcome keeps the primary action above a collapsed shortcut catalog (GUI f
     chooseRoot.compareDocumentPosition(shortcuts) & 4,
     'the actionable CTA precedes the shortcut catalog in document order'
   );
+});
+
+test('clearRecent drops every recent file (a workspace root change)', async () => {
+  const { JSDOM } = require('jsdom');
+  const dom = new JSDOM('<div id="empty"></div>');
+  const host = dom.window.document.getElementById('empty');
+  const welcome = createIdeWelcome({
+    getDom: () => ({ ideEmptyState: host }),
+    actionButton: ({ dataset = {} }) => (dataset['ide-welcome-file'] ? `<button data-ide-welcome-file="${dataset['ide-welcome-file']}"></button>` : '<button></button>'),
+  });
+  welcome.seedRecent(['old/a.js', 'old/b.js']);
+  await welcome.render({ hasRoot: true });
+  assert.equal(host.querySelectorAll('[data-ide-welcome-file]').length, 2);
+  welcome.clearRecent();
+  await welcome.render({ hasRoot: true });
+  assert.equal(host.querySelector('[data-ide-welcome-file]'), null);
+  welcome.dispose();
 });

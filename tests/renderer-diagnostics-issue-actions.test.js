@@ -10,7 +10,11 @@ async function boot(t, shell = {}) {
     windowGlobals: { __jennyMonacoSharedState: {
       ready: false, failed: true, readyPromise: null, loaderConfigured: true,
       failureReason: 'harness', loggedFailure: true, requireErrorHookInstalled: true,
-    } },
+    },
+    // The Chats panel asks for the project switcher at boot; the harness lazy loader
+    // cannot serve it, so hand it over as the app would load it (no load-failed WARN).
+    rendererProjectMenu: require('../renderer/features/renderer-project-menu'),
+    rendererProjectSwitcher: require('../renderer/features/renderer-project-switcher') },
     shell: { ...shell, diagnostics: { logs: { getSnapshot: async () => ({
       active_run: { run_id: 'run' }, entries: [], sources: {},
       integrity: { complete: true, partial_reasons: [] },

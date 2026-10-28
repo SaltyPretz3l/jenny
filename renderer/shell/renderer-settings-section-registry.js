@@ -43,9 +43,6 @@
       group: 'modelTools',
       order: -1,
       label: jt('settings.sections.readiness.title', 'Readiness'),
-      domKey: 'readiness',
-      refreshPolicy: 'render',
-      diagnosticsLifecycle: 'none',
     },
     // Runs moved to Diagnostics › Runs (owner, 2026-10-03); a stored `runs`
     // section falls back to the default like any unknown id.
@@ -54,9 +51,6 @@
       id: 'models',
       group: 'modelTools',
       label: jt('settings.sections.models.title', 'Models'),
-      domKey: 'models',
-      refreshPolicy: 'render',
-      diagnosticsLifecycle: 'none',
       default: true,
       // The Model library grid lives in this card since 2026-09-21; keep its
       // old name (and what people pull/add there) reachable from search.
@@ -66,32 +60,22 @@
       id: 'offline',
       group: 'modelTools',
       label: jt('settings.sections.offline.title', 'Offline'),
-      domKey: 'offline',
       lazy: true,
-      refreshPolicy: 'offline',
-      diagnosticsLifecycle: 'none',
     },
     {
       id: 'context',
       group: 'context',
       label: jt('settings.sections.context.title', 'Context'),
-      domKey: 'context',
-      refreshPolicy: 'render',
-      diagnosticsLifecycle: 'none',
     },
     {
       id: 'tools',
       group: 'modelTools',
       label: jt('settings.sections.tools.title', 'Tools'),
-      domKey: 'tools',
-      refreshPolicy: 'render',
-      diagnosticsLifecycle: 'none',
     },
     {
       id: 'skills',
       group: 'modelTools',
       label: jt('settings.sections.skills.title', 'Skills'),
-      domKey: 'skills',
       navItemId: 'skillsSettingsNavItem',
       lazy: true,
       // Merged into Extensions as a subsection: skills keeps its full lazy
@@ -99,52 +83,35 @@
       // nav item. The Extensions host readies + refreshes it as a companion on reveal.
       hidden: true,
       mergedInto: 'extensions',
-      refreshPolicy: 'skills',
-      diagnosticsLifecycle: 'none',
     },
     // --- Context & memory: Jenny's identity and memories ---
     {
       id: 'memories',
       group: 'context',
       label: jt('settings.sections.memories.title', 'Memory'),
-      domKey: 'memories',
       lazy: true,
-      refreshPolicy: 'memories',
-      diagnosticsLifecycle: 'none',
     },
     {
       id: 'personality',
       group: 'context',
       label: jt('settings.sections.personality.title', 'Personality'),
-      domKey: 'personality',
       lazy: true,
-      refreshPolicy: 'personality',
-      diagnosticsLifecycle: 'none',
     },
     {
       id: 'appearance',
       group: 'app',
       label: jt('settings.sections.appearance.title', 'Appearance'),
-      domKey: 'appearance',
-      refreshPolicy: 'render',
-      diagnosticsLifecycle: 'none',
     },
     // --- App: the application surfaces & your account ---
     {
       id: 'editor',
       group: 'app',
       label: jt('settings.sections.editor.title', 'Editor'),
-      domKey: 'editor',
-      refreshPolicy: 'render',
-      diagnosticsLifecycle: 'none',
     },
     {
       id: 'home',
       group: 'app',
       label: jt('settings.sections.home.title', 'Home'),
-      domKey: 'home',
-      refreshPolicy: 'render',
-      diagnosticsLifecycle: 'none',
     },
     // --- App: Notifications (owner-approved 2026-09-27, placement A): desktop
     // toasts while Jenny is in the background, one switch per category.
@@ -152,12 +119,17 @@
       id: 'notifications',
       group: 'app',
       label: jt('settings.sections.notifications.title', 'Notifications'),
-      domKey: 'notifications',
-      refreshPolicy: 'render',
-      diagnosticsLifecycle: 'none',
       keywords: [jt('settings.sections.notifications.keywords.toast', 'toast'), jt('settings.sections.notifications.keywords.desktop', 'desktop'),
         jt('settings.sections.notifications.keywords.alerts', 'alerts'), jt('settings.sections.notifications.keywords.sound', 'sound'),
         jt('settings.sections.notifications.keywords.background', 'background')],
+    },
+    // --- App: Dictation (row 84): push-to-talk into the message box.
+    {
+      id: 'dictation',
+      group: 'app',
+      label: jt('settings.sections.dictation.title', 'Dictation'),
+      keywords: [jt('settings.sections.dictation.keywords.voice', 'voice'), jt('settings.sections.dictation.keywords.microphone', 'microphone'),
+        jt('settings.sections.dictation.keywords.speech', 'speech'), jt('settings.sections.dictation.keywords.talk', 'talk')],
     },
     {
       // Owner-approved 2026-09-20 (Projects v2): this section is the project list.
@@ -165,68 +137,47 @@
       id: 'runtime',
       group: 'work',
       label: jt('settings.sections.projects.title', 'Projects'),
-      domKey: 'runtime',
       lazy: true,
-      refreshPolicy: 'render',
-      diagnosticsLifecycle: 'none',
     },
     {
       id: 'usage',
       group: 'work',
       label: jt('settings.sections.usage.title', 'Usage'),
-      domKey: 'usage',
       navItemId: 'usageSettingsNavItem',
       lazy: true,
-      refreshPolicy: 'usage',
-      diagnosticsLifecycle: 'none',
     },
     {
       // Skill folders (the merged skills section) and standalone MCP servers.
       id: 'extensions',
       group: 'system',
       label: jt('settings.sections.extensions.title', 'Extensions'),
-      domKey: 'extensions',
-      refreshPolicy: 'render',
-      diagnosticsLifecycle: 'none',
     },
     {
       id: 'account',
       group: 'system',
       label: jt('settings.sections.account.title', 'Profile, data & updates'),
-      domKey: 'account',
-      refreshPolicy: 'render',
-      diagnosticsLifecycle: 'none',
     },
     {
       id: 'dataPrivacy',
       group: 'system',
       label: jt('settings.sections.dataPrivacy.title', 'Data & Privacy'),
-      domKey: 'dataPrivacy',
       hidden: true,
       mergedInto: 'account',
-      refreshPolicy: 'render',
-      diagnosticsLifecycle: 'none',
     },
     {
       id: 'aboutUpdates',
       group: 'system',
       label: jt('settings.sections.aboutUpdates.title', 'About & Updates'),
-      domKey: 'aboutUpdates',
       hidden: true,
       mergedInto: 'account',
-      refreshPolicy: 'render',
-      diagnosticsLifecycle: 'none',
     },
     // --- Developer: expert engine tuning ---
     {
       id: 'advanced',
       group: 'developer',
       label: jt('settings.sections.advanced.title', 'Limits & budgets'),
-      domKey: 'advanced',
       // ~28 numeric fields have no business on the boot path.
       lazy: true,
-      refreshPolicy: 'advanced',
-      diagnosticsLifecycle: 'none',
     },
     {
       // Runtime limits (moved out of the Projects page 2026-09-20; the work list
@@ -235,12 +186,9 @@
       id: 'runtimeLimits',
       group: 'developer',
       label: jt('settings.sections.runtimeLimits.title', 'Runtime limits'),
-      domKey: 'runtimeLimits',
       hidden: true,
       mergedInto: 'advanced',
       lazy: true,
-      refreshPolicy: 'render',
-      diagnosticsLifecycle: 'none',
     },
   ].map((definition) => Object.freeze(definition)));
 
@@ -258,7 +206,6 @@
       id,
       group: String(definition.group || 'app'),
       label: String(definition.label || id),
-      domKey: String(definition.domKey || id),
       navItemId: definition.navItemId ? String(definition.navItemId) : '',
       lazy: Boolean(definition.lazy),
       // A `hidden` section exists for lifecycle purposes but renders no nav item
@@ -266,8 +213,6 @@
       hidden: Boolean(definition.hidden),
       mergedInto: definition.mergedInto ? String(definition.mergedInto) : '',
       default: Boolean(definition.default),
-      refreshPolicy: String(definition.refreshPolicy || 'render'),
-      diagnosticsLifecycle: String(definition.diagnosticsLifecycle || 'none'),
       order: normalizeOrder(definition.order, index),
       // Extra search terms for renderer-settings-search.js (a folded-in
       // section's old name, what people do in the card). Plain strings.

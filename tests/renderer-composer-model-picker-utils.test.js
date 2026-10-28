@@ -119,6 +119,7 @@ test('normalizeCatalogEntry normalizes metadata and strict capability flags', ()
     tagHead: 'Tag-One',
     org: '',
     engineHint: '',
+    hint: '',
     group: { key: 'vllm', label: 'vLLM', order: 20 },
   });
   assert.deepEqual(
@@ -141,6 +142,7 @@ test('normalizeCatalogEntry normalizes metadata and strict capability flags', ()
       tagHead: '',
       org: '',
       engineHint: '',
+      hint: '',
       group: { key: 'other', label: 'Other', order: 90 },
     },
   );
@@ -237,4 +239,24 @@ test('buildPillTitle describes overrides, defaults, and supported thinking', () 
   assert.equal(utils.buildPillTitle({ effort: 'none', effortSupported: true }),
     'Model: default. Thinking: Off');
   assert.equal(utils.buildPillTitle({ effort: 'high', effortSupported: false }), 'Model: default');
+});
+
+test('resolveDefaultChatModel names the Settings default unless a cloud engine runs, else the loaded model', () => {
+  const state = {
+    status: { model: 'ornith15:9b-q6-256k', engine: 'ollama' },
+    offline: { preferredLocalModel: 'qwen3.8-27b-nvfp4' },
+    modelList: { data: [{ id: 'ornith15:9b-q6-256k', engine_type: 'ollama' }, { id: 'qwen3.8-27b-nvfp4', engine_type: 'openai-compatible' }] },
+  };
+  assert.deepEqual(utils.resolveDefaultChatModel(state), { model: 'qwen3.8-27b-nvfp4', engineType: 'openai-compatible' });
+  assert.deepEqual(
+    utils.resolveDefaultChatModel({ ...state, modelList: { data: [{ id: 'ornith15:9b-q6-256k' }] } }),
+    { model: 'qwen3.8-27b-nvfp4', engineType: '' },
+    'an unlisted default (NInfer while Ollama runs) is still the default'
+  );
+  assert.deepEqual(
+    utils.resolveDefaultChatModel({ ...state, status: { model: 'gpt-6', engine: 'chatgpt' } }),
+    { model: 'gpt-6', engineType: 'chatgpt' }
+  );
+  assert.deepEqual(utils.resolveDefaultChatModel({ ...state, offline: {} }), { model: 'ornith15:9b-q6-256k', engineType: 'ollama' });
+  assert.deepEqual(utils.resolveDefaultChatModel(null), { model: '', engineType: '' });
 });

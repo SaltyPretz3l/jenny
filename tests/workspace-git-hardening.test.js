@@ -19,7 +19,7 @@ function createService(exec) {
 }
 
 function scopeResult(args) {
-  if (args.includes('--is-inside-work-tree')) return { success: true, stdout: 'true\n' };
+  if (args.includes('--is-inside-work-tree')) return { success: true, stdout: `true\n${ROOT}\n` };
   if (args.includes('--show-toplevel')) return { success: true, stdout: `${ROOT}\n` };
   return null;
 }

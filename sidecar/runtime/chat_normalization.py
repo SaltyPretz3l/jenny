@@ -7,6 +7,7 @@ import logging
 from datetime import date
 from typing import Any
 
+from sidecar.ai.context.primary_chat_overlay import PRIMARY_SESSION_ROLE
 from sidecar.ai.memory.contracts import (
     GENERAL_PROJECT_ID,
     MAX_RECENT_CHATS,
@@ -353,9 +354,13 @@ CONTEXT_BLOCK_KINDS = frozenset(
         "codebase",
         "linked_session",
         "workspace_presentation",
+        # Row 69: counts and recent chats for the primary Jenny chat only.
+        # Per-turn, so it is not a leading kind (turn_context.py) and rides the
+        # trailing turn context on local engines; never compaction input.
+        "profile_overview",
     }
 )
-MAX_CONTEXT_BLOCKS = 6
+MAX_CONTEXT_BLOCKS = 7
 # Generous by design: Electron already trims these blocks to the model's
 # MEASURED effective window (context-budget-trimmer.js), so these ceilings are a
 # transport-integrity backstop against a runaway block, not a context policy. A
@@ -435,6 +440,19 @@ def normalize_context_blocks(value: Any) -> list[dict[str, str]]:
         seen_kinds.add(kind)
         normalized.append({"kind": kind, "content": content})
     return normalized
+
+
+SESSION_ROLES = frozenset({PRIMARY_SESSION_ROLE})
+
+
+def session_role_from_params(params: Any) -> str | None:
+    """``"primary"`` or absent (None); any other value, null included, is invalid."""
+    if not isinstance(params, dict) or "session_role" not in params:
+        return None
+    value = params["session_role"]
+    if not isinstance(value, str) or value not in SESSION_ROLES:
+        raise ValueError("chat.send params.session_role must be 'primary' or absent")
+    return value
 
 
 def normalize_debug_options(value: Any) -> dict[str, bool] | None:

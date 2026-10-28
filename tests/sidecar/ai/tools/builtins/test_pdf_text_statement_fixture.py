@@ -56,7 +56,8 @@ def _fixture_path() -> Path:
 
 
 def _page_lines(page_number: int) -> list[pdf_text.PdfTextLine]:
-    fitz = pytest.importorskip("fitz")
+    import fitz
+
     with fitz.open(_fixture_path()) as document:
         return pdf_text.reconstruct_page_lines(document.load_page(page_number - 1))
 

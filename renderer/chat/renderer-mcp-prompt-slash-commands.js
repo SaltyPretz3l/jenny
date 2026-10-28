@@ -168,11 +168,8 @@
       if (event?.type === 'input' && !/^\/[a-z0-9_-]*$/i.test(String(chatInput?.value || ''))) return;
       ensureScope({ maxAgeMs: 1000 })?.catch(() => {});
     };
-    const refreshOnMenu = event => {
-      if (event.target?.closest?.('#composerTerminalShortcut')) refreshOnFocus(event);
-    };
-    for (const type of ['focus', 'input']) chatInput?.addEventListener?.(type, refreshOnFocus);
-    chatInput?.ownerDocument?.addEventListener?.('click', refreshOnMenu, true);
+    const SLASH_MENU_EVENT = 'jenny:open-slash-menu'; // the + menu's Commands and Skills rows
+    for (const type of ['focus', 'input', SLASH_MENU_EVENT]) chatInput?.addEventListener?.(type, refreshOnFocus);
     // A send attempt that captured the block owns its text from then on (a queued entry, a receipt's
     // Retry payload); a replacement block made since is not touched.
     function consume(block) {
@@ -182,8 +179,7 @@
     }
     function dispose() {
       disposed = true; revision += 1;
-      for (const type of ['focus', 'input']) chatInput?.removeEventListener?.(type, refreshOnFocus);
-      chatInput?.ownerDocument?.removeEventListener?.('click', refreshOnMenu, true);
+      for (const type of ['focus', 'input', SLASH_MENU_EVENT]) chatInput?.removeEventListener?.(type, refreshOnFocus);
       for (const command of owned.keys()) registry?.unregister?.(command);
       owned.clear();
     }

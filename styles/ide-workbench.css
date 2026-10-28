@@ -123,6 +123,7 @@
 /* While a sash drags, nothing under the pointer may steal it (iframes, xterm). */
 .ide-workbench.wb-dragging {
   user-select: none;
+  cursor: grabbing;
 }
 
 .ide-workbench.wb-dragging .wb-stack-body {
@@ -335,6 +336,33 @@
   color: var(--text-primary);
 }
 
+/* The New Terminal split-button (row 82 T2): + and its shell-profile chevron read as one control. */
+.wb-stack-actions .btn[data-wb-action="view:new-terminal"]:has(+ [data-wb-action="view:new-terminal-profile"]) {
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+}
+
+.wb-stack-actions .btn[data-wb-action="view:new-terminal-profile"] {
+  inline-size: 14px;
+  margin-inline-start: -2px;
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
+}
+
+.wb-stack-actions .btn[data-wb-action="view:new-terminal-profile"] svg {
+  inline-size: 12px;
+  block-size: 12px;
+}
+
+/* Terminal: Rename edits the tab's name in place (inventory inline-title-editor). */
+.wb-tabs .inv-inline-title-editor {
+  align-self: center;
+  flex-shrink: 0;
+  inline-size: 16ch;
+  block-size: 22px;
+  font-size: var(--font-size-body);
+}
+
 /* Actions stay quiet until the stack is in use. */
 @media (hover: hover) {
   .wb-stack:not(:hover):not(:focus-within) .wb-stack-actions .btn:not([aria-pressed="true"]) {
@@ -475,12 +503,6 @@
   line-height: 1.45;
 }
 
-.wb-empty-title {
-  margin: 0;
-  color: var(--text-secondary);
-  font-weight: 500;
-}
-
 .wb-empty-copy {
   margin: 0;
 }
@@ -516,10 +538,6 @@
 .wb-tab[data-wb-drag-source="true"],
 .wb-strip-btn[data-wb-drag-source="true"] {
   opacity: 0.55;
-}
-
-.ide-workbench.wb-dragging {
-  cursor: grabbing;
 }
 
 /* A pen or touch drag on a tab moves the view instead of panning the page. */

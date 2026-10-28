@@ -61,7 +61,7 @@ class ChatMessagingService {
     createId = randomUUID,
     setTimer = (fn, ms) => setTimeout(fn, ms),
     clearTimer = (handle) => clearTimeout(handle),
-    notifierOptions = {},
+    notifierOptions = {}, wake = null, // row 70: the wake ops (./chat-messaging-wake), composed by the wiring
   } = {}) {
     if (!mailStore || typeof mailStore.read !== 'function' || typeof mailStore.mutate !== 'function') {
       throw new TypeError('ChatMessagingService requires a session mail store.');
@@ -83,6 +83,7 @@ class ChatMessagingService {
     this._createId = createId;
     this._setTimer = setTimer;
     this._clearTimer = clearTimer;
+    this._wake = wake; this._quiet = false; // row 70; `_quiet`: the startup report repair delivers without waking anyone
     this._operations = new Map(); // operation id -> source session id (a locate cache, never authoritative)
     this._recovery = new Map(); // operation id -> { attempt, timer }
     this._notifier = createChangeNotifier({
@@ -116,20 +117,16 @@ class ChatMessagingService {
       log,
     });
     const shared = {
-      mail: mailStore,
-      getSessionSummary,
-      isContinuable,
-      now,
-      createId,
-      notify: (sessionId) => this.notify(sessionId),
-      storeFailure: (result) => this._storeFailure(result),
+      mail: mailStore, getSessionSummary, isContinuable, now, createId,
+      notify: (sessionId) => this.notify(sessionId), storeFailure: (result) => this._storeFailure(result),
     };
     this._grants = createGrantOps({ ...shared, settlePending: (sourceId, operationId) => this._delivery.deliver(sourceId, operationId) });
     this._agent = createAgentOps({
       ...shared,
       getProjectName,
-      runDelivery: (sourceId, operationId, created) => this._runDelivery(sourceId, operationId, created),
+      runDelivery: (sourceId, operationId, created) => this._runDelivery(sourceId, operationId, created, created),
       projectOperation: (op) => this._project.projectOperation(op),
+      projectInboxPage: (sessionId, records) => this._project.projectInboxPage(sessionId, records),
       track: (operationId, sourceId) => boundedSet(this._operations, operationId, sourceId, MAX_TRACKED_OPERATIONS),
     });
     this._restore = createRestoreOps({
@@ -266,7 +263,7 @@ class ChatMessagingService {
     });
     if (!result.ok && !(result.aborted && result.reason === 'replay')) return this._storeFailure(result);
     if (result.ok) this.notify(sourceId);
-    return this._runDelivery(sourceId, operationId, result.ok);
+    return this._runDelivery(sourceId, operationId, result.ok, result.ok);
   }
 
   async retry(raw) {
@@ -431,47 +428,50 @@ class ChatMessagingService {
   agentSend(args) { return this._agent.agentSend(args); }
   agentCancel(args) { return this._agent.agentCancel(args); }
   agentRead(args) { return this._agent.agentRead(args); }
-
+  agentListInbox(args) { return this._agent.agentListInbox(args); }
   // ---- linked-child terminal reports (cp5b-1) -------------------------------------
-
+  autoResumeProbe(sessionId) { return this._wake?.autoResumeProbe?.(sessionId) ?? null; } // F3b: the child card's resume count
   setReporting(raw) { return this._reports.setReporting(raw); }
-
+  onTurnSettled(sessionId) { return this._wake?.onTurnSettled(sessionId); } // row 70: that chat's turn ended
+  resumeWake(sessionId) { return this._wake?.resumeDestination?.(sessionId) ?? null; } // row 76: the person's Resume
+  wakeDepth(turnId) { return this._wake?.depthForTurn?.(turnId) ?? 0; } // row 76: a wake turn mints no standing grant
   // Settles a turn's report reservation into one pending outbox report and delivers it.
   convertReport(raw) { return this._reports.convertReport(raw); }
 
-  // Delivers a pending report through the existing delivery transaction (also the Retry path's engine).
+  // Delivers a pending report through the existing delivery transaction; a live delivery wakes the parent.
   deliverReport(childSessionId, operationId) {
     boundedSet(this._operations, operationId, childSessionId, MAX_TRACKED_OPERATIONS);
-    return this._runDelivery(childSessionId, operationId, false);
+    return this._runDelivery(childSessionId, operationId, false, !this._quiet);
   }
 
-  // ---- startup -----------------------------------------------------------------
-
+  // ---- startup (`_quiet`: the report repair delivers without waking anyone) --------
   // Marks records from deleted sources, repeats pending deliveries, finishes acknowledgments,
-  // expires prepared operations and lets admission settle reserved snapshots. Never throws; one bad session is skipped.
-  reconcileOnStartup() {
+  // expires prepared operations and lets admission settle reserved snapshots. Never throws; one bad session is skipped,
+  // and there is one step per chat so the wiring can run them in yielding slices (row 62).
+  reconcileOnStartup() { for (const step of this.startupReconcileSteps()) step(); }
+  startupReconcileSteps() {
     let ids;
-    try { ids = this._listSessionIds() || []; } catch { return; }
+    try { ids = this._listSessionIds() || []; } catch { return []; }
     const receiptCache = new Map();
     const liveIds = new Set(ids);
-    for (const sessionId of ids) {
+    return ids.map((sessionId) => () => {
       try {
         this._delivery.markAbsentSources(sessionId, liveIds);
         this._delivery.reconcileSession(sessionId, receiptCache);
         receiptCache.clear();
         const read = this._mail.read(sessionId);
-        if (!read.ok || read.frozen) continue;
+        if (!read.ok || read.frozen) return;
         for (const op of read.mail.outbox) {
           if (op.state !== 'delivered' && op.state !== 'cancelled') boundedSet(this._operations, op.operation_id, sessionId, MAX_TRACKED_OPERATIONS);
         }
         if (read.mail.admission_snapshots.some((snapshot) => snapshot.state === 'reserved')) {
           if (this._reconcileAdmission(sessionId)) this.notify(sessionId);
         }
-        this._reports.repairSession(sessionId, liveIds);
+        this._quiet = true; try { this._reports.repairSession(sessionId, liveIds); } finally { this._quiet = false; }
       } catch {
         this._log('WARN', 'chat_messaging.reconcile_failed', { reason: 'exception' });
       }
-    }
+    });
   }
 
   dispose() {
@@ -527,15 +527,16 @@ class ChatMessagingService {
     return succeed({ operation_id: record.operation_id, envelope, expires_at: record.expires_at });
   }
 
-  // Runs the delivery phases and shapes the answer. A transient write failure leaves the
-  // operation pending and schedules a bounded in-process retry; Retry and restart also recover it.
-  _runDelivery(sourceId, operationId, created) {
+  // Runs the delivery phases and shapes the answer. A transient write failure leaves the operation pending and
+  // schedules a bounded in-process retry; Retry and restart recover it too, and only a live `wake` send wakes (row 70).
+  _runDelivery(sourceId, operationId, created, wake = false) {
     const outcome = this._delivery.deliver(sourceId, operationId);
     if (!outcome.ok) {
       if (outcome.reason === 'persistence_failure') this._scheduleRecovery(sourceId, operationId);
       return fail(outcome.reason);
     }
     this._clearRecovery(operationId);
+    if (wake && outcome.operation?.state === 'delivered') this._wake?.onDelivered(outcome.operation);
     return succeed({ created, operation: this._project.projectOperation(outcome.operation) });
   }
 

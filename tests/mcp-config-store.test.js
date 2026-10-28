@@ -237,6 +237,7 @@ for (const [label, row, reason] of [
   ['PATH-bearing env key', { ...V1_DOCS_ROW, env: { REA_PLUGIN_PATH: 'x' } }, 'reserved_env_key'],
   ['NODE_OPTIONS env key', { ...V1_DOCS_ROW, env: { NODE_OPTIONS: '--inspect' } }, 'reserved_env_key'],
   ['NODE_PATH env key', { ...V1_DOCS_ROW, env: { NODE_PATH: 'x' } }, 'reserved_env_key'],
+  ['Windows machine-fact env key', { ...V1_DOCS_ROW, env: { PROGRAMDATA: 'x' } }, 'reserved_env_key'],
   ['npm alias of NODE_OPTIONS', { ...V1_DOCS_ROW, env: { NPM_CONFIG_NODE_OPTIONS: '--require=x' } }, 'reserved_env_key'],
   ['NODE_ family env key', { ...V1_DOCS_ROW, env: { NODE_ENV: 'production' } }, 'reserved_env_key'],
   ['JVM options env key', { ...V1_DOCS_ROW, env: { JAVA_TOOL_OPTIONS: '-javaagent:x' } }, 'reserved_env_key'],

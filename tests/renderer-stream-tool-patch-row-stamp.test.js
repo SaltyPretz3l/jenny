@@ -37,10 +37,10 @@ test('a live tool patch drops the row stamp so an identical reconcile restores t
   t.after(() => controller.dispose());
   const outcomes = [];
   const reconcile = () => patch.reconcileKeyedRowList(list, segments, { onOutcome: (record) => outcomes.push(record.stats) });
-  const read = () => list.querySelector('.tool-call-name')?.textContent;
+  const read = () => list.querySelector('.tool-call-row')?.outerHTML;
   reconcile();
   const canonical = read();
-  assert.ok(canonical, 'the row renders a tool name');
+  assert.ok(canonical, 'the row renders');
   const rowElement = list.firstElementChild;
 
   controller.queueToolPatch({ sessionId: 's', callId: 'c', type: 'tool_result', toolName: 'read_file', summary: 'Read 20 lines', content: 'example result' });

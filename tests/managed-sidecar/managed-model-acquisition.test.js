@@ -1,6 +1,5 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { EventEmitter } = require('events');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -17,50 +16,7 @@ const { createFakeSafeStorage } = require('../helpers/fake-safe-storage');
 const { driveProgressTicks } = require('../helpers/mock-timer-progress');
 const PROGRESS_INTERVAL_MS = 12;
 
-function createService(initialize) {
-  const service = new EventEmitter();
-  const sidecarProcess = {};
-  Object.assign(service, {
-    appVersion: '0.1.0',
-    currentEngineType: 'ollama',
-    currentModel: '',
-    defaultModel: 'ornith:9b',
-    featureFlags: {},
-    options: { userDataPath: process.cwd() },
-    _disposed: false,
-    _stopping: false,
-    _managedInitializeFlight: null,
-    _managedInitializeGeneration: 0,
-    _managedPendingModel: '',
-    _lastEngineFallback: null,
-    _modelLifecycle: { state: 'unloaded' },
-    _emitServiceLog() {},
-    sidecarManager: {
-      process: sidecarProcess,
-      getStatus() { return { phase: 'ready', pid: 42 }; },
-    },
-    sidecarClient: {
-      process: sidecarProcess,
-      connected: true,
-      attachProcess(next) { this.process = next; this.connected = true; },
-      initialize,
-    },
-  });
-  return service;
-}
-
-function successPayload(model = 'ornith:9b') {
-  return {
-    active_engine: 'ollama',
-    active_model: model,
-    active_model_capabilities: { text: true },
-    local_runtime: {
-      engine: { type: 'ollama' },
-      model: { id: model, loaded: true },
-    },
-  };
-}
-
+const { createService, successPayload } = require('../helpers/managed-model-acquisition-fixture');
 
 test('chatgpt initialization refreshes auth before managed secrets are built', async () => {
   let cachedToken = '';
@@ -317,8 +273,8 @@ test('matching callers join one flight while a conflicting model is retryably bu
     initializeCalls += 1;
     return new Promise((resolve) => { resolveInitialize = resolve; });
   });
-  const first = initializeManagedSidecarWithTimeout(service, { absoluteTimeoutMs: 200 });
-  const joined = initializeManagedSidecarWithTimeout(service, { absoluteTimeoutMs: 200 });
+  const first = initializeManagedSidecarWithTimeout(service, { requestedModel: 'tiny:1b', absoluteTimeoutMs: 200 });
+  const joined = initializeManagedSidecarWithTimeout(service, { requestedModel: 'tiny:1b', absoluteTimeoutMs: 200 });
   await assert.rejects(
     initializeManagedSidecarWithTimeout(service, {
       requestedModel: 'different:1b',
@@ -330,6 +286,23 @@ test('matching callers join one flight while a conflicting model is retryably bu
   const [a, b] = await Promise.all([first, joined]);
   assert.equal(a.active_model, b.active_model);
   assert.equal(initializeCalls, 1);
+});
+
+// 2026-10-27: stopping NInfer for an engine switch re-brokered the config (a
+// flight with no explicit model) and the switch's own load was refused busy.
+test('a config-refresh flight yields to an explicit model load instead of refusing it', async () => {
+  const resolvers = [];
+  const service = createService(() => new Promise((resolve) => { resolvers.push(resolve); }));
+  const refresh = initializeManagedSidecarWithTimeout(service, { absoluteTimeoutMs: 500 });
+  const explicit = initializeManagedSidecarWithTimeout(service, { requestedModel: 'different:1b', absoluteTimeoutMs: 500 });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(resolvers.length, 1, 'the explicit load waits for the refresh flight');
+  resolvers[0](successPayload());
+  await refresh;
+  while (resolvers.length < 2) await new Promise((resolve) => setImmediate(resolve));
+  resolvers[1](successPayload());
+  await explicit;
+  assert.equal(service._managedInitializeFlight, null);
 });
 
 test('same-model callers targeting different engines do not join one initialization flight', async () => {

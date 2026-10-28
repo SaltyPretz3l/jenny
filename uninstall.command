@@ -39,6 +39,7 @@ case "$RESULT" in
       remove_profile_child "blob_storage"
       remove_profile_child "Cache"
       remove_profile_child "Code Cache"
+      remove_profile_child "compile-cache"
       remove_profile_child "Cookies"
       remove_profile_child "Cookies-journal"
       remove_profile_child "cost-tracker.json"
@@ -117,6 +118,7 @@ case "$RESULT" in
       remove_profile_child "vllm-process.json"
       remove_profile_child "WebStorage"
       remove_profile_child "window-state.json"
+      remove_profile_child "workspace-backups"
       remove_profile_child "workspace-snapshots"
       if ! rmdir "$PROFILE_ROOT" 2>/dev/null && [ -d "$PROFILE_ROOT" ]; then
         printf '%s\n' "Jenny retained unrecognized profile items in $PROFILE_ROOT for your review."

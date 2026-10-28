@@ -8,7 +8,7 @@ const path = require('path');
 const { DATA_ERROR_CODES } = require('../backend/error-codes');
 const { createArchive, buildDefaultArchiveRoot } = require('./archive-service');
 const { KNOWN_RUNTIME_CHILDREN } = require('./cleanup-service');
-const { collectDataInventory, collectWorkspaceInventory, countSessionAttachments } = require('./data-inventory');
+const { collectDataInventory, collectWorkspaceInventory, countSessionAttachmentsAsync } = require('./data-inventory');
 const { PortablePreferencesStore, projectPortableShellConfig } = require('./portable-preferences-store');
 const {
   boundedDataError,
@@ -238,7 +238,7 @@ class DataLifecycleService extends EventEmitter {
     return this._result('', 'ready', {
       counts: {
         chats: Array.isArray(summaries) ? summaries.length : 0,
-        attachments: countSessionAttachments(this.sessionStore),
+        attachments: await countSessionAttachmentsAsync(this.sessionStore),
         memory: [
           path.join(this.userDataPath, 'sidecar-memory.db'),
           this.runtimePath && path.join(this.runtimePath, 'jenny_memory.db'),

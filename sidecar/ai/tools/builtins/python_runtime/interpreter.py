@@ -32,7 +32,6 @@ _SIDECAR_PACKAGE_DIR = next(
 )
 # Development-tree default; packaged builds supply the wheelhouse through config.
 DEFAULT_RUNTIME_WHEELHOUSE = _SIDECAR_PACKAGE_DIR.parent / "vendor" / "python-runtime-wheels"
-WHEELHOUSE_MANIFEST_FILENAME = "wheelhouse-manifest.json"
 RUNTIME_PACKAGES = (
     "pandas==3.0.1",
     "numpy==2.4.3",
@@ -65,10 +64,10 @@ MAX_TIMEOUT_SECONDS = 600
 MIN_MEMORY_LIMIT_MB = 1
 MAX_MEMORY_LIMIT_MB = 8192
 SHA256_HEX_LENGTH = 64
-# Bootstrap locking, pip bootstrap, and the typed runtime errors live in sibling
-# modules so this file stays under the repository file-size ceiling. Re-exported
-# here because their ``interpreter`` names are established entry points for
-# callers and tests.
+# Bootstrap locking, pip bootstrap, wheelhouse manifest checks, and the typed
+# runtime errors live in sibling modules so this file stays under the repository
+# file-size ceiling. Re-exported here because their ``interpreter`` names are
+# established entry points for callers and tests.
 from sidecar.ai.tools.builtins.python_runtime import bootstrap_subprocess  # noqa: E402
 from sidecar.ai.tools.builtins.python_runtime.bootstrap_lock import (  # noqa: E402, F401
     _BOOTSTRAP_THREAD_LOCKS,
@@ -106,6 +105,30 @@ from sidecar.ai.tools.builtins.python_runtime.pip_bootstrap import (  # noqa: E4
     _ensure_offline_pip,
     _extract_verified_pip_wheel,  # noqa: F401 -- retained test seam
 )
+
+# The wheelhouse manifest module loads on first use: it is only needed when a
+# runtime is provisioned, and the sidecar startup import budget counts modules.
+
+
+def _wheelhouse_manifest_path(wheelhouse: Path) -> Path:
+    from sidecar.ai.tools.builtins.python_runtime import wheelhouse_manifest as _manifest
+
+    return _manifest._wheelhouse_manifest_path(wheelhouse)
+
+
+def _verify_wheelhouse_integrity(wheelhouse: Path) -> None:
+    from sidecar.ai.tools.builtins.python_runtime import wheelhouse_manifest as _manifest
+
+    _manifest._verify_wheelhouse_integrity(wheelhouse)
+
+
+def __getattr__(name: str) -> object:
+    if name == "WHEELHOUSE_MANIFEST_FILENAME":
+        from sidecar.ai.tools.builtins.python_runtime import wheelhouse_manifest as _manifest
+
+        return _manifest.WHEELHOUSE_MANIFEST_FILENAME
+    raise AttributeError(name)
+
 
 __all__ = [
     "MAX_BOOTSTRAP_PIP_UNPACKED_BYTES",
@@ -496,73 +519,6 @@ def _runtime_requirements_fingerprint_for_wheelhouse(wheelhouse: Path | None) ->
     return hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()
 
 
-def _wheelhouse_manifest_path(wheelhouse: Path) -> Path:
-    return wheelhouse / WHEELHOUSE_MANIFEST_FILENAME
-
-
-def _load_wheelhouse_manifest(wheelhouse: Path) -> dict[str, str]:
-    manifest_path = _wheelhouse_manifest_path(wheelhouse)
-    try:
-        raw = manifest_path.read_text(encoding="utf-8")
-    except OSError as error:
-        raise PythonRuntimeWheelhouseIntegrityError(
-            f"Python runtime wheelhouse is missing its checksum manifest: {manifest_path}"
-        ) from error
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as error:
-        raise PythonRuntimeWheelhouseIntegrityError(
-            f"Python runtime wheelhouse checksum manifest is not valid JSON: {manifest_path}"
-        ) from error
-    files = payload.get("files") if isinstance(payload, dict) else None
-    if not isinstance(files, dict) or not files:
-        raise PythonRuntimeWheelhouseIntegrityError(
-            f"Python runtime wheelhouse checksum manifest has no file entries: {manifest_path}"
-        )
-    normalized: dict[str, str] = {}
-    for name, digest in files.items():
-        if isinstance(name, str) and name and isinstance(digest, str) and digest:
-            normalized[name] = digest.lower()
-    if not normalized:
-        raise PythonRuntimeWheelhouseIntegrityError(
-            f"Python runtime wheelhouse checksum manifest has no valid entries: {manifest_path}"
-        )
-    return normalized
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _verify_wheelhouse_integrity(wheelhouse: Path) -> None:
-    """Verify the wheelhouse's wheel files exactly match a checksum manifest
-    before anything is installed from it. Any mismatch — missing manifest,
-    missing wheel, unexpected extra wheel, or a bad checksum — raises
-    PythonRuntimeWheelhouseIntegrityError. Callers must not catch this to
-    fall back to a network install: an untrustworthy wheelhouse fails closed.
-    """
-    manifest = _load_wheelhouse_manifest(wheelhouse)
-    on_disk = sorted(path.name for path in wheelhouse.glob("*.whl"))
-    manifest_names = sorted(manifest)
-    if on_disk != manifest_names:
-        missing = sorted(set(manifest_names) - set(on_disk))
-        unexpected = sorted(set(on_disk) - set(manifest_names))
-        raise PythonRuntimeWheelhouseIntegrityError(
-            "Python runtime wheelhouse contents do not match its checksum manifest "
-            f"(missing={missing}, unexpected={unexpected})"
-        )
-    for name, expected_digest in manifest.items():
-        actual_digest = _sha256_file(wheelhouse / name)
-        if actual_digest != expected_digest:
-            raise PythonRuntimeWheelhouseIntegrityError(
-                f"Python runtime wheelhouse file failed checksum verification: {name}"
-            )
-
-
 def _install_from_wheelhouse(venv_python: Path, wheelhouse: Path) -> None:
     constraining_wheels: list[tuple[str, str]] = []
     for wheel_path in wheelhouse.glob("*.whl"):
@@ -827,6 +783,9 @@ def ensure_runtime_venv(
     *,
     deadline_monotonic: float | None = None,
 ) -> Path:
+    warm = _warm_ready_venv(config)
+    if warm is not None:
+        return warm
     with bootstrap_subprocess.bootstrap_deadline(deadline_monotonic):
         return _ensure_runtime_venv(config, deadline_monotonic=deadline_monotonic)
 
@@ -878,13 +837,47 @@ def _retained_staging_is_resumable(
     return resumable
 
 
+def _ready_fast_key(config: Any, venv_dir: Path) -> str | None:
+    """Warm-process cache key that skips re-reading the wheelhouse manifest.
+
+    The readiness fingerprint is a pure function of which wheelhouse resolves
+    and its manifest bytes, so the manifest's stat identity stands in for it.
+    Any resolution problem returns None: the full path re-raises it inside
+    the ``wheelhouse_resolved`` phase.
+    """
+    try:
+        wheelhouse = _runtime_wheelhouse(config)
+        if wheelhouse is None:
+            return f"fast|{venv_dir}|"
+        manifest_stat = _wheelhouse_manifest_path(wheelhouse).stat()
+    except OSError:
+        return None
+    return (
+        f"fast|{venv_dir}|{wheelhouse}|{manifest_stat.st_mtime_ns}|{manifest_stat.st_size}"
+    )
+
+
+def _warm_ready_venv(config: Any) -> Path | None:
+    fast_key = _ready_fast_key(config, _venv_dir(config))
+    cached = _READY_VENV_CACHE.get(fast_key) if fast_key is not None else None
+    return cached if cached is not None and cached.exists() else None
+
+
+def _remember_ready_venv(ready_python: Path, *cache_keys: str | None) -> Path:
+    for cache_key in cache_keys:
+        if cache_key is not None:
+            _READY_VENV_CACHE[cache_key] = ready_python
+    return ready_python
+
+
 def _ensure_runtime_venv(
     config: Any,
     *,
     deadline_monotonic: float | None,
 ) -> Path:
-    telemetry = BootstrapTelemetry(logger)
     venv_dir = _venv_dir(config)
+    fast_key = _ready_fast_key(config, venv_dir)
+    telemetry = BootstrapTelemetry(logger)
     configured_wheelhouse = _string_config_value(config, "tools_python_runtime_wheelhouse_dir")
     wheelhouse_data: dict[str, object] = {
         "found": False,
@@ -902,15 +895,14 @@ def _ensure_runtime_venv(
 
     cached = _READY_VENV_CACHE.get(cache_key)
     if cached is not None and cached.exists():
-        return cached
+        return _remember_ready_venv(cached, cache_key, fast_key)
 
     ready = _venv_is_ready(
         venv_dir,
         requirements_fingerprint=requirements_fingerprint,
     )
     if ready is not None:
-        _READY_VENV_CACHE[cache_key] = ready
-        return ready
+        return _remember_ready_venv(ready, cache_key, fast_key)
 
     _raise_if_bootstrap_deadline_elapsed(deadline_monotonic)
     with _acquire_bootstrap_lock(venv_dir, deadline_monotonic):
@@ -919,14 +911,13 @@ def _ensure_runtime_venv(
         # that), or may have left the marker fresh from the in-process cache.
         cached = _READY_VENV_CACHE.get(cache_key)
         if cached is not None and cached.exists():
-            return cached
+            return _remember_ready_venv(cached, cache_key, fast_key)
         ready = _venv_is_ready(
             venv_dir,
             requirements_fingerprint=requirements_fingerprint,
         )
         if ready is not None:
-            _READY_VENV_CACHE[cache_key] = ready
-            return ready
+            return _remember_ready_venv(ready, cache_key, fast_key)
 
         _raise_if_bootstrap_deadline_elapsed(deadline_monotonic)
         staging_dir = _staging_dir(venv_dir)
@@ -972,8 +963,7 @@ def _ensure_runtime_venv(
             except Exception:
                 _remove_tree(staging_dir)
                 raise
-        _READY_VENV_CACHE[cache_key] = _venv_python(venv_dir)
-        return _READY_VENV_CACHE[cache_key]
+        return _remember_ready_venv(_venv_python(venv_dir), cache_key, fast_key)
 
 
 def configured_timeout_seconds(config: Any) -> int:

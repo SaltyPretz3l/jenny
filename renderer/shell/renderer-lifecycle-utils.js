@@ -63,8 +63,6 @@
       chatInput,
       composerAttachMenu,
       composerAttachShortcut,
-      composerCommandPopover,
-      composerTerminalShortcut,
     } = deps.dom;
     const {
       normalizeReasoningEffort,
@@ -86,7 +84,7 @@
     const call = deps.callbacks;
     let disposed = false;
     const lifecycleFence = asyncFenceUtils.createDisposalFence();
-    const FWD_KEYS = ['renderComposerPopover', 'renderCommandPopover', 'renderAttachmentTray', 'clearAttachmentNotice', 'buildAttachmentToastMessage', 'showToastMessage', 'reportError', 'renderAll', 'renderLayout', 'renderHeader', 'renderLogs', 'renderSettings', 'renderApprovedMemoryManager', 'renderIde', 'ensureIdeLoaded', 'activateIde', 'renderHomePanel', 'renderDashboard', 'notifyBootViewReady', 'syncStartupBackendStatus', 'resetArtifactsState', 'renderComposerState', 'syncComposerVisualState', 'renderPersonalityEditor', 'syncBackendNotice', 'renderSessions', 'refreshApprovedMemories', 'refreshPendingMemories', 'refreshPersonalityWorkspace', 'refreshCompanionState', 'toErrorMessage', 'refreshProactiveState', 'refreshSkillsState', 'refreshOfflineState', 'refreshAwayDigest', 'refreshPhasePercentiles', 'refreshObservability', 'syncUsageVisibility', 'initializeComposerHolo', 'initializeComposerLayoutObserver', 'warmCodeHighlighting', 'disposeCodeHighlighting', 'applyViewChrome', 'updateComposerSafeOffset', 'updateAssistantSpritePosition', 'hideAssistantSprite', 'setSidebarCollapsed', 'clearComposerStatusNotice', 'getCurrentVisibleMessages', 'getCurrentSessionMessages', 'getSessionMessages', 'setSessionMessages', 'setSessionTurnEventState', 'scrollThreadToTop', 'scrollThreadToBottom', 'scrollMessageIntoView', 'getLatestUserMessageId', 'getLatestReplyAssistantMessageId', 'isSendBusy', 'isAnySendBusy', 'setFollowLatest', 'clearStalePendingQuestionBatch', 'getPendingQuestionBatch', 'clearInteractiveDraft', 'getScrollMetrics', 'createNormalizedMessage', 'restoreSettingsNavSection', 'ensureSettingsSectionReady', 'refreshSettingsSection', 'upsertSessionSummary', 'removeSessionState', 'applySurfaceEffect', 'renderMessages', 'flushPendingStreamCommitsForSession'];
+    const FWD_KEYS = ['renderComposerPopover', 'renderAttachmentTray', 'clearAttachmentNotice', 'buildAttachmentToastMessage', 'showToastMessage', 'reportError', 'renderAll', 'renderLayout', 'renderHeader', 'renderLogs', 'renderSettings', 'renderApprovedMemoryManager', 'renderIde', 'ensureIdeLoaded', 'activateIde', 'renderHomePanel', 'renderDashboard', 'notifyBootViewReady', 'syncStartupBackendStatus', 'resetArtifactsState', 'renderComposerState', 'syncComposerVisualState', 'renderPersonalityEditor', 'syncBackendNotice', 'renderSessions', 'refreshApprovedMemories', 'refreshPendingMemories', 'refreshPersonalityWorkspace', 'refreshCompanionState', 'toErrorMessage', 'refreshProactiveState', 'refreshSkillsState', 'refreshOfflineState', 'refreshAwayDigest', 'refreshPhasePercentiles', 'refreshObservability', 'syncUsageVisibility', 'initializeComposerHolo', 'initializeComposerLayoutObserver', 'warmCodeHighlighting', 'disposeCodeHighlighting', 'applyViewChrome', 'updateComposerSafeOffset', 'updateAssistantSpritePosition', 'hideAssistantSprite', 'setSidebarCollapsed', 'clearComposerStatusNotice', 'getCurrentVisibleMessages', 'getCurrentSessionMessages', 'getSessionMessages', 'setSessionMessages', 'setSessionTurnEventState', 'scrollThreadToTop', 'scrollThreadToBottom', 'scrollMessageIntoView', 'getLatestUserMessageId', 'getLatestReplyAssistantMessageId', 'isSendBusy', 'isAnySendBusy', 'setFollowLatest', 'clearStalePendingQuestionBatch', 'getPendingQuestionBatch', 'clearInteractiveDraft', 'getScrollMetrics', 'createNormalizedMessage', 'restoreSettingsNavSection', 'ensureSettingsSectionReady', 'refreshSettingsSection', 'upsertSessionSummary', 'removeSessionState', 'applySurfaceEffect', 'renderMessages', 'flushPendingStreamCommitsForSession'];
     const fwd = {};
     for (const k of FWD_KEYS) {
       fwd[k] = (...a) => (typeof call[k] === 'function' ? call[k](...a) : undefined);
@@ -359,7 +357,8 @@
       persistActiveView(viewId);
       if (previousViewId === 'settings' && viewId !== 'settings') {
         fwd.syncUsageVisibility();
-        // One page pass off-view tears down the Appearance effect preview (renderAll no longer paints it here).
+        // Off-view, renderSettings skips the page pass and only releases the
+        // Appearance effect preview (renderAll no longer paints it here).
         fwd.renderSettings();
       }
 
@@ -478,23 +477,9 @@
     }
 
     function openComposerPopover() {
-      if (state.ui.commandPopoverOpen) closeCommandPopover();
       state.ui.composerPopoverOpen = true;
       fwd.renderComposerPopover();
       focusPopover(composerAttachMenu);
-    }
-
-    function closeCommandPopover({ restoreFocus = false } = {}) {
-      state.ui.commandPopoverOpen = false;
-      fwd.renderCommandPopover();
-      if (restoreFocus) composerTerminalShortcut.focus();
-    }
-
-    function openCommandPopover() {
-      if (state.ui.composerPopoverOpen) closeComposerPopover();
-      state.ui.commandPopoverOpen = true;
-      fwd.renderCommandPopover();
-      focusPopover(composerCommandPopover);
     }
 
     const sessionCacheController = sessionCacheUtils.createSessionCacheController?.({
@@ -609,6 +594,14 @@
       signalRendererReadyOnce();
       scheduleDeferredVisualStartup();
 
+      // The stored active tab, read alongside the status round trip, so the
+      // first conversation load opens the chat the user left (the workspace
+      // restore that follows then finds it loaded) instead of the newest one.
+      const storedWorkspaceActiveSessionIdPromise = Promise.resolve()
+        .then(() => window.jennyShell.workspace?.getState?.())
+        .then((snapshot) => String(snapshot?.activeSessionId || '').trim())
+        .catch(() => '');
+
       try {
         const [backendStatus, authState, systemStats] = await Promise.all([
           window.jennyShell.backend.getStatus(),
@@ -653,11 +646,19 @@
         });
       }
 
-      // model_unavailable keeps the chat surface usable (send retries the
-      // model load), so a reload in that state must still hydrate sessions.
-      if ((state.backend.phase === 'ready' || state.backend.phase === 'model_unavailable') && state.auth.authenticated) {
-        const results = await Promise.allSettled([loadSessions(), refreshSnapshots()]);
-        ['sessions', 'snapshots'].forEach((operation, index) => {
+      // History lives in the main-process store, not the sidecar, so the chat
+      // list and the last-open chat hydrate without waiting for the engine.
+      // Only the engine snapshots (status, models) wait for a usable backend
+      // (model_unavailable keeps the chat surface usable: send retries the
+      // model load); the ready transition reloads both (backendReadyLoadHandled).
+      if (state.auth.authenticated) {
+        const backendUsable = state.backend.phase === 'ready' || state.backend.phase === 'model_unavailable';
+        const storedActiveSessionId = await storedWorkspaceActiveSessionIdPromise;
+        const operations = backendUsable ? ['sessions', 'snapshots'] : ['sessions'];
+        const results = await Promise.allSettled(backendUsable
+          ? [loadSessions(storedActiveSessionId), refreshSnapshots()]
+          : [loadSessions(storedActiveSessionId)]);
+        operations.forEach((operation, index) => {
           if (results[index].status !== 'rejected') { return; }
           appendClientLog('WARN', 'renderer.bootstrap_session_hydration_failed', {
             operation,
@@ -784,6 +785,9 @@
         title: String(options.title || 'New Chat').trim(),
         ...(typeof options.initialPrompt === 'string' ? { initialPrompt: options.initialPrompt } : {}), ...(typeof options.linkedTaskId === 'string' && options.linkedTaskId ? { linkedTaskId: options.linkedTaskId } : {}),
         ...(typeof options.projectId === 'string' && /^project_[A-Za-z0-9_-]{1,128}$/u.test(options.projectId) ? { projectId: options.projectId } : {}),
+        // /handoff links the new chat to its source (row 60 W4); the backend refuses one from the primary chat.
+        ...(typeof options.handoffFromSessionId === 'string' && options.handoffFromSessionId && options.handoffFromSessionId.length <= 256
+          ? { handoffFromSessionId: options.handoffFromSessionId } : {}),
         preferences: {
           preferred_model: runtimePreferences.preferredModel,
           reasoning_effort: runtimePreferences.reasoningEffort,
@@ -904,7 +908,7 @@
     }) || null;
     window.rendererComposerSessionStateController = composerSessionStateController;
 
-    return { escapeHtml, getSessionMonogram, normalizeModelToken, normalizeContextPreferences, getActiveSession, getRuntimePreferencesFromSession, getCurrentRuntimePreferences, patchSessionSummary, syncRuntimeDraftFromActiveSession, buildModelOptionMarkup, loadAppearancePreferences, loadChatUiState, appendClientLog, getRendererElapsedMs, noteFirstRenderComplete, runDeferredVisualStartup, scheduleDeferredVisualStartup, disposeLifecycleController, pushIncomingLog, resetLogsViewState, setActiveView, refreshDiagnosticsWorkspace, setDiagnosticsObservabilityRefresh: (refresh) => { call.refreshObservability = typeof refresh === 'function' ? refresh : undefined; }, saveAppearancePreferences, applyAppearancePreferences, applyChatZoomPercent, adjustChatZoomPercent, resetChatZoomPercent, isDefaultAppearancePreferences, isDefaultChatZoomPercent, buildSelectOptionMarkup, closeComposerPopover, openComposerPopover, closeCommandPopover, openCommandPopover, resetAttachmentQueue, removeQueuedAttachment, mergePreparedAttachments, beginAttachmentToken, cancelAttachmentToken, handleAttachmentPicker, prepareDroppedAttachments, queueInlineImageAttachment, setDropActive, suppressFileDropNavigation, getDroppedFilePaths, loadSessions, openSession, refreshSessionSummaries, refreshSnapshots, bootstrap, handleJumpToTop, handleJumpToBottom, handleJumpToLastPrompt, handleCreateSession, handleRenameSession, handleDeleteSession, attachGlobalErrorBoundary, detachGlobalErrorBoundary };
+    return { escapeHtml, getSessionMonogram, normalizeModelToken, normalizeContextPreferences, getActiveSession, getRuntimePreferencesFromSession, getCurrentRuntimePreferences, patchSessionSummary, syncRuntimeDraftFromActiveSession, buildModelOptionMarkup, loadAppearancePreferences, loadChatUiState, appendClientLog, getRendererElapsedMs, noteFirstRenderComplete, runDeferredVisualStartup, scheduleDeferredVisualStartup, disposeLifecycleController, pushIncomingLog, resetLogsViewState, setActiveView, refreshDiagnosticsWorkspace, setDiagnosticsObservabilityRefresh: (refresh) => { call.refreshObservability = typeof refresh === 'function' ? refresh : undefined; }, saveAppearancePreferences, applyAppearancePreferences, applyChatZoomPercent, adjustChatZoomPercent, resetChatZoomPercent, isDefaultAppearancePreferences, isDefaultChatZoomPercent, buildSelectOptionMarkup, closeComposerPopover, openComposerPopover, resetAttachmentQueue, removeQueuedAttachment, mergePreparedAttachments, beginAttachmentToken, cancelAttachmentToken, handleAttachmentPicker, prepareDroppedAttachments, queueInlineImageAttachment, setDropActive, suppressFileDropNavigation, getDroppedFilePaths, loadSessions, openSession, refreshSessionSummaries, refreshSnapshots, bootstrap, handleJumpToTop, handleJumpToBottom, handleJumpToLastPrompt, handleCreateSession, handleRenameSession, handleDeleteSession, attachGlobalErrorBoundary, detachGlobalErrorBoundary };
   }
 
   return { createLifecycleController };

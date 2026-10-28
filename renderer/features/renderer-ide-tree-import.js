@@ -7,19 +7,26 @@
   root.rendererIdeTreeImport = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  const TREE_DRAG_MIME = 'application/x-jenny-tree-path';
-  const TREE_DRAG_PATHS_MIME = 'application/x-jenny-tree-paths';
+  const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
+  function resolveModule(globalName, requirePath) {
+    if (globalRef[globalName]) return globalRef[globalName];
+    if (typeof require === 'function') {
+      try {
+        return require(requirePath);
+      } catch (_error) {
+        /* unavailable */
+      }
+    }
+    return {};
+  }
+  // tree-dnd and tree-mutations load first (renderer-ide-script-manifest order).
+  const {
+    TREE_DRAG_MIME, TREE_DRAG_PATHS_MIME, hasType, dropTargetFor, createDropPainter,
+  } = resolveModule('rendererIdeTreeDnd', './renderer-ide-tree-dnd');
+  const { isReadyMutationContext, mutationContextError } = resolveModule('rendererIdeTreeMutations', './renderer-ide-tree-mutations');
   const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const IMPORT_ERROR = jt('ide.treeImport.unresolvedPaths', 'Imported files could not be resolved to disk paths.');
   function noop() {}
-
-  function hasType(transfer, type) {
-    const types = transfer?.types;
-    if (!types) return false;
-    if (typeof types.includes === 'function') return types.includes(type);
-    if (typeof types.contains === 'function') return types.contains(type);
-    return [...types].includes(type);
-  }
 
   function isExternalFileTransfer(transfer) {
     return hasType(transfer, 'Files')
@@ -37,12 +44,10 @@
   }
 
   function createIdeTreeImport(deps) {
-    const getDom = typeof deps?.getDom === 'function' ? deps.getDom : () => ({});
     const getMountEl = typeof deps?.getMountEl === 'function'
       ? deps.getMountEl : () => null;
     const isActivePanel = typeof deps?.isActivePanel === 'function'
       ? deps.isActivePanel : () => true;
-    const getIde = typeof deps?.getIde === 'function' ? deps.getIde : () => ({});
     const getAttachmentsApi = typeof deps?.getAttachmentsApi === 'function'
       ? deps.getAttachmentsApi : () => null;
     const getWorkspaceFsApi = typeof deps?.getWorkspaceFsApi === 'function'
@@ -64,7 +69,7 @@
     const parentDirOf = typeof deps?.parentDirOf === 'function' ? deps.parentDirOf : () => '';
     const nameOf = typeof deps?.nameOf === 'function' ? deps.nameOf : (path) => String(path || '');
     let boundHosts = [];
-    let paintedNode = null;
+    const painter = createDropPainter();
     let stripNode = null;
     let stripStatus = null;
     let stripCancel = null;
@@ -84,35 +89,8 @@
       return Boolean(isActivePanel() && host && host === getMountEl() && host.contains(event.target));
     }
 
-    function findRow(host, path) {
-      return [...(host?.querySelectorAll?.('[data-ide-tree-path]') || [])]
-        .find((row) => row.dataset.ideTreePath === path) || null;
-    }
-
     function targetForEvent(event) {
-      const host = event.currentTarget;
-      const row = event.target?.closest?.('[data-ide-tree-path]');
-      if (row && !host.contains(row)) return null;
-      const destination = row?.dataset.ideTreeKind === 'directory'
-        ? row.dataset.ideTreePath : row ? parentDirOf(row.dataset.ideTreePath) : '';
-      return {
-        destination,
-        paintNode: destination ? findRow(host, destination) : host.querySelector('.ide-tree'),
-      };
-    }
-
-    function clearPaint() {
-      paintedNode?.classList.remove('ide-tree-row--drop-target', 'ide-tree--drop-root');
-      paintedNode = null;
-    }
-
-    function paintTarget(target) {
-      if (!target || paintedNode === target.paintNode) return;
-      clearPaint();
-      paintedNode = target.paintNode;
-      paintedNode?.classList.add(
-        target.destination ? 'ide-tree-row--drop-target' : 'ide-tree--drop-root'
-      );
+      return dropTargetFor(event.currentTarget, event.target?.closest?.('[data-ide-tree-path]'), parentDirOf);
     }
 
     function handleDragOver(event) {
@@ -120,12 +98,12 @@
       event.preventDefault();
       event.stopPropagation();
       if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
-      paintTarget(targetForEvent(event));
+      painter.paint(targetForEvent(event));
     }
 
     function handleDragLeave(event) {
       if (event.relatedTarget && event.currentTarget?.contains?.(event.relatedTarget)) return;
-      clearPaint();
+      painter.clear();
     }
 
     function removeStrip() {
@@ -343,6 +321,11 @@
           context = null;
         }
         if (importIsStale(generation, rootEpoch)) return;
+        // Same refusal as move/delete: an import is never sent unfenced.
+        if (!isReadyMutationContext(context)) {
+          showError(mutationContextError().message, { dedupeKey: 'ide:tree:import' });
+          return;
+        }
         importId = `import-${Date.now()}-${++importCounter}`;
         activeImportId = importId;
         activeDestination = destination;
@@ -357,8 +340,7 @@
           sources,
           destination,
           onCollision: 'auto-rename',
-          ...(Number.isSafeInteger(context?.generation)
-            ? { expectedGeneration: context.generation } : {}),
+          expectedGeneration: context.generation,
           ...(confirmation.allowLargeTree ? { allowLargeTree: true } : {}),
           ...(confirmation.allowSensitive ? { allowSensitive: true } : {}),
         };
@@ -384,13 +366,13 @@
       event.stopPropagation();
       cancelPendingEdit();
       const target = targetForEvent(event);
-      clearPaint();
+      painter.clear();
       if (!target || activeImportId) return;
       activeImportId = 'pending';
       const files = [...(event.dataTransfer?.files || [])];
       const generation = operationGeneration;
       const rootEpoch = getRootEpoch();
-      void startImport(files, target.destination, generation, rootEpoch);
+      void startImport(files, target.path, generation, rootEpoch);
     }
 
     function bindEvents() {
@@ -409,7 +391,7 @@
     function dispose() {
       disposed = true;
       operationGeneration += 1;
-      clearPaint();
+      painter.clear();
       resetActiveImport();
       for (const host of boundHosts) {
         host.removeEventListener('dragenter', handleDragOver);

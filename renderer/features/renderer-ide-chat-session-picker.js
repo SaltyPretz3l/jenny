@@ -1,0 +1,346 @@
+/* renderer/features/renderer-ide-chat-session-picker.js
+ *
+ * The Workspace Chat Dock's session switcher: a searchable popover of recent
+ * chats behind the dock header's session button. Moved out of
+ * renderer-ide-chip-picker unchanged (row 82, that file's 600-line ratchet).
+ * Buttons and the search field render through the inventory primitives. */
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) {
+    module.exports = factory();
+    return;
+  }
+  root.rendererIdeChatSessionPicker = factory();
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+
+  const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+
+  const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
+  function noop() {}
+
+  const RECENT_SESSION_LIMIT = 12;
+  const SEARCH_RESULT_LIMIT = 50;
+  const CHEVRON_DOWN_GLYPH = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6l6-6"></path></svg>';
+
+  function resolveInventoryPrimitive(globalName, requirePath) {
+    if (typeof globalRef[globalName] === 'function') {
+      return globalRef[globalName];
+    }
+    if (typeof require === 'function') {
+      try {
+        return require(requirePath);
+      } catch (_error) {
+        /* unavailable */
+      }
+    }
+    return null;
+  }
+
+  function sessionTitle(session) {
+    return String(session?.title || '').trim() || jt('ide.chipPicker.newChat', 'New Chat');
+  }
+
+  function createIdeChatSessionPicker(deps) {
+    const state = deps?.state || {};
+    const getHeader = typeof deps?.getHeader === 'function' ? deps.getHeader : () => null;
+    const onSelectSession = typeof deps?.onSelectSession === 'function' ? deps.onSelectSession : noop;
+    const showShellErrorToast = typeof deps?.showShellErrorToast === 'function' ? deps.showShellErrorToast : noop;
+    const appendClientLog = typeof deps?.appendClientLog === 'function' ? deps.appendClientLog : noop;
+    const actionButton = resolveInventoryPrimitive('inventoryActionButton', '../inventory/action-button');
+    const textField = resolveInventoryPrimitive('inventoryTextField', '../inventory/text-field');
+    const popover = resolveInventoryPrimitive('inventoryPopover', '../inventory/popover');
+
+    let boundHeader = null;
+    let pickerQuery = '';
+    let pickerListSignature = '';
+    let switchingSessionId = '';
+    let disposed = false;
+
+    function activeSession() {
+      const currentId = String(state.currentSessionId || '').trim();
+      return (Array.isArray(state.sessions) ? state.sessions : [])
+        .find((session) => String(session?.id || '').trim() === currentId) || null;
+    }
+
+    function eligibleSessions() {
+      const pendingDeletes = new Set(
+        (Array.isArray(state.ui?.pendingSessionDeletes) ? state.ui.pendingSessionDeletes : [])
+          .map((id) => String(id || '').trim()).filter(Boolean)
+      );
+      return (Array.isArray(state.sessions) ? state.sessions : [])
+        .filter((session) => {
+          const id = String(session?.id || '').trim();
+          const type = String(session?.session_type || 'chat').trim().toLowerCase();
+          return Boolean(id) && type === 'chat' && !session?.archived_at && !pendingDeletes.has(id);
+        })
+        .slice()
+        .sort((left, right) => String(right?.updated_at || right?.created_at || '')
+          .localeCompare(String(left?.updated_at || left?.created_at || '')));
+    }
+
+    function visibleSessions() {
+      const sessions = eligibleSessions();
+      const query = pickerQuery.trim().toLowerCase();
+      if (query) {
+        const matches = sessions.filter((session) => sessionTitle(session).toLowerCase().includes(query));
+        return { sessions: matches.slice(0, SEARCH_RESULT_LIMIT), total: matches.length, searching: true };
+      }
+      const currentId = String(state.currentSessionId || '').trim();
+      const current = sessions.find((session) => String(session.id || '').trim() === currentId);
+      const recent = sessions.filter((session) => String(session.id || '').trim() !== currentId)
+        .slice(0, current ? RECENT_SESSION_LIMIT - 1 : RECENT_SESSION_LIMIT);
+      return { sessions: current ? [current, ...recent] : recent, total: sessions.length, searching: false };
+    }
+
+    function buildMarkup() {
+      if (typeof actionButton !== 'function' || typeof textField !== 'function' || typeof popover !== 'function') {
+        return '';
+      }
+      const trigger = actionButton({
+        plain: true,
+        className: 'ide-chat-dock-session-trigger',
+        ariaLabel: jt('ide.chipPicker.switchChatSession', 'Switch chat session'),
+        title: jt('ide.chipPicker.switchChatSession', 'Switch chat session'),
+        ariaHaspopup: 'dialog',
+        ariaExpanded: false,
+        ariaControls: 'ideChatDockSessionPicker',
+        dataset: { 'ide-chatdock-session-trigger': '1' },
+        trustedHtml: '<span class="ide-chat-dock-label" data-ide-chatdock-session-title></span>' + CHEVRON_DOWN_GLYPH,
+      });
+      const search = textField({
+        id: 'ide-chat-dock-session-search',
+        placeholder: jt('ide.chipPicker.searchSessionsPlaceholder', 'Search sessions...'),
+        ariaLabel: jt('ide.chipPicker.searchChatSessions', 'Search chat sessions'),
+        className: 'ide-chat-dock-session-search',
+        dataset: { 'ide-chatdock-session-search': '1' },
+      });
+      const picker = popover({
+        id: 'ide-chatdock-sessions',
+        domId: 'ideChatDockSessionPicker',
+        className: 'ide-chat-dock-session-picker',
+        ariaLabel: jt('ide.chipPicker.switchChatSession', 'Switch chat session'),
+        trustedHtml: search
+      + '<div class="ide-chat-dock-session-list" id="ideChatDockSessionList" role="listbox" aria-label="' + (actionButton.escapeHtml || String)(jt('ide.chipPicker.chatSessions', 'Chat sessions')) + '"></div>'
+          + '<div class="ide-chat-dock-session-status" role="status" aria-live="polite"></div>',
+      });
+      return `<div class="ide-chat-dock-session-control">${trigger}${picker}</div>`;
+    }
+
+    function renderPickerList() {
+      const header = getHeader();
+      const list = header?.querySelector?.('.ide-chat-dock-session-list');
+      const status = header?.querySelector?.('.ide-chat-dock-session-status');
+      if (!list || !status || typeof actionButton !== 'function') return;
+      const result = visibleSessions();
+      const currentId = String(state.currentSessionId || '').trim();
+      const signature = [pickerQuery, currentId, switchingSessionId, result.total]
+        .concat(result.sessions.map((session) => `${session.id}|${sessionTitle(session)}|${session.updated_at || ''}`))
+        .join('\n');
+      if (signature !== pickerListSignature) {
+        pickerListSignature = signature;
+        list.innerHTML = result.sessions.length
+          ? result.sessions.map((session) => {
+            const id = String(session.id || '').trim();
+            const selected = id === currentId;
+            return actionButton({
+              plain: true,
+              className: `ide-chat-dock-session-option${selected ? ' is-active' : ''}`,
+              disabled: Boolean(switchingSessionId),
+              role: 'option',
+              ariaSelected: selected,
+              title: jt('ide.chipPicker.switchChatSession', 'Switch chat session'),
+              dataset: { 'ide-chatdock-session-id': id },
+              trustedHtml: `<span class="ide-chat-dock-session-option-title">${actionButton.escapeHtml(sessionTitle(session))}</span>`
+                + `<span class="ide-chat-dock-session-check" aria-hidden="true">${selected ? '&#10003;' : ''}</span>`,
+            });
+          }).join('')
+          : '<div class="ide-chat-dock-session-empty" role="note">' + actionButton.escapeHtml(jt('ide.chipPicker.noChatsFound', 'No chats found')) + '</div>';
+      }
+      let nextStatus = '';
+      if (result.searching && result.total > SEARCH_RESULT_LIMIT) {
+      nextStatus = jt('ide.chipPicker.showingMatches', 'Showing first {limit} of {total} matches', { limit: SEARCH_RESULT_LIMIT, total: result.total });
+      } else if (result.searching) {
+        nextStatus = `${result.total} ${result.total === 1 ? 'match' : 'matches'}`;
+      } else if (result.total > RECENT_SESSION_LIMIT) {
+        nextStatus = jt('ide.chipPicker.recentChats', '{count} recent chats', { count: RECENT_SESSION_LIMIT });
+      }
+      if (status.textContent !== nextStatus) status.textContent = nextStatus;
+      status.hidden = !nextStatus;
+    }
+
+    function resetQuery() {
+      pickerQuery = '';
+      const input = getHeader()?.querySelector?.('[data-ide-chatdock-session-search]');
+      if (input && input.value !== '') input.value = '';
+      pickerListSignature = '';
+    }
+
+    function close(restoreFocus = false) {
+      const picker = getHeader()?.querySelector?.('#ideChatDockSessionPicker');
+      if (picker && typeof popover?.close === 'function') popover.close(picker, { restoreFocus });
+    }
+
+    function open() {
+      const header = getHeader();
+      const trigger = header?.querySelector?.('[data-ide-chatdock-session-trigger]');
+      const picker = header?.querySelector?.('#ideChatDockSessionPicker');
+      if (!trigger || !picker || typeof popover?.open !== 'function') return;
+      resetQuery();
+      renderPickerList();
+      popover.open(picker, { trigger, focus: false });
+      header.querySelector('[data-ide-chatdock-session-search]')?.focus?.();
+    }
+
+    function toggle() {
+      const picker = getHeader()?.querySelector?.('#ideChatDockSessionPicker');
+      if (!picker || typeof popover?.isOpen !== 'function') return;
+      if (popover.isOpen(picker)) close(true);
+      else open();
+    }
+
+    async function selectSession(sessionId) {
+      const id = String(sessionId || '').trim();
+      if (!id || switchingSessionId) return;
+      if (id === String(state.currentSessionId || '').trim()) {
+        close(true);
+        return;
+      }
+      switchingSessionId = id;
+      renderPickerList();
+      close(true);
+      try {
+        await onSelectSession(id);
+        if (disposed) return;
+        const applied = String(state.currentSessionId || '').trim() === id;
+        try {
+          appendClientLog('INFO', applied ? 'ide_chat_dock.session_switched' : 'ide_chat_dock.session_switch_not_applied', { sessionId: id });
+        } catch (_logError) { /* diagnostics are best-effort */ }
+      } catch (error) {
+        if (disposed) return;
+        try {
+          appendClientLog('WARN', 'ide_chat_dock.session_switch_failed', {
+            sessionId: id,
+            message: String(error?.message || error || '').slice(0, 200),
+          });
+        } catch (_logError) { /* diagnostics are best-effort */ }
+        try {
+          showShellErrorToast(jt('ide.chipPicker.switchFailedMessage', 'Could not switch chat sessions. The current session remains open.'), {
+            title: jt('ide.chipPicker.switchFailedTitle', 'Session Switch Failed'),
+            dedupeKey: 'ide-chat-dock:session-switch-failed',
+          });
+        } catch (_toastError) { /* feedback must not escape the click handler */ }
+      } finally {
+        if (!disposed) {
+          switchingSessionId = '';
+          pickerListSignature = '';
+          render();
+        }
+      }
+    }
+
+    function render() {
+      const header = getHeader();
+      const title = sessionTitle(activeSession());
+      const titleEl = header?.querySelector?.('[data-ide-chatdock-session-title]');
+      const trigger = header?.querySelector?.('[data-ide-chatdock-session-trigger]');
+      if (titleEl) { const dockTitle = jt('ide.chipPicker.dockTitle', 'Jenny · {title}', { title }); if (titleEl.textContent !== dockTitle) titleEl.textContent = dockTitle; }
+      const triggerLabel = jt('ide.chipPicker.currentSessionLabel', 'Switch chat session. Current: {title}', { title });
+      if (trigger?.getAttribute?.('aria-label') !== triggerLabel
+        || trigger?.getAttribute?.('title') !== triggerLabel) {
+        trigger?.setAttribute?.('aria-label', triggerLabel);
+        trigger?.setAttribute?.('title', triggerLabel);
+      }
+      const search = header?.querySelector?.('[data-ide-chatdock-session-search]');
+      if (search?.getAttribute?.('aria-controls') !== 'ideChatDockSessionList') {
+        search?.setAttribute?.('aria-controls', 'ideChatDockSessionList');
+      }
+      const picker = header?.querySelector?.('#ideChatDockSessionPicker');
+      if (typeof popover?.isOpen === 'function' && popover.isOpen(picker)) renderPickerList();
+    }
+
+    function pickerOptions() {
+      const list = getHeader()?.querySelector?.('.ide-chat-dock-session-list');
+      return list ? [...list.querySelectorAll('[data-ide-chatdock-session-id]:not(:disabled)')] : [];
+    }
+
+    function handleClick(event) {
+      const target = event.target;
+      if (!target || typeof target.closest !== 'function') return;
+      if (target.closest('[data-ide-chatdock-session-trigger]')) {
+        toggle();
+        return;
+      }
+      const option = target.closest('[data-ide-chatdock-session-id]');
+      if (option) void selectSession(option.dataset.ideChatdockSessionId);
+    }
+
+    function handleInput(event) {
+      if (!event.target?.matches?.('[data-ide-chatdock-session-search]')) return;
+      pickerQuery = String(event.target.value || '');
+      pickerListSignature = '';
+      renderPickerList();
+    }
+
+    function handleKeydown(event) {
+      const search = event.target?.matches?.('[data-ide-chatdock-session-search]');
+      const option = event.target?.closest?.('[data-ide-chatdock-session-id]');
+      if (!search && !option) return;
+      const options = pickerOptions();
+      if (event.key === 'Escape') {
+        close(true);
+        event.preventDefault();
+        return;
+      }
+      // Enter that commits an IME composition belongs to the IME.
+      if (event.key === 'Enter' && (event.isComposing || event.keyCode === 229)) return;
+      if (search && event.key === 'Enter') {
+        options[0]?.click?.();
+        event.preventDefault();
+        return;
+      }
+      if (option && (event.key === 'Enter' || event.key === ' ')) {
+        option.click?.();
+        event.preventDefault();
+        return;
+      }
+      if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) || !options.length) return;
+      let nextIndex = search ? (event.key === 'ArrowUp' || event.key === 'End' ? options.length - 1 : 0) : options.indexOf(option);
+      if (!search) {
+        if (event.key === 'ArrowDown') nextIndex = (nextIndex + 1) % options.length;
+        else if (event.key === 'ArrowUp') nextIndex = (nextIndex - 1 + options.length) % options.length;
+        else if (event.key === 'Home') nextIndex = 0;
+        else nextIndex = options.length - 1;
+      }
+      options[nextIndex]?.focus?.();
+      event.preventDefault();
+    }
+
+    function handlePopoverToggle(event) {
+      if (event.detail?.id === 'ide-chatdock-sessions' && event.detail.open === false) resetQuery();
+    }
+
+    function bindEvents(header = getHeader()) {
+      if (!header || boundHeader) return;
+      boundHeader = header;
+      boundHeader.addEventListener('click', handleClick);
+      boundHeader.addEventListener('input', handleInput);
+      boundHeader.addEventListener('keydown', handleKeydown);
+      boundHeader.addEventListener('inv-popover-toggle', handlePopoverToggle);
+    }
+
+    function dispose() {
+      disposed = true;
+      close(false);
+      if (!boundHeader) return;
+      boundHeader.removeEventListener('click', handleClick);
+      boundHeader.removeEventListener('input', handleInput);
+      boundHeader.removeEventListener('keydown', handleKeydown);
+      boundHeader.removeEventListener('inv-popover-toggle', handlePopoverToggle);
+      boundHeader = null;
+    }
+
+    return { bindEvents, buildMarkup, close, dispose, render };
+  }
+
+  return { createIdeChatSessionPicker };
+});

@@ -87,18 +87,19 @@ describe('ipc-contract workspacePty descriptors', () => {
 });
 
 describe('registerWorkspacePtyIpcHandlers', () => {
-  test('wires all 4 workspacePty invoke channels and forwards the payload', async () => {
+  test('wires all 5 workspacePty invoke channels and forwards the payload', async () => {
     const ipc = createFakeIpcMain();
     const { proxy } = createRecorder();
     registerWorkspacePtyIpcHandlers(ipc, proxy);
 
     const paths = [
       'workspacePty.spawn',
+      'workspacePty.listProfiles',
       'workspacePty.write',
       'workspacePty.resize',
       'workspacePty.kill',
     ];
-    assert.equal(ipc.invoke.size, 4);
+    assert.equal(ipc.invoke.size, 5);
     for (const methodPath of paths) {
       assert.equal(ipc.invoke.has(invokeChannel(methodPath)), true, `expected ${methodPath}`);
     }

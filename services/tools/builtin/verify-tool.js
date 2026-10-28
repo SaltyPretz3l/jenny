@@ -37,6 +37,7 @@ const {
   TOOL_ERROR_CODES,
   WORKSPACE_TEST_RUNNER_ERROR_CODES,
 } = require('../../backend/error-codes');
+const { manifestSchema } = require('./tool-result');
 
 // Failure lines are what the model actually needs; a passing parade is noise.
 // The sidecar's distill filters do the real reduction downstream — this is the
@@ -124,19 +125,28 @@ function describeCounts(record) {
   return parts.join(', ');
 }
 
+// A scoped listing without a bound root, or a disabled runner, answers
+// `{ available: false, reason }` rather than an error envelope; it is not "no
+// configurations".
+function listingUnavailable(outcome) {
+  return Boolean(outcome && outcome.available === false);
+}
+
 function createVerifyTool() {
   function listConfigurations(service) {
-    const outcome = service.listConfigs();
+    // One scope build answers both the listing and the last-run statuses.
+    const outcome = service.listConfigs({ includeState: true });
     const code = envelopeCode(outcome);
-    if (code) {
-      if (code === WORKSPACE_TEST_RUNNER_ERROR_CODES.ROOT_MISSING) {
-        return failure({
-          reason: 'workspace_root_missing',
-          errorCode: TOOL_ERROR_CODES.EXECUTION_FAILED,
-          message: 'No workspace root is configured, so there are no test configurations to run.',
-          summary: 'No workspace root',
-        });
-      }
+    if (code === WORKSPACE_TEST_RUNNER_ERROR_CODES.ROOT_MISSING
+      || (listingUnavailable(outcome) && outcome.reason === 'root_missing')) {
+      return failure({
+        reason: 'workspace_root_missing',
+        errorCode: TOOL_ERROR_CODES.EXECUTION_FAILED,
+        message: 'No workspace root is configured, so there are no test configurations to run.',
+        summary: 'No workspace root',
+      });
+    }
+    if (code || listingUnavailable(outcome)) {
       return failure({
         reason: 'list_failed',
         errorCode: TOOL_ERROR_CODES.EXECUTION_FAILED,
@@ -156,7 +166,8 @@ function createVerifyTool() {
       };
     }
 
-    const state = typeof service.getState === 'function' ? service.getState() : null;
+    const state = outcome.state !== undefined ? outcome.state
+      : typeof service.getState === 'function' ? service.getState() : null;
     const rows = configs.map((config) => {
       const last = lastRunFor(state, config.id);
       return {
@@ -268,8 +279,7 @@ function createVerifyTool() {
 
   async function runGate(service, attempt) {
     const outcome = service.listConfigs();
-    const code = envelopeCode(outcome);
-    if (code) {
+    if (envelopeCode(outcome) || listingUnavailable(outcome)) {
       // Cannot even read the configurations: report and let the turn continue.
       return skipped({
         reason: 'gate_unavailable',
@@ -304,32 +314,10 @@ function createVerifyTool() {
 
   return {
     name: 'verify',
-    description: 'Run one of the user\'s own saved test configurations and report the result. '
-      + 'action "list" shows the available configurations and their last status; action "run" '
-      + 'executes one by config_id and returns pass/fail counts plus failing output. You cannot '
-      + 'create or modify a configuration, and you cannot choose the command — only which saved '
-      + 'configuration to run. Prefer this over run_command for running the project\'s tests.',
+    ...manifestSchema('verify'),
     category: 'builtin',
     readOnly: false,
     workspaceRequired: true,
-    parameters: {
-      type: 'object',
-      properties: {
-        action: {
-          type: 'string',
-          enum: ['list', 'run', 'gate'],
-          description: '"list" to see saved test configurations, "run" to execute one by '
-            + 'config_id, "gate" to run whichever one the user designated as the '
-            + 'verification gate.',
-        },
-        config_id: {
-          type: 'string',
-          description: 'Required for action "run": the id of a saved test configuration.',
-        },
-      },
-      required: ['action'],
-      additionalProperties: false,
-    },
     summarize(input) {
       const action = typeof input?.action === 'string' ? input.action.trim() : '';
       if (action === 'run') {
@@ -354,13 +342,7 @@ function createVerifyTool() {
       }
 
       const action = typeof input?.action === 'string' ? input.action.trim() : '';
-      if (action === 'list') {
-        return listConfigurations(service);
-      }
-      if (action === 'gate') {
-        return runGate(service, readAttempt(input));
-      }
-      if (action !== 'run') {
+      if (!['list', 'run', 'gate'].includes(action)) {
         return failure({
           reason: 'invalid_action',
           errorCode: TOOL_ERROR_CODES.EXECUTION_FAILED,
@@ -370,7 +352,7 @@ function createVerifyTool() {
       }
 
       const configId = typeof input?.config_id === 'string' ? input.config_id.trim() : '';
-      if (!configId) {
+      if (action === 'run' && !configId) {
         return failure({
           reason: 'missing_config_id',
           errorCode: TOOL_ERROR_CODES.EXECUTION_FAILED,
@@ -381,18 +363,28 @@ function createVerifyTool() {
       }
 
       try {
+        if (action === 'list') return listConfigurations(service);
+        if (action === 'gate') return await runGate(service, readAttempt(input));
         return await runConfiguration(service, configId);
       } catch (error) {
         if (projectToolResourceWait(error)) throw error;
+        const reasonText = String(error?.message || error).slice(0, 300);
+        if (action === 'list') {
+          return failure({
+            reason: 'list_failed',
+            errorCode: TOOL_ERROR_CODES.EXECUTION_FAILED,
+            message: `Could not read the test configurations: ${reasonText}`,
+            summary: 'Could not list test configurations',
+          });
+        }
         // A runner rejection must not strand the turn: report it and let the
         // model finish with an honest "unverified".
         return skipped({
-          reason: 'run_threw',
-          message: `The test run for "${configId}" failed to complete: `
-            + `${String(error?.message || error).slice(0, 300)}. `
-            + 'Report the change as unverified.',
-          summary: 'Test run did not complete',
-          extra: { action: 'run', config_id: configId },
+          reason: action === 'gate' ? 'gate_threw' : 'run_threw',
+          message: `${action === 'gate' ? 'The verification gate' : `The test run for "${configId}"`} `
+            + `failed to complete: ${reasonText}. Report the change as unverified.`,
+          summary: action === 'gate' ? 'Verification gate did not complete' : 'Test run did not complete',
+          extra: { action, ...(action === 'run' ? { config_id: configId } : {}) },
         });
       }
     },

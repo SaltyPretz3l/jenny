@@ -404,6 +404,9 @@ test('NInfer settings backfill, bound the watchdog thresholds, and persist a dee
   assert.equal(updated.contextSize, 131072);
   assert.equal(updated.mtp, false);
   assert.equal(updated.vision, false);
+  // 192k is an offered window (8-bit cache, 2026-10-20), so it survives normalization.
+  assert.equal(service.updateNinferSettings({ contextSize: 196608 }).contextSize, 196608);
+  service.updateNinferSettings({ contextSize: 131072 });
   const persisted = JSON.parse(fs.readFileSync(service.store.filePath, 'utf8'));
   assert.equal(persisted.localEngines.ninfer.watchdog.maxWatts, 430);
   assert.equal(persisted.localEngines.ninfer.lastUsedArtifactId, 'qwen3.8-27b-nvfp4');

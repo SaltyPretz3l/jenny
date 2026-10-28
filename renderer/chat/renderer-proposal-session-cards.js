@@ -97,6 +97,49 @@
     return status('warn', jt('chat.proposal.needsAttention', 'Needs attention'), jt('chat.proposal.needsAttentionDetail', 'This needs your attention.'), child);
   }
 
+  const childFailureDetail = (errorClass) => {
+    if (errorClass === 'model_busy') return jt('chat.proposal.session.errModelBusy', 'The model was still switching. Nothing ran.');
+    if (errorClass === 'engine') return jt('chat.proposal.session.errNoResponse', "The model didn't respond.");
+    return jt('chat.proposal.session.errGeneric', 'The turn failed.');
+  };
+
+  /** F3b: after admission a New session card follows its child (proposal.child, derived per read in the
+   *  main process); without one it keeps the plain "Started" receipt. */
+  function childStatus(proposal, status, hasChild, title) {
+    const child = asObject(proposal.child);
+    const open = { openChild: hasChild };
+    const reply = child && typeof child.reply_turn_id === 'string' ? child.reply_turn_id : '';
+    switch (child && child.phase) {
+      case 'starting':
+        return status('active', jt('chat.proposal.session.starting', 'Starting the new chat…'), '', { running: true, ...open });
+      case 'running':
+        return status('active', jt('chat.proposal.session.running', 'Running'), child.resume_count > 0
+          ? jt('chat.proposal.session.resumedDetail', 'Resumed automatically after a turn-budget stop ({count} of {max})', { count: child.resume_count, max: child.resume_max })
+          : '', { running: true, startedAt: child.turn_started_at || '', noElapsed: !child.turn_started_at, ...open });
+      case 'waiting':
+        return status('warn', jt('chat.proposal.session.waitingYou', 'Waiting for you'), jt('chat.proposal.session.waitingDetail', 'The new chat needs your answer.'), open);
+      case 'reported':
+        return status('ok', jt('chat.proposal.session.reported', 'Reported back'), '', { replyTurnId: reply, ...open });
+      case 'stopped': {
+        const resumeHint = jt('chat.proposal.session.stoppedDetail', 'Reply "resume" in the chat to keep going.');
+        return child.resume_count > 0
+          ? status('warn', jt('chat.proposal.session.stopped', 'Stopped'), `${jt('chat.proposal.session.stoppedResumes', 'Jenny resumed it {count} of {max} times.', { count: child.resume_count, max: child.resume_max })} ${resumeHint}`, { replyTurnId: reply, ...open })
+          : status('warn', jt('chat.proposal.session.stoppedBudget', 'Turn budget used up'), resumeHint, { replyTurnId: reply, ...open });
+      }
+      case 'failed':
+        return status('error', child.failed_turn_is_first ? jt('chat.proposal.session.startFailedWord', "Couldn't start the new chat")
+          : jt('chat.proposal.session.failedLater', 'The new chat stopped with an error'), childFailureDetail(child.error_class),
+        { retryChild: asObject(child.retry) && typeof child.retry.message_id === 'string' ? child.retry.message_id : '', ...open });
+      case 'attention':
+        return status('warn', jt('chat.proposal.needsAttention', 'Needs attention'), jt('chat.proposal.needsAttentionDetail', 'This needs your attention.'), open);
+      case 'cancelled': return status('muted', jt('chat.proposal.session.stopped', 'Stopped'), '', open);
+      case 'archived': return status('muted', jt('chat.proposal.session.archived', 'Archived'), '', open);
+      case 'gone': return status('muted', jt('chat.proposal.session.deleted', 'The new chat was deleted'), '');
+      default:
+        return status('ok', jt('chat.proposal.session.started', 'Started · {title}', { title }), '', open);
+    }
+  }
+
   /** The closed table for kind session: every decision_state/action_state pair maps to one status; nothing else renders. */
   function deriveSessionStatus(proposal) {
     const status = (tone, word, detail, extra) => ({ tone, word, detail: detail || '', ...extra });
@@ -121,8 +164,7 @@
       case 'child_created':
       case 'admitted':
         return status('active', jt('chat.proposal.session.starting', 'Starting the new chat…'), '', { running: true, openChild: hasChild });
-      case 'succeeded':
-        return status('ok', jt('chat.proposal.session.started', 'Started · {title}', { title: String(display.title || '') }), '', { openChild: hasChild });
+      case 'succeeded': return childStatus(proposal, status, hasChild, String(display.title || ''));
       case 'failed': return status('error', jt('chat.proposal.session.startFailedWord', "Couldn't start the new chat"), '', { openChild: hasChild });
       case 'cancelled': return status('muted', jt('chat.proposal.cancelled', 'Cancelled'));
       case 'needs_attention': return newSessionAttention(proposal, status, hasChild);
@@ -271,6 +313,39 @@
       + button('new_session', jt('chat.proposal.session.newSession', 'New session'), 'secondary', '');
   }
 
+  /** E1: "Always allow Jenny to start chats in <project>" under the choices; primary-chat offers only (never a suggestion). */
+  function alwaysAllowMarkup(h, ctx, proposal, suggestion) {
+    if (suggestion || !proposal || proposal.decision_state !== 'pending') return '';
+    if (h.launchPermissionEnabled === false || typeof h.isPrimarySession !== 'function' || !h.isPrimarySession(ctx.sessionId)) return '';
+    // A chat with no project has nothing specific to allow: the wildcard grant is not offered from this card.
+    const projectId = asObject(proposal.options) && proposal.options.destination_project_id;
+    if (!projectId) return '';
+    const caps = ctx.lookup.capabilities;
+    const destinations = caps && caps.value && Array.isArray(caps.value.destinations) ? caps.value.destinations : [];
+    const match = destinations.find((item) => item && item.project_id === projectId);
+    const project = match && typeof match.label === 'string' && match.label ? match.label : jt('chat.proposal.session.thisProject', 'this project');
+    return `<div class="proposal-always">${h.checkbox({
+      id: `proposal-always-${ctx.proposalId}`, disabled: ctx.lookup.busy === true,
+      label: jt('chat.proposal.session.alwaysAllow', 'Always allow Jenny to start chats in {project}', { project }),
+      dataset: { 'proposal-always-allow': '1' },
+    })}</div>`;
+  }
+
+  // The composer's own run mode names, so the facts line reads like the mode picker.
+  const RUN_MODE_LABELS = () => ({
+    ask: jt('composer.runMode.ask', 'Ask'), auto: jt('composer.runMode.auto', 'Auto'),
+    plan: jt('composer.runMode.plan', 'Plan'), propose: jt('composer.runMode.propose', 'Propose'),
+  });
+
+  /** F3b: the child's facts under a receipt's title: project · model · the mode it actually got. */
+  function childFactsMarkup(h, proposal) {
+    const child = asObject(proposal && proposal.child);
+    if (!child || child.phase === 'gone') return '';
+    const parts = [child.project_label, child.model, RUN_MODE_LABELS()[child.run_mode]]
+      .filter((part) => typeof part === 'string' && part);
+    return parts.length ? `<p class="proposal-session-meta">${h.escapeHtml(parts.join(' · '))}</p>` : '';
+  }
+
   function titleMarkup(h, display) {
     const description = typeof display.description === 'string' && display.description
       ? `<p class="proposal-session-desc">${h.escapeHtml(display.description)}</p>` : '';
@@ -295,10 +370,10 @@
     const rowClass = suggestion ? ' proposal-suggestion' : '';
     if (status) {
       const statusView = { ...status, links: proposal.links, cancelAvailable: proposal.actions.cancel && proposal.actions.cancel.available,
-        retryAvailable: proposal.actions.retry && proposal.actions.retry.available, elapsed: status.running ? h.elapsedMarkup(h, proposal) : '' };
+        retryAvailable: proposal.actions.retry && proposal.actions.retry.available, elapsed: status.running && !status.noElapsed ? h.elapsedMarkup(h, proposal, status.startedAt) : '' };
       return `${h.cardOpen(h, view, 'session', state, `proposal-receipt${rowClass}`)}${head}`
         + `${suggestion ? '' : '<span class="user-questions-receipt-rule"></span>'}`
-        + `<p class="proposal-session-title">${escapeHtml(display.title)}</p>`
+        + `<p class="proposal-session-title">${escapeHtml(display.title)}</p>${childFactsMarkup(h, proposal)}`
         + `${h.statusLineMarkup(h, statusView)}${h.noticeMarkup(h, lookup.notice)}</section>`;
     }
     const pending = state === 'pending';
@@ -316,6 +391,7 @@
     return `${h.cardOpen(h, view, 'session', state, suggestion ? 'proposal-suggestion' : ['proposal-decision', 'proposal-session-offer'].join(' '))}${head}${eyebrow}`
       + `${titleMarkup(h, display)}${authNote}`
       + `<div class="proposal-actions">${optionsMarkup(h, ctx, proposal)}<div class="proposal-choices">${choiceButtons(h, ctx, proposal, suggestion, can)}</div></div>`
+      + `${alwaysAllowMarkup(h, ctx, proposal, suggestion)}`
       + `${dismiss}${tail}${h.noticeMarkup(h, lookup.notice)}</section>`;
   }
 

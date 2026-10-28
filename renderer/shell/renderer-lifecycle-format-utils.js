@@ -91,15 +91,10 @@
       : false;
     const options = [{ value: '', label: autoLabel, disabled: false, selected: false }];
     if (normalizedSelected && !hasSelectedModel) {
-      // "(selected)" flags a chosen model missing from the live catalog. The
-      // Home ask popover opts out (annotateMissingSelected: false): its closed
-      // select IS the selection display, so the state suffix is just noise
-      // there. Settings keeps the annotation byte-identical by default.
+      // "(selected)" flags a chosen model missing from the live catalog.
       options.push({
         value: normalizedSelected,
-        label: config.annotateMissingSelected === false
-          ? normalizedSelected
-          : jt('models.library.options.selected', '{model} (selected)', { model: normalizedSelected }),
+        label: jt('models.library.options.selected', '{model} (selected)', { model: normalizedSelected }),
         disabled: false,
         selected: true,
       });

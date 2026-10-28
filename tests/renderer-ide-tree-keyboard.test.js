@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { createIdeTree } = require('../renderer/features/renderer-ide-tree');
+const { createIdeExplorerWiring } = require('../renderer/features/renderer-ide-explorer-wiring');
 const ideStateUtils = require('../renderer/features/renderer-ide-state');
 const { buildIdeDom, createBridgeStub, settle } = require('./helpers/ide-tree-harness');
 
@@ -352,4 +353,72 @@ test('truncated external changes clear QoL selection membership', async (t) => {
   await harness.tree.handleExternalChanges([], { truncated: true });
 
   assert.deepEqual(harness.tree.selection.getPaths(), []);
+});
+
+test('Ctrl+F in the tree opens the filter bar and focuses its input', async (t) => {
+  const harness = await createHarness({ files: { 'a.js': 'a' } });
+  t.after(() => harness.dispose());
+  const row = getRow(harness, 'a.js');
+  row.focus();
+
+  const event = pressKey(harness, row, 'f', { ctrlKey: true });
+
+  assert.equal(event.defaultPrevented, true);
+  const input = harness.panel.querySelector('.chat-search-bar-input');
+  assert.ok(input);
+  assert.equal(harness.dom.window.document.activeElement, input);
+});
+
+async function createWiringHarness({ splitResult = true, openResult = true } = {}) {
+  const domHarness = buildIdeDom();
+  const bridge = createBridgeStub({ files: { 'a.js': 'a' }, dirs: ['d'] });
+  const ide = ideStateUtils.createIdeUiState();
+  const calls = [];
+  const wiring = createIdeExplorerWiring({
+    getDom: domHarness.getDom,
+    getIde: () => ide,
+    getWorkspaceFsApi: () => bridge.jennyShell.workspaceFs,
+    openFile: async (path, options) => { calls.push(['openFile', path, options]); return openResult; },
+    getEditorGroups: () => ({ splitActive: (dir) => { calls.push(['splitActive', dir]); return splitResult; } }),
+    buildFileContextMenuItems: () => [{ label: 'Open in New Tab', action() {} }, { label: 'Other', action() {} }],
+    buildPathUtilityMenuItems: () => [],
+    schedulePersist: () => {},
+    showShellErrorToast: () => {},
+    appendClientLog: () => {},
+    getGitFeature: () => null,
+    panelDeps: () => ({ getMountEl: () => domHarness.getDom().ideRailPanel, isActivePanel: () => true }),
+  });
+  wiring.bindAll();
+  wiring.tree.refreshRoot();
+  await settle(30);
+  return {
+    ...domHarness, wiring, calls, bridge, panel: domHarness.getDom().ideRailPanel,
+    dispose() { wiring.disposeAll(); domHarness.dom.window.close(); },
+  };
+}
+
+test('Ctrl+Enter on a file row opens it, then splits the active file to the right', async (t) => {
+  const harness = await createWiringHarness();
+  t.after(() => harness.dispose());
+
+  pressKey(harness, getRow(harness, 'a.js'), 'Enter', { ctrlKey: true });
+  await settle(10);
+
+  assert.deepEqual(harness.calls, [['openFile', 'a.js', undefined], ['splitActive', 'right']]);
+});
+
+test('Ctrl+Enter does not split when the open fails and does nothing special on a directory', async (t) => {
+  const failed = await createWiringHarness({ openResult: false });
+  t.after(() => failed.dispose());
+  pressKey(failed, getRow(failed, 'a.js'), 'Enter', { ctrlKey: true });
+  await settle(10);
+  assert.deepEqual(failed.calls.map((call) => call[0]), ['openFile']);
+
+  const dir = await createWiringHarness();
+  t.after(() => dir.dispose());
+  const before = dir.calls.length;
+  pressKey(dir, getRow(dir, 'd'), 'Enter', { ctrlKey: true });
+  await settle(10);
+  assert.equal(dir.calls.length, before);
+  assert.equal(dir.calls.some((call) => call[0] === 'splitActive'), false);
 });

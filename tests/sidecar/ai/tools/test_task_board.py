@@ -248,7 +248,7 @@ def test_model_bridge_writes_survive_restart_and_mutate_by_identity(tmp_path: Pa
     ) in listed.output
     assert (
         f"id={second_id} | title=Second task | status=active"
-        " | sourceKind=agent_task"
+        " | notes=Keep this intact. | sourceKind=agent_task"
     ) in listed.output
 
 

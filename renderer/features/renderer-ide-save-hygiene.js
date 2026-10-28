@@ -11,6 +11,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const globalRef = typeof globalThis !== 'undefined' ? globalThis : {};
   function noop() {}
+  const FORMAT_TIMEOUT_MS = 5000;
+  const FORMAT_TIMEOUT = Object.freeze({ code: 'format_timeout' });
 
   function resolveAsyncFence() {
     if (globalRef.rendererAsyncFence) {
@@ -63,7 +65,19 @@
     const editorHost = deps?.editorHost || null;
     const getIde = typeof deps?.getIde === 'function' ? deps.getIde : () => ({});
     const appendClientLog = typeof deps?.appendClientLog === 'function' ? deps.appendClientLog : noop;
+    const timers = deps?.timers || globalRef;
     const fence = resolveAsyncFence().createDisposalFence();
+
+    // A hung formatter must not hold the save guard forever: race it against a
+    // timeout that resolves the save as a failed format.
+    function formatWithTimeout(path) {
+      let handle = null;
+      const timeout = new Promise((_resolve, reject) => {
+        handle = timers.setTimeout(() => reject(FORMAT_TIMEOUT), FORMAT_TIMEOUT_MS);
+      });
+      return Promise.race([editorHost.formatPath(path), timeout])
+        .finally(() => timers.clearTimeout(handle));
+    }
 
     // The surgical trim + final-newline model edits (trim first, then final
     // newline off the trimmed model, so a last line with both trailing whitespace
@@ -90,11 +104,19 @@
     // Stay synchronous without formatting so the save's content/version snapshot
     // precedes later edits: an edit during the write must stay dirty. Formatting
     // returns a promise, then model edits clean up its result before the snapshot.
-    function applySaveHygiene(path) {
+    // `overrides` (e.g. .editorconfig) wins over the prefs per key; a non-boolean
+    // key is ignored. `overrides.endOfLine` converts the document EOL first.
+    function applySaveHygiene(path, overrides) {
       const ide = getIde() || {};
       const format = ide.formatOnSave === true;
-      const trim = ide.trimTrailingWhitespace === true;
-      const finalNewline = ide.insertFinalNewline === true;
+      const pick = (key) => (typeof overrides?.[key] === 'boolean' ? overrides[key] : ide[key] === true);
+      const trim = pick('trimTrailingWhitespace');
+      const finalNewline = pick('insertFinalNewline');
+      const eol = overrides?.endOfLine === 'lf' || overrides?.endOfLine === 'crlf' ? overrides.endOfLine : '';
+      if (eol && typeof editorHost?.getEol === 'function' && typeof editorHost.setEol === 'function'
+        && editorHost.getEol(path) !== eol) {
+        editorHost.setEol(path, eol);
+      }
       if (!format && !trim && !finalNewline) {
         return { formatStatus: 'disabled', formatReason: '' };
       }
@@ -108,16 +130,17 @@
       }
       if (model && editorHost.showsPath?.(path)) {
         return Promise.resolve()
-          .then(() => editorHost.formatPath(path))
+          .then(() => formatWithTimeout(path))
           .then((result) => ({
             formatStatus: result?.supported === false ? 'unavailable' : 'formatted',
             formatReason: result?.supported === false ? 'formatter_unavailable' : '',
           }))
           .catch((error) => {
+            const timedOut = error === FORMAT_TIMEOUT;
             appendClientLog('WARN', 'ide.format_on_save_failed', {
-              message: String(error?.message || error || ''),
+              message: timedOut ? 'timeout' : String(error?.message || error || ''),
             });
-            return { formatStatus: 'failed', formatReason: 'formatter_failed' };
+            return { formatStatus: 'failed', formatReason: timedOut ? 'formatter_timeout' : 'formatter_failed' };
           })
           .then((outcome) => {
             if (!fence.isDisposed() && editorHost.getModel(path) === model) {

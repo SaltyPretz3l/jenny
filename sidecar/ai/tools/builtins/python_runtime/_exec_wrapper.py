@@ -30,7 +30,9 @@ _MAX_TABLE_ROWS = 50
 _MAX_TABLE_COLUMNS = 32
 _MAX_TABLE_CELL_CHARS = 512
 _MAX_TABLE_HTML_CHARS = 100_000
-_MAX_TOTAL_TABLE_HTML_CHARS = 500_000
+# Matches output.MAX_TOTAL_TABLE_HTML_CHARS, the model-visible budget: the
+# child never serializes table HTML the parent would only discard.
+_MAX_TOTAL_TABLE_HTML_CHARS = 250_000
 _MAX_TABLE_NAME_CHARS = 200
 _MAX_ERROR_MESSAGE_CHARS = 4_000
 _MAX_TRACEBACK_CHARS = 50_000
@@ -157,7 +159,9 @@ def _format_traceback(error: BaseException) -> str:
     extracted = traceback.extract_tb(error.__traceback__)
     user_frames = [frame for frame in extracted if frame.filename == "<analysis>"]
     if not user_frames:
-        return "".join(traceback.format_exception(type(error), error, error.__traceback__))
+        # Wrapper and stdlib frames carry absolute install paths and say
+        # nothing about the user's code (a SyntaxError names its own line).
+        return "".join(traceback.format_exception_only(type(error), error))
     formatted = ["Traceback (most recent call last):\n"]
     formatted.extend(traceback.format_list(user_frames))
     formatted.extend(traceback.format_exception_only(type(error), error))
@@ -165,9 +169,10 @@ def _format_traceback(error: BaseException) -> str:
 
 
 def _collect_tables(namespace: dict[str, Any]) -> list[dict[str, object]]:
-    try:
-        import pandas as pd  # type: ignore
-    except Exception:  # noqa: BLE001  # optional
+    # Only code that imported pandas can have produced a DataFrame; importing
+    # it here would cost every run its multi-second import.
+    pd = sys.modules.get("pandas")
+    if pd is None:
         return []
 
     tables: list[dict[str, object]] = []
@@ -214,6 +219,14 @@ def _bounded_text(value: object, max_chars: int) -> str:
     return text[: max(1, int(max_chars))]
 
 
+def _error_payload(error: BaseException) -> dict[str, str]:
+    return {
+        "type": type(error).__name__,
+        "message": _bounded_text(error, _MAX_ERROR_MESSAGE_CHARS),
+        "traceback": _bounded_text(_format_traceback(error), _MAX_TRACEBACK_CHARS),
+    }
+
+
 def _safe_json_dumps(payload: object) -> str:
     return _strip_surrogates(json.dumps(payload, ensure_ascii=False))
 
@@ -247,13 +260,24 @@ def main(argv: list[str]) -> int:
             expr_value = eval(expr_code, namespace, namespace)
             if expr_value is not None:
                 last_expr_repr = _bounded_text(repr(expr_value), _MAX_EXPRESSION_CHARS)
+    except SystemExit as error:
+        # sys.exit() in user code ends the script, not the wrapper: the
+        # result file must still be written.
+        if error.code is None or error.code == 0:
+            exit_code = 0
+        else:
+            exit_code = 1
+            error_payload = {
+                "type": "SystemExit",
+                "message": _bounded_text(error.code, _MAX_ERROR_MESSAGE_CHARS),
+                "traceback": "",
+            }
+    except KeyboardInterrupt as error:
+        exit_code = 130
+        error_payload = _error_payload(error)
     except Exception as error:  # noqa: BLE001
         exit_code = 1
-        error_payload = {
-            "type": type(error).__name__,
-            "message": _bounded_text(error, _MAX_ERROR_MESSAGE_CHARS),
-            "traceback": _bounded_text(_format_traceback(error), _MAX_TRACEBACK_CHARS),
-        }
+        error_payload = _error_payload(error)
     finally:
         if plt.get_fignums():
             images.extend(_capture_figures(output_dir))

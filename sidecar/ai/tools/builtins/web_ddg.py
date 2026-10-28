@@ -19,6 +19,7 @@ from typing import Any
 
 from sidecar.ai.tools.builtins.web_http import (
     _BROWSER_USER_AGENT,
+    ValidatedUrl,
     _is_public_ip,
     read_url_response,
     validate_public_url,
@@ -49,6 +50,17 @@ _DEFAULT_SEARCH_MAX_CHARS = 4000
 
 _BLOCKED_METADATA_HOSTS = frozenset({"localhost", "localhost.localdomain"})
 _BLOCKED_METADATA_IPV4_PREFIXES = ("127.", "10.", "169.254.", "192.168.")
+# A host that merely STARTS with four numeric labels reads as an IPv4 literal or a
+# wildcard-DNS name embedding one (`192.168.1.1.nip.io`). A name like
+# `10.example.com` has only one numeric label and is an ordinary hostname.
+_IPV4_LOOKING_HOST_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:\.|$)")
+
+# The three fixed DuckDuckGo hosts are validated through `validate_public_url`
+# on every request (a DNS round trip each); their pinned address is reused for
+# this long. Redirect hops still revalidate on their own.
+_DDG_FIXED_HOSTS = frozenset({"html.duckduckgo.com", "lite.duckduckgo.com", "api.duckduckgo.com"})
+_DDG_VALIDATION_TTL_S = 60.0
+_ddg_validation_cache: dict[str, tuple[float, str]] = {}
 
 
 # DuckDuckGo's HTML/lite endpoints challenge or rate-limit obvious bot clients, so the
@@ -280,6 +292,21 @@ def _backoff_sleep(seconds: float, deadline: float | None) -> None:
         time.sleep(seconds)
 
 
+def _validate_ddg_url(url: str, *, deadline: float) -> ValidatedUrl:
+    host = str(urllib.parse.urlparse(url).hostname or "").lower()
+    if host in _DDG_FIXED_HOSTS:
+        cached = _ddg_validation_cache.get(host)
+        if cached is not None and cached[0] > time.monotonic():
+            return ValidatedUrl(url=url, pinned_ip=cached[1])
+    validated = validate_public_url(url, deadline=deadline)
+    if host in _DDG_FIXED_HOSTS and validated.pinned_ip:
+        _ddg_validation_cache[host] = (
+            time.monotonic() + _DDG_VALIDATION_TTL_S,
+            validated.pinned_ip,
+        )
+    return validated
+
+
 def _ddg_http_request(
     url: str,
     *,
@@ -308,7 +335,7 @@ def _ddg_http_request(
         if remaining <= 0:
             break
         try:
-            validated = validate_public_url(url, deadline=request_deadline)
+            validated = _validate_ddg_url(url, deadline=request_deadline)
             remaining = request_deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError("Web request timed out.")
@@ -431,6 +458,8 @@ def _ddg_instant_answer(
 
 
 def _host_has_blocked_private_prefix(host: str) -> bool:
+    if not _IPV4_LOOKING_HOST_RE.match(host):
+        return False
     if host.startswith(_BLOCKED_METADATA_IPV4_PREFIXES):
         return True
     if not host.startswith("172."):

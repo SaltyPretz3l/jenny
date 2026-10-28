@@ -466,3 +466,37 @@ describe('expandReplacement mirrors String.prototype.replace patterns', () => {
     assert.equal(expandReplacement(/(?<known>x)/.exec('x'), '$<missing>'), '');
   });
 });
+
+describe('preview expansion limits and position verification', () => {
+  const match = { preview: { text: 'foo bar', matchStart: 0, matchEnd: 3 } };
+
+  it('falls back to the plain hit for a pattern that can match a newline', () => {
+    for (const query of ['foo\\s*', 'foo[^x]*', 'foo\\n', 'fo\\W?o']) {
+      assert.equal(computeRegexPreviewReplacement(match, { query, replaceText: '<$&>' }), 'foo', query);
+    }
+    assert.equal(computeRegexPreviewReplacement(match, { query: 'fo(o)', replaceText: '<$1>' }), '<o>');
+  });
+
+  it('stops expanding once the per-render budget is spent', () => {
+    const budget = { remaining: 1 };
+    assert.equal(computeRegexPreviewReplacement(match, { query: 'f(o)o', replaceText: '$1', budget }), 'o');
+    assert.equal(computeRegexPreviewReplacement(match, { query: 'f(o)o', replaceText: '$1', budget }), 'foo');
+    assert.equal(budget.remaining, 0);
+  });
+
+  it('refuses a replace-at whose line no longer matches the expected preview', () => {
+    const expectedPreview = { text: 'foo bar foo', matchStart: 8, matchEnd: 11 };
+    assert.deepEqual(applyReplaceAtPosition('foo foo foo', {
+      line: 1, column: 9, query: 'foo', replaceText: 'X', expectedPreview,
+    }), { newRaw: 'foo foo foo', ok: false });
+    assert.deepEqual(applyReplaceAtPosition('foo bar foo\r\nz', {
+      line: 1, column: 9, query: 'foo', replaceText: 'X', expectedPreview,
+    }), { newRaw: 'foo bar X\r\nz', ok: true });
+  });
+
+  it('keeps byte-exact offsets with and without carriage returns', () => {
+    assert.deepEqual(applyReplaceToText('a b a', { query: 'a', replaceText: 'cc' }), { newRaw: 'cc b cc', count: 2 });
+    assert.deepEqual(applyReplaceToText('a\r\nb\ra', { query: 'a', replaceText: 'cc' }), { newRaw: 'cc\r\nb\rcc', count: 2 });
+    assert.deepEqual(applyReplaceAtPosition('x\ny a', { line: 2, column: 3, query: 'a', replaceText: 'Q' }), { newRaw: 'x\ny Q', ok: true });
+  });
+});

@@ -244,6 +244,7 @@ def test_initialize_exposes_provider_capabilities_without_secret_leak() -> None:
         "openai-compatible",
         "codex-cli",
         "chatgpt",
+        "api-provider",
         "replay",
         "mock",
     }

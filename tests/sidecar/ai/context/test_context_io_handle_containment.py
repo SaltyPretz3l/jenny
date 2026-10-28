@@ -1,29 +1,12 @@
 from __future__ import annotations
 
 import os
-import subprocess
 from pathlib import Path
 
 import pytest
 
 from sidecar.ai.context import context_io
-
-
-def _link_directory(link: Path, target: Path) -> None:
-    if os.name == "nt":
-        result = subprocess.run(
-            ["cmd", "/c", "mklink", "/J", str(link), str(target)],
-            capture_output=True,
-            check=False,
-            text=True,
-        )
-        if result.returncode != 0:
-            pytest.skip(f"mklink /J not permitted: {result.stderr.strip()}")
-    else:
-        try:
-            os.symlink(target, link, target_is_directory=True)
-        except (OSError, NotImplementedError) as error:
-            pytest.skip(f"symlink creation not permitted: {error}")
+from tests.sidecar._platform_skips import make_dir_link
 
 
 @pytest.fixture
@@ -52,7 +35,7 @@ def test_parent_swap_after_authorization_rejects_outside_handle(
         assert authorized is not None
         bootstrap = workspace / "BOOTSTRAP"
         bootstrap.rename(workspace / "BOOTSTRAP-original")
-        _link_directory(bootstrap, outside)
+        make_dir_link(bootstrap, outside)
         return authorized
 
     def record_read(fd: int, size: int) -> bytes:
@@ -97,7 +80,7 @@ def test_junction_or_symlink_authorized_root_reads(
     workspace: Path, tmp_path: Path
 ) -> None:
     root = tmp_path / "workspace-link"
-    _link_directory(root, workspace)
+    make_dir_link(root, workspace)
     result = context_io.read_bounded_context_text(
         root / "BOOTSTRAP" / "IDENTITY.md",
         authorized_root=root,

@@ -107,14 +107,73 @@ describe('PortablePreferencesStore', () => {
     assert.equal(result.version, PORTABLE_SHELL_CONFIG_VERSION);
     assert.deepEqual(result.session_runtime, DEFAULT_SESSION_RUNTIME);
     assert.equal(result.chatUi.zoomPercent, 125);
-    assert.deepEqual(result.proactive.reminders[0], {
-      id: 'one', label: 'Remember', prompt: 'Call someone', enabled: true,
-    });
+    assert.equal(result.proactive.reminders[0].id, 'one');
+    assert.equal(result.proactive.reminders[0].prompt, 'Call someone');
+    assert.equal(result.proactive.reminders[0].enabled, true);
+    assert.equal(Object.hasOwn(result.proactive.reminders[0], 'token'), false);
     assert.deepEqual(Object.keys(result.proactive), ['reminders']);
-    assert.deepEqual(result.home, { scratchpad: { text: 'portable note' } });
+    // The legacy single-text scratchpad is upgraded by the canonical home normalizer.
+    assert.equal(result.home.scratchpad.notes[0].text, 'portable note');
+    assert.equal(Object.hasOwn(result.home, 'secret'), false);
     assert.equal(JSON.stringify(result).includes('private'), false);
     assert.equal(JSON.stringify(result).includes('token'), false);
   });
+
+  it('keeps each reminder schedule, source and timestamps through the projection', () => {
+    const reminders = [
+      { id: 'a', label: 'Daily', prompt: 'p', scheduleType: 'daily_at', dailyAt: '07:30',
+        createdAt: '2026-01-02T03:04:05.000Z', lastFiredAt: '2026-02-03T04:05:06.000Z' },
+      { id: 'b', label: 'Every', prompt: 'p', scheduleType: 'interval_minutes', intervalMinutes: 45, enabled: false },
+      { id: 'c', label: 'Once', prompt: 'p', scheduleType: 'once_at', onceAt: '2030-05-06T07:08',
+        sourceKind: 'assistant', sourceId: 'evt-1' },
+      { id: '', label: 'No id' },
+    ];
+    const projected = projectPortableShellConfig({ proactive: { reminders } }).proactive.reminders;
+    assert.deepEqual(projected.map((item) => item.id), ['a', 'b', 'c']);
+    assert.equal(projected[0].scheduleType, 'daily_at');
+    assert.equal(projected[0].dailyAt, '07:30');
+    assert.equal(projected[0].createdAt, '2026-01-02T03:04:05.000Z');
+    assert.equal(projected[0].lastFiredAt, '2026-02-03T04:05:06.000Z');
+    assert.equal(projected[1].scheduleType, 'interval_minutes');
+    assert.equal(projected[1].intervalMinutes, 45);
+    assert.equal(projected[1].enabled, false);
+    assert.equal(projected[2].scheduleType, 'once_at');
+    assert.equal(projected[2].onceAt, '2030-05-06T07:08');
+    assert.equal(projected[2].sourceKind, 'assistant');
+    assert.equal(projected[2].sourceId, 'evt-1');
+    const many = Array.from({ length: 80 }, (_, index) => ({ id: `r${index}`, label: 'L' }));
+    assert.equal(projectPortableShellConfig({ proactive: { reminders: many } }).proactive.reminders.length, 50);
+  });
+
+  it('keeps an unset preferred engine unset and drops a non-local engine instead of forcing ollama', () => {
+    assert.equal(projectPortableShellConfig({ preferredEngineType: '' }).preferredEngineType, '');
+    assert.equal(projectPortableShellConfig({}).preferredEngineType, '');
+    assert.equal(projectPortableShellConfig({ preferredEngineType: 'chatgpt' }).preferredEngineType, '');
+    assert.equal(projectPortableShellConfig({ preferredEngineType: 'ollama' }).preferredEngineType, 'ollama');
+  });
+
+  it('reads zoom from the canonical chatUi value, then the legacy top level, else 100', () => {
+    const zoom = (source) => projectPortableShellConfig(source).chatUi.zoomPercent;
+    assert.equal(zoom({ chatUi: { zoomPercent: 120 }, chatZoomPercent: 90 }), 120);
+    assert.equal(zoom({ chatZoomPercent: 110 }), 110);
+    assert.equal(zoom({ chatUi: {}, chatZoomPercent: 130 }), 130);
+    assert.equal(zoom({ chatUi: { zoomPercent: null }, chatZoomPercent: null }), 100);
+    assert.equal(zoom({}), 100);
+    assert.equal(normalizePortablePreferences({ chatZoomPercent: null }).chatZoomPercent, undefined);
+    assert.equal(normalizePortablePreferences({ chatZoomPercent: '120' }).chatZoomPercent, undefined);
+  });
+
+  it('skips the write when synced appearance, model and zoom are unchanged', () => withTempDir((root) => {
+    const store = new PortablePreferencesStore(root);
+    const first = store.sync({ appearance: { paletteId: 'luma' }, chatZoomPercent: 110, preferredModel: 'qwen3' });
+    const bytes = fs.readFileSync(store.filePath, 'utf8');
+    const again = store.sync({ appearance: { paletteId: 'luma' }, chatZoomPercent: 110, preferredModel: 'qwen3' });
+    assert.equal(again.updated_at, first.updated_at);
+    assert.equal(fs.readFileSync(store.filePath, 'utf8'), bytes);
+    const changed = store.sync({ chatZoomPercent: 115 });
+    assert.equal(changed.chatZoomPercent, 115);
+    assert.notEqual(fs.readFileSync(store.filePath, 'utf8'), bytes);
+  }));
 
   it('leaves last-used model targets out of the portable projection', () => {
     const result = projectPortableShellConfig({

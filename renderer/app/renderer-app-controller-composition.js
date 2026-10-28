@@ -3,7 +3,14 @@
   function createControllerComposition(ctx) {
     let result = null;
     with (ctx) {
-  const compactionCoordinator = window.rendererCompactionCoordinator?.createAppCompactionCoordinator?.(ctx) || null;
+  // These renderers are built below, not passed in ctx: without them a settled
+  // compaction left the composer disabled. A prototype overlay, not a spread:
+  // ctx members such as renderSettings are assigned later.
+  const compactionCoordinator = window.rendererCompactionCoordinator?.createAppCompactionCoordinator?.(Object.assign(Object.create(ctx), {
+    renderComposerState: (...a) => renderComposerState(...a),
+    renderMessages: (...a) => renderMessages(...a),
+    refreshSessionSummaries: (...a) => refreshSessionSummaries(...a),
+  })) || null;
   state.compactionCoordinator = compactionCoordinator;
   /* settingsShellController */
   settingsShellController = (window.rendererSettingsShellControllerUtils || {}).createSettingsShellController?.({
@@ -18,12 +25,6 @@
       renderAll: (...a) => renderAll(...a),
       renderSessions: (...a) => renderSessions(...a),
       setSidebarCollapsed: (...a) => setSidebarCollapsed(...a),
-      upsertApprovedMemoryDraft: (...a) => upsertApprovedMemoryDraftSafe(...a),
-      getApprovedMemoryById: (...a) => getApprovedMemoryByIdSafe(...a),
-      hasApprovedMemoryDraftChanges: (...a) => hasApprovedMemoryDraftChangesSafe(...a),
-      clearApprovedMemoryDraft: (...a) => clearApprovedMemoryDraftSafe(...a),
-      handleApprovedMemorySave: (...a) => handleApprovedMemorySaveSafe(...a),
-      handleApprovedMemoryDelete: (...a) => handleApprovedMemoryDeleteSafe(...a),
         applyAppearancePreferences: (...a) => applyAppearancePreferences(...a),
         applyChatZoomPercent: (...a) => applyChatZoomPercent(...a),
         appearanceUtils,
@@ -73,7 +74,6 @@
       refreshPendingMemories: (...a) => refreshPendingMemoriesSafe(...a),
       refreshMemoryStatus: (...a) => refreshMemoryStatusSafe(...a),
       refreshPersonalityWorkspace: (...a) => refreshPersonalityWorkspaceSafe(...a),
-      listSlashCommands: () => chatShellController?.listSlashCommands?.() || [],
       normalizeAppearancePreferences,
       getPalettePresets,
       getTypographyPresets,
@@ -101,7 +101,6 @@
       isDefaultAppearancePreferences,
       resolveComposerModelSelectWidth,
       updateComposerSafeOffset: (...a) => updateComposerSafeOffset(...a),
-      renderApprovedMemoryManager: (...a) => renderApprovedMemoryManagerSafe(...a),
       renderSkillsManager: (...a) => renderSkillsManagerSafe(...a),
       renderOfflineManager: (...a) => renderOfflineManagerSafe(...a),
       escapeHtml,
@@ -116,16 +115,17 @@
     renderSettings = noop,
     renderComposerCarriers = noop,
     renderComposerPopover = noop,
-    renderCommandPopover = noop,
     syncComposerInputHeight = noop,
   } = settingsShellController || {});
   settingsShellController?.whenSettingsPageReady(() => {
     window.rendererSettingsCommandSandboxUtils?.bindCommandSandboxSettings?.(window, registerRendererCleanup);
     window.rendererSettingsCloudModels?.bindCloudModelsSettings?.(window, registerRendererCleanup);
+    window.rendererSettingsApiProviders?.bindApiProvidersSettings?.(window, registerRendererCleanup);
     window.rendererSettingsConversationTransfer?.bindConversationTransferSettings?.(window, registerRendererCleanup, async (id) => {
       await loadSessions(); await openSession(id); setActiveView('chat');
     });
     window.rendererSettingsPdfAddonUtils?.bindPdfAddonSettings?.(window, registerRendererCleanup);
+    window.rendererSettingsCliPath?.bindCliPathSettings?.(window, registerRendererCleanup);
   });
   /* logRendererController */
   const logRenderUtils = window.rendererDiagnosticsRenderUtils || {};
@@ -181,7 +181,7 @@
   /* headerController */
   const headerUtils = globalThis.rendererHeaderUtils || {};
   const headerController = headerUtils.createHeaderController?.({
-    state, staticModel,
+    state,
     dom: { metricList, newChatButton },
     callbacks: {
       escapeHtml,
@@ -214,7 +214,7 @@
   let pinController = null;
   /* renderPipelineController */
   const buildRenderPipeline = (pane = {}) => renderPipelineUtils.createRenderPipeline?.({
-    state, constants: { MESSAGE_STATUS, ACTIVITY_SCOPE, staticModel },
+    state, constants: { MESSAGE_STATUS, ACTIVITY_SCOPE },
     dom: { homeView, chatView, ideView, chatSurface, logsView, settingsView, homeNavButton, metricList, sessionActionButton, newChatButton, chatTimeline, chatThreadScroll, chatThreadColumn, chatSpriteLayer, chatAssistantSprite, heroAvatar, heroTitle, heroSubtitle, heroRuntimeHint, heroStack, logSearchInput, logLevelFilter, logSourceFilter, logResultsLabel, logList, chatInput, stopStreamButton, sendButton, composer, composerModelSelect, composerEffortSelect, jumpToTopButton, jumpToBottomButton, jumpToLastPromptButton, composerModelSelectShell, composerEffortSelectShell, chatSurfaceEffects, chatSurfaceEffectLeft, chatThreadStage, composerWrap, chatOriginChip, chatOriginLabel, ...pane.dom },
     callbacks: {
       escapeHtml, getLatestAssistantMessageId, getLatestReplyAssistantMessageId, getLatestUserMessageId, resolveRegenerateRequest, buildAssistantMetaLabel, shouldShowThinkingToggle,
@@ -261,7 +261,7 @@
       shouldRenderHomePanel: (...a) => shouldRenderHomePanelSafe(...a),
       renderHomePanel: (...a) => renderHomePanelSafe(...a),
       renderAttachmentTray: (...a) => renderAttachmentTray(...a), renderComposerStatusNotice: (...a) => renderComposerStatusNotice(...a), setComposerStatusNotice: (...a) => setComposerStatusNotice(...a), clearComposerStatusNotice: (...a) => clearComposerStatusNotice(...a), syncBackendNotice: (...a) => syncBackendNotice(...a),
-      renderToastViewport: (...a) => renderToastViewport(...a), renderComposerPopover: (...a) => renderComposerPopover(...a), renderCommandPopover: (...a) => renderCommandPopover(...a),
+      renderToastViewport: (...a) => renderToastViewport(...a), renderComposerPopover: (...a) => renderComposerPopover(...a),
       getCurrentRuntimePreferences: (...a) => getCurrentRuntimePreferences(...a), getRuntimePreferencesFromSession, renderComposerEnhancements: (...a) => renderComposerEnhancements(...a),
       renderMarkdown: (...a) => (window.markdownUtils?.renderMarkdown ? window.markdownUtils.renderMarkdown(...a) : escapeHtml(String(a[0] || ''))),
       renderStreamingMarkdownUnits: (...a) => (
@@ -339,31 +339,13 @@
     registerRendererCleanup(() => observabilityRefreshButton.removeEventListener('click', onRefreshClick));
   }
   const {
-    formatSessionDate = () => 'Recent', formatLogTimestamp = () => '--',
-    formatMessageTerminalTimestamp = noopStr, applyChatStateClasses = noop,
-    syncChatState = noop,
-    escapeSelectorValue = (v) => String(v || ''),
-    hideAssistantSprite = noop,
-    updateAssistantSpritePosition = noop,
-    renderLayout = noop, renderHeader = noop,
-    renderMessages = noop, renderHero = noop,
-    renderLogs = noop, syncComposerVisualState = noop,
-    renderComposerJumpControls = noop,
-    renderComposerState = noop, renderAll = noop,
-    applySurfaceEffect = noop,
-    syncBackendActivityFromStatus = noop,
-    renderLiveThinkingChip: _renderLiveThinkingChip = noop,
-    setSessionOrigin = noop,
-    setPendingOrigin = noop,
-    clearPendingOrigin = noop,
-    attachPendingOriginToSession = noopStr,
-    rekeySessionOrigin = noopStr,
-    clearProjectionContextCacheForSession: pipelineClearProjectionContextCacheForSession = noopFalse,
-    rekeyProjectionContextCache: pipelineRekeyProjectionContextCache = noopStr,
-    invalidateProjectionStateForSession = noop,
-    toggleThreadBranch = noop,
-    timelineVirtualizer = null,
-    dispose: disposeRenderPipeline = noop,
+    escapeSelectorValue = (v) => String(v || ''), hideAssistantSprite, updateAssistantSpritePosition, renderLayout, renderHeader,
+    renderMessages, renderLogs, syncComposerVisualState, renderComposerJumpControls, renderComposerState,
+    renderAll, applySurfaceEffect, syncBackendActivityFromStatus, renderLiveThinkingChip: _renderLiveThinkingChip,
+    setSessionOrigin, setPendingOrigin, clearPendingOrigin, attachPendingOriginToSession, rekeySessionOrigin,
+    clearProjectionContextCacheForSession: pipelineClearProjectionContextCacheForSession,
+    rekeyProjectionContextCache: pipelineRekeyProjectionContextCache, invalidateProjectionStateForSession,
+    toggleThreadBranch, timelineVirtualizer, dispose: disposeRenderPipeline,
   } = renderPipelineController || {};
   clearProjectionContextCacheForSession = (...a) => pipelineClearProjectionContextCacheForSession(...a);
   rekeyProjectionContextCache = (...a) => pipelineRekeyProjectionContextCache(...a);
@@ -406,16 +388,11 @@
   }) || null;
   /* lifecycleController late-bound (popover, attachments, sessions) */
   const {
-    closeComposerPopover = noop, openComposerPopover = noop, closeCommandPopover = noop, openCommandPopover = noop, resetAttachmentQueue = noop,
-    beginAttachmentToken = () => null, cancelAttachmentToken = () => false,
-    removeQueuedAttachment = noop, mergePreparedAttachments = noop, handleAttachmentPicker = noopAsync,
-    prepareDroppedAttachments = noopAsync, queueInlineImageAttachment = noopAsync, setDropActive = noop,
-    suppressFileDropNavigation = (e) => { e.preventDefault(); e.stopPropagation(); }, getDroppedFilePaths = noopArr,
-    loadSessions = noopAsync, openSession = noopAsync, refreshSessionSummaries = noopAsync,
-    refreshSnapshots = noopAsync, bootstrap = noopAsync,
-    handleCreateSession = noopAsync, handleRenameSession = noopAsync, handleDeleteSession = noopAsync,
-    handleJumpToTop = noop, handleJumpToLastPrompt = noop, handleJumpToBottom = noop,
-    viewportReveal = null,
+    closeComposerPopover, openComposerPopover, resetAttachmentQueue, beginAttachmentToken, cancelAttachmentToken,
+    removeQueuedAttachment, mergePreparedAttachments, handleAttachmentPicker, prepareDroppedAttachments,
+    queueInlineImageAttachment, setDropActive, suppressFileDropNavigation, getDroppedFilePaths, loadSessions,
+    openSession, refreshSessionSummaries, refreshSnapshots, bootstrap, handleCreateSession, handleRenameSession,
+    handleDeleteSession, handleJumpToTop, handleJumpToLastPrompt, handleJumpToBottom, viewportReveal = null,
   } = lifecycleController || {};
   const chatWayfinderUtils = window.rendererChatWayfinderUtils || {};
   chatWayfinderController = (typeof chatWayfinderUtils.createChatWayfinderController === 'function'
@@ -472,7 +449,6 @@
     },
   }) || {};
   const {
-    pruneContextUsageCache = noop,
     renderComposerEnhancements = noop,
     refreshComposerToolToggles = noopAsync,
     getToolPreferences = noopObj,
@@ -537,8 +513,8 @@
   // Pinnable sticky-note overlay: a shell-level controller (not the lazy dashboard
   // one) so the chips survive every view switch. It owns a dedicated scratchpad-
   // actions instance for the inline pin editor; that instance's echo re-renders
-  // ONLY the overlay (cheap), while the renderPinnedNotes chrome hook + the
-  // dashboard manager's pins-change renderAll keep it in sync with edits made
+  // only the overlay unless Home is visible, while the renderPinnedNotes chrome
+  // hook + the dashboard manager's pinned-content renderAll keep it in sync with edits made
   // elsewhere (pin/unpin from the tab menu, Home-pad edits, note deletes).
   {
     const pinEditorActions = (window.rendererDashboardScratchpadActions || {}).createScratchpadActions?.({
@@ -550,7 +526,13 @@
         if (config && typeof config === 'object') {
           state.homeConfig = config;
         }
-        pinController?.render?.();
+        // A visible Home pad must repaint too, or its unfocused textarea keeps
+        // the pre-edit text and the next keystroke saves it over this edit.
+        if (state.ui?.activeView === 'home') {
+          renderAll();
+        } else {
+          pinController?.render?.();
+        }
       },
     }) || null;
     pinController = (window.rendererScratchpadPin || {}).createScratchpadPinController?.({
@@ -719,8 +701,6 @@
       resetArtifactsState: (...a) => resetArtifactsState(...a),
       closeComposerPopover: (...a) => closeComposerPopover(...a),
       openComposerPopover: (...a) => openComposerPopover(...a),
-      closeCommandPopover: (...a) => closeCommandPopover(...a),
-      openCommandPopover: (...a) => openCommandPopover(...a),
       hideAssistantSprite: (...a) => hideAssistantSprite(...a),
       updateAssistantSpritePosition: (...a) => updateAssistantSpritePosition(...a),
       setActiveView: (...a) => setActiveView(...a),
@@ -829,16 +809,6 @@
   const {
     startPromptSend = noopAsync,
     handleStopActiveStream = noopAsync,
-    handleSend = noop,
-    handleInteractiveOptionSelect = noop,
-    handleInteractiveOtherConfirm = noop,
-    handleInteractiveOtherInputChange = noop,
-    handleInteractiveSkip = noop,
-    handleInteractiveSkipQuestion = noop,
-    handleInteractiveSkipAll = noop,
-    handleInteractiveSubmit = noop,
-    handleCopyMessage = noopAsync,
-    handleElaborateMessage = noopAsync,
     handleRegenerateMessage = noopAsync,
     flushPendingStreamCommitsForSession: chatFlushPendingStreamCommitsForSession = () => ({ flushedCount: 0, catchupRequired: false }),
     rehydrateSessionFromPersistedTurnEvents: chatRehydrateSessionFromPersistedTurnEvents = () => null,
@@ -851,23 +821,15 @@
       chatWayfinderController,
       contextUsageModule,
       renderSettings, renderComposerCarriers, renderComposerPopover,
-      renderCommandPopover,
       syncComposerInputHeight,
       ensureLogRowMounted,
       scrollLogsToBottom,
       navigateToDiagnosticsTrace,
-      formatSessionDate,
-      formatLogTimestamp,
-      formatMessageTerminalTimestamp,
-      applyChatStateClasses,
-      syncChatState,
-      escapeSelectorValue,
       hideAssistantSprite,
       updateAssistantSpritePosition,
       renderLayout,
       renderHeader,
       renderMessages,
-      renderHero,
       renderLogs,
       syncComposerVisualState,
       renderComposerJumpControls,
@@ -879,16 +841,10 @@
       setSessionOrigin,
       setPendingOrigin,
       clearPendingOrigin,
-      attachPendingOriginToSession,
-      rekeySessionOrigin,
       clearProjectionContextCacheForSession,
       rekeyProjectionContextCache,
-      toggleThreadBranch,
-      timelineVirtualizer,
       closeComposerPopover,
       openComposerPopover,
-      closeCommandPopover,
-      openCommandPopover,
       resetAttachmentQueue, beginAttachmentToken, cancelAttachmentToken,
       removeQueuedAttachment,
       mergePreparedAttachments,
@@ -900,39 +856,17 @@
       getDroppedFilePaths,
       loadSessions,
       openSession,
-      refreshSessionSummaries,
       refreshSnapshots,
       bootstrap,
-      handleCreateSession,
       handleRenameSession,
-      handleDeleteSession,
-      handleJumpToTop,
-      handleJumpToLastPrompt,
-      handleJumpToBottom,
-      pruneContextUsageCache,
-      renderComposerEnhancements,
       refreshComposerToolToggles,
       getToolPreferences,
       handleComposerToggleChange,
       queueDeferredStartupTask,
-      handleErrorRecoveryAction,
-      handleArtifactAction,
-      loadSessionsWithWorkspace,
-      refreshSessionSummariesWithWorkspace,
       handleCreateSessionWithWorkspace,
       handleDeleteSessionWithWorkspace,
       startPromptSend,
       handleStopActiveStream,
-      handleSend,
-      handleInteractiveOptionSelect,
-      handleInteractiveOtherConfirm,
-      handleInteractiveOtherInputChange,
-      handleInteractiveSkip,
-      handleInteractiveSkipQuestion,
-      handleInteractiveSkipAll,
-      handleInteractiveSubmit,
-      handleCopyMessage,
-      handleElaborateMessage,
       handleRegenerateMessage,
       flushPendingStreamCommitsForSession,
       rehydrateSessionFromPersistedTurnEvents,

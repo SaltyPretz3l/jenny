@@ -144,37 +144,37 @@
     const clearTimeoutImpl = deps.clearTimeoutImpl || ((timer) => clearTimeout(timer));
 
     let saveTimer = null;
-    let pendingText = null;
-    // The note a queued save targets, captured at keystroke time. Without this a
-    // tab switch between queueSave and the debounce fire would write the pending
-    // text into the newly-active note instead of the one being edited.
-    let pendingNoteId = null;
+    // The queued draft: { text, noteId }. noteId is captured at keystroke time so
+    // a tab switch between queueSave and the debounce fire can't write the text
+    // into the newly-active note. Each queueSave makes a NEW object, so identity
+    // tells a flush whether a newer draft arrived while it was writing.
+    let pending = null;
     // The latest in-flight write promise. A fire-and-forget save (a textarea
     // focusout flush) leaves no queued text but its config echo is still settling;
     // flushSave() awaits this so a caller that serializes after it (the markdown
     // checklist toggle) reads the reconciled note, never a stale pre-echo snapshot.
     let inFlightWrite = null;
     let inFlightSave = null;
-    let draftVersion = 0;
+
+    const hasNote = (notes, noteId) => notes.some((note) => note.id === noteId);
+    const noteNotFound = () => ({ error: jt('dashboard.scratchpad.actions.noteNotFound', 'Note not found.') });
+    const saveNoteFailed = () => ({ error: jt('dashboard.scratchpad.actions.saveNoteFailed', 'Could not save the note.') });
+    const notesUnavailable = () => ({ error: jt('dashboard.scratchpad.actions.notesUnavailable', 'Notes are unavailable.') });
 
     // Resolve the current scratchpad object, tolerating a missing accessor or a
     // half-seeded state so a save never throws on a malformed snapshot.
     function readScratchpad() {
       const current = getScratchpad ? getScratchpad() : null;
-      const source = current && typeof current === 'object' && !Array.isArray(current) ? current : {};
-      const notes = Array.isArray(source.notes) && source.notes.length
-        ? source.notes.filter((note) => note && typeof note === 'object')
-        : null;
-      if (!notes || notes.length === 0) {
+      const source = isRecord(current) ? current : {};
+      const notes = Array.isArray(source.notes) ? source.notes.filter(isRecord) : [];
+      if (notes.length === 0) {
         return defaultScratchpad();
       }
       let activeNoteId = typeof source.activeNoteId === 'string' ? source.activeNoteId : '';
-      if (!notes.some((note) => note.id === activeNoteId)) {
+      if (!hasNote(notes, activeNoteId)) {
         activeNoteId = notes[0].id;
       }
-      const settings = source.settings && typeof source.settings === 'object' && !Array.isArray(source.settings)
-        ? source.settings
-        : undefined;
+      const settings = isRecord(source.settings) ? source.settings : undefined;
       // Pinned-note ids ride along so pin/unpin/delete can rewrite the set off
       // live state; cross-validation against surviving notes happens at each
       // call site (and again in the schema normalizer on read).
@@ -184,15 +184,38 @@
       return { notes, activeNoteId, settings, pins };
     }
 
+    // The capture / pin instances can run before Home primes app state, when
+    // readScratchpad() would fall back to the empty default (or read the Home
+    // manager's placeholder, which is deliberately not a complete config);
+    // writing that would replace every persisted note and setting. Load the
+    // real pad first and refuse the write when it cannot be read.
+    function hasLoadedNotes() {
+      if (getHomeConfig && !isCompleteHomeConfig(getHomeConfig())) return false;
+      const current = getScratchpad ? getScratchpad() : null;
+      return Array.isArray(current?.notes) && current.notes.length > 0;
+    }
+
+    async function ensureLoaded() {
+      if (hasLoadedNotes()) return true;
+      try {
+        const config = await shell?.home?.getConfig?.();
+        if (isCompleteHomeConfig(config)) onHomeConfig(config);
+      } catch (error) {
+        appendClientLog('WARN', 'home.scratchpad_load_failed', {
+          message: String(error?.message || error || ''),
+        });
+      }
+      return hasLoadedNotes();
+    }
+
     function scratchpadEchoMatches(requested, config, currentHome) {
       const echoed = config?.scratchpad;
       if (!isCompleteHomeConfig(config)) return false;
-      if (currentHome && typeof currentHome === 'object' && !Array.isArray(currentHome)) {
-        const expected = {
-          ...currentHome,
-          scratchpad: { ...(currentHome.scratchpad || {}), ...requested },
-        };
-        return jsonValuesEqual(config, expected);
+      // The whole scratchpad section must match, so a pointer-only echo that lost
+      // sibling notes is refused; other home sections may legitimately have moved
+      // under a concurrent write (rail width, calendar, Settings) and are adopted.
+      if (isRecord(currentHome)) {
+        return jsonValuesEqual(echoed, { ...(currentHome.scratchpad || {}), ...requested });
       }
       return Object.keys(requested).every((key) => (
         jsonValuesEqual(echoed[key], requested[key])
@@ -208,8 +231,11 @@
       }
       const op = (async () => {
         try {
-          const currentHome = getHomeConfig?.() || null;
           const config = await shell.home.updateConfig({ scratchpad });
+          // Read the baseline AFTER the await: a sibling actions instance (pin
+          // editor, capture) may have landed and been adopted meanwhile, and its
+          // change is legitimately part of this echo.
+          const currentHome = getHomeConfig?.() || null;
           if (!scratchpadEchoMatches(scratchpad, config, currentHome)) {
             throw new Error('Scratchpad persistence acknowledgement did not match the requested change.');
           }
@@ -244,10 +270,14 @@
     // active-note pointer and settings are preserved; the stamp is applied here,
     // at write time, not on every keystroke.
     async function persist(text, targetNoteId) {
+      if (!hasLoadedNotes() && !await ensureLoaded()) return null;
       const current = readScratchpad();
-      const noteId = targetNoteId && current.notes.some((note) => note.id === targetNoteId)
-        ? targetNoteId
-        : current.activeNoteId;
+      // A draft whose note was deleted elsewhere mid-debounce is dropped, never
+      // written over whichever note is active now.
+      if (targetNoteId && !hasNote(current.notes, targetNoteId)) {
+        return true;
+      }
+      const noteId = targetNoteId || current.activeNoteId;
       const stamp = nowProvider().toISOString();
       const nextNotes = current.notes.map((note) => (
         note.id === noteId
@@ -259,16 +289,18 @@
 
     // `noteId` (optional) pins the save to the note the caller is editing, so an
     // active-note switch before the debounce fires can't misroute the text.
-    function queueSave(text, noteId) {
-      draftVersion += 1;
-      pendingText = String(text);
-      pendingNoteId = noteId || readScratchpad().activeNoteId;
+    // `onSettled` (optional) hears the debounced write's result, so a failure
+    // can be shown instead of leaving "Saving…" up.
+    function queueSave(text, noteId, onSettled) {
+      pending = { text: String(text), noteId: noteId || readScratchpad().activeNoteId };
       if (saveTimer) {
         clearTimeoutImpl(saveTimer);
       }
       saveTimer = setTimeoutImpl(() => {
         saveTimer = null;
-        void flushSave();
+        void flushSave().then((saved) => {
+          if (typeof onSettled === 'function') onSettled(saved);
+        });
       }, debounceMs);
     }
 
@@ -278,19 +310,18 @@
         saveTimer = null;
       }
       if (inFlightSave) {
-        return (await inFlightSave) && (pendingText === null || await flushSave());
-      } else if (inFlightWrite && !await inFlightWrite) {
+        return (await inFlightSave) && (!pending || await flushSave());
+      } else if (inFlightWrite && !await inFlightWrite && pending) {
+        // A failed sibling write (pin, settings) only blocks a real draft; with
+        // nothing queued there is nothing of the note's left to lose.
         return false;
       }
-      if (pendingText === null) return true;
-      const version = draftVersion;
+      if (!pending) return true;
+      const draft = pending;
       const op = (async () => {
-        const config = await persist(pendingText, pendingNoteId);
+        const config = await persist(draft.text, draft.noteId);
         if (!config) return false;
-        if (draftVersion === version) {
-          pendingText = null;
-          pendingNoteId = null;
-        }
+        if (pending === draft) pending = null;
         return true;
       })();
       inFlightSave = op;
@@ -300,19 +331,33 @@
       } finally {
         if (inFlightSave === op) inFlightSave = null;
       }
-      return saved && (pendingText === null || await flushSave());
+      return saved && (!pending || await flushSave());
+    }
+
+    // The unsaved draft text for `noteId` while it is queued or left behind by a
+    // failed write (null once a write is carrying it). Lets the widget keep that
+    // draft on screen instead of repainting the older persisted text over it.
+    function pendingDraftFor(noteId) {
+      return pending && !inFlightSave && pending.noteId === noteId ? pending.text : null;
+    }
+
+    // Shared prelude of every scratchpad write: fail when persistence is missing,
+    // else flush the pending text first and make sure the real pad is loaded.
+    // `unavailable` builds the caller's own "unavailable" result. Returns a
+    // result object to hand back, or null to proceed.
+    async function noteWriteBlocked(unavailable = notesUnavailable) {
+      if (!shell?.home?.updateConfig) return unavailable();
+      if (!await flushSave()) return saveNoteFailed();
+      if (!await ensureLoaded()) return unavailable();
+      return null;
     }
 
     // Append a fresh empty note and make it active. Flushes first so the
     // outgoing note keeps its in-flight edits. Returns { ok, activeNoteId } or
     // { error }.
     async function addNote() {
-      if (!shell?.home?.updateConfig) {
-        return { error: jt('dashboard.scratchpad.actions.notesUnavailable', 'Notes are unavailable.') };
-      }
-      if (!await flushSave()) {
-        return { error: jt('dashboard.scratchpad.actions.saveNoteFailed', 'Could not save the note.') };
-      }
+      const blocked = await noteWriteBlocked();
+      if (blocked) return blocked;
       const current = readScratchpad();
       if (current.notes.length >= MAX_NOTES) {
         return { error: jt('dashboard.scratchpad.actions.notesLimit', 'Up to {count} notes.', { count: MAX_NOTES }) };
@@ -327,16 +372,10 @@
     // the active pointer stay valid). Empty title is allowed — the schema slugs
     // its id from the existing id, and the tab strip shows a fallback label.
     async function renameNote(noteId, title) {
-      if (!shell?.home?.updateConfig) {
-        return { error: jt('dashboard.scratchpad.actions.notesUnavailable', 'Notes are unavailable.') };
-      }
-      if (!await flushSave()) {
-        return { error: jt('dashboard.scratchpad.actions.saveNoteFailed', 'Could not save the note.') };
-      }
+      const blocked = await noteWriteBlocked();
+      if (blocked) return blocked;
       const current = readScratchpad();
-      if (!current.notes.some((note) => note.id === noteId)) {
-        return { error: jt('dashboard.scratchpad.actions.noteNotFound', 'Note not found.') };
-      }
+      if (!hasNote(current.notes, noteId)) return noteNotFound();
       const cleanTitle = String(title || '').replace(/[\r\n\0]/g, '').trim().slice(0, MAX_TITLE_CHARS);
       const notes = current.notes.map((note) => (
         note.id === noteId ? { ...note, title: cleanTitle } : note
@@ -349,20 +388,14 @@
     // neighbor that slid into its slot becomes active (deterministic, no dangling
     // pointer). Returns the surviving active id so the widget can sync.
     async function deleteNote(noteId) {
-      if (!shell?.home?.updateConfig) {
-        return { error: jt('dashboard.scratchpad.actions.notesUnavailable', 'Notes are unavailable.') };
-      }
-      if (!await flushSave()) {
-        return { error: jt('dashboard.scratchpad.actions.saveNoteFailed', 'Could not save the note.') };
-      }
+      const blocked = await noteWriteBlocked();
+      if (blocked) return blocked;
       const current = readScratchpad();
       if (current.notes.length <= 1) {
         return { error: jt('dashboard.scratchpad.actions.keepOneNote', 'Keep at least one note.') };
       }
       const index = current.notes.findIndex((note) => note.id === noteId);
-      if (index === -1) {
-        return { error: jt('dashboard.scratchpad.actions.noteNotFound', 'Note not found.') };
-      }
+      if (index === -1) return noteNotFound();
       const notes = current.notes.filter((note) => note.id !== noteId);
       let activeNoteId = current.activeNoteId;
       if (activeNoteId === noteId) {
@@ -372,7 +405,7 @@
       // overlay never flashes a dangling chip (the schema would drop it on read
       // too, but stripping here keeps the in-flight echo clean).
       const survivingIds = new Set(notes.map((note) => note.id));
-      const pins = (current.pins || []).filter((id) => survivingIds.has(id));
+      const pins = current.pins.filter((id) => survivingIds.has(id));
       const config = await writeScratchpad(withSettings({ notes, activeNoteId, pins }, current));
       return config ? { ok: true, activeNoteId } : { error: jt('dashboard.scratchpad.actions.deleteNoteFailed', 'Could not delete the note.') };
     }
@@ -381,16 +414,10 @@
     // note keeps its edits, then persists a pointer-only patch (the section merge
     // keeps notes + settings).
     async function setActiveNote(noteId) {
-      if (!shell?.home?.updateConfig) {
-        return { error: jt('dashboard.scratchpad.actions.notesUnavailable', 'Notes are unavailable.') };
-      }
-      if (!await flushSave()) {
-        return { error: jt('dashboard.scratchpad.actions.saveNoteFailed', 'Could not save the note.') };
-      }
+      const blocked = await noteWriteBlocked();
+      if (blocked) return blocked;
       const current = readScratchpad();
-      if (!current.notes.some((note) => note.id === noteId)) {
-        return { error: jt('dashboard.scratchpad.actions.noteNotFound', 'Note not found.') };
-      }
+      if (!hasNote(current.notes, noteId)) return noteNotFound();
       if (current.activeNoteId === noteId) {
         return { ok: true };
       }
@@ -405,18 +432,12 @@
     // serialize cleanly. Returns { ok, pinned } or { error }; pinning an already-
     // pinned note (or unpinning an unpinned one) is an idempotent success.
     async function setPinned(noteId, shouldPin) {
-      if (!shell?.home?.updateConfig) {
-        return { error: jt('dashboard.scratchpad.actions.notesUnavailable', 'Notes are unavailable.') };
-      }
-      if (!await flushSave()) {
-        return { error: jt('dashboard.scratchpad.actions.saveNoteFailed', 'Could not save the note.') };
-      }
+      const blocked = await noteWriteBlocked();
+      if (blocked) return blocked;
       const current = readScratchpad();
-      if (!current.notes.some((note) => note.id === noteId)) {
-        return { error: jt('dashboard.scratchpad.actions.noteNotFound', 'Note not found.') };
-      }
+      if (!hasNote(current.notes, noteId)) return noteNotFound();
       // Re-validate the live set against surviving notes before mutating it.
-      const pins = (current.pins || []).filter((id) => current.notes.some((note) => note.id === id));
+      const pins = current.pins.filter((id) => hasNote(current.notes, id));
       const alreadyPinned = pins.includes(noteId);
       if (shouldPin === alreadyPinned) {
         return { ok: true, pinned: alreadyPinned };
@@ -444,7 +465,7 @@
 
     // Toggle entry point for the tab "⋯" menu — flips the current pin state.
     function togglePin(noteId) {
-      const pinned = (readScratchpad().pins || []).includes(noteId);
+      const pinned = readScratchpad().pins.includes(noteId);
       return setPinned(noteId, !pinned);
     }
 
@@ -452,12 +473,10 @@
     // any pending text write, preserve every note/pin, and return a structured
     // result so the menu can keep visible feedback on failure.
     async function updateSettings(patch = {}) {
-      if (!shell?.home?.updateConfig) return { error: jt('dashboard.scratchpad.actions.settingsUnavailable', 'Scratchpad settings are unavailable.') };
-      if (!await flushSave()) {
-        return { error: jt('dashboard.scratchpad.actions.saveNoteFailed', 'Could not save the note.') };
-      }
+      const blocked = await noteWriteBlocked(() => ({ error: jt('dashboard.scratchpad.actions.settingsUnavailable', 'Scratchpad settings are unavailable.') }));
+      if (blocked) return blocked;
       const current = readScratchpad();
-      const source = patch && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
+      const source = isRecord(patch) ? patch : {};
       const settings = { ...(current.settings || {}) };
       if (source.font === 'prose' || source.font === 'mono') settings.font = source.font;
       if (Number.isFinite(Number(source.rows))) settings.rows = Math.max(3, Math.min(30, Math.trunc(Number(source.rows))));
@@ -611,14 +630,10 @@
       if (!body) {
         return { error: jt('dashboard.scratchpad.actions.writeSomethingFirst', 'Write something first.') };
       }
-      if (!shell?.home?.updateConfig) {
-        return { code: 'scratchpad_unavailable', error: jt('dashboard.scratchpad.actions.notesUnavailable', 'Notes are unavailable.') };
-      }
       // Flush any in-flight pad edit first so the capture appends onto the
       // latest text (and the pending debounced save can't clobber it).
-      if (!await flushSave()) {
-        return { error: jt('dashboard.scratchpad.actions.saveNoteFailed', 'Could not save the note.') };
-      }
+      const blocked = await noteWriteBlocked(() => ({ code: 'scratchpad_unavailable', ...notesUnavailable() }));
+      if (blocked) return blocked;
       const current = readScratchpad();
       const note = current.notes.find((entry) => entry.id === current.activeNoteId) || current.notes[0];
       const stampLine = `[${hhmm(nowProvider())}] ${body}`;
@@ -633,13 +648,7 @@
         // instead of reporting a false success while dropping the new text.
         return { code: 'note_full', error: jt('dashboard.scratchpad.actions.noteFull', 'This note is full — switch to another note.') };
       }
-      const stamp = nowProvider().toISOString();
-      const nextNotes = current.notes.map((entry) => (
-        entry.id === note.id ? { ...entry, text: nextText, updatedAt: stamp } : entry
-      ));
-      const config = await writeScratchpad(
-        withSettings({ notes: nextNotes, activeNoteId: current.activeNoteId }, current),
-      );
+      const config = await persist(nextText, note.id);
       if (!config) {
         return { error: jt('dashboard.scratchpad.actions.saveNoteFailed', 'Could not save the note.') };
       }
@@ -663,7 +672,7 @@
         clearTimeoutImpl(saveTimer);
         saveTimer = null;
       }
-      if (pendingText === null && !inFlightWrite && !inFlightSave) {
+      if (!pending && !inFlightWrite && !inFlightSave) {
         return undefined;
       }
       return flushSave();
@@ -672,6 +681,7 @@
     return {
       queueSave,
       flushSave,
+      pendingDraftFor,
       addNote,
       renameNote,
       deleteNote,

@@ -10,6 +10,9 @@ const { t } = require('../i18n-main');
 const { AI_ERROR_CODES, SIDECAR_ERROR_CODES } = require('./error-codes');
 const { getResidentModels } = require('./backend-resident-models');
 const { chatgptModelsEnabled } = require('./chatgpt-models-enabled');
+const {
+  apiProviderCatalogKey, apiProviderListPayload, assertApiProviderUsable, persistApiProviderLoad, withApiProviderEntries,
+} = require('./api-provider-runtime');
 
 const MODEL_UNLOAD_SHUTDOWN_TIMEOUT_MS = 2000;
 const MODEL_LIST_CACHE_TTL_MS = 2000;
@@ -227,7 +230,7 @@ function listModels(service) {
   const catalogEpoch = service._modelCatalogEpoch || 0;
   const now = Date.now();
   const desiredEngineType = resolveManagedModelListEngineType(service);
-  const providerKey = providerCatalogKey(service, desiredEngineType);
+  const providerKey = providerCatalogKey(service, desiredEngineType) + apiProviderCatalogKey(service);
   const lastResult = service._modelListLastResult;
   if (lastResult && lastResult.engineType === desiredEngineType && lastResult.providerKey === providerKey
       && now >= lastResult.at && now - lastResult.at < MODEL_LIST_CACHE_TTL_MS) {
@@ -285,10 +288,11 @@ function listModels(service) {
       includeAvailable: true,
     }) || data;
     if (providerData.slice(data.length).some((entry) => entry.available === true)) available = true;
-    const taggedData = tagModelListEntries(providerData, desiredEngineType).map((entry) => {
+    // API-key provider rows come from config, after the tagger (which would drop their extra fields).
+    const taggedData = withApiProviderEntries(service, tagModelListEntries(providerData, desiredEngineType).map((entry) => {
       const managedKind = entry.engine_type === 'openai-compatible' ? managedServerKindForModel(service, entry.id) : '';
       return managedKind ? { ...entry, managed: managedKind } : entry;
-    });
+    }));
     replaceModelEngineHints(service, taggedData);
     return {
       ...payload,
@@ -319,6 +323,9 @@ function listModels(service) {
 }
 
 function listModelsForEngine(service, engineType, options = {}) {
+    if (String(engineType || '').trim().toLowerCase() === 'api-provider') {
+      return Promise.resolve(apiProviderListPayload(service));
+    }
     service.chatgptModelCatalogService?.snapshot?.();
     const catalogEpoch = service._modelCatalogEpoch || 0;
     const desiredEngineType = String(engineType || '').trim().toLowerCase() || String(
@@ -471,6 +478,8 @@ async function loadModel(service, model, options = {}) {
       });
       requestedEngineType = 'openai-compatible';
     }
+    // Refuse before anything is switched or stopped: a missing key must not cost a running engine.
+    if (requestedEngineType === 'api-provider') assertApiProviderUsable(service, requestedModelName);
     const manager = service.options?.getLlamaServerManager?.() || null;
     const managed = manager
       ? service.configService?.getLocalEngines?.()?.openaiCompatible?.managed || null
@@ -682,6 +691,8 @@ async function loadModel(service, model, options = {}) {
         });
       }
     }
+
+    if (requestedEngineType === 'api-provider') persistApiProviderLoad(service, requestedModelName);
 
     refreshSetupReadinessAfterModelLoad(service);
     return { status: 'ok', model: service.currentModel };

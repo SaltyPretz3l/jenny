@@ -47,6 +47,19 @@ TRUNCATION_REASONS = frozenset({
 Opcode = tuple[str, int, int, int, int]
 
 @dataclass(frozen=True)
+class NormalizedText:
+    """Diff-input text normalized and hashed once, shared by every consumer."""
+
+    text: str
+    sha256: str
+
+
+def normalized_text(value: object) -> NormalizedText:
+    text = normalize_diff_input_text(value)
+    return NormalizedText(text=text, sha256=sha256_text(text))
+
+
+@dataclass(frozen=True)
 class DiffCaps:
     max_diff_bytes: int = MAX_DIFF_BYTES
     max_diff_hunks: int = MAX_DIFF_HUNKS
@@ -70,8 +83,13 @@ def compute_structured_diff(  # noqa: PLR0913
     max_diff_lines: object | None = None,
     max_diff_line_chars: object | None = None,
     context_lines: object | None = None,
+    normalized_old: NormalizedText | None = None,
 ) -> dict[str, Any] | None:
-    """Return JS-compatible V1 diff metadata, or ``None`` on generation failure."""
+    """Return JS-compatible V1 diff metadata, or ``None`` on generation failure.
+
+    ``normalized_old`` is ``normalized_text(old_text)`` when the caller already
+    computed it (the pre-change snapshot hashes the same normalized text).
+    """
 
     caps = _resolve_caps(
         max_diff_bytes=max_diff_bytes,
@@ -81,23 +99,29 @@ def compute_structured_diff(  # noqa: PLR0913
         context_lines=context_lines,
     )
     try:
-        normalized_old = normalize_diff_input_text(old_text)
+        old_value = (
+            normalized_old.text if normalized_old is not None
+            else normalize_diff_input_text(old_text)
+        )
         normalized_new = normalize_diff_input_text(new_text)
-        resolved_status = _resolve_status(status, normalized_old)
-        old_tokens = _line_tokens(normalized_old)
+        resolved_status = _resolve_status(status, old_value)
+        old_tokens = _line_tokens(old_value)
         new_tokens = _line_tokens(normalized_new)
-        changed_new, changed_old = _changed_span(old_tokens, new_tokens)
+        bounds = _changed_bounds(old_tokens, new_tokens)
+        _prefix, changed_new, changed_old = bounds
         input_limit = (
-            "byte_limit" if len(normalized_old) + len(normalized_new) > MAX_DIFF_INPUT_CHARS
+            "byte_limit" if len(old_value) + len(normalized_new) > MAX_DIFF_INPUT_CHARS
             else "line_limit" if (
                 changed_old + changed_new > MAX_DIFF_INPUT_LINES
                 or changed_old * changed_new > MAX_DIFF_MATCH_WORK
             ) else None
         )
-        groups = [] if input_limit else _grouped_opcodes(old_tokens, new_tokens, caps.context_lines)
+        groups = (
+            [] if input_limit
+            else _grouped_opcodes(old_tokens, new_tokens, caps.context_lines, bounds=bounds)
+        )
         additions, deletions = (
-            _count_changed_tokens(normalized_old, normalized_new)
-            if input_limit else _count_group_changes(groups)
+            (changed_new, changed_old) if input_limit else _count_group_changes(groups)
         )
         truncation_reason = input_limit or _preflight_truncation_reason(
             groups, old_tokens, new_tokens, caps
@@ -121,7 +145,11 @@ def compute_structured_diff(  # noqa: PLR0913
             "deletions": deletions,
             "truncated": truncated,
             "truncation_reason": truncation_reason,
-            "before_hash": None if resolved_status == "created" else sha256_text(normalized_old),
+            "before_hash": (
+                None if resolved_status == "created"
+                else normalized_old.sha256 if normalized_old is not None
+                else sha256_text(old_value)
+            ),
             "after_hash": None if resolved_status == "deleted" else sha256_text(normalized_new),
             "hash_kind": _normalize_text_field(hash_kind) or "diff_input_text",
             "hunks": [] if truncated else hunks,
@@ -268,12 +296,13 @@ def _line_tokens(value: str) -> list[str]:
 class _ShiftedOpcodes:
     """Opcodes for the whole file from a match over the trimmed middle only."""
 
-    def __init__(self, old_tokens: list[str], new_tokens: list[str]) -> None:
-        added, deleted = _changed_span(old_tokens, new_tokens)
-        prefix = 0
-        limit = min(len(old_tokens), len(new_tokens))
-        while prefix < limit and old_tokens[prefix] == new_tokens[prefix]:
-            prefix += 1
+    def __init__(
+        self,
+        old_tokens: list[str],
+        new_tokens: list[str],
+        bounds: tuple[int, int, int] | None = None,
+    ) -> None:
+        prefix, added, deleted = bounds or _changed_bounds(old_tokens, new_tokens)
         old_end, new_end = prefix + deleted, prefix + added
         matcher = SequenceMatcher(
             a=old_tokens[prefix:old_end], b=new_tokens[prefix:new_end], autojunk=False
@@ -293,10 +322,12 @@ def _grouped_opcodes(
     old_tokens: list[str],
     new_tokens: list[str],
     context_lines: int,
+    *,
+    bounds: tuple[int, int, int] | None = None,
 ) -> list[list[Opcode]]:
     # Matching runs on the changed middle only, so a long shared prefix or
     # suffix in a repetitive file costs linear time (BLT-06); difflib groups.
-    shifted = _ShiftedOpcodes(old_tokens, new_tokens)
+    shifted = _ShiftedOpcodes(old_tokens, new_tokens, bounds)
     return [
         list(group)
         for group in difflib.SequenceMatcher.get_grouped_opcodes(shifted, n=context_lines)  # type: ignore[arg-type]
@@ -388,6 +419,12 @@ def _count_changed_tokens(old_text: str, new_text: str) -> tuple[int, int]:
 def _changed_span(old_tokens: list[str], new_tokens: list[str]) -> tuple[int, int]:
     """(added, deleted) line counts of the one span left after trimming the common prefix
     and suffix: linear even for repetitive files, and an upper bound on the real counts."""
+    _prefix, added, deleted = _changed_bounds(old_tokens, new_tokens)
+    return added, deleted
+
+
+def _changed_bounds(old_tokens: list[str], new_tokens: list[str]) -> tuple[int, int, int]:
+    """(common prefix length, added, deleted) for the changed middle span."""
     prefix = 0
     end_old, end_new = len(old_tokens), len(new_tokens)
     while prefix < min(end_old, end_new) and old_tokens[prefix] == new_tokens[prefix]:
@@ -398,7 +435,7 @@ def _changed_span(old_tokens: list[str], new_tokens: list[str]) -> tuple[int, in
     ):
         end_old -= 1
         end_new -= 1
-    return end_new - prefix, end_old - prefix
+    return prefix, end_new - prefix, end_old - prefix
 
 
 def _resolve_truncation_reason(hunks: list[dict[str, Any]], caps: DiffCaps) -> str | None:

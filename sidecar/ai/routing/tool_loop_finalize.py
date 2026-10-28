@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from sidecar.ai.error_codes import CMP_STREAM_INCOMPLETE
@@ -63,6 +64,7 @@ class _FinalResponseMixin:
     max_iterations: Any
     iteration_total: int
     tool_nudge_attempted: bool
+    empty_sanitized_generations: int
     thinking_budget_checkpoints: int
     last_checkpoint_carry: str | None
     prompt_cache_enabled: bool
@@ -79,9 +81,23 @@ class _FinalResponseMixin:
     if TYPE_CHECKING:
         # Hub-owned methods (defined on ``_ToolLoopRun`` in tool_loop_run.py).
         # Never executed -- ``TYPE_CHECKING`` is False at runtime.
-        def _finish(self, loop_result: Any, *, reason: str) -> Any: ...
+        def _finish_text(
+            self,
+            response_text: str,
+            *,
+            reason: str,
+            status: str | None = None,
+            reasoning: object = None,
+            completion_source: str = "model",
+            **terminal: Any,
+        ) -> Any: ...
         def _finish_empty_generation(self, result: Any) -> Any | None: ...
         def grant_gate_iteration(self) -> bool: ...
+        def release_gate_iteration(self) -> None: ...
+
+    def _final_reason(self, reason: str) -> str:
+        """A sub-agent budget finalization reports as ``budget_exhausted``."""
+        return "budget_exhausted" if self.sub_agent_budget_finalization_requested else reason
 
     def _sub_agent_report_disposition(
         self,
@@ -159,24 +175,10 @@ class _FinalResponseMixin:
             request_id=self.request_id,
             session_id=self.session_id,
         )
-        return self._finish(
-            _tl_hub.ToolLoopResult(
-                thinking_text="Sub-agent report finalization failed validation.",
-                thinking_kind=_tl_hub.CHAT_THINKING_KIND_STATUS,
-                persist_thinking=False,
-                response_text=response_text,
-                approval_request=None,
-                approval_plan=None,
-                outcomes=self.outcomes,
-                usage_totals=self.usage_totals,
-                streamed_event_types=self.streamed_event_types,
-                completion_source="model",
-            ),
-            reason=(
-                "budget_exhausted"
-                if self.sub_agent_budget_finalization_requested
-                else "subagent_invalid_report"
-            ),
+        return self._finish_text(
+            response_text,
+            status="Sub-agent report finalization failed validation.",
+            reason=self._final_reason("subagent_invalid_report"),
         )
 
     def _finish_valid_sub_agent_report(self, result: Any) -> Any:
@@ -196,31 +198,11 @@ class _FinalResponseMixin:
                 f"outcomes={len(self.outcomes)}"
             ),
         )
-        return self._finish(
-            _tl_hub.ToolLoopResult(
-                thinking_text=reasoning_text or self.thinking_text,
-                thinking_kind=(
-                    _tl_hub.CHAT_THINKING_KIND_REASONING
-                    if reasoning_text
-                    else _tl_hub.CHAT_THINKING_KIND_STATUS
-                ),
-                persist_thinking=bool(reasoning_text),
-                response_text=response_text,
-                approval_request=None,
-                approval_plan=None,
-                outcomes=self.outcomes,
-                usage_totals=self.usage_totals,
-                streamed_event_types=self.streamed_event_types,
-                completion_source="model",
-            ),
-            reason=(
-                "budget_exhausted"
-                if self.sub_agent_budget_finalization_requested
-                else (
-                    "final_response_with_reasoning"
-                    if reasoning_text
-                    else "final_response"
-                )
+        return self._finish_text(
+            response_text,
+            reasoning=reasoning_text,
+            reason=self._final_reason(
+                "final_response_with_reasoning" if reasoning_text else "final_response"
             ),
         )
 
@@ -296,30 +278,17 @@ class _FinalResponseMixin:
                     f"response_length={len(response_text)}"
                 ),
             )
-            return self._finish(
-                _tl_hub.ToolLoopResult(
-                    thinking_text=reasoning_text or status_text,
-                    thinking_kind=(
-                        _tl_hub.CHAT_THINKING_KIND_REASONING
-                        if reasoning_text
-                        else _tl_hub.CHAT_THINKING_KIND_STATUS
-                    ),
-                    persist_thinking=bool(reasoning_text),
-                    response_text=error_message,
-                    approval_request=None,
-                    approval_plan=None,
-                    outcomes=self.outcomes,
-                    usage_totals=self.usage_totals,
-                    streamed_event_types=self.streamed_event_types,
-                    completion_source="model",
-                    terminal_error_code=CMP_STREAM_INCOMPLETE,
-                    terminal_subcode=(
-                        TERMINAL_SUBCODE_THINKING_BUDGET
-                        if finish_reason == "thinking_budget"
-                        else None
-                    ),
-                    terminal_error_retryable=True,
+            return self._finish_text(
+                error_message,
+                status=status_text,
+                reasoning=reasoning_text,
+                terminal_error_code=CMP_STREAM_INCOMPLETE,
+                terminal_subcode=(
+                    TERMINAL_SUBCODE_THINKING_BUDGET
+                    if finish_reason == "thinking_budget"
+                    else None
                 ),
+                terminal_error_retryable=True,
                 reason=f"stream_{cause}",
             )
         return None
@@ -348,28 +317,14 @@ class _FinalResponseMixin:
                 streamed_event_types=self.streamed_event_types,
                 response_text=response_text,
             )
-        reasoning_text = str(result.thinking_text or "").strip()
         self.runtime.audit(
             _tl_hub.KIND_TURN_COMPLETED,
             summary=f"accepted_plan_reply chars={len(response_text)}",
         )
-        return self._finish(
-            _tl_hub.ToolLoopResult(
-                thinking_text=reasoning_text or self.thinking_text,
-                thinking_kind=(
-                    _tl_hub.CHAT_THINKING_KIND_REASONING
-                    if reasoning_text
-                    else _tl_hub.CHAT_THINKING_KIND_STATUS
-                ),
-                persist_thinking=bool(reasoning_text),
-                response_text=response_text,
-                approval_request=None,
-                approval_plan=None,
-                outcomes=self.outcomes,
-                usage_totals=self.usage_totals,
-                streamed_event_types=self.streamed_event_types,
-                completion_source=completion_source,
-            ),
+        return self._finish_text(
+            response_text,
+            reasoning=result.thinking_text,
+            completion_source=completion_source,
             reason="accepted_plan_reply",
         )
 
@@ -399,9 +354,7 @@ class _FinalResponseMixin:
             # The grant went unused (the gate passed, was skipped, or the mode is
             # report-only). Hand it back so a later gate attempt in this same run
             # can still claim it, and so the model never inherits the slack.
-            self.gate_iterations_granted -= 1
-            self.max_iterations -= 1
-            self.iteration_total -= 1
+            self.release_gate_iteration()
         import sidecar.ai.routing.tool_loop as _tl_hub
 
         _tl_hub.log_event(
@@ -425,7 +378,7 @@ class _FinalResponseMixin:
     def _is_continuable_checkpoint(self, result: Any) -> bool:
         """A checkpoint-shaped result while continuation is on.
 
-        Shared with the empty-final shortcut in tool_loop_calls: a post-tool
+        Shared with the empty-final shortcut in _handle_final_response: a post-tool
         completion cut at a thinking-budget checkpoint is not "empty", so the
         checkpoint ladder below continues it instead of winding the turn down
         (owner gate 2026-09-20: a long post-tool think died at its first
@@ -454,6 +407,18 @@ class _FinalResponseMixin:
         _iteration: int,
     ) -> Any | None:
         import sidecar.ai.routing.tool_loop as _tl_hub
+
+        # An empty post-tool completion winds down before normal finalization.
+        recovery = _tl_hub.tool_loop_recovery
+        if tool_cap_result := recovery.maybe_wind_down_tool_cap_final(self, result):
+            return tool_cap_result
+        if (
+            self.outcomes and not str(result.content or "").strip()
+            and not self._defers_empty_final(result)
+            and not self.post_tool_continuation_attempted
+            and _iteration < self.iteration_total
+        ):
+            return recovery.empty_final_wind_down(self)
 
         runtime = self.runtime
         kernel = self.kernel
@@ -508,7 +473,7 @@ class _FinalResponseMixin:
         if self.thinking_budget_checkpoints < limit:
             text = str(result.thinking_text or "")
             carry = text[-CHECKPOINT_CARRY_CHARS:]
-            previous_carry = getattr(self, "last_checkpoint_carry", None)
+            previous_carry = self.last_checkpoint_carry
             if checkpoint_stalled(self, previous_carry, carry, result):
                 similarity = checkpoint_carry_similarity(previous_carry, carry)
                 exhausted_reason = "no_progress"
@@ -656,19 +621,10 @@ class _FinalResponseMixin:
                 self.streamed_event_types,
                 reason="deterministic_replacement",
             )
-            return self._finish(
-                _tl_hub.ToolLoopResult(
-                    thinking_text="Live web lookup unavailable for this request.",
-                    thinking_kind=_tl_hub.CHAT_THINKING_KIND_STATUS,
-                    persist_thinking=False,
-                    response_text=current_info_unavailable_response,
-                    approval_request=None,
-                    approval_plan=None,
-                    outcomes=self.outcomes,
-                    usage_totals=self.usage_totals,
-                    streamed_event_types=self.streamed_event_types,
-                    completion_source="deterministic_tool_fallback",
-                ),
+            return self._finish_text(
+                current_info_unavailable_response,
+                status="Live web lookup unavailable for this request.",
+                completion_source="deterministic_tool_fallback",
                 reason="current_info_unavailable",
             )
 
@@ -787,19 +743,10 @@ class _FinalResponseMixin:
                 self.streamed_event_types,
                 reason=("deterministic_replacement" if no_retry_capacity else "nudge_retry"),
             )
-            return self._finish(
-                _tl_hub.ToolLoopResult(
-                    thinking_text="Tool call retry failed; returning a safe fallback.",
-                    thinking_kind=_tl_hub.CHAT_THINKING_KIND_STATUS,
-                    persist_thinking=False,
-                    response_text=_tl_hub.TOOL_NUDGE_FALLBACK_RESPONSE,
-                    approval_request=None,
-                    approval_plan=None,
-                    outcomes=self.outcomes,
-                    usage_totals=self.usage_totals,
-                    streamed_event_types=self.streamed_event_types,
-                    completion_source="deterministic_tool_fallback",
-                ),
+            return self._finish_text(
+                _tl_hub.TOOL_NUDGE_FALLBACK_RESPONSE,
+                status="Tool call retry failed; returning a safe fallback.",
+                completion_source="deterministic_tool_fallback",
                 reason=(
                     "tool_nudge_no_capacity" if no_retry_capacity else "tool_nudge_fallback"
                 ),
@@ -810,7 +757,6 @@ class _FinalResponseMixin:
         )
         post_tool_invalid_reason = _tl_hub._post_tool_invalid_response_reason(
             response_text=response_text,
-            harness_inventory_invalid=False,
         )
         post_tool_response_invalid = (
             self.outcomes
@@ -850,7 +796,6 @@ class _FinalResponseMixin:
                 response_text=response_text,
                 invalid_reason=post_tool_invalid_reason,
                 successful_outcome_count=successful_outcome_count,
-                harness_summary_available=False,
                 outcome_count=len(self.outcomes),
             )
             recovery_log_data["trigger"] = recovery_trigger
@@ -909,21 +854,23 @@ class _FinalResponseMixin:
                     data=recovery_log_data,
                     request_id=request_id,
                 )
-                return self._finish(
-                    _tl_hub.ToolLoopResult(
-                        thinking_text="Using deterministic tool result context.",
-                        thinking_kind=_tl_hub.CHAT_THINKING_KIND_STATUS,
-                        persist_thinking=False,
-                        response_text=fallback_text,
-                        approval_request=None,
-                        approval_plan=None,
-                        outcomes=self.outcomes,
-                        usage_totals=self.usage_totals,
-                        streamed_event_types=self.streamed_event_types,
-                        completion_source="deterministic_tool_fallback",
-                    ),
+                return self._finish_text(
+                    fallback_text,
+                    status="Using deterministic tool result context.",
+                    completion_source="deterministic_tool_fallback",
                     reason=f"post_tool_recovery_fallback:{recovery_trigger}",
                 )
+
+        if not self.outcomes and not response_text.strip():
+            # Content that sanitizes to nothing (whitespace, control tokens) is
+            # an empty generation, not a reply. The loop re-asks once (a sampled
+            # model may recover); a second one ends the turn instead of re-running
+            # the identical history up to the iteration cap (tool review C3 #1).
+            self.empty_sanitized_generations += 1
+            if self.empty_sanitized_generations > 1:
+                empty = self._finish_empty_generation(replace(result, content=""))
+                if empty is not None:
+                    return empty
 
         # -- Verification gate (P8b) ---------------------------------------
         # The last thing before the turn settles: the model is about to claim it
@@ -972,43 +919,13 @@ class _FinalResponseMixin:
                     f"outcomes={len(self.outcomes)}"
                 ),
             )
-            if str(result.thinking_text or "").strip():
-                return self._finish(
-                    _tl_hub.ToolLoopResult(
-                        thinking_text=str(result.thinking_text).strip(),
-                        thinking_kind=_tl_hub.CHAT_THINKING_KIND_REASONING,
-                        persist_thinking=True,
-                        response_text=response_text,
-                        approval_request=None,
-                        approval_plan=None,
-                        outcomes=self.outcomes,
-                        usage_totals=self.usage_totals,
-                        streamed_event_types=self.streamed_event_types,
-                        completion_source=completion_source,
-                    ),
-                    reason=(
-                        "budget_exhausted"
-                        if self.sub_agent_budget_finalization_requested
-                        else "final_response_with_reasoning"
-                    ),
-                )
-            return self._finish(
-                _tl_hub.ToolLoopResult(
-                    thinking_text=self.thinking_text,
-                    thinking_kind=_tl_hub.CHAT_THINKING_KIND_STATUS,
-                    persist_thinking=False,
-                    response_text=response_text,
-                    approval_request=None,
-                    approval_plan=None,
-                    outcomes=self.outcomes,
-                    usage_totals=self.usage_totals,
-                    streamed_event_types=self.streamed_event_types,
-                    completion_source=completion_source,
-                ),
-                reason=(
-                    "budget_exhausted"
-                    if self.sub_agent_budget_finalization_requested
-                    else "final_response"
+            with_reasoning = bool(str(result.thinking_text or "").strip())
+            return self._finish_text(
+                response_text,
+                reasoning=result.thinking_text,
+                completion_source=completion_source,
+                reason=self._final_reason(
+                    "final_response_with_reasoning" if with_reasoning else "final_response"
                 ),
             )
 

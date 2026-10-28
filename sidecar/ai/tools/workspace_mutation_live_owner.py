@@ -15,13 +15,13 @@ from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING, Any, Iterator
 
-from filelock import FileLock, Timeout
-
 from sidecar.ai.error_codes import CMP_TOOL_IO_FAILED
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 from sidecar.ai.tools.workspace_mutation_journal_contract import _is_junction, workspace_identity
 
 if TYPE_CHECKING:
+    from filelock import FileLock
+
     from sidecar.ai.tools.workspace_mutation_journal_store import (
         StoreResult,
         WorkspaceMutationJournalStore,
@@ -29,6 +29,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 MAX_LIVE_OWNERS = 1024
+# filelock (and the asyncio it pulls in) loads on the first lock, not at sidecar
+# startup. Its Timeout subclasses TimeoutError, so the OSError arms below still
+# catch it (pinned by test_workspace_mutation_live_owner_lazy_filelock.py).
 
 
 @dataclass
@@ -55,6 +58,8 @@ def _new_lock(path: Path) -> FileLock:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_symlink() or _is_junction(path):
         raise ValueError("mutation live owner lock contains an unsafe link")
+    from filelock import FileLock  # Lazy: see the note at MAX_LIVE_OWNERS.
+
     # Resumed/cancelled turns can settle on another request thread.
     return FileLock(str(path), timeout=0, thread_local=False)
 
@@ -109,7 +114,7 @@ def recovery_ownership(path: Path) -> Iterator[bool]:
     try:
         lock = _new_lock(path)
         lock.acquire(timeout=0)
-    except (Timeout, OSError, ValueError) as error:
+    except (OSError, ValueError) as error:
         logger.debug("workspace_mutation_recovery_ownership_unavailable",
                      extra={"reason": type(error).__name__})
         yield False
@@ -157,7 +162,7 @@ def acquire_run_owner(run: Any, change_set_id: str, session_id: str, turn_id: st
             session_id=session_id,
             turn_id=turn_id,
         )
-    except (Timeout, OSError, ValueError) as error:
+    except (OSError, ValueError) as error:
         raise ToolExecutionFailure(
             code=CMP_TOOL_IO_FAILED,
             retryable=False,

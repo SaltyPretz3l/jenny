@@ -582,7 +582,7 @@ def test_iter_change_set_ids_is_bounded(tmp_path: Path, monkeypatch: pytest.Monk
     for index in range(10):
         (workspace_dir / f"dir-{index}").mkdir()
 
-    ids = retention_module._iter_change_set_ids(store, workspace_id)
+    ids = retention_module._iter_change_set_ids(workspace_dir)
     assert len(ids) == 3
 
 

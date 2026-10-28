@@ -18,7 +18,8 @@ const NO = { available: false, reason: null };
 const YES = { available: true, reason: null };
 const LINKS = { continuation_turn_id: null, continuation_work_id: null, command_tool_call_id: null, child_session_id: null, first_turn_turn_id: null, first_turn_work_id: null, preparation_turn_id: null };
 const NOW = Date.parse('2026-10-15T12:00:00Z');
-const FUTURE = '2026-10-20T12:00:00Z';
+// Far future: the card markup reads the wall clock for "actionable", so a near date expires the fixtures.
+const FUTURE = '2099-01-01T00:00:00Z';
 
 function member(c, overrides = {}) {
   return {

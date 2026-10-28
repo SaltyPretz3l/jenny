@@ -9,7 +9,6 @@ service's ``max_active`` slots after enough completed monitors.
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,6 +24,7 @@ from sidecar.ai.tools.builtins.owned_process_settlement import (
     CleanupObservation,
     OwnedProcessCleanupVerdict,
 )
+from tests.sidecar._platform_skips import windows_only
 
 
 def test_release_frees_capacity_after_direct_reap(tmp_path: Path) -> None:
@@ -122,7 +122,7 @@ def test_wait_returns_the_same_cleanup_verdict_it_publishes(
     assert observed == [uncertain]
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Job Object proof path is Windows-only")
+@windows_only("Job Object proof path")
 def test_uncertain_cleanup_quarantines_capacity_until_owner_retry_confirms() -> None:
     class _Job:
         provable = False

@@ -12,39 +12,18 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
   const ADAPTER_ID = 'windowUi.notifications';
-  const NOTIFICATION_CATEGORIES = Object.freeze(['replies', 'failures', 'permissions', 'questions', 'reminders']);
-  const DEFAULT_NOTIFICATION_SETTINGS = Object.freeze({
-    enabled: true,
-    onlyWhenUnfocused: true,
-    sound: true,
-    replyPreview: false,
-    categories: Object.freeze({ replies: true, failures: true, permissions: true, questions: true, reminders: true }),
-  });
+  // The settings shape (categories, defaults, the total normalizer) is owned by
+  // the desktop-notifications module, which the page shell loads first.
+  const { NOTIFICATION_CATEGORIES, DEFAULT_NOTIFICATION_SETTINGS, normalizeNotificationSettings } = globalThis.rendererDesktopNotifications
+    || require('./renderer-desktop-notifications');
 
   function isRecord(value) { return Boolean(value) && typeof value === 'object' && !Array.isArray(value); }
-  function flag(value, fallback) { return typeof value === 'boolean' ? value : fallback; }
   function fieldModules() {
     const load = (path) => (typeof require === 'function' ? require(path) : null);
     return {
       descriptors: globalThis.rendererSettingsFieldDescriptors || load('./renderer-settings-field-descriptors'),
       binding: globalThis.rendererSettingsFieldBinding || load('./renderer-settings-field-binding'),
-    };
-  }
-
-  /* Total: any input yields a full settings object; unknown keys are dropped. */
-  function normalizeNotificationSettings(value) {
-    const source = isRecord(value) ? value : {};
-    const categorySource = isRecord(source.categories) ? source.categories : {};
-    const categories = {};
-    NOTIFICATION_CATEGORIES.forEach((category) => {
-      categories[category] = flag(categorySource[category], DEFAULT_NOTIFICATION_SETTINGS.categories[category]);
-    });
-    return {
-      enabled: flag(source.enabled, DEFAULT_NOTIFICATION_SETTINGS.enabled),
-      onlyWhenUnfocused: flag(source.onlyWhenUnfocused, DEFAULT_NOTIFICATION_SETTINGS.onlyWhenUnfocused),
-      sound: flag(source.sound, DEFAULT_NOTIFICATION_SETTINGS.sound),
-      replyPreview: flag(source.replyPreview, DEFAULT_NOTIFICATION_SETTINGS.replyPreview),
-      categories,
+      surfaces: globalThis.rendererSettingsV2Surfaces || load('./renderer-settings-v2-surfaces'),
     };
   }
 
@@ -70,7 +49,7 @@
   function renderNotificationsSection({ container, state } = {}) {
     if (!container || typeof container.querySelector !== 'function') return;
     const toggleSwitch = globalThis.inventory?.toggleSwitch || globalThis.inventoryToggleSwitch?.toggleSwitch;
-    const { binding, descriptors } = fieldModules();
+    const { binding, descriptors, surfaces } = fieldModules();
     if (typeof toggleSwitch !== 'function' || !binding || !descriptors) return;
     const settings = readSettings(state);
     const off = settings.enabled !== true;
@@ -82,8 +61,7 @@
       lists[list].push(binding.renderSettingRow(descriptor, binding.getPath(settings, descriptor.key), { inventory: { toggleSwitch }, disabled }));
     });
     Object.keys(lists).forEach((selector) => {
-      const list = container.querySelector(selector);
-      if (list) list.innerHTML = lists[selector].join('');
+      surfaces.paintSlot(container.querySelector(selector), lists[selector].join(''));
     });
   }
 
@@ -120,7 +98,7 @@
     };
   }
 
-  function bindNotificationsSection({ container, status, state, renderSettings, registerListener, listenerOptions, registry } = {}) {
+  function bindNotificationsSection({ container, status, state, renderSettings, registerListener, listenerOptions } = {}) {
     if (!container || !state || typeof registerListener !== 'function') return;
     const { binding, descriptors } = fieldModules();
     if (typeof binding?.bindSettingFields !== 'function' || typeof descriptors?.listSettingDescriptors !== 'function') return;
@@ -134,7 +112,7 @@
     // the current binding's callbacks through `live` (see the binding module).
     const shared = binding.sharedRegistryFor(state, ADAPTER_ID);
     Object.assign(shared.live, { state, rerender, showStatus });
-    const adapterRegistry = registry || shared.registry;
+    const adapterRegistry = shared.registry;
     if (!adapterRegistry.has(ADAPTER_ID)) adapterRegistry.register(createNotificationsAdapter(shared.live));
     binding.bindSettingFields({
       container,

@@ -47,6 +47,7 @@ SECRET_CONFIG_KEYS: frozenset[str] = frozenset(
         # Live credential-bearing config keys.
         "chatgpt_access_token",
         "openai_compatible_api_key",
+        "api_provider_key",
         "telemetry_dsn",
         "tools_web_search_provider_keys",
     }
@@ -56,6 +57,7 @@ BROKERED_SECRET_KEYS: frozenset[str] = frozenset(
     {
         "chatgpt_access_token",
         "openai_compatible_api_key",
+        "api_provider_key",
         "tools_web_search_provider_keys",
     }
 )

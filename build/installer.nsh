@@ -26,6 +26,91 @@
   !undef JennyRemove_ID
 !macroend
 
+; The in-app "Install command-line tool" action (services/cli-path-service.js)
+; may have put $INSTDIR\resources\bin on the current user's Path. Drop every
+; entry equal to it (StrCmp is case-insensitive; %VAR% forms are expanded and
+; trailing backslashes ignored for the comparison) and keep all other entries
+; verbatim. HKCU only: the machine Path is never read or written. A value as
+; long as the NSIS string buffer may have been truncated, so it is left alone
+; rather than written back short. An update reuses the same directory, so the
+; entry stays. This runs on every real uninstall, whatever the removal mode,
+; and touches nothing under $APPDATA.
+!define /math JennyCliPathReadLimit ${NSIS_MAX_STRLEN} - 1
+!macro RemoveJennyCliPathEntry
+  ${ifNot} ${isUpdated}
+    Push $R0
+    Push $R1
+    Push $R2
+    Push $R3
+    Push $R4
+    Push $R5
+    Push $R6
+    Push $R7
+    Push $R8
+    ClearErrors
+    ReadRegStr $R0 HKCU "Environment" "Path"
+    IfErrors jenny_cli_path_restore
+    StrCmp $R0 "" jenny_cli_path_restore
+    StrLen $R1 $R0
+    IntCmp $R1 ${JennyCliPathReadLimit} jenny_cli_path_restore 0 jenny_cli_path_restore
+    StrCpy $R2 0
+    StrCpy $R3 ""
+    StrCpy $R4 ""
+    StrCpy $R5 0
+    StrCpy $R8 0
+    jenny_cli_path_scan:
+      StrCpy $R6 $R0 1 $R2
+      StrCmp $R6 "" jenny_cli_path_entry
+      StrCmp $R6 ";" jenny_cli_path_entry
+      StrCpy $R3 "$R3$R6"
+      IntOp $R2 $R2 + 1
+      Goto jenny_cli_path_scan
+    jenny_cli_path_entry:
+      ExpandEnvStrings $R7 $R3
+    jenny_cli_path_trim:
+      StrCpy $R1 $R7 1 -1
+      StrCmp $R1 "\" 0 jenny_cli_path_compare
+      StrCpy $R7 $R7 -1
+      Goto jenny_cli_path_trim
+    jenny_cli_path_compare:
+      StrCmp $R7 "" jenny_cli_path_keep
+      StrCmp $R7 "$INSTDIR\resources\bin" 0 jenny_cli_path_keep
+      IntOp $R5 $R5 + 1
+      Goto jenny_cli_path_next
+    jenny_cli_path_keep:
+      IntCmp $R8 0 jenny_cli_path_append
+      StrCpy $R4 "$R4;"
+    jenny_cli_path_append:
+      StrCpy $R4 "$R4$R3"
+      IntOp $R8 $R8 + 1
+    jenny_cli_path_next:
+      StrCmp $R6 "" jenny_cli_path_write
+      StrCpy $R3 ""
+      IntOp $R2 $R2 + 1
+      Goto jenny_cli_path_scan
+    jenny_cli_path_write:
+      IntCmp $R5 0 jenny_cli_path_restore
+      StrCmp $R4 "" jenny_cli_path_delete
+      WriteRegExpandStr HKCU "Environment" "Path" $R4
+      Goto jenny_cli_path_broadcast
+    jenny_cli_path_delete:
+      DeleteRegValue HKCU "Environment" "Path"
+    jenny_cli_path_broadcast:
+      ; HWND_BROADCAST, WM_SETTINGCHANGE: new terminals pick up the change.
+      SendMessage 0xFFFF 0x1A 0 "STR:Environment" /TIMEOUT=5000
+    jenny_cli_path_restore:
+    Pop $R8
+    Pop $R7
+    Pop $R6
+    Pop $R5
+    Pop $R4
+    Pop $R3
+    Pop $R2
+    Pop $R1
+    Pop $R0
+  ${endIf}
+!macroend
+
 !macro customUnInit
   StrCpy $JennyRemovalMode "preserve"
   ${ifNot} ${isUpdated}
@@ -50,6 +135,7 @@
 !macroend
 
 !macro customUnInstall
+  !insertmacro RemoveJennyCliPathEntry
   StrCmp $JennyRemovalMode "cleanup" 0 done
   StrCpy $JennyCleanupIncomplete "0"
   ; A junction or symlink at the profile root would redirect every deletion
@@ -71,6 +157,7 @@
   !insertmacro RemoveJennyProfileChild "blob_storage"
   !insertmacro RemoveJennyProfileChild "Cache"
   !insertmacro RemoveJennyProfileChild "Code Cache"
+  !insertmacro RemoveJennyProfileChild "compile-cache"
   !insertmacro RemoveJennyProfileChild "Cookies"
   !insertmacro RemoveJennyProfileChild "Cookies-journal"
   !insertmacro RemoveJennyProfileChild "cost-tracker.json"
@@ -149,6 +236,7 @@
   !insertmacro RemoveJennyProfileChild "vllm-process.json"
   !insertmacro RemoveJennyProfileChild "WebStorage"
   !insertmacro RemoveJennyProfileChild "window-state.json"
+  !insertmacro RemoveJennyProfileChild "workspace-backups"
   !insertmacro RemoveJennyProfileChild "workspace-snapshots"
   StrCmp $JennyCleanupIncomplete "1" incomplete
   RMDir "$APPDATA\jenny"

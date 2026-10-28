@@ -112,7 +112,22 @@ function producerToolSupported(deps, context, toolName) {
   }
 }
 
-async function publishProposal(toolName, { kind, resultKind, content, summary }, input, binding, live, context) {
+function defaultProjection(proposal, { resultKind, content }) {
+  const metadata = normalizeProposalResultMetadata({
+    schema_version: 1,
+    result_kind: resultKind,
+    proposal_id: proposal.proposal_id,
+    revision: proposal.revision,
+    decision_state: proposal.decision_state,
+    action_state: proposal.action_state,
+  });
+  return metadata ? { content, metadata } : null;
+}
+
+// `project(proposal)` (optional) maps the published proposal to
+// `{ content, metadata }`, or null when it cannot be projected.
+async function publishProposal(toolName, spec, input, binding, live, context) {
+  const { kind, summary, project = (proposal) => defaultProjection(proposal, spec) } = spec;
   const publisher = context.backendService?.chatProposals;
   if (!publisher || typeof publisher.publish !== 'function') return proposalFailure(toolName, 'unavailable');
   let published;
@@ -132,17 +147,9 @@ async function publishProposal(toolName, { kind, resultKind, content, summary },
   if (!published || published.ok !== true) {
     return proposalFailure(toolName, published?.reason || 'unavailable');
   }
-  const proposal = published.proposal || {};
-  const metadata = normalizeProposalResultMetadata({
-    schema_version: 1,
-    result_kind: resultKind,
-    proposal_id: proposal.proposal_id,
-    revision: proposal.revision,
-    decision_state: proposal.decision_state,
-    action_state: proposal.action_state,
-  });
-  if (!metadata) return proposalFailure(toolName, 'unavailable');
-  return { content, summary, isError: false, metadata };
+  const projected = project(published.proposal || {});
+  if (!projected) return proposalFailure(toolName, 'unavailable');
+  return { content: projected.content, summary, isError: false, metadata: projected.metadata };
 }
 
 module.exports = {

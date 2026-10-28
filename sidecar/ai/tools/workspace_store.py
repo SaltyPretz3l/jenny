@@ -420,17 +420,21 @@ class GuardedWorkspaceStore:
                 self._remove_no_follow(tombstone_path.path, counter=counter, limit=limit)
             except (OSError, ToolExecutionFailure) as error:
                 self._log_delete_degraded(ref, type(error).__name__)
-                return DeleteOutcome(
-                    removed=False,
-                    quarantined=True,
-                    entries_removed=counter[0],
-                )
-            return DeleteOutcome(
-                removed=not tombstone_path.path.exists()
-                and not tombstone_path.path.is_symlink(),
-                quarantined=True,
-                entries_removed=counter[0],
-            )
+                return DeleteOutcome(removed=False, quarantined=True, entries_removed=counter[0])
+            removed = not tombstone_path.path.exists() and not tombstone_path.path.is_symlink()
+            return DeleteOutcome(removed=removed, quarantined=True, entries_removed=counter[0])
+
+    def purge_quarantine_entry(self, name: str) -> None:
+        """Remove one top-level quarantine entry, never following a link (retention sweep)."""
+        ref = self.resolve(WorkspaceStoreKind.QUARANTINE, name)
+        if len(ref.parts) != 1:
+            raise _store_failure("quarantine purge takes one entry name", retryable=False)
+        with self._lock:
+            parent = self._prepare(self.resolve(ref.kind), create_parents=False)
+            if parent.leaf_identity is not None:
+                self._revalidate(parent)
+                self._remove_no_follow(parent.path / ref.parts[0], counter=[0],
+                                       limit=MAX_STORE_DELETE_ENTRIES)
 
     def list_entries(
         self,

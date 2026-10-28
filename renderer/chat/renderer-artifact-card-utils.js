@@ -161,12 +161,23 @@
     releaseInlineImages();
   }
 
-  function renderImagePendingFigure(options) {
-    return figure ? figure.renderPendingFigure({ ...options, labels: {
-      title: jt('chat.artifactFigure.pendingTitle', 'Rendering image…'),
-      note: jt('chat.artifactFigure.pendingNote', 'The chat model is paused to free the GPU. It comes back when the image is done.'),
-      cancel: jt('chat.artifactFigure.cancel', 'Cancel'),
-    } }) : '';
+  /* A running image_generate call: its title and prompt as the finished figure will show them
+   * (the tool's own defaults: the title falls back to the prompt, both whitespace-collapsed). */
+  function renderImagePendingFigure(callId, input) {
+    const source = input && typeof input === 'object' ? input : {};
+    const text = (value) => (typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '');
+    const prompt = text(source.prompt);
+    return figure ? figure.renderPendingFigure({
+      callId,
+      width: Number(source.width) || 1024,
+      height: Number(source.height) || 1024,
+      title: Array.from(text(source.title) || prompt).slice(0, 100).join(''),
+      prompt,
+      labels: {
+        phase: jt('chat.artifactFigure.renderStarting', 'Starting…'),
+        stop: jt('chat.artifactFigure.stop', 'Stop'),
+      },
+    }) : '';
   }
 
   var presentation = (function resolvePresentation() {

@@ -69,6 +69,8 @@
     let lastAsideHtml = '';
     let lastDockStage = null;
     let hadResponseSelection = false;
+    // Children whose drill-in shows the Transcript instead of the Overview.
+    const transcriptKeys = new Set();
 
     function currentMessages() {
       return getMessages(readSessionId().trim()) || [];
@@ -131,28 +133,13 @@
         terminal: model.terminal,
         parentState: model.parentState,
         usage: model.usage,
+        transcript: [...transcriptKeys],
+        // Every child field but the clock ones: the tick owns elapsed text. A
+        // transcript stands in by its length and live version: a settled one
+        // never changes, a live one bumps its version on every change.
         children: model.children.map((child) => ({
-          key: child.key,
-          label: child.label,
-          status: child.status,
-          tone: child.tone,
-          terminal: child.terminal,
-          terminalReason: child.terminalReason,
-          terminalCopy: child.terminalCopy,
-          summary: child.summary,
-          answer: child.answer,
-          steps: child.steps,
-          activity: child.activity,
-          reasoningEffort: child.reasoningEffort,
-          stepCount: child.stepCount,
-          model: child.model,
-          provider: child.provider,
-          evidence: child.evidence,
-          tools: child.tools,
-          uncertainties: child.uncertainties,
-          usage: child.usage,
-          budget: child.budget,
-          error: child.error,
+          ...child, elapsedMs: 0, startedAt: 0, updatedAt: 0, transcript: child.transcript.length,
+          activity: child.activity && { ...child.activity, transcript: child.activity.transcript_version },
         })),
       });
     }
@@ -166,7 +153,7 @@
       const nextSignature = signature(model);
       if (cachedParts && nextSignature === lastSignature) return { model, parts: cachedParts, changed: false };
       lastSignature = nextSignature;
-      cachedParts = viewUtils.renderMonitor?.(model, { page, idSuffix }) || { header: '', body: '', footer: '' };
+      cachedParts = viewUtils.renderMonitor?.(model, { page, idSuffix, transcriptKeys }) || { header: '', body: '', footer: '' };
       return { model, parts: cachedParts, changed: true };
     }
 
@@ -302,6 +289,7 @@
       hosted = '';
       lastSignature = '';
       cachedParts = null;
+      transcriptKeys.clear();
     }
 
     function close(closeOptions = {}) {
@@ -380,6 +368,22 @@
       return true;
     }
 
+    // The switch's keyboard path: the inventory control moves and announces the change.
+    // The Overview | Transcript switch: the inventory's own handlers turn its
+    // clicks and arrow keys into this event.
+    function handleViewChange(event) {
+      const group = event.target?.closest?.('[data-subagent-view]');
+      if (group && contentRoot()?.contains?.(group)) showView(group.getAttribute('data-subagent-view'), event.detail?.value === 'transcript');
+    }
+
+    // Overview | Transcript for one child; focus follows the chosen option.
+    function showView(key, transcript) {
+      if (!key || transcriptKeys.has(key) === transcript) return;
+      if (transcript) transcriptKeys.add(key); else transcriptKeys.delete(key);
+      render({ force: true });
+      contentRoot()?.querySelector?.('[data-subagent-view] [aria-checked="true"]')?.focus?.();
+    }
+
     function syncOriginExpanded(expanded) {
       const controls = hostId();
       if (origin?.setAttribute) origin.setAttribute('aria-expanded', expanded ? 'true' : 'false');
@@ -419,6 +423,16 @@
       if (event.target?.closest?.('[data-subagent-back]')) {
         event.preventDefault();
         back();
+        return;
+      }
+      // A transcript call's output "Show more" (the chat's own detail body).
+      const clamp = event.target?.closest?.('[data-tool-detail-toggle]');
+      if (clamp) { event.preventDefault(); globalThis.rendererToolDetailBody?.toggleDetailClamp?.(clamp); return; }
+      const copyTrigger = event.target?.closest?.('[data-subagent-copy]');
+      if (copyTrigger) {
+        event.preventDefault();
+        const child = viewModel()?.children?.find((entry) => entry.key === copyTrigger.getAttribute('data-subagent-copy'));
+        viewUtils.copyAnswer?.(copyTrigger, child?.answer || child?.summary || '', windowRef);
       }
     }
 
@@ -440,6 +454,8 @@
         return;
       }
       if (event.ctrlKey || event.metaKey || isEditable(event.target)) return;
+      // The view switch moves with its own arrows (inv-segmented-change), not "back".
+      if (event.target?.closest?.('[data-subagent-view]')) return;
       // Backspace, ArrowLeft (with or without Alt) go back from the drill-in.
       const goBack = event.key === 'Backspace' || event.key === 'ArrowLeft';
       if (page === 'detail' && goBack) {
@@ -558,6 +574,7 @@
       documentRef.addEventListener('keydown', handleDocumentKeydown);
       documentRef.addEventListener('visibilitychange', handleVisibilityChange);
       documentRef.addEventListener('selectionchange', handleSelectionChange);
+      documentRef.addEventListener('inv-segmented-change', handleViewChange);
       windowRef.addEventListener?.(REHOST_EVENT, rehost);
       lastDockStage = isDockStage();
       reconcile();
@@ -571,6 +588,7 @@
       documentRef?.removeEventListener?.('keydown', handleDocumentKeydown);
       documentRef?.removeEventListener?.('visibilitychange', handleVisibilityChange);
       documentRef?.removeEventListener?.('selectionchange', handleSelectionChange);
+      documentRef?.removeEventListener?.('inv-segmented-change', handleViewChange);
       windowRef.removeEventListener?.(REHOST_EVENT, rehost);
       clearElapsedTick();
     }

@@ -280,3 +280,43 @@ test('a chrome pass whose sources did not move rebuilds no model at all', () => 
   h.controller.dispose();
   h.window.close();
 });
+
+test('a failed cross-chat delivery is a row whose title and Open both go to the sending chat', () => {
+  const h = harness({ sessions: [session('sender', { failed_delivery_count: 1 }), session('s2')] });
+  h.controller.render();
+  const row = h.rowFor('delivery_failed:sender');
+  assert.ok(row, 'the failed send is listed');
+  assert.equal(row.classList.contains('attention-inbox__row--delivery_failed'), true);
+  assert.equal(row.querySelector('.attention-inbox__note').textContent, "Couldn't deliver a message");
+  const open = row.querySelector('[data-attention-action="open"]');
+  assert.ok(open, 'the row offers Open');
+  assert.equal(open.textContent.trim(), 'Open');
+  assert.equal(open.classList.contains('attention-inbox__action--open'), true);
+  assert.ok(open.title, 'every control carries a tooltip');
+  open.click();
+  h.title('delivery_failed:sender').click();
+  assert.deepEqual(h.openCalls, ['sender', 'sender'], 'both open the chat where Retry and Cancel send live');
+  assert.equal(h.document.querySelector('.attention-inbox-badge__count').textContent, '1');
+  h.controller.dispose();
+  h.window.close();
+});
+
+test('the failed-delivery count is a moved source: 0 -> 1 -> 2 -> 0 repaints each time', () => {
+  const h = harness({ sessions: [session('sender', { failed_delivery_count: 0 })] });
+  h.controller.render();
+  assert.equal(h.host.hidden, true, 'nothing failed, nothing listed');
+  h.state.sessions = [session('sender', { failed_delivery_count: 1 })];
+  h.controller.render();
+  assert.equal(h.host.hidden, false);
+  assert.equal(h.rowFor('delivery_failed:sender').querySelector('.attention-inbox__note').textContent, "Couldn't deliver a message");
+  h.state.sessions = [session('sender', { failed_delivery_count: 2 })];
+  h.controller.render();
+  assert.equal(h.rowFor('delivery_failed:sender').querySelector('.attention-inbox__note').textContent, "Couldn't deliver 2 messages",
+    'the same key with a new count repaints, so the signature carries the count');
+  h.state.sessions = [session('sender', { failed_delivery_count: 0 })];
+  h.controller.render();
+  assert.equal(h.rowFor('delivery_failed:sender'), null, 'a retried or cancelled send leaves the inbox');
+  assert.equal(h.host.hidden, true);
+  h.controller.dispose();
+  h.window.close();
+});

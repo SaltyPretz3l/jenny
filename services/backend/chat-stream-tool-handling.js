@@ -39,6 +39,7 @@ const {
   normalizeExternalPayloadsFromNotification,
   completedToolResultCallIdsForStream,
   buildToolCallPayload,
+  carriedApprovalFields,
   findToolMessageId,
   approvalTerminalOutput,
   normalizeDurationMs,
@@ -290,6 +291,7 @@ function handleToolNotification(service, context, notification, options = {}) {
           approvalState: 'auto',
           streamId,
           externalPayloads,
+          ...carriedApprovalFields(existingMessages, existingToolUseId),
         }),
       });
     } else {
@@ -438,6 +440,9 @@ function handleToolNotification(service, context, notification, options = {}) {
       existingMessagesAtResult,
       { kind: 'tool_use', callId, streamId, fallbackId: toolUseMessageId }
     );
+    const carriedApproval = existingToolUseId
+      ? carriedApprovalFields(existingMessagesAtResult, existingToolUseId)
+      : {};
     if (existingToolUseId) {
       service.sessionStore.updateMessage(resolvedSessionId, existingToolUseId, {
         tool_call: buildToolCallPayload({
@@ -451,6 +456,7 @@ function handleToolNotification(service, context, notification, options = {}) {
           approvalState: 'auto',
           streamId,
           externalPayloads,
+          ...carriedApproval,
         }),
       });
     }
@@ -506,7 +512,7 @@ function handleToolNotification(service, context, notification, options = {}) {
         is_error: params.success === false,
         error_code: String(params.error_code || '').trim(),
         duration_ms: explicitDurationMs ?? 0,
-        approval_state: 'auto',
+        approval_state: carriedApproval.approvalState || 'auto',
         parent_stream_id: streamId,
         generated_artifacts: generatedArtifacts.map((artifact) => ({
           ...artifact,

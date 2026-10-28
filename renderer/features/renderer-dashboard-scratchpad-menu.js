@@ -93,7 +93,7 @@
         action: () => settle(
           Promise.resolve(copyText(scoped)).then((ok) => (ok === false ? { error: jt('dashboard.scratchpad.menu.copyFailed', 'Could not copy.') } : { ok: true })),
           onResult,
-          () => 'Copied.'
+          () => jt('dashboard.scratchpad.menu.copied', 'Copied.')
         ),
       });
     }
@@ -115,7 +115,9 @@
           : () => settle(
             actions.togglePin(o.noteId),
             onResult,
-            (r) => (r && r.pinned ? 'Pinned.' : 'Unpinned.')
+            (r) => (r && r.pinned
+              ? jt('dashboard.scratchpad.menu.pinned', 'Pinned.')
+              : jt('dashboard.scratchpad.menu.unpinned', 'Unpinned.'))
           ),
       });
       items.push({ separator: true });

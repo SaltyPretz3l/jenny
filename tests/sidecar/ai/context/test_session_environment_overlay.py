@@ -80,7 +80,8 @@ def _render(
 
 def test_heading_is_registered_append_only() -> None:
     assert SESSION_ENVIRONMENT_HEADING == "## Session Environment"
-    assert RUNTIME_SYSTEM_MESSAGE_HEADINGS[-1] == SESSION_ENVIRONMENT_HEADING
+    # Later headings (row 69's ``## Primary Chat``) append after it.
+    assert RUNTIME_SYSTEM_MESSAGE_HEADINGS.index(SESSION_ENVIRONMENT_HEADING) == 12
     # Existing headings keep their positions (append-only tuple).
     assert RUNTIME_SYSTEM_MESSAGE_HEADINGS[0] == "## Recalled Memories"
 

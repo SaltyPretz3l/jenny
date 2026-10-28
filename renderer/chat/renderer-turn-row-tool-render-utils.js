@@ -58,20 +58,21 @@
     });
   }
 
+  // Resolved per call: tests install a global after this module loads; in the
+  // app tool-call-utils is always loaded first (index.html order).
+  function sharedToolCallUtils() {
+    return (typeof globalThis !== 'undefined' && globalThis.toolCallUtils) || require('./tool-call-utils');
+  }
+
+  // Canonical labels come from tool-call-utils so trace-row and block-family
+  // labels cannot diverge; a command that exited non-zero reads "exit N".
   function getToolStatusLabel(status, normalizeId, result) {
     const normalize = typeof normalizeId === 'function' ? normalizeId : fallbackNormalizeId;
     const normalizedStatus = normalize(status).toLowerCase();
-    // Canonical labels come from tool-call-utils.getStatusLabel so trace-row and block-family labels cannot diverge.
-    const toolCallUtils = (typeof globalThis !== 'undefined' && globalThis.toolCallUtils)
-      || (typeof require === 'function' ? require('./tool-call-utils') : null);
-    // A command that exited non-zero reads "exit N" (the result carries the code).
-    if (result && toolCallUtils && typeof toolCallUtils.getResultStatusLabel === 'function') {
-      return toolCallUtils.getResultStatusLabel(normalizedStatus, result);
-    }
-    if (toolCallUtils && typeof toolCallUtils.getStatusLabel === 'function') {
-      return toolCallUtils.getStatusLabel(normalizedStatus);
-    }
-    return String(status || '').trim();
+    const toolCallUtils = sharedToolCallUtils();
+    return result
+      ? toolCallUtils.getResultStatusLabel(normalizedStatus, result)
+      : toolCallUtils.getStatusLabel(normalizedStatus);
   }
 
   const toolDetailBody = (typeof globalThis !== 'undefined' && globalThis.rendererToolDetailBody)
@@ -83,15 +84,13 @@
     || (typeof require === 'function' ? require('../features/renderer-project-notes-entry') : null);
   const memoryChatEntry = () => (typeof globalThis !== 'undefined' && globalThis.rendererMemoryChatEntry)
     || (typeof require === 'function' ? require('../features/renderer-memory-chat-entry') : null);
+  const reviewFindingsModule = () => (typeof globalThis !== 'undefined' && globalThis.rendererReviewFindings)
+    || (typeof require === 'function' ? require('./renderer-review-findings') : null);
+  const messageStrip = () => (typeof globalThis !== 'undefined' && globalThis.rendererComposerMessageStrip)
+    || (typeof require === 'function' ? require('./renderer-composer-message-strip') : null);
 
-  function getToolStatusSeverity(status, normalizeId) {
-    const toolCallUtils = (typeof globalThis !== 'undefined' && globalThis.toolCallUtils)
-      || (typeof require === 'function' ? require('./tool-call-utils') : null);
-    if (toolCallUtils && typeof toolCallUtils.getToolStatusSeverity === 'function') {
-      return toolCallUtils.getToolStatusSeverity(status);
-    }
-    const normalize = typeof normalizeId === 'function' ? normalizeId : fallbackNormalizeId;
-    return normalize(status).toLowerCase() === 'errored' ? 'danger' : '';
+  function getToolStatusSeverity(status) {
+    return sharedToolCallUtils().getToolStatusSeverity(status);
   }
 
   const OUTCOME_SEVERITY = Object.freeze({
@@ -103,12 +102,7 @@
   // Classify an errored tool result into one of three outcomes from its
   // error_code + status, so denied/cancelled don't read as crashes.
   function classifyToolResultOutcome(payload) {
-    const toolCallUtils = (typeof globalThis !== 'undefined' && globalThis.toolCallUtils)
-      || (typeof require === 'function' ? require('./tool-call-utils') : null);
-    if (toolCallUtils && typeof toolCallUtils.classifyToolResultOutcome === 'function') {
-      return toolCallUtils.classifyToolResultOutcome(payload);
-    }
-    return 'failure';
+    return sharedToolCallUtils().classifyToolResultOutcome(payload);
   }
 
   // The granular call status to use when a paired/standalone result is an
@@ -116,12 +110,7 @@
   // so getToolStatusLabel/Severity produce the right badge + rail (a denied
   // tool reads "Denied"/calm, not "Errored"/danger).
   function erroredStatusForResult(payload) {
-    const toolCallUtils = (typeof globalThis !== 'undefined' && globalThis.toolCallUtils)
-      || (typeof require === 'function' ? require('./tool-call-utils') : null);
-    if (toolCallUtils && typeof toolCallUtils.statusForToolResult === 'function') {
-      return toolCallUtils.statusForToolResult(payload);
-    }
-    return 'errored';
+    return sharedToolCallUtils().statusForToolResult(payload);
   }
 
   // Statuses that open the minimal tool row's detail body by default: the
@@ -201,9 +190,7 @@
   function clearToolRowExpansionOverridesForSession(sessionId) {
     const normalized = fallbackNormalizeId(sessionId);
     if (!normalized) return;
-    const toolCallUtils = (typeof globalThis !== 'undefined' && globalThis.toolCallUtils)
-      || require('./tool-call-utils');
-    const prefix = toolCallUtils.toolRowKeySessionPrefix(normalized);
+    const prefix = sharedToolCallUtils().toolRowKeySessionPrefix(normalized);
     for (const key of Array.from(_toolRowExpansionOverrides.keys())) {
       if (key.startsWith(prefix)) _toolRowExpansionOverrides.delete(key);
     }
@@ -211,15 +198,8 @@
 
   function createTurnRowToolRenderUtils(deps) {
     const settings = deps || {};
-    const toolCallUtils = (typeof globalThis !== 'undefined' && globalThis.toolCallUtils)
-      || (typeof require === 'function' ? require('./tool-call-utils') : null);
-    function resolveProjectedRowCallId(row) {
-      if (toolCallUtils && typeof toolCallUtils.resolveProjectedRowCallId === 'function') {
-        return toolCallUtils.resolveProjectedRowCallId(row);
-      }
-      const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
-      return fallbackNormalizeId(payload.tool_call_id || (row && row.tool_call_id));
-    }
+    const toolCallUtils = sharedToolCallUtils();
+    const resolveProjectedRowCallId = toolCallUtils.resolveProjectedRowCallId;
     const escapeHtml = typeof settings.escapeHtml === 'function'
       ? settings.escapeHtml
       : fallbackEscapeHtml;
@@ -252,16 +232,6 @@
       ? settings.getNow
       : function defaultGetNow() { return Date.now(); };
 
-    // One tool call = one minimal single-row header sharing the block family's
-    // status dot, name, summary, status, duration, and disclosure anatomy. Its
-    // flat detail body stays collapsed while compact artifact
-    // teasers remain available beside it
-    // (inert) until the user expands it or the status demands attention
-    // (the canonical tool-call-utils rule). When the row list pairs this call row
-    // with its tool_result row (options.pairedToolResultRow, same
-    // tool_call_id), the status badge flips to the terminal state in place.
-    // The mermaid_generate result diagram renders OUTSIDE the collapsed body
-    // only in the fallback case — see buildMermaidFallbackBlockMarkup.
     // W1-4: render the summary's path portion as an inline open-in-IDE chip.
     // The chip carries the forward-slash-normalized path (what the IDE and
     // workspace-fs speak) while displaying the summary's original text; when
@@ -272,26 +242,22 @@
       const summary = String(rowSummary || '');
       const path = String(primaryPath || '');
       if (!path || !chipPath) {
-        return { summaryMarkup: escapeHtml(summary), pathMarkup: '' };
+        return { summaryText: summary, summaryMarkup: escapeHtml(summary), pathMarkup: '' };
       }
       const index = summary.indexOf(path);
       if (index === -1) {
-        return { summaryMarkup: escapeHtml(summary), pathMarkup: '' };
+        return { summaryText: summary, summaryMarkup: escapeHtml(summary), pathMarkup: '' };
       }
       const surroundingSummary = `${summary.slice(0, index)} ${summary.slice(index + path.length)}`
         .replace(/\s+/g, ' ')
         .trim();
       return {
+        summaryText: surroundingSummary,
         summaryMarkup: escapeHtml(surroundingSummary),
         pathMarkup: `<span class="tool-path-chip" role="link" tabindex="0" data-chat-path-open="${escapeHtml(chipPath)}" title="${escapeHtml(jt('chat.toolRow.openInIde', 'Open {path} in the IDE', { path: chipPath }))}">${escapeHtml(path)}</span>`,
       };
     }
 
-    // Generated images render as the inline figure (open / save / copy /
-    // reveal) the classic tool shell shows; settled rows take this minimal
-    // path, so without it an image never shows in the timeline (GIP-1).
-    // Other artifacts keep their teaser card. Resolved per call: the card
-    // utils may load after this module.
     // The row's "Review changes" target through the change ledger; null when
     // the ledger is not loaded or the call changed nothing reviewable.
     function resolveReviewableChange(toolCall, turnId) {
@@ -301,6 +267,11 @@
         ? ledger.resolveReviewableChange(toolCall, { turnId }) : null;
     }
 
+    // Generated images render as the inline figure (open / save / copy /
+    // reveal) the classic tool shell shows; settled rows take this minimal
+    // path, so without it an image never shows in the timeline (GIP-1).
+    // Other artifacts keep their teaser card. Resolved per call: the card
+    // utils may load after this module.
     function resolveArtifactCardUtils() {
       if (settings.artifactCardUtils && typeof settings.artifactCardUtils.renderArtifactCards === 'function') {
         return settings.artifactCardUtils;
@@ -326,6 +297,16 @@
       return figuresMarkup + teasers.map((artifact) => renderArtifactTeaser(artifact)).join('');
     }
 
+    // One tool call = one minimal single-row header sharing the block family's
+    // status dot, name, summary, status, duration, and disclosure anatomy. Its
+    // flat detail body stays collapsed while compact artifact
+    // teasers remain available beside it
+    // (inert) until the user expands it or the status demands attention
+    // (the canonical tool-call-utils rule). When the row list pairs this call row
+    // with its tool_result row (options.pairedToolResultRow, same
+    // tool_call_id), the status badge flips to the terminal state in place.
+    // The mermaid_generate result diagram renders OUTSIDE the collapsed body
+    // only in the fallback case — see buildMermaidFallbackBlockMarkup.
     function buildToolCallRowMarkup(row, messages, options) {
       const renderOptions = options || {};
       const payload = row && row.payload && typeof row.payload === 'object' ? row.payload : {};
@@ -414,7 +395,7 @@
       const bodyId = `${domToken}-body`;
       const ariaBusy = status === 'running' ? ' aria-busy="true"' : '';
       const hasResultAttr = resultPayload ? ' data-has-result="true"' : '';
-      const severity = getToolStatusSeverity(status, normalizeId);
+      const severity = getToolStatusSeverity(status);
       const severityAttr = severity ? ` data-tool-severity="${severity}"` : '';
       // Live per-tool elapsed: while the call is executing (and no result has
       // settled it), the duration slot becomes an elapsed node the transcript
@@ -460,9 +441,14 @@
         inputExpected: inputPresent,
         inputRecorded: structuredInputUsable || inputJsonUsable,
         outputText: String(resultPayload && resultPayload.output_text || ''),
+        // The stored result message holds the full metadata; the projected row
+        // keeps a bounded subset, so it refines the message's, never shadows it.
         metadata: (() => {
-          const source = resultPayload?.metadata || canonicalResult?.metadata;
-          return source && typeof source === 'object' && !Array.isArray(source) ? source : {};
+          const isPlain = (value) => value && typeof value === 'object' && !Array.isArray(value);
+          const rowMetadata = isPlain(resultPayload?.metadata) ? resultPayload.metadata : null;
+          const messageMetadata = isPlain(canonicalResult?.metadata) ? canonicalResult.metadata : null;
+          if (!rowMetadata || !messageMetadata) return rowMetadata || messageMetadata || {};
+          return { ...messageMetadata, ...rowMetadata };
         })(),
         errorCode: String(resultPayload && resultPayload.error_code || ''),
         /* row.turn_id IS the stream id (projector derivation) — it makes the
@@ -505,23 +491,30 @@
           // Resolved per render: the bindings module owns the live-journal set.
           hasLiveJournalEntry: globalThis.rendererCalendarChatBindings?.hasLiveJournalEntry,
         }) : '';
-      const notesBlockMarkup = resultPayload?.metadata?.result_kind === 'project_notes'
-        ? projectNotesEntry()?.buildProjectNotesResultBlockMarkup?.(resultPayload.metadata, { escapeHtml }) || ''
-        : resultPayload?.metadata?.result_kind === 'memory' // the memory chip shares the notes row slot
-          ? memoryChatEntry()?.buildMemoryResultBlockMarkup?.(resultPayload.metadata, { escapeHtml, sessionId: detailModel.sessionId }) || '' : '';
+      const notesBlockMarkup = !resultPayload ? ''
+        : detailModel.metadata.result_kind === 'project_notes'
+          ? projectNotesEntry()?.buildProjectNotesResultBlockMarkup?.(detailModel.metadata, { escapeHtml }) || ''
+          : detailModel.metadata.result_kind === 'memory' // the memory chip shares the notes row slot
+            ? memoryChatEntry()?.buildMemoryResultBlockMarkup?.(detailModel.metadata, { escapeHtml, sessionId: detailModel.sessionId }) || ''
+            // Option C: a sent message's receipt lives on its own row (the strip paints it live).
+            : detailModel.metadata.result_kind === 'session_message'
+              ? messageStrip()?.conversationReceiptMarkup?.(detailModel.metadata, { escapeHtml }) || '' : '';
+      // Row 64: a report_findings result renders its findings list beside the header.
+      const reviewFindings = resultPayload && !resultBodyIsError && normalizeId(toolName) === 'report_findings' ? reviewFindingsModule() : null;
+      const reviewFindingsMarkup = reviewFindings
+        ? reviewFindings.buildReviewFindingsBlockMarkup(reviewFindings.parseReviewFindings(detailModel.outputText), {
+          escapeHtml, toolCallId, sessionId: detailModel.sessionId, domToken,
+        }) : '';
       const displayToolName = toolCallUtils && typeof toolCallUtils.getToolDisplayName === 'function'
         ? toolCallUtils.getToolDisplayName(toolName, payload.tool_display_name)
         : toolName;
       const isFileOperation = /^(Write|Edit|Move)$/.test(detailModel.toolKind);
       const isRunning = statusKey === 'running' || statusKey === 'executing';
-      // F30: a running image render shows its sized placeholder (with Cancel)
+      // F30: a running image render shows its developing figure (with Stop)
       // beside the header, outside the inert body; the result render replaces
       // it with the real figure.
       const pendingImageFigureMarkup = isRunning && !resultPayload && normalizeId(toolName) === 'image_generate'
-        ? (resolveArtifactCardUtils()?.renderImagePendingFigure?.({
-          width: Number(summaryInput?.width) || 1024,
-          height: Number(summaryInput?.height) || 1024,
-        }) || '')
+        ? (resolveArtifactCardUtils()?.renderImagePendingFigure?.(toolCallId, summaryInput) || '')
         : '';
       const fileOperationClass = isFileOperation
         ? ` tool-call-file-operation${isRunning ? ' tool-call-file-composing' : (toolCallUtils.isFileOperationSettledStatus(status) ? ' tool-call-file-settled' : '')}`
@@ -534,57 +527,58 @@
           ? { scope: 'suggested', turnId: reviewTurnId, toolCallId } : null)
         : resolveReviewableChange({ toolCallId, toolName, state: status, resultIsError: resultBodyIsError,
           resultMetadata: detailModel.metadata, input: summaryInput }, reviewTurnId);
-      const headerInner = toolCallUtils && typeof toolCallUtils.buildToolHeaderInner === 'function'
-        ? toolCallUtils.buildToolHeaderInner({
-            displayToolName,
-            reviewableChange,
-            lineCounts: toolCallUtils.getToolLineCounts(toolName, detailModel.metadata, status, resultBodyIsError),
-            summary: rowSummary === displayToolName ? '' : rowSummary,
-            status: headerStatus,
-            isRunning,
-            isFileOperation,
-            icon: toolCallUtils.getToolIcon(toolName),
-            statusLabel: headerStatus === 'paused' ? jt('approval.block.paused', 'Paused')
-              : (headerStatus === 'withdrawn' ? jt('chat.toolCall.withdrawn', 'Withdrawn')
-                : getToolStatusLabel(status, normalizeId, { exit_code: resultPayload?.exit_code, metadata: detailModel.metadata })),
-            // R2-12: a failed row stays collapsed, so its own failure text
-            // rides in the header as one bounded line.
-            failureSummary: resultBodyIsError && toolCallUtils
-              && typeof toolCallUtils.summarizeToolFailure === 'function'
-              ? toolCallUtils.summarizeToolFailure({
-                  isError: true,
-                  status,
-                  errorCode: detailModel.errorCode,
-                  outputText: detailModel.outputText,
-                  resultSummary: detailModel.resultSummary,
-                  metadata: detailModel.metadata,
-                })
-              : '',
-            durationLabel: liveElapsedAttrs ? liveElapsedSeedLabel : durationLabel,
-            secondaryMeta: toolCallUtils && typeof toolCallUtils.formatToolResultMeta === 'function'
-              ? toolCallUtils.formatToolResultMeta(toolName, detailModel.metadata)
-              : '',
-          }, {
-            escapeHtml,
-            renderReviewChangesAffordance(change) {
-              const affordance = globalThis.rendererCodeReviewAffordance
-                || (typeof require === 'function' ? require('./renderer-code-review-affordance') : null);
-              return change && affordance?.renderReviewChangesAffordance?.(change, { escapeHtml }) || '';
-            },
-            renderIcon(icon, model) {
-              return model.isFileOperation && icon
-                ? `<span class="tool-call-file-icon" aria-hidden="true">${icon}</span>` : '';
-            },
-            renderSummary: function renderSummary() {
-              return `<span class="tool-call-summary tool-call-row-summary">${summaryParts.summaryMarkup}</span>`;
-            },
-            renderDuration: function renderDuration(label) {
-              return label
-                ? ` <span class="tool-result-duration"${liveElapsedAttrs}>${escapeHtml(label)}</span>`
-                : '';
-            },
-          })
-        : `<span class="tool-call-row-summary">${summaryParts.summaryMarkup}</span>`;
+      const headerInner = toolCallUtils.buildToolHeaderInner({
+        displayToolName,
+        reviewableChange,
+        lineCounts: toolCallUtils.getToolLineCounts(toolName, detailModel.metadata, status, resultBodyIsError),
+        summary: rowSummary === displayToolName ? '' : rowSummary,
+        status: headerStatus,
+        isRunning,
+        isFileOperation,
+        icon: toolCallUtils.getToolIcon(toolName),
+        statusLabel: headerStatus === 'paused' ? jt('approval.block.paused', 'Paused')
+          : (headerStatus === 'withdrawn' ? jt('chat.toolCall.withdrawn', 'Withdrawn')
+            : getToolStatusLabel(status, normalizeId, { exit_code: resultPayload?.exit_code, metadata: detailModel.metadata })),
+        // R2-12: a failed row stays collapsed, so its own failure text
+        // rides in the header as one bounded line.
+        failureSummary: resultBodyIsError
+          ? toolCallUtils.summarizeToolFailure({
+              isError: true,
+              status,
+              errorCode: detailModel.errorCode,
+              outputText: detailModel.outputText,
+              resultSummary: detailModel.resultSummary,
+              metadata: detailModel.metadata,
+            })
+          : '',
+        durationLabel: liveElapsedAttrs ? liveElapsedSeedLabel : durationLabel,
+        secondaryMeta: toolCallUtils.formatToolResultMeta(toolName, detailModel.metadata),
+      }, {
+        escapeHtml,
+        renderReviewChangesAffordance(change) {
+          const affordance = globalThis.rendererCodeReviewAffordance
+            || (typeof require === 'function' ? require('./renderer-code-review-affordance') : null);
+          return change && affordance?.renderReviewChangesAffordance?.(change, { escapeHtml }) || '';
+        },
+        renderIcon(icon, model) {
+          return model.isFileOperation && icon
+            ? `<span class="tool-call-file-icon" aria-hidden="true">${icon}</span>` : '';
+        },
+        // An empty summary is the header's dedupe (it equalled the tool name).
+        renderSummary: function renderSummary(summary) {
+          if (!summary) return '';
+          // Once the path moves into its chip, "Edit test.py" leaves "Edit",
+          // which read "Edit Edit" beside the name. The span stays (empty) as
+          // the live tool patcher's target for the result summary.
+          const summaryMarkup = summaryParts.summaryText === displayToolName ? '' : summaryParts.summaryMarkup;
+          return `<span class="tool-call-summary tool-call-row-summary">${summaryMarkup}</span>`;
+        },
+        renderDuration: function renderDuration(label) {
+          return label
+            ? ` <span class="tool-result-duration"${liveElapsedAttrs}>${escapeHtml(label)}</span>`
+            : '';
+        },
+      });
       // CMP-TOOL-0047 (PDF reading add-on missing): one quiet link, a sibling of
       // the header so it stays visible on the collapsed row. The transcript's
       // data-inv-error-action delegate opens Settings > Tools at the add-on.
@@ -602,7 +596,7 @@
       // A row that shows content beside its header (banner, action link, chip,
       // calendar block, diagram, artifact) never folds into an Answers tool run.
       const runFoldableAttr = renderOptions.transcriptView === 'answers' && [markerBannerMarkup, pdfAddonLinkMarkup, sessionBudgetLinkMarkup,
-        calendarBlockMarkup, notesBlockMarkup, mermaidFallbackMarkup, artifactTeasersMarkup, pendingImageFigureMarkup].some((part) => String(part || '').trim())
+        calendarBlockMarkup, notesBlockMarkup, reviewFindingsMarkup, mermaidFallbackMarkup, artifactTeasersMarkup, pendingImageFigureMarkup].some((part) => String(part || '').trim())
         ? ' data-run-foldable="false"' : '';
       return `
         ${markerBannerMarkup}
@@ -622,7 +616,7 @@
           </div>
           ${summaryParts.pathMarkup}
           </div>
-          ${pdfAddonLinkMarkup}${sessionBudgetLinkMarkup}${calendarBlockMarkup}${notesBlockMarkup}
+          ${pdfAddonLinkMarkup}${sessionBudgetLinkMarkup}${calendarBlockMarkup}${notesBlockMarkup}${reviewFindingsMarkup}
           ${mermaidFallbackMarkup}
           ${artifactTeasersMarkup}${pendingImageFigureMarkup}
           <div class="tool-call-row-body" id="${escapeHtml(bodyId)}"${expanded ? '' : ' inert'}>
@@ -783,11 +777,9 @@
     // block; the tool-result-body class keeps the markdown.css scoping and
     // the GUI smoke selector working.
     function buildMermaidFallbackBlockMarkup(resultPayload, domToken, options) {
-      if (!resultPayload || !isTurnSettledForRender(options)) {
-        return '';
-      }
-      const mermaidText = resolveResultMermaidSource(resultPayload);
-      if (!mermaidText || answerHasMatchingMermaidFence(options, mermaidText)) {
+      // The cheap tool-name check first: the settled-turn walk visits every row.
+      const mermaidText = resultPayload ? resolveResultMermaidSource(resultPayload) : '';
+      if (!mermaidText || !isTurnSettledForRender(options) || answerHasMatchingMermaidFence(options, mermaidText)) {
         return '';
       }
       const markdownUtilsRef = resolveMarkdownUtils();
@@ -946,6 +938,9 @@
           ? toolCallUtils.getApprovalFacts(toolName, approvalInput) : [],
         commandText,
         sessionMessageApproval: sendsMessage ? payload.session_message_approval : undefined,
+        sessionStopApproval: toolName === 'session_stop' ? payload.session_stop_approval : undefined,
+        // Always passed (even undefined): a command or write without its live exact presentation fails closed.
+        exactApproval: cardState.exactApproval,
         mode: 'inline',
         cardState: cardState.state,
         resumeKey: cardState.resumeKey,

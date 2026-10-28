@@ -5,8 +5,37 @@
   }
   root.rendererRenderPipelineProjectionContextUtils = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  // A running delegate's live state (agent_status_steps) sits on the turn's
+  // next assistant shell, which projects no row and is not yet in the turn's
+  // source_message_ids while it streams (only turnIdByMessageId knows it),
+  // while the delegate's own tool_call row renders it
+  // (collectLiveDelegationSteps). Folded into the tail fingerprint so the
+  // active-turn-root patch rebuilds on a frame that changes it instead of
+  // short-circuiting as unchanged. The fields are the ones the live row and
+  // monitor paint (inlineSummaryMarkup), not only the ones that change on
+  // every frame. The map scan is a few tens of microseconds per build.
+  function liveDelegationFingerprintSuffix(turnId, turnIdByMessageId, messageById) {
+    if (!turnId || typeof turnIdByMessageId?.forEach !== 'function') return '';
+    let hash = 5381;
+    let seen = false;
+    turnIdByMessageId.forEach((messageTurnId, id) => {
+      if (messageTurnId !== turnId) return;
+      const steps = messageById?.get?.(id)?.agent_status_steps;
+      if (!Array.isArray(steps) || !steps.length) return;
+      seen = true;
+      const fields = [id, ...steps.map((step) => [step?.childTaskId, step?.status, step?.stage, step?.percent,
+        step?.childTerminal, step?.terminal, step?.terminalReason, step?.childLabel, step?.childCount,
+        step?.childOrdinal, step?.summary, step?.model, step?.usage?.total_tokens,
+        step?.childActivity?.sequence].join('~'))].join('^');
+      for (let index = 0; index < fields.length; index += 1) hash = ((hash << 5) + hash + fields.charCodeAt(index)) | 0;
+    });
+    return seen ? `:d${hash}` : '';
+  }
+
   function createProjectionContextPipeline(deps) {
     const { state = {}, constants = {}, callbacks = {} } = deps || {};
+    const manualCompactionDivider = globalThis.rendererManualCompactionDivider
+      || (typeof require === 'function' ? require('./renderer-manual-compaction-divider') : null);
     const { MESSAGE_STATUS = {} } = constants;
     const {
       escapeHtml = (value) => String(value || ''),
@@ -169,12 +198,21 @@
       const projectionMessageSignature = messageFingerprints && typeof computeProjectionSignatureFromFingerprints === 'function'
         ? computeProjectionSignatureFromFingerprints(messageFingerprints)
         : computeProjectionSignature(sourceMessages);
+      // A manual compaction's divider comes from the session summary, not the
+      // messages (renderer-manual-compaction-divider.js): key it here, and bump
+      // the revision so the render guard repaints a message-less change.
+      const manualCompactionKey = manualCompactionDivider?.resolveManualCompaction(state, normalizedSessionId)?.key || '';
       const projectionSignature = [
         projectionMessageSignature,
         String(turnEventState.turnEventLogVersion || 0),
         turnEventSignature,
+        manualCompactionKey,
       ].join('||');
       const cached = getProjectionContextCache(normalizedSessionId);
+      if (cached && String(cached.manualCompactionKey || '') !== manualCompactionKey) {
+        cached.manualCompactionKey = manualCompactionKey;
+        bumpProjectionStateRevision(normalizedSessionId);
+      }
       // P3-PERF-B: settle the whole-projection cache question BEFORE walking the
       // transcript. The signature is derived from the fingerprint list the caller
       // already computed, so asking early costs nothing here — and knowing the
@@ -258,6 +296,7 @@
           if (cache) {
             cache.projectionSignature = projectionSignature;
             cache.turnProjection = turnProjection;
+            cache.manualCompactionKey = manualCompactionKey;
           }
         }
         if (getChatTimelineRowModelEnabled(normalizedSessionId) === true && rolloutMeta) {
@@ -514,7 +553,9 @@
           activeStreamingMessageId: activeMessageId,
           activeTurnRootMessageId,
           activeTurnStructureHash: activeTurn ? computeTurnStructureHash(activeTurn, activeRows) : 0,
-          activeTurnTailFingerprint: activeTurn ? computeTurnTailFingerprint(activeTurn, activeRows) : '',
+          activeTurnTailFingerprint: activeTurn
+            ? computeTurnTailFingerprint(activeTurn, activeRows) + liveDelegationFingerprintSuffix(activeRootScopeTurnId, turnIdByMessageId, messageById)
+            : '',
           projectionStateRevisionKey: buildProjectionStateRevisionKey(normalizedSessionId),
         });
       } catch (error) {
@@ -653,9 +694,9 @@
           || projectedToolRow.payload?.status
           || ''
         ).trim().toLowerCase();
-        // Keep the established rich shells as the single rendering owner for
-        // tool-specific output. The generic trace row intentionally handles
-        // only tools without a specialized renderer.
+        // Tool kinds the routing predicate names keep the transcript tool-call
+        // block (its detail body owns their tool-specific output); the generic
+        // trace row handles every other settled call.
         if (
           !(hasSpecializedToolShell(projectedToolName) && projectedToolState !== 'denied')
           && isSettledProjectedToolCall(projectedToolRow, pairedToolResultRow)

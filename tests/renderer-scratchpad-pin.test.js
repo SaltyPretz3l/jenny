@@ -202,6 +202,25 @@ test('renders one tab per pinned id in pin order; the layer stays closed until a
   assert.match(tabs.querySelector('[data-pin-expand="note-1"]').getAttribute('title'), /line one/);
 });
 
+test('a pinned note text edit refreshes the tab tooltip without rebuilding the strip', () => {
+  const state = pinState({
+    notes: [{ id: 'note-1', title: 'Alpha', text: 'first' }],
+    pins: ['note-1'],
+  });
+  const { tabs, controller } = makeController(state);
+  controller.render();
+  const tab = tabs.querySelector('[data-pin-expand="note-1"]');
+
+  state.homeConfig.scratchpad.notes[0] = { ...state.homeConfig.scratchpad.notes[0], text: 'second' };
+  controller.render();
+  assert.equal(tabs.querySelector('[data-pin-expand="note-1"]'), tab, 'same pill node');
+  assert.match(tab.getAttribute('title'), /second/);
+
+  state.homeConfig.scratchpad.notes[0] = { ...state.homeConfig.scratchpad.notes[0], title: 'Renamed' };
+  controller.render();
+  assert.notEqual(tabs.querySelector('[data-pin-expand="note-1"]'), tab, 'a title change rebuilds');
+});
+
 test('clicking a tab expands it into an editable textarea panel in the popover', () => {
   const { layer, tabs, controller, window } = makeController(pinState({ pins: ['note-1'] }));
   controller.render();

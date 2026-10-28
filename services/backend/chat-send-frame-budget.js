@@ -68,13 +68,41 @@ function copyPresent(target, source, key) {
   }
 }
 
+// A subagent transcript (row 67, up to ~24 KB per child) is UI-only and the
+// sidecar never reads a report back from history, so it never rides in a send.
+function withoutTranscript(report) {
+  if (!isNonArrayObject(report) || !Object.prototype.hasOwnProperty.call(report, 'transcript')) {
+    return report;
+  }
+  const { transcript: _transcript, transcript_dropped: _dropped, ...rest } = report;
+  return rest;
+}
+
+function projectMetadataForSend(metadata) {
+  if (!isNonArrayObject(metadata)) {
+    return metadata;
+  }
+  const single = metadata.subagent_report;
+  const batch = metadata.subagent_batch_report;
+  const tasks = isNonArrayObject(batch) && Array.isArray(batch.tasks) ? batch.tasks : null;
+  const singleCut = withoutTranscript(single) !== single;
+  const batchCut = tasks !== null && tasks.some((task) => withoutTranscript(task) !== task);
+  if (!singleCut && !batchCut) {
+    return metadata;
+  }
+  const projected = { ...metadata };
+  if (singleCut) projected.subagent_report = withoutTranscript(single);
+  if (batchCut) projected.subagent_batch_report = { ...batch, tasks: tasks.map(withoutTranscript) };
+  return projected;
+}
+
 function projectToolResultForSend(message, toolResult) {
   const projected = {};
   copyPresent(projected, toolResult, 'tool_name');
   copyPresent(projected, toolResult, 'is_error');
   const metadata = toolResult.metadata;
   if (metadata !== undefined && metadata !== null) {
-    projected.metadata = metadata;
+    projected.metadata = projectMetadataForSend(metadata);
   }
   if (
     message.role === 'tool'

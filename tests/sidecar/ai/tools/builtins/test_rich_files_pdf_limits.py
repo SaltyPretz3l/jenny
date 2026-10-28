@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 
 import pytest
 
@@ -13,52 +12,52 @@ from sidecar.ai.tools.workspace import WorkspaceGuard
 from tests.sidecar.ai.tools.builtins.test_rich_files_pdf import _write_pdf
 
 
-def test_pdf_parser_rejects_redirected_handle_after_validation(tmp_path, monkeypatch):
-    import builtins
-    import io
+def test_pdf_parses_the_validated_bytes_without_reopening(tmp_path, monkeypatch):
+    import hashlib
+    import json
 
-    from sidecar.ai.error_codes import CMP_TOOL_OUTSIDE_WORKSPACE
     module = importlib.import_module("sidecar.ai.tools.builtins.rich_files.pdf")
-    root = tmp_path / "workspace"
-    root.mkdir()
-    path = root / "sample.pdf"
-    outside = tmp_path / "outside.pdf"
+    path = tmp_path / "sample.pdf"
     _write_pdf(path)
-    _write_pdf(outside)
+    validated = hashlib.sha256(path.read_bytes()).hexdigest()
     original_validate = module.validate_rich_file_source
-    original_open = builtins.open
-    original_io_open = io.open
-    def validate_then_redirect(**kwargs):
+
+    def validate_then_swap(**kwargs):
         source = original_validate(**kwargs)
-        def redirect(file, *args, **options):
-            target = outside if isinstance(file, (str, Path)) and Path(file) == path else file
-            return original_open(target, *args, **options)
-        def redirect_io(file, *args, **options):
-            target = outside if isinstance(file, (str, Path)) and Path(file) == path else file
-            return original_io_open(target, *args, **options)
-        monkeypatch.setattr(builtins, "open", redirect)
-        monkeypatch.setattr(io, "open", redirect_io)
+        # Swapped or grown after validation: the parser still reads the hashed bytes.
+        path.write_bytes(b"not a pdf" * 4096)
         return source
-    monkeypatch.setattr(module, "validate_rich_file_source", validate_then_redirect)
-    with pytest.raises(ToolExecutionFailure) as exc:
-        module.pdf_inspect_tool({"path": "sample.pdf"}, WorkspaceGuard(str(root)))
-    assert exc.value.code == CMP_TOOL_OUTSIDE_WORKSPACE
+
+    monkeypatch.setattr(module, "validate_rich_file_source", validate_then_swap)
+    result = module.pdf_inspect_tool({"path": "sample.pdf"}, WorkspaceGuard(str(tmp_path)))
+
+    assert result.success is True
+    assert result.metadata["source"]["sha256"] == validated
+    # The cursor digest is the validated SHA-256's prefix, so cursors stay compatible.
+    summary = json.loads(result.output)["summary"]
+    assert summary["page_count"] >= 1
+    assert pdf_text.document_digest_from_sha256(validated) == validated[:16]
 
 
-def test_pdf_parser_rechecks_byte_limit_after_validation(tmp_path, monkeypatch):
+def test_pdf_validation_rechecks_byte_limit_while_reading(tmp_path, monkeypatch):
+    from sidecar.ai.error_codes import CMP_TOOL_RICH_FILES_TOO_LARGE
+    from sidecar.ai.tools.builtins.rich_files import base
+
     module = importlib.import_module("sidecar.ai.tools.builtins.rich_files.pdf")
     path = tmp_path / "sample.pdf"
     _write_pdf(path)
     limit = path.stat().st_size + 1
-    original_validate = module.validate_rich_file_source
-    def validate_then_grow(**kwargs):
-        source = original_validate(**kwargs)
+    original_open = base.open_regular_file
+
+    def grow_then_open(target, mode="rb", **kwargs):
         path.write_bytes(path.read_bytes() + b"x" * limit)
-        return source
+        return original_open(target, mode, **kwargs)
+
     monkeypatch.setattr(module.filesystem_content, "MAX_MEDIA_FILE_BYTES", limit)
-    monkeypatch.setattr(module, "validate_rich_file_source", validate_then_grow)
-    with pytest.raises(ToolExecutionFailure, match="size limit"):
+    monkeypatch.setattr(base, "open_regular_file", grow_then_open)
+    with pytest.raises(ToolExecutionFailure, match="byte limit") as caught:
         module.pdf_inspect_tool({"path": "sample.pdf"}, WorkspaceGuard(str(tmp_path)))
+    assert caught.value.code == CMP_TOOL_RICH_FILES_TOO_LARGE
 
 
 def test_pdf_oversized_line_is_explicitly_nonrecoverable_after_serialization(tmp_path, monkeypatch):

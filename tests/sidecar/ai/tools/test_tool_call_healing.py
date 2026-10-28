@@ -168,6 +168,37 @@ class TestRepairTaxonomyPositives:
         }
         assert result.repairs == ("python_literals",)
 
+    def test_literal_word_inside_a_single_quoted_value_survives(self) -> None:
+        raw = "{'name':'write_file','arguments':{'path':'a.txt','content':'None of the above'}}"
+
+        result = repair_json_payload(raw)
+
+        assert result.value == {
+            "name": "write_file",
+            "arguments": {"path": "a.txt", "content": "None of the above"},
+        }
+        assert result.repairs == ("single_quotes",)
+
+    def test_bare_literal_beside_single_quoted_value_words(self) -> None:
+        raw = "{'content': 'True story, False start', 'overwrite': True, 'mode': None}"
+
+        result = repair_json_payload(raw)
+
+        assert result.value == {
+            "content": "True story, False start",
+            "overwrite": True,
+            "mode": None,
+        }
+        assert result.repairs == ("single_quotes", "python_literals")
+
+    def test_fenced_payload_that_drops_a_second_object_tags_debris(self) -> None:
+        raw = '```json\n{"path": "a"}\n```\n{"content": "x"}'
+
+        result = repair_json_payload(raw)
+
+        assert result.value == {"path": "a"}
+        assert result.repairs == ("stripped_fence", "stripped_debris")
+
     def test_smart_quotes(self) -> None:
         raw = "{“name”: “read_file”, “arguments”: {“path”: “a.py”}}"
         result = repair_json_payload(raw)

@@ -197,3 +197,11 @@ test('unanswered questions render as (no answer) without changing normalized met
     { id: 'many', value: [] },
   ]);
 });
+
+test('summaries pluralise the question count', () => {
+  const question = (prompt) => ({ prompt });
+  assert.equal(tool.summarize({}), 'Ask user 1 question');
+  assert.equal(tool.summarize({ questions: [] }), 'Ask user 1 question');
+  assert.equal(tool.summarize({ questions: [question('a')] }), 'Ask user 1 question');
+  assert.equal(tool.summarize({ questions: [question('a'), question('b')] }), 'Ask user 2 questions');
+});

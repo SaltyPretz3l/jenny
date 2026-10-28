@@ -74,24 +74,10 @@
   const SUMMARY_CHAR_CAP = 4000;
   const TRUNCATION_MARKER = '… (truncated)';
 
-  // Reimplemented locally (not imported from renderer-ide-map-view.js) per
-  // the plan: this module must stay DOM-free / independently testable.
-  const LANG_CLASS_RULES = [
-    { re: /\.(mjs|cjs|jsx|js)$/i, cls: 'js' },
-    { re: /\.(tsx|ts)$/i, cls: 'ts' },
-    { re: /\.py$/i, cls: 'py' },
-    { re: /\.css$/i, cls: 'css' },
-    { re: /\.(html|htm)$/i, cls: 'html' },
-    { re: /\.(md|markdown)$/i, cls: 'md' },
-    { re: /\.(json|ya?ml|toml)$/i, cls: 'data' },
-  ];
-
-  function langClassFor(relPath) {
-    for (const rule of LANG_CLASS_RULES) {
-      if (rule.re.test(relPath)) return rule.cls;
-    }
-    return 'other';
-  }
+  // The atlas's language classes (pure, DOM-free; loads earlier in the IDE
+  // script manifest): 7 named classes plus 'other'.
+  const { langClassFor } = globalThis.rendererIdeMapAtlasLayout || require('./renderer-ide-map-atlas-layout');
+  const LANGUAGE_SLOTS = 8;
 
   function dirOf(relPath) {
     const path = String(relPath || '');
@@ -115,22 +101,23 @@
 
     const dirCounts = new Map();
     const langCounts = new Map();
-    for (const node of nodes) {
-      if (!node || typeof node.id !== 'string') continue;
+    // Ignored-directory bucket pseudo-nodes are rollups, not files.
+    const files = nodes.filter((node) => node && typeof node.id === 'string' && !node.bucket);
+    for (const node of files) {
       const dir = dirOf(node.id);
       dirCounts.set(dir, (dirCounts.get(dir) || 0) + 1);
       const lang = langClassFor(node.id);
       langCounts.set(lang, (langCounts.get(lang) || 0) + 1);
     }
     const topDirs = topNByCount(dirCounts, 5).map(([dir, count]) => ({ dir, count }));
-    const languages = topNByCount(langCounts, LANG_CLASS_RULES.length + 1)
+    const languages = topNByCount(langCounts, LANGUAGE_SLOTS)
       .map(([lang, count]) => ({ lang, count }));
 
     // Entry points: files with zero inbound edges, ranked by outbound
     // (biggest "roots" first); fall back to top importance when every node
     // has at least one inbound edge (no clear entry points by that signal).
-    const zeroInbound = nodes.filter((n) => n && (Number(n.inbound) || 0) === 0);
-    const pool = zeroInbound.length > 0 ? zeroInbound : nodes.slice();
+    const zeroInbound = files.filter((n) => (Number(n.inbound) || 0) === 0);
+    const pool = zeroInbound.length > 0 ? zeroInbound : files;
     const entryPoints = pool
       .slice()
       .sort((a, b) => {
@@ -144,7 +131,7 @@
       .map((n) => n.id);
 
     return {
-      fileCount: nodes.length,
+      fileCount: files.length,
       edgeCount: edges.length,
       topDirs,
       languages,
@@ -187,6 +174,67 @@
     return { push, finish };
   }
 
+  // Row 77: the drafted component tree (graph.components from
+  // services/workspace-file-map-components.js) as summary lines: the root
+  // components largest first with what each opens onto, the strongest root
+  // links, and the tests/docs/other groups beside them. Each line is bounded
+  // so the directories and hubs still fit under the cap.
+  const COMPONENT_LINE_CHARS = 160;
+  const COMPONENT_LINKS = 8;
+  const OUTSIDE_TARGETS = 3;
+
+  function bySize(a, b) {
+    return (b.fileCount - a.fileCount) || String(a.name).localeCompare(String(b.name));
+  }
+
+  function boundedList(head, items, limit) {
+    let line = head;
+    for (let i = 0; i < items.length; i += 1) {
+      const more = items.length - i;
+      const next = `${line}${i ? ', ' : ''}${items[i]}`;
+      // Keep room for the ", +N more" tail unless this is the last item.
+      if (next.length + (more > 1 ? 10 : 0) > limit) return `${line}${i ? ', ' : ''}+${more} more`;
+      line = next;
+    }
+    return line;
+  }
+
+  function componentSummaryLines(draft) {
+    const list = draft && Array.isArray(draft.components) ? draft.components : [];
+    const valid = list.filter((c) => c && typeof c.id === 'string' && Number.isFinite(c.fileCount));
+    const roots = valid.filter((c) => c.parentId === null).sort(bySize);
+    if (!roots.length) return [];
+    const names = new Map(valid.map((c) => [c.id, c.name]));
+    const lines = [`Components (source files; ${roots.length} at the top level):`];
+    for (const root of roots) {
+      const inside = valid.filter((c) => c.parentId === root.id).sort(bySize).map((c) => `${c.name} ${c.fileCount}`);
+      const head = `- ${root.name}: ${root.fileCount} files`;
+      lines.push(inside.length ? boundedList(`${head}; inside: `, inside, COMPONENT_LINE_CHARS) : head);
+    }
+    const links = (Array.isArray(draft.relations) ? draft.relations : [])
+      .filter((r) => r && r.scopeId === 'root' && names.has(r.from) && names.has(r.to))
+      .sort((a, b) => (b.weight - a.weight) || String(a.from).localeCompare(String(b.from)) || String(a.to).localeCompare(String(b.to)))
+      .slice(0, COMPONENT_LINKS);
+    if (links.length) {
+      lines.push('Links between components (importer -> imported: file imports):');
+      for (const r of links) lines.push(`- ${names.get(r.from)} -> ${names.get(r.to)}: ${r.weight}`);
+    }
+    const groups = (Array.isArray(draft.outside) ? draft.outside : []).filter((o) => o && Number.isFinite(o.fileCount));
+    if (groups.length) {
+      const into = Array.isArray(draft.outsideRelations) ? draft.outsideRelations : [];
+      const parts = groups.map((group) => {
+        const targets = into
+          .filter((r) => r && r.from === group.id && names.has(r.to))
+          .sort((a, b) => (b.files - a.files) || String(a.to).localeCompare(String(b.to)));
+        const shown = targets.slice(0, OUTSIDE_TARGETS).map((r) => `${names.get(r.to)} ${r.files}`);
+        if (targets.length > OUTSIDE_TARGETS) shown.push(`+${targets.length - OUTSIDE_TARGETS} more`);
+        return `${group.id} ${group.fileCount} files${shown.length ? ` (importing ${shown.join(', ')})` : ''}`;
+      });
+      lines.push(`Beside the components: ${parts.join(', ')}.`);
+    }
+    return lines;
+  }
+
   // Bounded text summary of the graph for the Ask-the-Map composer prefill.
   // Hard cap: SUMMARY_CHAR_CAP characters, never truncated mid-line.
   function serializeGraphSummary(graph) {
@@ -199,6 +247,8 @@
     w.push(
       `Findings: ${overview.hubs} hub(s), ${overview.cycles} cycle(s), ${overview.orphans} orphan(s).`
     );
+
+    for (const line of componentSummaryLines(g.components)) w.push(line);
 
     w.push('Top directories:');
     for (const { dir, count } of overview.topDirs) {

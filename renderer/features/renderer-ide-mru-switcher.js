@@ -141,14 +141,14 @@
     function bindWindowKeys() {
       windowRef.addEventListener?.('keydown', handleWindowKeydown, true);
       windowRef.addEventListener?.('keyup', handleWindowKeyup, true);
-      windowRef.addEventListener?.('blur', cancel);
+      windowRef.addEventListener?.('blur', close);
       windowRef.document?.addEventListener?.('visibilitychange', handleVisibilityChange);
     }
 
     function unbindWindowKeys() {
       windowRef.removeEventListener?.('keydown', handleWindowKeydown, true);
       windowRef.removeEventListener?.('keyup', handleWindowKeyup, true);
-      windowRef.removeEventListener?.('blur', cancel);
+      windowRef.removeEventListener?.('blur', close);
       windowRef.document?.removeEventListener?.('visibilitychange', handleVisibilityChange);
     }
 
@@ -191,19 +191,14 @@
       }
     }
 
-    function commit() {
-      const path = items[selectedIndex];
-      // items is snapshotted at open(); if the target was closed elsewhere while the
-      // overlay was held, don't resurrect it — only commit to a still-open tab.
+    // items is snapshotted at open(); if the target (the selected row, or a clicked
+    // one) was closed elsewhere while the overlay was held, don't resurrect it.
+    function commit(path = items[selectedIndex]) {
       const stillOpen = !!path && (getOpenTabs() || []).some((tab) => tab && tab.path === path);
       close();
       if (stillOpen) {
         activateTab(path);
       }
-    }
-
-    function cancel() {
-      close();
     }
 
     // The single keyboard entry point, called by the #ideView keydown handler on
@@ -222,7 +217,7 @@
         return;
       }
       if (getActiveView() !== 'ide') {
-        cancel(); // the IDE is no longer the active surface — stand down
+        close(); // the IDE is no longer the active surface — stand down
         return;
       }
       const key = String(event.key || '').toLowerCase();
@@ -233,7 +228,7 @@
       } else if (key === 'escape') {
         event.preventDefault();
         event.stopPropagation();
-        cancel();
+        close();
       }
     }
 
@@ -242,7 +237,7 @@
         return;
       }
       if (getActiveView() !== 'ide') {
-        cancel(); // released the modifier on a non-IDE surface — cancel, don't switch
+        close(); // released the modifier on a non-IDE surface — cancel, don't switch
         return;
       }
       // Commit the moment the held modifier (Ctrl on Windows/Linux, Cmd on Mac) is
@@ -254,7 +249,7 @@
 
     function handleVisibilityChange() {
       if (visible && windowRef.document?.hidden) {
-        cancel();
+        close();
       }
     }
 
@@ -263,14 +258,7 @@
       if (!row) {
         return;
       }
-      // Mirror commit()'s still-open guard: a row whose tab was closed elsewhere
-      // while the overlay was held must not resurrect the file on click.
-      const path = row.dataset.ideMruPath;
-      const stillOpen = !!path && (getOpenTabs() || []).some((tab) => tab && tab.path === path);
-      close();
-      if (stillOpen) {
-        activateTab(path);
-      }
+      commit(row.dataset.ideMruPath);
     }
 
     // bindEvents/dispose are the collector's lifecycle contract. The window key

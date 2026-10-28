@@ -12,8 +12,9 @@
  * navigation, switches to the Workspace IDE, and opens the file at line via
  * the IDE controller's openFileAtLine seam. Any claiming listener MUST
  * preventDefault() to avoid a double-open; when nothing claims (rootless
- * shell, unsafe path, listener absent) the click falls through to the OS
- * fallback below — window.jennyShell.workspaceFs.openInDefaultApp({ path }).
+ * shell, listener absent) the link only marks itself "couldn't open from
+ * here". There is no OS default-app fallback: shell.openPath would run
+ * whatever file the model cited (F2).
  *
  * This module self-installs a MutationObserver on #chatTimeline and touches no
  * other file: enhancement is purely imperative DOM work that runs AFTER the
@@ -217,9 +218,6 @@
     var doc = options.document || (typeof document !== 'undefined' ? document : null);
     var win = options.window || (doc && doc.defaultView) || (typeof window !== 'undefined' ? window : null);
     var chatTimeline = options.chatTimeline || null;
-    var getWorkspaceFs = typeof options.getWorkspaceFs === 'function'
-      ? options.getWorkspaceFs
-      : function defaultGetWorkspaceFs() { return null; };
     var isEnabled = typeof options.isEnabled === 'function'
       ? options.isEnabled
       : function defaultIsEnabled() { return true; };
@@ -400,28 +398,6 @@
       }
     }
 
-    // Map a workspaceFs open failure to a short, human-readable cue. Keys off the
-    // structured CMP-WORKSPACEFS-* error code (the renderer convention — cf.
-    // renderer/shared/error-intake.js and renderer-ide-tree.js — rather than
-    // sniffing the human-prose message, which never carries the symbolic token).
-    // Codes are mirrored from services/backend/error-codes.js WORKSPACE_FS_ERROR_CODES
-    // because this UMD module cannot import services. Falls back to a generic
-    // line for any unrecognized / absent code (e.g. if the code did not survive
-    // the IPC boundary), so the cue is always useful.
-    function friendlyOpenError(relPath, error) {
-      var code = String((error && (error.error_code || error.code)) || '');
-      if (code === 'CMP-WORKSPACEFS-0004') { // NOT_FOUND
-        return jt('chat.codebaseCite.fileNotFound', 'Couldn’t open {path} — file not found.', { path: relPath });
-      }
-      if (code === 'CMP-WORKSPACEFS-0003') { // PATH_OUTSIDE_ROOT
-        return jt('chat.codebaseCite.outsideWorkspace', 'Couldn’t open {path} — outside the workspace.', { path: relPath });
-      }
-      if (code === 'CMP-WORKSPACEFS-0061') { // OPEN_UNAVAILABLE
-        return jt('chat.codebaseCite.openUnavailable', 'Couldn’t open {path} from here.', { path: relPath });
-      }
-      return 'Couldn’t open ' + relPath + '.';
-    }
-
     // Self-contained, CSS-free feedback at the point of interaction: stamp the
     // clicked link so a dead citation visibly explains itself on hover (title)
     // and exposes a styling hook (data-codebase-cite-error). Also fire the
@@ -473,29 +449,10 @@
       if (handled) {
         return;
       }
-      // No in-editor listener claimed it — fall back to opening the real file
-      // via the OS. (isSafeRelPath already vetted the path; the main process
-      // re-validates containment + existence.)
-      var fsApi = getWorkspaceFs();
-      if (!fsApi || typeof fsApi.openInDefaultApp !== 'function') {
-        appendClientLog('WARN', 'chat.codebase_cite_open_unavailable', { path: citation.path });
-        markCiteError(anchor, jt('chat.codebaseCite.openUnavailable', 'Couldn’t open {path} from here.', { path: citation.path }));
-        return;
-      }
-      // One failure handler for both a rejected promise and a synchronous throw
-      // (the call stays synchronous so the open fires this tick).
-      var reportFailure = function reportFailure(error) {
-        appendClientLog('WARN', 'chat.codebase_cite_open_failed', {
-          path: citation.path,
-          message: String((error && error.message) || error || ''),
-        });
-        markCiteError(anchor, friendlyOpenError(citation.path, error));
-      };
-      try {
-        Promise.resolve(fsApi.openInDefaultApp({ path: citation.path })).catch(reportFailure);
-      } catch (error) {
-        reportFailure(error);
-      }
+      // No in-editor listener claimed it: say so on the link. Never hand the
+      // cited file to the OS opener.
+      appendClientLog('WARN', 'chat.codebase_cite_open_unavailable', { path: citation.path });
+      markCiteError(anchor, jt('chat.codebaseCite.openUnavailable', 'Couldn’t open {path} from here.', { path: citation.path }));
     }
 
     function findCiteAnchor(target) {
@@ -616,9 +573,6 @@
     var controller = null;
     var controllerDispose = null;
 
-    function getWorkspaceFs() {
-      return (root.jennyShell && root.jennyShell.workspaceFs) || null;
-    }
     function isEnabled() {
       return enabled === true;
     }
@@ -663,7 +617,6 @@
         document: doc,
         window: root,
         chatTimeline: chatTimeline,
-        getWorkspaceFs: getWorkspaceFs,
         isEnabled: isEnabled,
       });
       // Attach is deferred to refreshFlag()->applyFlagState()->ensureAttached()

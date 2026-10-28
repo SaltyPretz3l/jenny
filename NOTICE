@@ -22,6 +22,16 @@ This repository vendors the following third-party code:
   v3.46.0 Search icon and modified only to embed its attribution and license
   notice.
 
+## CodeBoarding (services/workspace-file-map-components*.js)
+
+- Upstream: https://github.com/CodeBoarding/CodeBoarding (read at 9591385)
+- License: MIT License, Copyright (c) 2025 CodeBoarding
+- Description: Architecture maps of codebases from static analysis.
+- `services/workspace-file-map-components.js`, `-names.js` and `-fold.js` are
+  a JavaScript port of its name-tree component partition
+  (`static_analyzer/clustering/names/`); the role-word list is copied as data.
+  Deviations are recorded in `docs/plans/FILE_MAP_COMPONENTS_2026-10-25.md`.
+
 ## Sidecar media site (`vendor/sidecar-media-site`, packaged as `resources/sidecar-media-site`)
 
 - Pillow — MIT-CMU; numpy — BSD-3-Clause.
@@ -37,8 +47,22 @@ This repository vendors the following third-party code:
 - colorlog — MIT; colorama — BSD-3-Clause; six — MIT; PyYAML — MIT.
 - protobuf — BSD-3-Clause; flatbuffers — Apache-2.0; packaging — Apache-2.0
   or BSD-2-Clause.
+- onnx-asr 0.12.0 — MIT (Ilya Stupakov): https://github.com/istupakov/onnx-asr
 
 The site is built from the hash lock and verified before packaging.
+
+## Dictation speech model (downloaded on request, not bundled)
+
+Settings > Dictation downloads these pinned files into the user profile:
+
+- NVIDIA Parakeet TDT 0.6B v3 — CC-BY-4.0, by NVIDIA
+  (https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), in the int8 ONNX
+  export by Ilya Stupakov (https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx).
+- Silero VAD — MIT, by Silero Team (https://github.com/snakers4/silero-vad),
+  in the ONNX export at https://huggingface.co/istupakov/silero-vad-onnx.
+
+The push-to-talk interaction is modelled on Handy (MIT,
+https://github.com/cjpais/Handy); no Handy code is included.
 
 ## Optional PDF reading add-on (not bundled)
 

@@ -83,6 +83,36 @@ test('bindUnreadSync coalesces events per chat, reads the inbox count and hands 
   assert.equal(bridge.hasListener(), false);
 });
 
+test('bindUnreadSync hands over the failed-delivery count the same reply carries, or null', async () => {
+  const timers = makeTimers();
+  const bridge = makeBridge({ s1: { inbox: [], counts: { unread: 0, failed_delivery: 2 }, revision: 3 }, s2: { inbox: [], counts: { unread: 1 }, revision: 1 } });
+  const applied = [];
+  unread.bindUnreadSync({ bridge, apply: (...args) => applied.push(args), setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout });
+  bridge.emit({ session_id: 's1' });
+  bridge.emit({ session_id: 's2' });
+  timers.run();
+  await flush();
+  assert.deepEqual(applied, [['s1', 0, 2], ['s2', 1, 0]]);
+  const bare = { listener: null, onChanged(fn) { this.listener = fn; return () => {}; }, list: async () => ({ ok: true, counts: { unread: 5 } }) };
+  unread.bindUnreadSync({ bridge: bare, apply: (...args) => applied.push(args), setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout });
+  bare.listener({ session_id: 's3' });
+  timers.run();
+  await flush();
+  assert.deepEqual(applied[2], ['s3', 5, null], 'a reply without the count hands over null');
+});
+
+test('patchMailCounts replaces one chat\'s counts and returns null when nothing moved', () => {
+  const sessions = [{ id: 's1', unread_message_count: 1, failed_delivery_count: 0 }, { id: 's2' }];
+  const moved = unread.patchMailCounts(sessions, 's1', 1, 1);
+  assert.deepEqual(moved[0], { id: 's1', unread_message_count: 1, failed_delivery_count: 1 });
+  assert.equal(moved[1], sessions[1], 'other chats keep their identity');
+  assert.equal(unread.patchMailCounts(sessions, 's1', 1, 0), null);
+  assert.equal(unread.patchMailCounts(sessions, 's1', 1, null), null, 'null keeps the summary count');
+  assert.equal(unread.patchMailCounts(moved, 's1', 0, null)[0].failed_delivery_count, 1);
+  assert.equal(unread.patchMailCounts(sessions, 'gone', 3, 3), null);
+  assert.equal(unread.patchMailCounts(null, 's1', 3, 3), null);
+});
+
 test('bindUnreadSync ignores failures and tolerates a missing bridge', async () => {
   const timers = makeTimers();
   const bridge = makeBridge({}, { responses: { list: { ok: false, reason: 'unavailable' } } });

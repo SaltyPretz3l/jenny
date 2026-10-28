@@ -27,6 +27,7 @@ DESKTOP_SANDBOX_TYPED_FILE_TOOL_NAMES: frozenset[str] = frozenset(
         "list_dir",
         "create_artifact",
         "mermaid_generate",
+        "report_findings",
     }
 )
 DESKTOP_SANDBOX_ELECTRON_TOOL_NAMES: frozenset[str] = frozenset(

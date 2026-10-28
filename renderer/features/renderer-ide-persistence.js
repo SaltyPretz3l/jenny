@@ -20,6 +20,7 @@
     'activeStageSurface',
     'previewPath',
     'replaceJournal',
+    'searchHistory',
   ]);
 
   function noop() {}
@@ -133,6 +134,10 @@
       if (boundContext?.rootId === write.expectedRootId && boundContext?.generation === write.expectedGeneration) {
         write = { ...write, rootState: getTabRestore()?.capture(write.rootState, getIde()) || write.rootState };
       }
+      // Preferences are global, not root-bound: always write the live values so
+      // a commitPreference acknowledged after the capture is not reverted.
+      const live = ideStateUtils.toPersistedState?.(getIde());
+      if (live) write = { ...write, preferences: splitPersistedState(live).preferences };
       const result = await api.updateState(write);
       if (!result || result.updated !== true) {
         const error = new Error('Workspace IDE persistence refused the captured root context.');
@@ -219,8 +224,9 @@
       else if (persistTimer !== null || pendingWrite) void flushPersist();
     }
 
-    // A late (retried) hydrate restores the saved layout but must not drop the tabs
-    // opened while it was failing: duplicates keep live state in saved order.
+    // A hydrate restores the saved layout but must not drop the tabs opened while
+    // it awaited or was failing (a chat path chip during first activation, a
+    // retry): duplicates keep live state in saved order. No live tabs: no-op.
     // Dropping them would also orphan a dirty buffer past the exit prompt.
     // Main persists only the first MAX_OPEN_TABS (64) of a saved list, so a live tab
     // appended past the cap would vanish on restart: every live tab stays and the
@@ -322,7 +328,7 @@
       clearHydrateRetryTimer();
       hydrateInFlight = (async () => {
         try {
-          const result = await hydrateForContext(null, { keepLive: hydrateFailures > 0 });
+          const result = await hydrateForContext(null, { keepLive: true });
           if (result.hydrated && hydrateFailures > 0) {
             hydrateFailures = 0;
             onLateHydrated(getIde());

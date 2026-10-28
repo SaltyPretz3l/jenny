@@ -458,15 +458,9 @@ test('canonical collector keeps internal capture ordering out of stored events',
 
 for (const filename of fixtureFiles) {
   const fixture = loadFixture(filename);
-  const targetPhase = fixture?.metadata?.target_phase;
-  const description = fixture?.metadata?.description ?? '';
   const turnId = 't_replay';
 
-  const skip = Number.isInteger(targetPhase) && targetPhase >= 5;
-  const todo = !skip && targetPhase === 4 ? `Phase 4: ${description}` : null;
-  const testOptions = skip ? { skip: `Phase ${targetPhase}: ${description}` } : todo ? { todo } : {};
-
-  test(`replay corpus ${filename} round-trips through CanonicalTurnEventCollector`, testOptions, () => {
+  test(`replay corpus ${filename} round-trips through CanonicalTurnEventCollector`, () => {
     const collector = new CanonicalTurnEventCollector({
       store: makeStubStore(),
       turnId,

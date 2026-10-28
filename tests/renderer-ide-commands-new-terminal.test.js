@@ -1,7 +1,8 @@
 'use strict';
 
 /* The Workspace New Terminal command (palette row + Ctrl+Shift+`): offered only while the
- * terminal header's + is, running the same create path (renderer-ide-commands). */
+ * terminal header's + is, running the same create path. Row 82: the row registers from the
+ * keymap (renderer-ide-keymap via the keydown handler) into the shared registry. */
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -13,11 +14,13 @@ const {
 const { createHarness, settle } = require('./helpers/renderer-ide-harness');
 
 function buildCommands(overrides) {
-  const commands = createIdeCommands({
+  const options = {
     getActiveView: () => 'ide',
     editorHost: { runAction: () => true, toggleMinimap: () => false },
     ...overrides,
-  });
+  };
+  const commands = createIdeCommands(options);
+  createViewKeydownHandler({ ...options, state: { ui: { activeView: 'ide' } }, ideCommands: commands, windowRef: { document: null } });
   return { commands };
 }
 
@@ -34,15 +37,16 @@ function fakeKeyEvent(key, mods = {}) {
   };
 }
 
-test('New Terminal is a palette row only while its layout action is offered', () => {
+test('New Terminal is a palette row only while a terminal can be added', () => {
   let offered = true;
   const runs = [];
   const { commands } = buildCommands({
-    layoutActions: { get newTerminal() { return offered ? () => { runs.push(true); } : undefined; } },
+    newTerminal: () => { runs.push(true); },
+    canAddTerminal: () => offered,
   });
   const row = commands.getCommandItems().find((i) => i.id === 'ide:new-terminal');
   assert.ok(row, 'listed while a terminal can be added');
-  assert.equal(row.label, 'New Terminal');
+  assert.equal(row.label, 'Terminal: Create New Terminal');
   assert.equal(row.hint, 'Ctrl+Shift+`');
   assert.equal(row.group, 'Workspace');
   row.run();
@@ -52,11 +56,11 @@ test('New Terminal is a palette row only while its layout action is offered', ()
   assert.equal(commands.getCommandItems().some((i) => i.id === 'ide:new-terminal'), false, 'hidden at the cap / without terminals');
 });
 
-test('Ctrl+Shift+Backquote opens a new terminal; Ctrl+Backquote stays Toggle Panel', () => {
+test('Ctrl+Shift+Backquote opens a new terminal; Ctrl+Backquote stays Toggle Terminal', () => {
   const calls = { newTerminal: 0, toggle: 0 };
   const handler = createViewKeydownHandler({
     state: { ui: { activeView: 'ide' } },
-    bottomPanel: { toggle: () => { calls.toggle += 1; } },
+    bottomPanel: { toggle() {}, open: (id) => { if (id === 'terminal') calls.toggle += 1; } },
     newTerminal: () => { calls.newTerminal += 1; },
   });
   const chord = fakeKeyEvent('~', { ctrl: true, shift: true });
@@ -67,7 +71,7 @@ test('Ctrl+Shift+Backquote opens a new terminal; Ctrl+Backquote stays Toggle Pan
   assert.equal(calls.toggle, 0, 'the shifted chord does not toggle the panel');
 
   handler(fakeKeyEvent('`', { ctrl: true }));
-  assert.deepEqual(calls, { newTerminal: 1, toggle: 1 }, 'plain Ctrl+` keeps toggling the panel');
+  assert.deepEqual(calls, { newTerminal: 1, toggle: 1 }, 'plain Ctrl+` keeps showing the terminal');
 
   const withAlt = fakeKeyEvent('~', { ctrl: true, shift: true, alt: true });
   withAlt.code = 'Backquote';

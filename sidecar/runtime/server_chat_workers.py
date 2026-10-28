@@ -25,7 +25,12 @@ from sidecar.runtime.multiplexer import (
 )
 from sidecar.runtime.outcomes import ProcessOutcome
 from sidecar.runtime.rpc import error_response
-from sidecar.runtime.turn_state import LiveRunModeState, bind_live_run_mode_state
+from sidecar.runtime.turn_state import (
+    LiveRunModeState,
+    PendingMailQueue,
+    bind_live_run_mode_state,
+    bind_pending_mail,
+)
 
 ChatSendRunner = Callable[..., ProcessOutcome]
 FrameWriter = Callable[[dict[str, Any]], None]
@@ -165,7 +170,11 @@ def make_chat_send_worker(  # noqa: PLR0913
             live_run_mode = getattr(cancel_handle, "live_run_mode", None)
             if not isinstance(live_run_mode, LiveRunModeState):
                 live_run_mode = _initial_live_run_mode(message)
-            with bind_live_run_mode_state(live_run_mode):
+            # Mid-turn mail (row 70 W2a): session.mail_arrived fills it, the tool loop drains it.
+            pending_mail = getattr(cancel_handle, "pending_mail", None)
+            if not isinstance(pending_mail, PendingMailQueue):
+                pending_mail = PendingMailQueue()
+            with bind_live_run_mode_state(live_run_mode), bind_pending_mail(pending_mail):
                 outcome = chat_send_runner(message, **runner_options)
             if getattr(outcome, "deliver_after_worker_cleanup", False):
                 paused_outcome = outcome

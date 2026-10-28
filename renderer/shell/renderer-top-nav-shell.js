@@ -11,8 +11,7 @@
   root.rendererTopNavShell = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
-  // Rail tab labels mirror staticModel.tabs (renderer-bootstrap-utils.js); the
-  // rail itself filters to VIEW_TAB_ORDER, so 'artifacts' never renders here.
+  // The rail filters to VIEW_TAB_ORDER, so 'artifacts' never renders here.
   var DEFAULT_VIEW_TABS = [
     { id: 'home', label: jt('shell.topNav.home', 'Home') },
     { id: 'chat', label: jt('shell.topNav.chat', 'Chat') },
@@ -52,7 +51,7 @@
 
     const railController = (rootRef.rendererTopRailUtils || {}).createTopRailController?.({
       state,
-      staticModel: deps.staticModel || { tabs: DEFAULT_VIEW_TABS },
+      staticModel: { tabs: DEFAULT_VIEW_TABS },
       dom: {
         topRail: deps.dom.topRail,
         topRailTabs: deps.dom.topRailTabs,
@@ -267,7 +266,10 @@
       if (!descriptor?.panel) return null;
       const panelState = panelRegistry.getViewPanelState(targetView);
       const bounds = panelRegistry.getPanelWidthBounds(targetView);
-      return { viewId: targetView, ...panelState, ...bounds };
+      // `width` is the rendered (window-clamped) width, so a drag or arrow key
+      // starts from what is on screen; the chosen width stays in the registry.
+      const width = Math.min(Math.max(panelState.width, bounds.min), bounds.max);
+      return { viewId: targetView, ...panelState, ...bounds, width };
     }
 
     function setActivePanelWidth(width, options = {}) {
@@ -288,10 +290,6 @@
       panelRegistry.resetPanelWidth(viewId, { apply: viewId === state.ui.activeView, persist: true });
     }
 
-    function persistActivePanelWidth(width) {
-      setActivePanelWidth(width, { persist: true });
-    }
-
     function setPanelResizing(resizing) {
       workspace?.classList.toggle('panel-resizing', resizing === true);
     }
@@ -299,16 +297,6 @@
     function isActivePanelCollapsed() {
       const panelState = getActivePanelState();
       return Boolean(panelState?.collapsed || workspace?.dataset?.panelAutoCollapsed === 'true');
-    }
-
-    function focusChatsSearch() {
-      setActivePanelCollapsed(false);
-      const focus = () => searchInput?.focus?.();
-      if (typeof windowRef.requestAnimationFrame === 'function') {
-        windowRef.requestAnimationFrame(focus);
-      } else {
-        windowRef.setTimeout?.(focus, 0);
-      }
     }
 
     function bind() {
@@ -329,9 +317,13 @@
       const requestFrame = typeof windowRef?.requestAnimationFrame === 'function'
         ? windowRef.requestAnimationFrame.bind(windowRef)
         : (callback) => windowRef.setTimeout(callback, 0);
+      // Only the panel's auto-collapse and width depend on the window size; the
+      // rail's own ResizeObserver re-measures its indicator.
       resizeFrame = requestFrame(() => {
         resizeFrame = 0;
-        applyViewChrome();
+        panelRegistry?.applyPanelForView?.(state.ui.activeView);
+        syncPanelToggle();
+        syncChatsStrip();
       });
     }
 
@@ -377,11 +369,8 @@
       resetActivePanelWidth,
       setPanelResizing,
       isActivePanelCollapsed,
-      focusChatsSearch,
-      persistActivePanelWidth,
       syncChatsStrip,
       patchChatsStripRuntime,
-      getPanelRegistry: () => panelRegistry,
       focusActiveViewTab,
       bind,
       dispose,

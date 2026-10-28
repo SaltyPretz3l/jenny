@@ -5,7 +5,7 @@
   gap: var(--space-3);
   margin-top: var(--space-8);
   padding-top: var(--space-5);
-  border-top: 1px solid color-mix(in srgb, var(--border-subtle) 85%, transparent);
+  border-top: 1px solid var(--cal-hairline);
 }
 
 .cal-quickadd__affordance {
@@ -49,12 +49,6 @@
 
 .cal-quickadd .inv-text-field-control {
   width: 100%;
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid color-mix(in srgb, var(--border-default) 86%, transparent);
-  border-radius: var(--radius-base);
-  background: var(--surface-input-background);
-  color: var(--text-primary);
-  font-size: var(--font-size-body);
 }
 
 .cal-quickadd__error,
@@ -67,7 +61,7 @@
   display: grid;
   gap: var(--space-3);
   padding-top: var(--space-4);
-  border-top: 1px solid color-mix(in srgb, var(--border-subtle) 85%, transparent);
+  border-top: 1px solid var(--cal-hairline);
 }
 
 .cal-quickadd__preview {
@@ -103,7 +97,7 @@
   display: grid;
   gap: var(--space-5);
   padding-top: var(--space-5);
-  border-top: 1px solid color-mix(in srgb, var(--border-subtle) 85%, transparent);
+  border-top: 1px solid var(--cal-hairline);
 }
 
 .cal-form__heading {
@@ -152,6 +146,7 @@
   font-size: var(--font-size-sm);
 }
 
+.cal-quickadd .inv-text-field-control,
 .cal-form .inv-text-field-control,
 .cal-form .inv-date-field-control,
 .cal-form .inv-time-field-control,
@@ -205,7 +200,7 @@
   flex-wrap: wrap;
   gap: var(--space-5);
   padding-top: var(--space-5);
-  border-top: 1px solid color-mix(in srgb, var(--border-subtle) 85%, transparent);
+  border-top: 1px solid var(--cal-hairline);
 }
 
 .cal-feeds .inv-url-field {

@@ -11,7 +11,6 @@ const { JSDOM } = require('jsdom');
 
 const toolCallUtils = require('../renderer/chat/tool-call-utils');
 const detailBody = require('../renderer/chat/renderer-tool-detail-body');
-const toolShellUtils = require('../renderer/chat/renderer-tool-shell-utils');
 const fileDiffBindings = require('../renderer/chat/renderer-file-diff-bindings');
 const { escapeHtml } = require('../renderer/shared/string-utils');
 const { withInventory } = require('./helpers/inventory-harness');
@@ -73,22 +72,11 @@ function detailDoc(model) {
   return new JSDOM(`<body>${html}</body>`).window.document;
 }
 
-function shellDoc(t, model) {
-  withInventory(t);
-  const renderer = toolShellUtils.createToolShellRenderer({ escapeHtml, toolCallUtils, sanitizeHtmlFragment: null });
-  const html = renderer.renderToolShell({
-    displayToolName: model.toolName, summary: '', status: model.isError ? 'errored' : 'completed',
-    statusLabel: '', isRunning: false, durationLabel: '', defaultExpanded: true, ...model,
-    toolKind: model.toolName === 'run_command' ? 'run_command' : model.toolKind,
-  });
-  assert.ok(html, `${model.toolName} should render a shell`);
-  return new JSDOM(`<body>${html}</body>`).window.document;
-}
-
+// The detail body is the only renderer of a scripted tool's card body.
 function renderers(t) {
+  withInventory(t);
   return [
     ['detail body', (model) => detailDoc(model)],
-    ['shell', (model) => shellDoc(t, model)],
   ];
 }
 

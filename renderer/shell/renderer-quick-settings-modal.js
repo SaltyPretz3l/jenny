@@ -2,9 +2,10 @@
  *
  * Tier D quick-settings modal (JENNY_UIUX_OVERHAUL_PLAN.md L91-94, resolved
  * decisions L123-138, hardening L146-181): a compact Ctrl/Cmd+, overlay over
- * a curated subset of the settings catalog -- theme/palette, model context +
- * force-local inference, text size. Same inventory controls + write paths
- * as the full settings page; this is a VIEW, not a second store.
+ * a curated subset of the settings catalog -- palette, a current-model tuning
+ * shortcut + force-local inference, text size + session opening. Same
+ * inventory controls + write paths as the full settings page; this is a VIEW,
+ * not a second store.
  *
  * DOM contract: styles/quick-settings.css documents the exact markup shape
  * (quick-settings-overlay/scrim/dialog/header/body/slot/row/row-label/
@@ -19,18 +20,19 @@
  * assigned via innerHTML onto a plain structural host element.
  *
  * Overlay integration: renderer-overlay-manager.js owns Escape + focus-trap +
- * focus-restore -- open()/close() just call manager.open()/close() and the
- * scrim/close button call close() directly. If overlayManager is absent
- * (older wiring / a harness that never built one), a local guarded Escape
- * keydown on documentRef is the fallback (no other Escape handling here).
+ * focus-restore + the inert background -- open()/close() just call
+ * manager.open()/close() and the scrim/close button call close() directly.
+ * The shell binds the manager before this modal (index.html loads it first);
+ * without one the modal logs a WARN and opens with none of those.
  *
- * Persistence contracts (three independent adapters -- NEVER cross-write):
- *   - appearance (palette + font-scale): adapters.appearance
+ * Persistence contracts (independent adapters -- NEVER cross-write):
+ *   - appearance (palette + text size): adapters.appearance
  *     (createAppearanceAdapter, localStorage).
  *   - force-local inference: adapters.offline (createOfflineAdapter,
  *     offline.updateSettings IPC).
+ *   - session opening: adapters.sessionOpen (sessionOpenPrefUtils).
  *   - runtimePrefs.getCurrent() reads the active session model only to scope
- *     model-specific context tuning. Composer remains the sole model selector.
+ *     the model tuning shortcut. Composer remains the sole model selector.
  *
  * Every dependency is injected via `deps`, with a globalThis-then-require()
  * production fallback mirroring renderer-settings-persistence-adapters.js /
@@ -102,11 +104,14 @@
 
     let els = null;
     let opened = false;
-    let fallbackEscapeAttached = false;
     let registeredWithOverlayManager = false;
     let lifecycleGeneration = 0;
     let disposed = false;
-    let fallbackInertRecords = [];
+
+    // One inventory builder's TRUSTED HTML, '' when the builder is absent.
+    function inv(name, opts) {
+      return inventory && inventory[name] ? inventory[name](opts) : '';
+    }
 
     function resolveInertTargets() {
       let targets = inertTargetsSource;
@@ -117,35 +122,6 @@
       return targets.filter((target, index) => target
         && typeof target.setAttribute === 'function'
         && targets.indexOf(target) === index);
-    }
-
-    function applyFallbackInert(targets) {
-      fallbackInertRecords = targets.map((target) => {
-        const hadAttribute = target.hasAttribute('inert');
-        const hasProperty = 'inert' in target;
-        const record = {
-          target,
-          hadAttribute,
-          attributeValue: hadAttribute ? target.getAttribute('inert') : null,
-          hasProperty,
-          propertyValue: hasProperty ? Boolean(target.inert) : false,
-        };
-        if (hasProperty) target.inert = true;
-        else target.setAttribute('inert', '');
-        return record;
-      });
-    }
-
-    function restoreFallbackInert() {
-      fallbackInertRecords.forEach((record) => {
-        if (record.hasProperty) record.target.inert = record.propertyValue;
-        if (record.hadAttribute) {
-          record.target.setAttribute('inert', record.attributeValue == null ? '' : record.attributeValue);
-        } else {
-          record.target.removeAttribute('inert');
-        }
-      });
-      fallbackInertRecords = [];
     }
 
     // ── generic write-with-rollback-reflect helper ──
@@ -202,7 +178,7 @@
       const title = documentRef.createElement('h3');
       title.className = 'quick-settings-slot-title';
       title.textContent = jt('quickSettings.theme', 'Theme');
-      const { row, control } = buildRow('Palette');
+      const { row, control } = buildRow(jt('quickSettings.palette', 'Palette'));
       slotRoot.appendChild(title);
       slotRoot.appendChild(row);
 
@@ -211,12 +187,12 @@
           ? appearanceUtils.getPalettePresets()
           : [];
         const current = readAppearance();
-        buildInventoryHtml(control, inventory && inventory.selectField ? inventory.selectField({
+        buildInventoryHtml(control, inv('selectField', {
           id: 'quickSettingsPalette',
           ariaLabel: jt('quickSettings.palette', 'Palette'),
           value: current.paletteId,
           options: presets.map((p) => ({ value: p.id, label: p.label })),
-        }) : '');
+        }));
         const selectEl = control.querySelector('select');
         if (selectEl) {
           selectEl.addEventListener('change', () => {
@@ -285,7 +261,7 @@
           || ''
         ).trim().toLowerCase();
         const tuningSupported = !engineType || ['ollama', 'vllm', 'openai-compatible'].includes(engineType);
-        buildInventoryHtml(contextRow.control, tuningSupported && inventory && inventory.actionButton ? inventory.actionButton({
+        buildInventoryHtml(contextRow.control, tuningSupported ? inv('actionButton', {
           id: 'open-model-tuning', label: jt('quickSettings.tuneCurrentModel', 'Tune current model'), variant: 'secondary',
           disabled: !modelKnown, ariaLabel: jt('quickSettings.openCurrentModelTuning', 'Open current model tuning'),
           title: jt('quickSettings.openCurrentModelTuningTitle', 'Open per-model tuning for the current model'),
@@ -307,13 +283,13 @@
 
       function renderLocalOnly() {
         const offlineState = state && state.offline && typeof state.offline === 'object' ? state.offline : {};
-        buildInventoryHtml(localOnlyRow.control, inventory && inventory.toggleSwitch ? inventory.toggleSwitch({
+        buildInventoryHtml(localOnlyRow.control, inv('toggleSwitch', {
           id: 'quickSettingsLocalOnly',
           // The row label names the switch; a second visible label repeated it.
           bare: true,
           labelledBy: 'quickSettingsLocalOnlyLabel',
           checked: offlineState.mode === 'local_only',
-        }) : '');
+        }));
         renderReadinessNote(offlineState);
       }
 
@@ -380,20 +356,12 @@
       function renderFontScale() {
         const current = readAppearance();
         const options = fontScalePresets.map((p) => ({ value: p.id, label: p.label }));
-        const html = useSegmentedFontScale
-          ? (inventory && inventory.segmentedControl ? inventory.segmentedControl({
-            id: 'quickSettingsFontScale',
-            ariaLabel: jt('quickSettings.fontScale', 'Text size'),
-            value: current.fontScaleId,
-            options,
-          }) : '')
-          : (inventory && inventory.selectField ? inventory.selectField({
-            id: 'quickSettingsFontScale',
-            ariaLabel: jt('quickSettings.fontScale', 'Text size'),
-            value: current.fontScaleId,
-            options,
-          }) : '');
-        buildInventoryHtml(fontScaleRow.control, html);
+        buildInventoryHtml(fontScaleRow.control, inv(useSegmentedFontScale ? 'segmentedControl' : 'selectField', {
+          id: 'quickSettingsFontScale',
+          ariaLabel: jt('quickSettings.fontScale', 'Text size'),
+          value: current.fontScaleId,
+          options,
+        }));
         if (!useSegmentedFontScale) {
           const selectEl = fontScaleRow.control.querySelector('select');
           if (selectEl) {
@@ -421,11 +389,11 @@
 
       function renderSessionOpen() {
         const checked = adapters.sessionOpen?.read?.() === true;
-        buildInventoryHtml(sessionOpenRow.control, inventory?.toggleSwitch ? inventory.toggleSwitch({
+        buildInventoryHtml(sessionOpenRow.control, inv('toggleSwitch', {
           id: 'quickSettingsSessionsOpenInNewTab',
           label: jt('quickSettings.openSessionsInNewTab', 'Open sessions in a new tab'),
           checked,
-        }) : '');
+        }));
       }
       sessionOpenRow.control.addEventListener('inv-toggle-change', (event) => {
         if (event.detail?.id !== 'quickSettingsSessionsOpenInNewTab') return;
@@ -461,13 +429,13 @@
       heading.id = 'quickSettingsTitle';
       heading.textContent = jt('quickSettings.title', 'Quick settings');
       const closeHost = documentRef.createElement('div');
-      buildInventoryHtml(closeHost, inventory && inventory.actionButton ? inventory.actionButton({
+      buildInventoryHtml(closeHost, inv('actionButton', {
         id: 'quick-settings-close',
         ariaLabel: jt('common.close', 'Close'),
         title: jt('quickSettings.close', 'Close quick settings'),
         plain: true,
         className: 'quick-settings-close',
-      }) : '');
+      }));
       const closeButton = closeHost.firstElementChild;
       header.appendChild(heading);
       if (closeButton) header.appendChild(closeButton);
@@ -484,12 +452,12 @@
       const footer = documentRef.createElement('footer');
       footer.className = 'quick-settings-footer';
       const allSettingsHost = documentRef.createElement('div');
-      buildInventoryHtml(allSettingsHost, inventory && inventory.actionButton ? inventory.actionButton({
+      buildInventoryHtml(allSettingsHost, inv('actionButton', {
         id: 'quick-settings-all',
         label: jt('quickSettings.allSettings', 'All settings'),
         plain: true,
         className: 'quick-settings-all',
-      }) : '');
+      }));
       const allSettingsButton = allSettingsHost.firstElementChild;
       if (allSettingsButton) footer.appendChild(allSettingsButton);
 
@@ -529,28 +497,6 @@
       els.displaySlot.render();
     }
 
-    // ── fallback Escape (only wired when overlayManager is absent) ──
-    function handleFallbackEscape(event) {
-      if (!opened) return;
-      if (event.defaultPrevented) return;
-      if (event.isComposing) return;
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      close();
-    }
-
-    function attachFallbackEscape() {
-      if (fallbackEscapeAttached || !documentRef) return;
-      documentRef.addEventListener('keydown', handleFallbackEscape, true);
-      fallbackEscapeAttached = true;
-    }
-
-    function detachFallbackEscape() {
-      if (!fallbackEscapeAttached || !documentRef) return;
-      documentRef.removeEventListener('keydown', handleFallbackEscape, true);
-      fallbackEscapeAttached = false;
-    }
-
     // ── open / close / toggle ──
     function open() {
       if (disposed || !documentRef || opened) {
@@ -562,18 +508,14 @@
       refreshAll();
       dom.overlay.hidden = false;
       opened = true;
-      const inertTargets = resolveInertTargets();
-      if (overlayManager && typeof overlayManager.open === 'function') {
-        registeredWithOverlayManager = overlayManager.open({
-          id: OVERLAY_ID,
-          root: dom.dialog,
-          onRequestClose: () => close(),
-          inertTargets,
-        }) === true;
-      }
+      registeredWithOverlayManager = typeof overlayManager?.open === 'function' && overlayManager.open({
+        id: OVERLAY_ID,
+        root: dom.dialog,
+        onRequestClose: () => close(),
+        inertTargets: resolveInertTargets(),
+      }) === true;
       if (!registeredWithOverlayManager) {
-        applyFallbackInert(inertTargets);
-        attachFallbackEscape();
+        appendClientLog('WARN', 'quick_settings.overlay_manager_unavailable', { present: Boolean(overlayManager) });
       }
       const focusTarget = dom.body.querySelector('select, button, [tabindex]');
       Promise.resolve().then(() => {
@@ -594,12 +536,7 @@
       lifecycleGeneration += 1;
       opened = false;
       els.overlay.hidden = true;
-      detachFallbackEscape();
-      if (registeredWithOverlayManager && overlayManager && typeof overlayManager.close === 'function') {
-        overlayManager.close(OVERLAY_ID);
-      } else {
-        restoreFallbackInert();
-      }
+      if (registeredWithOverlayManager) overlayManager.close?.(OVERLAY_ID);
       registeredWithOverlayManager = false;
       return true;
     }
@@ -621,13 +558,6 @@
       if (opened) close();
       disposed = true;
       lifecycleGeneration += 1;
-      detachFallbackEscape();
-      if (registeredWithOverlayManager && overlayManager && typeof overlayManager.close === 'function') {
-        overlayManager.close(OVERLAY_ID);
-      } else {
-        restoreFallbackInert();
-      }
-      registeredWithOverlayManager = false;
       if (els && els.overlay && typeof els.overlay.remove === 'function') els.overlay.remove();
       els = null;
     }

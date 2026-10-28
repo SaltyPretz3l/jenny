@@ -90,6 +90,14 @@ test('approved enabled catalogs reconcile, retain on rejected reads, and dispose
   assert.equal(retry.registry.listCommands().length, 1);
 });
 
+test('opening the slash menu from the + menu refreshes the prompt catalog', async t => {
+  const h = harness(t);
+  assert.equal(h.registry.listCommands().length, 0);
+  h.chatInput.dispatchEvent(new h.dom.window.CustomEvent('jenny:open-slash-menu', { detail: { kind: 'commands' } }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(h.registry.listCommands().map(entry => entry.name), ['/rea-investigate_feature']);
+});
+
 test('missing argument keeps command draft, toasts its name, and never calls bridge', async t => {
   const h = harness(t); await h.manager.refresh();
   const dispatch = createSendSlashDispatch({ state: h.state, registry: h.registry, chatInput: h.chatInput });

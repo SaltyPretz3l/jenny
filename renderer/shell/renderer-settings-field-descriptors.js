@@ -349,13 +349,41 @@
   def({ id: 'editorTabSizeSelect', sectionId: 'editor', kind: 'enum', default: 2, adapterId: 'workspaceIde', key: 'tabSize', options: 'source:editorTabSizes', control: 'select', controlReason: 'runtime-options:S5-decides' });
   def({ id: 'editorRenderWhitespaceSelect', sectionId: 'editor', kind: 'enum', default: 'selection', adapterId: 'workspaceIde', key: 'renderWhitespace', options: 'source:editorWhitespace' });
   def({ id: 'editorRulersSelect', sectionId: 'editor', kind: 'enum', default: '', adapterId: 'workspaceIde', key: 'rulers', options: 'source:editorRulers' });
+  def({ id: 'editorTerminalScrollbackInput', sectionId: 'editor', kind: 'integer', default: 1000, adapterId: 'workspaceIde', key: 'terminalScrollback',
+    validation: { min: 500, max: 25000, step: 100 }, presentation: { unit: jt('settings.editor.terminalScrollbackUnit', 'lines') },
+    copy: { label: jt('settings.editor.terminalScrollback', 'Terminal scrollback'), description: jt('settings.editor.terminalScrollbackHelpCost', 'How many lines each terminal keeps to scroll back through, up to 25,000. Each terminal uses about 1.5 MB per 1,000 lines.'), keywords: [jt('settings.editor.terminalScrollbackKeyword', 'terminal history')] } });
+  def({ id: 'editorTerminalProfileSelect', sectionId: 'editor', kind: 'enum', default: '', adapterId: 'workspaceIde', key: 'terminalDefaultProfile', options: 'source:terminalProfiles',
+    copy: { label: jt('settings.editor.terminalProfile', 'Terminal shell'), description: jt('settings.editor.terminalProfileHelp', 'The shell a new terminal starts. A shell that is no longer installed falls back to the default.'), keywords: [jt('settings.editor.terminalProfileKeyword', 'shell profile')] } });
   bool('editorWordWrapToggle', 'editor', 'workspaceIde', 'wordWrap', false);
   bool('editorMinimapToggle', 'editor', 'workspaceIde', 'minimap', true);
   bool('editorLineNumbersToggle', 'editor', 'workspaceIde', 'lineNumbers', true);
   bool('editorFormatOnSaveToggle', 'editor', 'workspaceIde', 'formatOnSave', false);
   bool('editorTrimTrailingWhitespaceToggle', 'editor', 'workspaceIde', 'trimTrailingWhitespace', false);
   bool('editorInsertFinalNewlineToggle', 'editor', 'workspaceIde', 'insertFinalNewline', false);
-  bool('editorAutoSaveToggle', 'editor', 'workspaceIde', 'autoSaveEnabled', false);
+  // Row 82 E1 (plan 5.3): the VS Code editor options, additive keys of the same slice.
+  def({ id: 'editorFontFamilyField', sectionId: 'editor', kind: 'text', default: '', adapterId: 'workspaceIde', key: 'fontFamily', validation: { maxLength: 200 },
+    defaultLabel: jt('settings.editor.fontFamilyDefault', 'App code font') });
+  def({ id: 'editorCursorStyleSelect', sectionId: 'editor', kind: 'enum', default: 'line', adapterId: 'workspaceIde', key: 'cursorStyle',
+    options: [{ value: 'line', label: jt('settings.editor.cursorStyle.line', 'Line') }, { value: 'block', label: jt('settings.editor.cursorStyle.block', 'Block') }, { value: 'underline', label: jt('settings.editor.cursorStyle.underline', 'Underline') }] });
+  def({ id: 'editorCursorBlinkingSelect', sectionId: 'editor', kind: 'enum', default: 'smooth', adapterId: 'workspaceIde', key: 'cursorBlinking',
+    options: [{ value: 'smooth', label: jt('settings.editor.cursorBlinking.smooth', 'Smooth') }, { value: 'blink', label: jt('settings.editor.cursorBlinking.blink', 'Blink') }, { value: 'phase', label: jt('settings.editor.cursorBlinking.phase', 'Phase') },
+      { value: 'expand', label: jt('settings.editor.cursorBlinking.expand', 'Expand') }, { value: 'solid', label: jt('settings.editor.cursorBlinking.solid', 'Solid') }] });
+  bool('editorSmoothCaretToggle', 'editor', 'workspaceIde', 'cursorSmoothCaretAnimation', true);
+  bool('editorFontLigaturesToggle', 'editor', 'workspaceIde', 'fontLigatures', true);
+  bool('editorInsertSpacesToggle', 'editor', 'workspaceIde', 'insertSpaces', true);
+  bool('editorDetectIndentationToggle', 'editor', 'workspaceIde', 'detectIndentation', true);
+  def({ id: 'editorAutoSaveModeSelect', sectionId: 'editor', kind: 'enum', default: 'off', adapterId: 'workspaceIde', key: 'autoSaveMode', control: 'select', controlReason: 'row-standard:labels-over-260px',
+    options: [{ value: 'off', label: jt('common.off', 'Off') }, { value: 'afterDelay', label: jt('settings.editor.autoSave.afterDelay', 'After a delay') },
+      { value: 'onFocusChange', label: jt('settings.editor.autoSave.onFocusChange', 'When the editor loses focus') }, { value: 'onWindowChange', label: jt('settings.editor.autoSave.onWindowChange', 'When the window loses focus') }] });
+  def({ id: 'editorAutoSaveDelayInput', sectionId: 'editor', kind: 'integer', default: 1000, adapterId: 'workspaceIde', key: 'autoSaveDelayMs',
+    validation: { min: 100, max: 60000, step: 100 }, presentation: { unit: UNIT.sec, scale: 1000 } });
+  bool('editorBracketPairColorizationToggle', 'editor', 'workspaceIde', 'bracketPairColorization', true);
+  bool('editorIndentGuidesToggle', 'editor', 'workspaceIde', 'indentGuides', true);
+  bool('editorStickyScrollToggle', 'editor', 'workspaceIde', 'stickyScroll', true);
+  bool('editorFoldingToggle', 'editor', 'workspaceIde', 'folding', true);
+  bool('editorScrollBeyondLastLineToggle', 'editor', 'workspaceIde', 'scrollBeyondLastLine', false);
+  bool('editorMouseWheelZoomToggle', 'editor', 'workspaceIde', 'mouseWheelZoom', true);
+  bool('editorInlineBlameToggle', 'editor', 'workspaceIde', 'inlineBlame', true);
 
   // Home (scratchpad settings object). The contextual-tips control is retired (checkpoint 1, D2).
   def({ id: 'homeScratchpadCaptureSelect', sectionId: 'home', kind: 'enum', default: 'append', adapterId: 'home', key: 'captureMode',
@@ -366,6 +394,8 @@
   bool('notificationsEnabledToggle', 'notifications', 'windowUi.notifications', 'enabled', true);
   bool('notificationsBackgroundOnlyToggle', 'notifications', 'windowUi.notifications', 'onlyWhenUnfocused', true);
   bool('notificationsSoundToggle', 'notifications', 'windowUi.notifications', 'sound', true);
+  // Dictation (row 84): the feature flag, through the features adapter like spell check.
+  bool('dictationEnabledToggle', 'dictation', 'features', 'featureFlags.dictation', true);
   ['replies', 'failures', 'permissions', 'questions', 'reminders'].forEach((category) => {
     bool('notificationsCategory' + category[0].toUpperCase() + category.slice(1) + 'Toggle', 'notifications', 'windowUi.notifications', 'categories.' + category, true);
   });
@@ -518,8 +548,6 @@
 
   return {
     KINDS,
-    CONTROLS,
-    SEGMENTED_MAX_OPTIONS,
     LIMITS_PAGE_GROUPS,
     defineSettingDescriptor,
     getSettingDescriptor,

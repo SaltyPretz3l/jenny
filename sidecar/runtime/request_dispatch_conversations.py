@@ -161,12 +161,17 @@ def _purge_call(params: dict[str, Any]) -> ConversationCall:
 def _search_call(params: dict[str, Any]) -> ConversationCall:
     query = _text(params.get("query"), field="query", maximum=MAX_QUERY_CHARS)
     project_id = _id(params.get("project_id"), field="project_id")
+    # Row 69: the primary chat searches every project; Electron decides who may.
+    all_projects = params.get("all_projects", False)
+    if all_projects is not True and all_projects is not False:
+        raise ValueError("all_projects must be a boolean")
     exclude = _id_list(params.get("exclude_session_ids", []), field="exclude_session_ids",
                        maximum=MAX_EXCLUDED_SESSIONS)
     limit = _bounded_int(params.get("limit"), field="limit", default=DEFAULT_SEARCH_LIMIT,
                          maximum=MAX_SEARCH_LIMIT)
     return lambda store: conversation_search.search_conversations(
-        store, query=query, project_id=project_id, exclude_session_ids=exclude, limit=limit,
+        store, query=query, project_id=None if all_projects else project_id,
+        exclude_session_ids=exclude, limit=limit,
         embedder=semantic_runtime.current_embedder(),
     )
 

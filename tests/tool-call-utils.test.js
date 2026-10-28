@@ -225,7 +225,7 @@ test('every approval-gated manifest tool (plus fetch_url) declares optional purp
       .map((tool) => tool.name),
     'fetch_url',
   ])].sort();
-  assert.equal(expectedNames.length, 14, expectedNames.join(','));
+  assert.equal(expectedNames.length, 15, expectedNames.join(',')); // 15th: session_stop (row 69)
   assert.equal(expectedNames.includes('exit_plan_mode'), false, 'the plan card is not an intent card');
   // propose_command's purpose is the proposal card's display text, not an
   // approval-card intent: the tool itself only records a proposal.
@@ -239,10 +239,13 @@ test('every approval-gated manifest tool (plus fetch_url) declares optional purp
   assert.deepEqual(withPurpose, [...expectedNames, 'todo_write'].sort());
   for (const toolName of expectedNames) {
     const tool = manifest.tools.find((candidate) => candidate.name === toolName);
-    assert.deepEqual(tool.parameters.properties.purpose, {
+    // A tool may bound the purpose (session tools, row 69); the shape is otherwise fixed.
+    const { maxLength, ...purpose } = tool.parameters.properties.purpose;
+    assert.deepEqual(purpose, {
       type: 'string',
       description: "One short plain sentence explaining what will happen in the user's terms.",
-    });
+    }, toolName);
+    assert.ok(maxLength === undefined || maxLength === 1024, `${toolName} purpose bound`);
     assert.equal(tool.parameters.required?.includes('purpose') || false, false, toolName);
   }
 });

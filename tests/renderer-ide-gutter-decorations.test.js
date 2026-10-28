@@ -240,6 +240,7 @@ function makeEditorHost(initial) {
     getActivePath: () => state.activePath,
     getDocumentKind: () => state.kind,
     getValue: () => state.value,
+    isLargeFile: () => state.large === true,
     setGutterDecorations: (path, decs) => {
       calls.push({ path, decs });
       return Array.isArray(decs) ? decs.length : 0;
@@ -247,10 +248,9 @@ function makeEditorHost(initial) {
   };
 }
 
-function makeWindow(host) {
+function makeWindow() {
   const listeners = {};
   return {
-    rendererIdeActiveEditorReader: { isLargeFile: () => host.state.large === true },
     addEventListener: (name, fn) => { (listeners[name] = listeners[name] || []).push(fn); },
     removeEventListener: (name, fn) => {
       listeners[name] = (listeners[name] || []).filter((cb) => cb !== fn);

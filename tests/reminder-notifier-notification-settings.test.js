@@ -27,7 +27,7 @@ function dueReminder() {
   };
 }
 
-function createHarness({ notificationSettings, getWindowUiState, window } = {}) {
+function createHarness({ notificationSettings, getWindowUiState, window, isEnabled } = {}) {
   let reminders = [dueReminder()];
   const notifications = [];
   const bridgeEvents = [];
@@ -61,6 +61,7 @@ function createHarness({ notificationSettings, getWindowUiState, window } = {}) 
       return notification;
     },
     isSupported: () => true,
+    ...(isEnabled ? { isEnabled } : {}),
     sendBridgeEvent: (event, payload) => bridgeEvents.push({ event, payload }),
     log: (level, event, details) => logs.push({ level, event, details }),
     now: () => NOW_MS,
@@ -98,6 +99,15 @@ test('the master switch off skips the reminder toast', () => {
   harness.notifier.tick();
   assert.equal(harness.notifications.length, 0);
   assert.equal(harness.bridgeEvents.length, 1);
+});
+
+test('the desktop_notifications flag off skips the reminder toast but still fires in-app', () => {
+  const harness = createHarness({ isEnabled: () => false });
+  harness.notifier.tick();
+  assert.equal(harness.notifications.length, 0);
+  assert.deepEqual(harness.logs.filter((entry) => entry.event === 'reminder_notifier.suppressed').map((entry) => entry.details),
+    [{ reason: 'flag_off' }]);
+  assert.deepEqual(harness.bridgeEvents.map((entry) => entry.event), ['reminders.onFired']);
 });
 
 test('other categories off do not affect reminders', () => {

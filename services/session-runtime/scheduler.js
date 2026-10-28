@@ -25,7 +25,8 @@ class SessionRuntimeScheduler {
     claimCanonical, startProducer, cancelProducer = null, pauseProducer = null, discardPending = null,
     provePausedCleanup = null, enabled = true, createId = randomUUID,
     onAttention = null, onSuspended = null, captureEligibility = null, releaseEligibility = null,
-    validateCheckpoint = null, onWorkChange = null, cleanupAttentionGraceMs = 5000, setTimer = setTimeout, now = Date.now } = {}) {
+    validateCheckpoint = null, onWorkChange = null, cleanupAttentionGraceMs = 5000, setTimer = setTimeout, now = Date.now,
+    isPriorityTurn = null } = {}) {
     for (const operation of [resolveRoute, validateWork, claimCanonical, startProducer]) {
       if (typeof operation !== 'function') throw new TypeError('runtime_scheduler_port_required');
     }
@@ -44,6 +45,8 @@ class SessionRuntimeScheduler {
     this.enabled = enabled === true;
     this.createId = createId;
     this.incarnation = createId();
+    // Work whose turn takes the lane's priority slot (the primary Jenny chat); never throws.
+    this.isPriorityTurn = typeof isPriorityTurn === 'function' ? isPriorityTurn : () => false;
     this.onAttention = typeof onAttention === 'function' ? onAttention : null;
     this.onSuspended = typeof onSuspended === 'function' ? onSuspended : null;
     this.captureEligibility = typeof captureEligibility === 'function' ? captureEligibility : () => null;
@@ -306,7 +309,13 @@ class SessionRuntimeScheduler {
     } catch (error) {
       return this._admissionFailure(work, error);
     }
-    const admission = this.lanes.tryAcquireTurn({ sessionId: work.session_id, route });
+    // The priority predicate reads the session index, so it runs only when the ordinary slot is full.
+    let admission = this.lanes.tryAcquireTurn({ sessionId: work.session_id, route });
+    if (admission.status !== 'granted' && admission.reason === 'lane_capacity') {
+      let priority;
+      try { priority = this.isPriorityTurn(work) === true; } catch (_error) { priority = false; }
+      if (priority) admission = this.lanes.tryAcquireTurn({ sessionId: work.session_id, route, priority: true });
+    }
     if (admission.status !== 'granted') return this._waiting(work, admission);
     this.admissionWaits.clear(workId);
     try {

@@ -23,6 +23,7 @@ from sidecar.protocol import (
     CONVERSATIONS_INDEX_STATE_METHOD,
     CONVERSATIONS_PURGE_METHOD,
     CONVERSATIONS_SEARCH_METHOD,
+    HANDOFF_GENERATE_NOTE_METHOD,
     HARDWARE_PROFILE_METHOD,
     HARDWARE_VRAM_USAGE_METHOD,
     MCP_INSPECT_METHOD,
@@ -34,6 +35,8 @@ from sidecar.protocol import (
     MODELS_OLLAMA_BLOB_METHOD,
     MODELS_RESIDENT_METHOD,
     MODELS_UNLOAD_METHOD,
+    SPEECH_PREPARE_METHOD,
+    SPEECH_TRANSCRIBE_METHOD,
     SUGGESTIONS_GENERATE_METHOD,
     WORKSPACE_ABANDON_RESTORE_METHOD,
     WORKSPACE_ACKNOWLEDGE_RECOVERY_REVIEW_METHOD,
@@ -67,18 +70,30 @@ AUXILIARY_FAMILY_BY_METHOD: dict[str, str] = {
     CONTEXT_PREVIEW_METHOD: "context_preview",
     MODELS_LIST_METHOD: "models",
     MODELS_UNLOAD_METHOD: "models",
-    MODELS_RESIDENT_METHOD: "models",
+    # Its own family: a quick resident-model read. Sharing "models" let the two
+    # engine reads of one listModels (each waiting out a down model server)
+    # hold both slots at launch and reject it with a worker-cap WARN.
+    MODELS_RESIDENT_METHOD: "resident",
     # Its own family: read-only manifest disk reads that contend with nothing in
     # "models", and llama-server-ipc-handlers.js fans out OLLAMA_SOURCE_BATCH (4)
     # of them at once. Sharing a cap of 2 rejected half of every batch, and the
     # caller caches that rejection as "no GGUF source" for 30s.
     MODELS_OLLAMA_BLOB_METHOD: "blob",
+    # Dictation: CPU speech recognition off the dispatch loop. The engine's own
+    # lock runs one load or clip at a time; the family admits three so the
+    # transcribe of a short clip can queue behind the prepare its press fired
+    # instead of being refused while the model is still loading, even when an
+    # Esc-discarded transcribe is still finishing ahead of both.
+    SPEECH_PREPARE_METHOD: "speech",
+    SPEECH_TRANSCRIBE_METHOD: "speech",
     MEMORY_LIST_METHOD: "memory",
     # Memory vector indexing (row 58 W4): one step at a time, off the dispatch loop.
     MEMORY_EMBED_STEP_METHOD: "memory_index",
     HARDWARE_VRAM_USAGE_METHOD: "probe",
     SUGGESTIONS_GENERATE_METHOD: "inference",
     COMMIT_GENERATE_MESSAGE_METHOD: "inference",
+    # Row 60 W4 /handoff note: one generation, preemptible through chat.cancel.
+    HANDOFF_GENERATE_NOTE_METHOD: "inference",
     # Background reflection (row 58 W2): preemptible through chat.cancel.
     MEMORY_REFLECT_METHOD: "inference",
     WORKSPACE_LIST_CHANGE_SETS_METHOD: "workspace_recovery",
@@ -112,8 +127,10 @@ AUXILIARY_FAMILY_BY_METHOD: dict[str, str] = {
 DEFAULT_MAX_WORKERS_BY_FAMILY: dict[str, int] = {
     "context_preview": 2,
     "models": 2,
+    "resident": 2,
     # Must stay >= OLLAMA_SOURCE_BATCH in services/main/llama-server-ipc-handlers.js.
     "blob": 4,
+    "speech": 3,
     "memory": 2,
     "memory_index": 1,
     "probe": 1,

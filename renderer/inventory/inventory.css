@@ -957,7 +957,6 @@
   margin: var(--space-2) var(--space-4);
   background: rgba(111, 121, 160, 0.18);
 }
-
 /* ══ Inline title editor (in-place single-line rename) ══ */
 
 .inv-inline-title-editor {
