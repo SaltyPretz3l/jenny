@@ -60,6 +60,29 @@ progress and a Wide transcript.
 - Not yet covered: a real-model pass of each new Jenny chat tool (a settings change and its Undo, a chat move and model change, a project create and fork, `app_view` while idle and while typing, an export, `terminal_read` and `terminal_run`); a scheduled check across sleep and wake and after a card edit; your rules allowing, asking and blocking on live turns; the real OS toasts and quiet hours; a "While you were away" digest after four hours away; read-only commands in Ask and Plan on a real model; a background test run with a mid-turn notice and a wake; two real chats and a Claude Code session colliding on a work lease; a real `/image` turn and Edit prompt; the Wide transcript, live reasoning box, composer tools panel, Your data sizes against Explorer, Home Usage and side panel actions at three widths and three palettes; the fluency of the new strings in the 18 translated languages; and the installed 1.6.0 to 1.6.1 upgrade on Windows.
 - Windows remains unsigned. Linux packages and the Apple Silicon build remain experimental and were not retested on native hardware for 1.6.1.
 
+### 1.6.1 download checksums
+
+Published 2026-11-03 from public `4883c720` (private `88ad662b5`, tag `v1.6.1`): Windows installer,
+experimental Linux AppImage and deb, and an experimental Apple Silicon DMG and zip. All four
+release jobs were green on the build-only run and the tagged run.
+
+<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
+| File | SHA256 |
+| --- | --- |
+| dist/Jenny-Setup-x64.exe | 0e9f1f2b6c72f278210e737279e2a20e84b80060b08b7f92626336bbcf7956a4 |
+| dist/Jenny-Setup-x64.exe.blockmap | c7147b6bc25c0c4074162b44415e3cd26f33f8e343d5ed12cb488ab8ecb047c9 |
+| dist/Jenny-amd64.deb | d26fe6806c010b97c23eeb85f373f8542c1a0d7831d13a326f8b6c32a5bdecd6 |
+| dist/Jenny-arm64.dmg | 2a25fae68408ec0a44ef8cd9ae25469003f14ea0b771dbba2fb25f27f9d873c7 |
+| dist/Jenny-arm64.zip | 27adc0769b19d7271b2c4e6a6909c1995a3f8ff8d0765721f07e351d4c9a3bb7 |
+| dist/Jenny-x86_64.AppImage | fbe2730c30b4266f04847807e00c56c2617b07f21904447dbd20d03933db1fe8 |
+| dist/SHA256SUMS-linux.txt | ce98a56d82ebc6613f4acc8935fad8ac2026b37ace5e116383ea3e82724fd7b3 |
+| dist/SHA256SUMS-mac.txt | a23c68783c49584a8b0a4264041270933eb0ac94f9617885a51d54744db5cdbf |
+| dist/SHA256SUMS-windows.txt | 9d5ff61b9c5ef1029890f3e05b98cab076cb5d42e36ba0e1ce2fa344a17c72c9 |
+| dist/latest-linux.yml | fde6a4f5216523dc5ea2b1b84056d0afd02619f67ae9e233a7ba5926a1e2a169 |
+| dist/latest-mac.yml | fcbb58e54e02490fb1de64c56f8b1d9df44b9b038627f86d155e0f0d5e29ac36 |
+| dist/latest.yml | e2f705e577790e108da7bb0ec0b671be44642a8d9ac423f327971ccf4ebe49d2 |
+<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
+
 ## 1.6.0 - 2026-10-27
 
 Everything landed since 1.5.0, through private `main` on 2026-10-27: 314
@@ -140,7 +163,6 @@ Published 2026-10-27 from public `2c97b0ef` (private `12d093d5a`, tag `v1.6.0`):
 experimental Linux AppImage and deb, and an experimental Apple Silicon DMG and zip. All four
 release jobs were green on the tagged run.
 
-<!-- JENNY_RELEASE_SHA256_MANIFEST_START -->
 | File | SHA256 |
 | --- | --- |
 | dist/Jenny-Setup-x64.exe | d62ab86877dee368a942c7b08d56e1949920ea2905d1fa505a894ed84cc84c22 |
@@ -155,7 +177,6 @@ release jobs were green on the tagged run.
 | dist/latest-linux.yml | 9b4780af735164dd9246f74064a7e93a22670c5d470c7730d508ad3e1447a7f8 |
 | dist/latest-mac.yml | aab781e01a12a22029f1f8fad7ea0ee3951c83c421f9595c2501b3991032bf98 |
 | dist/latest.yml | 9360aa3a03dd8bd9003dfedc445139761c8edc81fdc7eecefd36071cf94a90b1 |
-<!-- JENNY_RELEASE_SHA256_MANIFEST_END -->
 
 ## 1.5.0 - 2026-10-17
 
