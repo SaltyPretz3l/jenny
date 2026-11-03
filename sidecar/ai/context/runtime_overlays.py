@@ -49,6 +49,7 @@ def build_dynamic_system_messages(  # noqa: PLR0913
     personality_rendered: bool = False,
     skill_invocation: dict[str, str] | None = None,
     execution_context: Any | None = None,
+    latest_user_content: str = "",
 ) -> list[dict[str, object]]:
     """Build cache-unstable personality and skill overlays for a request.
 
@@ -104,6 +105,7 @@ def build_dynamic_system_messages(  # noqa: PLR0913
         config=config,
         skill_invocation=skill_invocation,
         execution_context=execution_context,
+        latest_user_content=latest_user_content,
     )
     if invoked_skill_message:
         messages.append({"role": "system", "content": invoked_skill_message})
@@ -116,21 +118,27 @@ def build_invoked_skill_message(
     config: Any,
     skill_invocation: dict[str, str] | None,
     execution_context: Any | None = None,
+    latest_user_content: str = "",
 ) -> str:
     """The ``## Invoked Skill`` section for this request, or ``""``.
 
     It changes with every invocation, so with a trailing turn-context row it
     rides that row (``render_turn_context_row``) instead of the leading run.
+    Without an explicit invocation, a skill the user named mid-message with
+    ``/<command>`` in *latest_user_content* is applied the same way.
     """
-    if not skill_invocation:
-        return ""
-    invoked_builder = getattr(context_builder, "build_invoked_skill_system_message", None)
+    builder_name = (
+        "build_invoked_skill_system_message" if skill_invocation
+        else "build_mentioned_skill_system_message" if latest_user_content else ""
+    )
+    invoked_builder = getattr(context_builder, builder_name, None) if builder_name else None
     if not callable(invoked_builder):
         return ""
     authority = request_skill_authority(config, execution_context)
     # Duck-typed builders in tests do not accept the keyword; pass it only when set.
     skill_kwargs: dict[str, Any] = {} if authority is None else {"skill_authority": authority}
-    return str(invoked_builder(skill_invocation, **skill_kwargs) or "")
+    subject = skill_invocation or latest_user_content
+    return str(invoked_builder(subject, **skill_kwargs) or "")
 
 
 def build_prompt_memory_recall_system_message(  # noqa: PLR0913 - one overlay, six inputs.

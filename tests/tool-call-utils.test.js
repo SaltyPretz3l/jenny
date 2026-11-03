@@ -18,6 +18,19 @@ const {
   shouldAutoExpandToolDetails,
 } = require('../renderer/chat/tool-call-utils');
 
+test('row labels leave clipping to the row CSS so a Wide chat width row fills (row 92)', () => {
+  const { getApprovalLabel } = require('../renderer/chat/tool-call-utils');
+  const command = 'npm run test -- ' + 'tests/renderer-chat-layout.test.js '.repeat(5);
+  assert.equal(formatToolCallSummary('Bash', { command }), 'Run ' + command.trim());
+  const query = 'how do css container query units resolve inside a nested flex row';
+  assert.equal(formatToolCallSummary('web_search', { query }), 'Search web for ' + query);
+  const runaway = formatToolCallSummary('Bash', { command: 'x'.repeat(2000) });
+  assert.equal(runaway.length, 'Run '.length + 500);
+  assert.ok(runaway.endsWith('...'));
+  // The approval headline wraps, so it keeps its short clip.
+  assert.equal(getApprovalLabel('Bash', { command }), 'Jenny wants to run: ' + ('Run ' + command).slice(0, 57) + '...');
+});
+
 test('display name precedence: renderer alias, then catalog name, then title case (F16)', () => {
   const { getToolDisplayName } = require('../renderer/chat/tool-call-utils');
   assert.equal(getToolDisplayName('run_command', 'Run Command'), 'Bash');
@@ -50,8 +63,8 @@ test('a collapsed failure summarizes its own failure text on one bounded line (R
     'a b c',
     'bidi and control characters never reach the header'
   );
-  const long = summarizeToolFailure({ isError: true, status: 'errored', outputText: 'y'.repeat(500) });
-  assert.equal(Array.from(long).length, 160);
+  const long = summarizeToolFailure({ isError: true, status: 'errored', outputText: 'y'.repeat(2000) });
+  assert.equal(Array.from(long).length, 500);
   assert.ok(long.endsWith('...'));
 
   const header = buildToolHeaderInner({
@@ -225,12 +238,13 @@ test('every approval-gated manifest tool (plus fetch_url) declares optional purp
       .map((tool) => tool.name),
     'fetch_url',
   ])].sort();
-  assert.equal(expectedNames.length, 15, expectedNames.join(',')); // 15th: session_stop (row 69)
+  assert.equal(expectedNames.length, 22, expectedNames.join(',')); // 15th: session_stop (row 69), 16th: settings_change (row 88), 17th/18th: chat_organize, chat_configure (row 94), 19th: schedule_change (row 85), 20th: project_create (row 94 P2), 21st/22nd: session_export, terminal_run (row 94 P4)
   assert.equal(expectedNames.includes('exit_plan_mode'), false, 'the plan card is not an intent card');
   // propose_command's purpose is the proposal card's display text, not an
-  // approval-card intent: the tool itself only records a proposal.
+  // approval-card intent: the tool itself only records a proposal. app_view (row 94 P3) has no card;
+  // its required purpose states why the view should move.
   const withPurpose = manifest.tools
-    .filter((tool) => tool.parameters?.properties?.purpose && tool.name !== 'propose_command')
+    .filter((tool) => tool.parameters?.properties?.purpose && !['propose_command', 'app_view'].includes(tool.name))
     .map((tool) => tool.name)
     .sort();
 
@@ -240,13 +254,16 @@ test('every approval-gated manifest tool (plus fetch_url) declares optional purp
   for (const toolName of expectedNames) {
     const tool = manifest.tools.find((candidate) => candidate.name === toolName);
     // A tool may bound the purpose (session tools, row 69); the shape is otherwise fixed.
-    const { maxLength, ...purpose } = tool.parameters.properties.purpose;
+    const { maxLength, minLength, ...purpose } = tool.parameters.properties.purpose;
     assert.deepEqual(purpose, {
       type: 'string',
       description: "One short plain sentence explaining what will happen in the user's terms.",
     }, toolName);
-    assert.ok(maxLength === undefined || maxLength === 1024, `${toolName} purpose bound`);
-    assert.equal(tool.parameters.required?.includes('purpose') || false, false, toolName);
+    // settings_change (row 88), the chat management pair (row 94), schedule_change (row 85) and project_create (row 94 P2), session_export and terminal_run (row 94 P4) are the intent-bearing tools whose purpose is required: 1..200 characters.
+    const settings = ['settings_change', 'chat_organize', 'chat_configure', 'schedule_change', 'project_create', 'session_export', 'terminal_run'].includes(toolName);
+    assert.ok(maxLength === undefined || maxLength === (settings ? 200 : 1024), `${toolName} purpose bound`);
+    assert.ok(minLength === undefined || (settings && minLength === 1), `${toolName} purpose minimum`);
+    assert.equal(tool.parameters.required?.includes('purpose') || false, settings, toolName);
   }
 });
 
@@ -448,4 +465,23 @@ test('memory results name the write in the header meta and never fold into a too
   assert.equal(toolCallUtils.formatToolResultMeta('memory', meta({ status: 'refused', reason: 'capacity' })), '');
   assert.equal(toolCallUtils.formatToolResultMeta('memory', meta({ action: 'recall', status: 'ok' })), '');
   assert.equal(toolCallUtils.isToolRunFoldable({ toolName: 'memory', status: 'completed' }), false);
+});
+
+test('directory-target tools expose their path argument, never the pattern, and nothing when it is absent', () => {
+  const { getToolPathTarget } = require('../renderer/chat/tool-call-utils');
+  assert.equal(getToolPrimaryPath('list_dir', { path: 'src/utils' }), 'src/utils');
+  assert.equal(getToolPrimaryPath('list_dir', {}), '');
+  assert.equal(getToolPrimaryPath('list_dir', { path: '.' }), '');
+  assert.equal(getToolPrimaryPath('glob_files', { pattern: 'src/**/*.js', path: 'renderer' }), 'renderer');
+  assert.equal(getToolPrimaryPath('glob_files', { pattern: 'src/**/*.js' }), '');
+  assert.equal(getToolPrimaryPath('grep_search', { pattern: 'TODO|FIXME', path: 'sidecar/ai' }), 'sidecar/ai');
+  assert.equal(getToolPrimaryPath('grep_search', { pattern: 'a/b' }), '');
+  assert.equal(getToolPrimaryPath('grep_search', { pattern: 'a', path: './' }), '');
+
+  assert.deepEqual(getToolPathTarget('list_dir', { path: 'src' }), { path: 'src', kind: 'dir', appendChip: false });
+  assert.deepEqual(getToolPathTarget('glob_files', { pattern: '*.js', path: 'src' }), { path: 'src', kind: 'dir', appendChip: true });
+  assert.deepEqual(getToolPathTarget('grep_search', { pattern: 'x', path: 'src/app.js' }), { path: 'src/app.js', kind: '', appendChip: true });
+  assert.deepEqual(getToolPathTarget('grep_search', { pattern: 'x', path: 'src/' }), { path: 'src/', kind: 'dir', appendChip: true });
+  assert.deepEqual(getToolPathTarget('read_file', { path: 'a.js' }), { path: 'a.js', kind: '', appendChip: false });
+  assert.deepEqual(getToolPathTarget('glob_files', { pattern: '*.js' }), { path: '', kind: '', appendChip: false });
 });

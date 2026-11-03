@@ -17,7 +17,7 @@ function toggle(document, id) {
   return document.querySelector(`#notificationsSettingsSection [data-inv-toggle="${id}"]`);
 }
 
-test('Settings › Notifications renders its nine switches from the persisted windowUi block and writes the whole object back', async (t) => {
+test('Settings › Notifications renders its ten switches from the persisted windowUi block and writes the whole object back', async (t) => {
   const updateCalls = [];
   const { window, waitForSettingsRender } = await loadRendererTestApp(t, {
     shell: { windowUi: {
@@ -41,7 +41,7 @@ test('Settings › Notifications renders its nine switches from the persisted wi
   const card = document.getElementById('notificationsSettingsSection');
   assert.ok(card, 'the Notifications card exists');
   assert.equal(card.getAttribute('data-settings-section'), 'notifications');
-  assert.equal(card.querySelectorAll('[data-inv-toggle]').length, 9);
+  assert.equal(card.querySelectorAll('[data-inv-toggle]').length, 10);
   // Persisted values (hydrated from windowUi.getState) drive the switches.
   assert.equal(toggle(document, 'notificationsSoundToggle').getAttribute('aria-checked'), 'false');
   assert.equal(toggle(document, 'notificationsCategoryFailuresToggle').getAttribute('aria-checked'), 'false');
@@ -61,7 +61,7 @@ test('Settings › Notifications renders its nine switches from the persisted wi
   assert.deepEqual(updateCalls, [{
     notifications: {
       enabled: true, onlyWhenUnfocused: true, sound: false, replyPreview: false,
-      categories: { replies: true, failures: false, permissions: true, questions: false, reminders: true },
+      categories: { replies: true, failures: false, permissions: true, questions: false, reminders: true, jenny: true },
     },
   }]);
   assert.equal(toggle(document, 'notificationsCategoryQuestionsToggle').getAttribute('aria-checked'), 'false');

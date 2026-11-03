@@ -14,6 +14,7 @@
 const { createChatProposalStore } = require('./backend/chat-proposal-store');
 const { createSessionMailStore } = require('./backend/session-mail-store');
 const { isPrimarySession } = require('./backend/primary-session');
+const { forkingEnabled, readForkSource } = require('./backend/session-fork-source');
 const { ChatProposalService } = require('./chat-proposal-service');
 const { scheduleSlicedStartupReconcile } = require('./time-sliced-steps');
 
@@ -121,11 +122,28 @@ function createSessionPorts(backendService) {
     // Row 76: only the primary chat names a destination project and holds a standing launch permission.
     allowsProjectChoice: (sessionId) => isPrimarySession(store(), sessionId),
     projectExists: (projectId) => Boolean(backendService.projectService?.get?.(projectId)),
+    // Row 94 P2: the chat a primary proposal forks (null when forking is off or the chat cannot be forked).
+    readForkSource: (sessionId) => {
+      if (!forkingEnabled(backendService.featureFlags)) return null;
+      const source = readForkSource(store(), sessionId);
+      return source.ok ? source : null;
+    },
+    forkSourceTitle: (sessionId) => store()?.peekSessionSummary?.(sessionId)?.title ?? null,
     matchLaunchPermission: (args) => backendService.primaryChatControls?.matchLaunchPermission?.(args) ?? null,
+    // Row 87: the user's launch deny rules (primary-action-rules.js); a refusal is recorded in Activity.
+    launchDenied: ({ sessionId, turnId, destinationProjectId, runMode }) => Boolean(backendService.primaryActionRules?.denial?.({
+      action: 'launch', sessionId, turnId, target: { project_id: destinationProjectId ?? null }, runMode,
+    })),
     // A turn another chat's message or report woke (row 70 depth > 0) never spends a standing permission.
     isWakeTurn: (_sessionId, turnId) => (backendService.chatMessages?.wakeDepth?.(turnId) ?? 0) > 0,
-    createLinkedChildSession: (spec) => (typeof backendService.createLinkedChildSession === 'function'
-      ? backendService.createLinkedChildSession(spec) : { ok: false, code: 'unsupported' }),
+    // An accepted fork is created as a fork of its source chat; the rest of the launch is the same.
+    createLinkedChildSession: (spec) => {
+      if (typeof spec?.forkOfSessionId === 'string') {
+        return require('./backend/linked-fork-session').createLinkedForkSession(backendService, spec);
+      }
+      return typeof backendService.createLinkedChildSession === 'function'
+        ? backendService.createLinkedChildSession(spec) : { ok: false, code: 'unsupported' };
+    },
     sessionExists: (sessionId) => Boolean(store()?.peekSession?.(sessionId)),
     readSpawnedFrom: (sessionId) => store()?.peekSession?.(sessionId)?.spawned_from ?? null,
     readChildFacts: (childId, sourceId) => readChildFacts(backendService, childId, sourceId, replies),

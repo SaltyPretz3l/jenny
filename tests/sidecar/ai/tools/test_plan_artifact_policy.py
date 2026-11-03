@@ -76,6 +76,57 @@ def test_safe_plan_document_rejects_executable_conflicting_or_oversized_inputs(
     assert not is_safe_plan_document(_document(**overrides))
 
 
+def _revision(**overrides: object) -> dict[str, object]:
+    arguments: dict[str, object] = {
+        "artifact_kind": "document",
+        "title": "Plan",
+        "replaces": ".jenny/artifacts/session-1/plan.md",
+        "edits": [{"old_string": "# Plan", "new_string": "# Plan v2"}],
+    }
+    arguments.update(overrides)
+    return arguments
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        _revision(),
+        _revision(replaces="notes.txt"),
+        _revision(edits=None, content="# Plan v2\n"),
+        _document(replaces=".jenny/artifacts/session-1/plan.md"),
+    ],
+)
+def test_safe_plan_document_accepts_an_inert_revision(arguments: dict[str, object]) -> None:
+    payload = {key: value for key, value in arguments.items() if value is not None}
+    assert is_safe_plan_document(payload)
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        # The replaced file's own suffix classifies the write, not the defaults.
+        _revision(replaces=".jenny/artifacts/session-1/page.html"),
+        _revision(replaces="script.js"),
+        _revision(replaces="no-suffix"),
+        _revision(replaces=7),
+        _document(replaces="page.html"),
+        _document(replaces="notes.txt"),
+        _revision(replaces=None),
+        _revision(edits=[]),
+        _revision(edits="# Plan"),
+        _revision(edits=[{"old_string": "a"}]),
+        _revision(edits=[{"old_string": "a", "new_string": 1}]),
+        _revision(edits=[{"old_string": "a", "new_string": "x" * (MAX_PLAN_ARTIFACT_BYTES + 1)}]),
+        _revision(content="# Plan v2"),
+    ],
+)
+def test_safe_plan_document_rejects_unsafe_or_malformed_revisions(
+    arguments: dict[str, object],
+) -> None:
+    payload = {key: value for key, value in arguments.items() if value is not None}
+    assert not is_safe_plan_document(payload)
+
+
 def test_reserved_capability_is_stripped_without_mutating_input() -> None:
     forged = {"title": "Plan", PLAN_ARTIFACT_WRITE_ARG: True}
 
@@ -180,6 +231,8 @@ def test_plan_mode_exposes_only_the_narrowed_create_artifact_schema() -> None:
         parameters["properties"]["language"]["enum"]
     )
     assert parameters["additionalProperties"] is False
+    assert {"replaces", "edits"}.issubset(parameters["properties"])
+    assert parameters["required"] == ["artifact_kind", "title"]
 
 
 def test_plan_capability_requires_mode_descriptor_and_safe_payload() -> None:

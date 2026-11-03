@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createComposerV2ToggleController, sessionToolOverrideEchoMatches } = require('../renderer/chat/renderer-composer-v2-toggle');
+const { createComposerV2ToggleController, sessionToolOverrideEchoMatches, countRows } = require('../renderer/chat/renderer-composer-v2-toggle');
 const model = require('../renderer/chat/renderer-composer-v2-model');
 const entry = (surfaceFamily, name = surfaceFamily, extra = {}) => ({ name, surfaceFamily, available: true, lockdownAvailable: true, ...extra });
 const maps = (categories = {}, connections = {}) => ({ tool_category_overrides: categories, tool_connection_overrides: connections });
@@ -38,8 +38,19 @@ test('send preferences are the chat overrides only, never a default for every pr
     entry('web', 'fetch_url', { available: false }), { name: 'ask_user' }]);
   await controller.setToggle('mcp:github', false);
   assert.deepEqual(controller.getToggleStates(), { families: {}, connections: { 'mcp:github': false } });
-  assert.deepEqual(controller.getToolsChipCount(), { on: 1, present: 3, text: '1' });
+  assert.deepEqual(countRows(controller.getViewModel()), { on: 1, off: 1, total: 3 });
   assert.equal(controller.getViewModel().connections[0].label, 'GitHub');
+});
+
+test('connection rows carry their member tools and approvals; countRows counts usable rows only', () => {
+  const controller = setup({}, [entry('files'), entry('web', 'fetch_url', { available: false }),
+    entry('', 'create_issue', { connectionId: 'mcp:github', serverName: 'GitHub', approvalDefault: 'ask' }),
+    entry('', 'list_pulls', { connectionId: 'mcp:github', serverName: 'GitHub' })]);
+  const github = controller.getViewModel().connections[0];
+  assert.deepEqual(github.members.map((member) => [member.name, member.asksFirst]), [['create_issue', true], ['list_pulls', false]]);
+  assert.equal(github.approval, 'some');
+  assert.deepEqual(countRows(controller.getViewModel()), { on: 2, off: 0, total: 3 }, 'blocked Web is neither on nor off');
+  assert.deepEqual(countRows({}), { on: 0, off: 0, total: 0 });
 });
 
 test('view model reports blocked and partially usable families, approvals and ignores retired plugin connections', () => {

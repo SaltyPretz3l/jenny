@@ -20,6 +20,7 @@ from sidecar.ai.context.builder_shared import (
     looks_like_source_architecture_request,
     render_not_loaded_tools_line,
     requested_tool_families,
+    shell_work_guidance,
     status_matches_tool_family,
 )
 from sidecar.ai.tools.preconditions import PRECONDITION_RENDER
@@ -226,6 +227,7 @@ class _BuilderRenderMixin:
             "a task is complete, unless a successful tool result for that "
             "exact action exists earlier in this conversation."
         )
+        guidance += shell_work_guidance(available)
 
         if any(status.name in {"knowledge_search", "knowledge_view"} for status in available):
             guidance += "\n\n" + KNOWLEDGE_SCOPE_GUIDANCE

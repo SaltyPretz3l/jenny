@@ -128,7 +128,10 @@
 
 .session-rail-section-head:focus-visible,
 .session-rail-fact:focus-visible,
-.session-rail-toggle:focus-visible {
+.session-rail-toggle:focus-visible,
+.session-rail-divider:focus-visible,
+.session-rail-job-stop:focus-visible,
+.session-rail-job-open:focus-visible {
   outline: var(--focus-ring-width) solid var(--focus-ring-color);
   outline-offset: var(--focus-ring-offset);
 }
@@ -145,11 +148,13 @@
   transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
-.session-rail-section-head[aria-expanded="false"] .session-rail-chevron {
+.session-rail-section-head[aria-expanded="false"] .session-rail-chevron,
+.session-rail-divider[aria-expanded="false"] .session-rail-chevron {
   transform: rotate(-90deg);
 }
 
-:root[dir="rtl"] .session-rail-section-head[aria-expanded="false"] .session-rail-chevron {
+:root[dir="rtl"] .session-rail-section-head[aria-expanded="false"] .session-rail-chevron,
+:root[dir="rtl"] .session-rail-divider[aria-expanded="false"] .session-rail-chevron {
   transform: rotate(90deg);
 }
 
@@ -288,6 +293,160 @@ button.session-rail-fact:hover {
   color: var(--text-muted);
   font-size: var(--font-size-caption);
   line-height: 1.45;
+}
+
+/* ── Background jobs (owner pick 2026-11-01) ──
+   A live job's Stop takes the elapsed time's place on hover or focus; a finished job opens its output
+   below itself; finished work sits under a hairline "N finished" divider that folds. */
+.session-rail-job {
+  position: relative;
+  display: grid;
+}
+
+.session-rail-job-stop {
+  appearance: none;
+  position: absolute;
+  inset-inline-end: var(--space-2);
+  inset-block-start: 50%;
+  transform: translateY(-50%);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.session-rail-job:hover .session-rail-job-stop,
+.session-rail-job-stop:focus-visible {
+  opacity: 1;
+}
+
+.session-rail-job[data-job-state="running"]:hover .session-rail-meta,
+.session-rail-job[data-job-state="running"]:focus-within .session-rail-meta {
+  visibility: hidden;
+}
+
+/* Row 96: a running test job's 2 px bar sits under its text column, a red tick per failure. */
+.session-rail-job-progress {
+  margin-block: -4px var(--space-1);
+  margin-inline: calc(var(--space-2) + 16px + var(--space-4)) var(--space-2);
+}
+
+.session-rail-job-progress .inv-progress-track {
+  position: relative;
+  block-size: 2px;
+  overflow: visible;
+}
+
+.session-rail-job-tick {
+  position: absolute;
+  inset-block: -2px;
+  inline-size: 2px;
+  margin-inline-start: -1px;
+  border-radius: 1px;
+  background: var(--text-danger-emphasis);
+}
+
+/* The bar adds height below the fact: keep Stop centred on the fact's line. */
+.session-rail-job[data-job-progress] .session-rail-job-stop {
+  inset-block-start: 14px;
+}
+
+.session-rail-job-stop:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.session-rail-job-stop:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.session-rail-divider {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  inline-size: 100%;
+  min-block-size: 24px;
+  margin-block-start: var(--space-2);
+  padding: 0 var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.session-rail-divider:hover {
+  color: var(--text-secondary);
+}
+
+.session-rail-divider-rule {
+  flex: 1;
+  border-block-start: 1px solid var(--line);
+}
+
+.session-rail-job-output {
+  margin-block: var(--space-1) var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--tl-code-bg);
+}
+
+/* Command output reads left to right under RTL too. */
+.session-rail-job-output pre {
+  max-block-size: 180px;
+  margin: 0;
+  overflow: auto;
+  direction: ltr;
+  color: var(--text-secondary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-caption);
+  line-height: 1.45;
+  text-align: start;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.session-rail-job-open {
+  appearance: none;
+  margin-block-start: var(--space-2);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-link);
+  font: inherit;
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+
+/* The Session toggle's "N running" while the tray is out of sight. */
+.session-rail-jobs-readout {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.session-rail-jobs-readout[hidden] {
+  display: none;
+}
+
+.session-rail-jobs-readout .status-dot {
+  inline-size: 6px;
+  block-size: 6px;
+}
+
+.chat-timeline-utility-button.session-rail-toggle--icon:has(.session-rail-jobs-readout:not([hidden])) {
+  inline-size: auto;
 }
 
 /* ── Session toggle (in the pane's utility cluster) ──

@@ -27,6 +27,9 @@
   display: flex;
   align-items: center;
   width: 100%;
+  /* A flex item's automatic minimum is its nowrap label: without this a long command row stays as
+     wide as its text after Wide -> Standard and the ellipsis never applies. */
+  min-width: 0;
   min-height: var(--tl-row-h);
   column-gap: var(--space-3);
   margin: 0;
@@ -499,6 +502,33 @@
 .reasoning-row-panel-body > .reasoning-stream-unit[data-su-fp="elided-note"] > :first-child { margin-top: 0; }
 .reasoning-row-panel-body > .reasoning-stream-unit:last-child > :last-child { margin-bottom: 0; }
 
+/* Live box (row 101 Phase 2, owner pick A; flag reasoning_live_box): in the
+ * Thinking view a streaming body grows until it fills the chat viewport, then
+ * scrolls inside itself so the timeline holds still and the reader sees a
+ * screenful at a time. em units follow Appearance text size and chat zoom;
+ * --chat-thread-viewport-h is the thread stage height written by the viewport
+ * layer, minus the top inset and the composer offset. The cap holds through
+ * the settle collapse, and on an earlier phase that settles open while a
+ * later one streams (renderer-reasoning-live-box-follow.js keeps the marker),
+ * so the panel shrinks from the box and never un-caps mid-turn. The wheel scrolls the box first and chains to the timeline at
+ * its edges (no overscroll-behavior); reduced motion keeps the cap, the
+ * follow module snaps instead of chasing. */
+:root[data-reasoning-live-box="on"] .chat-timeline:not([data-transcript-view="answers"]) .reasoning-row-block[data-reasoning-status="streaming"] .reasoning-row-panel.expanded > .reasoning-row-panel-body,
+:root[data-reasoning-live-box="on"] .reasoning-row-panel.expanded > .reasoning-row-panel-body[data-live-box="true"] {
+  max-height: max(
+    calc(1.62em * 10),
+    calc(var(--chat-thread-viewport-h, 70vh) - var(--chat-thread-offset, 0px) - var(--composer-safe-offset, 0px) - var(--tl-row-h, 30px) - 3em)
+  );
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--widget-scrollbar-color) transparent;
+}
+:root[data-reasoning-live-box="on"] .reasoning-row-panel-body[data-live-box="true"].has-scrolled {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 2.4em);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 2.4em);
+}
+
 .tool-call-section-kicker {
   /* The label text and an optional error-code chip render as siblings with no
      markup separator — the flex gap IS the spacing between them. */
@@ -578,72 +608,6 @@
   color: var(--text-muted);
 }
 
-/* W2-2 background-job chip strip: one chip per backgrounded run_command job,
-   rendered above the composer (renderer-background-jobs.js). */
-.background-jobs-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  padding: var(--space-1) 0;
-}
-.background-job-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  max-width: 100%;
-  padding: var(--space-1) var(--space-2);
-  background: var(--tl-code-bg);
-  border: 1px solid var(--tl-panel-border);
-  border-radius: var(--tl-radius-chip);
-  font-size: var(--tl-font-meta);
-  color: var(--text-secondary);
-}
-.background-job-chip-dot {
-  width: 7px;
-  height: 7px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--text-muted);
-}
-.background-job-chip[data-job-state="running"] .background-job-chip-dot {
-  background: var(--accent, #4a9eff);
-}
-.background-job-chip[data-job-state="failed"] .background-job-chip-dot {
-  background: var(--state-danger);
-}
-.background-job-chip-command {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-primary);
-}
-.background-job-chip-status {
-  flex: none;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-muted);
-}
-.background-job-chip-action {
-  transition: color var(--transition-fast);
-  appearance: none;
-  flex: none;
-  border: none;
-  background: transparent;
-  padding: 0 var(--space-1);
-  font-size: var(--tl-font-meta);
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-.background-job-chip-action:hover:not(:disabled) {
-  color: var(--text-primary);
-}
-.background-job-chip-action:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-.background-job-chip-overflow {
-  color: var(--text-muted);
-}
-
 /* Group header for multi-step reasoning: quiet sentence-case line. */
 .reasoning-row-group-header {
   display: flex;
@@ -692,6 +656,15 @@
     transform: translateY(0);
   }
 }
+/* A unit landing within ~1.2 s of the previous one (fast streams) only fades:
+ * no blur, no lift, no stagger, so 100+ tok/s output stops pulsing. */
+.reasoning-stream-unit.is-revealed.is-revealed-quick {
+  animation: reasoning-quick-landing var(--motion-duration-fast) var(--motion-ease-standard) both;
+}
+@keyframes reasoning-quick-landing {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
 
 @media (max-width: 480px) {
   .reasoning-row-main,
@@ -715,7 +688,8 @@
   .tool-run-summary.shimmer-active {
     animation: none;
   }
-  .reasoning-stream-unit.is-revealed {
+  .reasoning-stream-unit.is-revealed,
+  .reasoning-stream-unit.is-revealed.is-revealed-quick {
     animation: none;
     opacity: 1;
     filter: none;

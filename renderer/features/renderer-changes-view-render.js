@@ -254,12 +254,28 @@
 
     /* ── Side panel detail page: picker, caption, unified diff ── */
 
+    // Previous / Next change on the ledger detail page; disabled at the ends.
+    function buildStepButton(detail, direction) {
+      const label = direction < 0 ? jt('changes.detail.previousFile', 'Previous file') : jt('changes.detail.nextFile', 'Next file');
+      return button({
+        plain: true,
+        className: 'changes-view-link changes-detail-step',
+        label: direction < 0 ? '‹' : '›',
+        ariaLabel: label,
+        title: label,
+        disabled: direction < 0 ? detail.index <= 1 : detail.index >= detail.total,
+        dataset: { 'changes-step': String(direction) },
+      });
+    }
+
     function buildDetailHtml(view) {
       const detail = view.detail || {};
       const picker = '<div class="changes-detail-picker">'
         + button({ plain: true, className: 'changes-view-link', label: jt('changes.detail.allChanges', '‹ All changes'), dataset: { 'changes-back': 'true' } })
         + (detail.total > 1
-          ? `<span class="changes-detail-position">${escape(jt('changes.detail.position', 'Change {index} of {total}', { index: detail.index, total: detail.total }))}</span>`
+          ? buildStepButton(detail, -1)
+            + `<span class="changes-detail-position">${escape(jt('changes.detail.position', 'Change {index} of {total}', { index: detail.index, total: detail.total }))}</span>`
+            + buildStepButton(detail, 1)
           : '')
         + '<span class="changes-history-spacer"></span>'
         + (detail.canOpenInWorkspace

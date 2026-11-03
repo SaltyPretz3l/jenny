@@ -3,7 +3,8 @@
  * A session's explicit choice (state.ui.transcriptViewBySession) wins; other
  * sessions follow the persisted global default (state.transcriptViewDefault).
  * Also owns the per-pane cluster control (icon button + radio menu) and the
- * Settings field builder (Transcript views plan, po-review A1/B1/C1).
+ * Settings field builder (Transcript views plan, po-review A1/B1/C1), and the
+ * Wide transcript toggle beside it (row 92: Chat width `full` on and off).
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -20,6 +21,12 @@
   const TRANSCRIPT_VIEW_ICONS = '<svg viewBox="0 0 16 16" aria-hidden="true" data-view="answers"><path d="M2.5 5.5h11M2.5 10.5h7"></path></svg>'
     + '<svg viewBox="0 0 16 16" aria-hidden="true" data-view="thinking"><path d="M2.5 4h11M2.5 8h7M2.5 12h11"></path></svg>'
     + '<svg viewBox="0 0 16 16" aria-hidden="true" data-view="everything"><path d="M2.5 3h11M2.5 6.5h7M2.5 10h11M2.5 13.5h7"></path></svg>';
+
+  // Row 92: Wide is the Chat width preset `full`; off returns to the width chosen before it.
+  const WIDE_CHAT_WIDTH = 'full';
+  const FALLBACK_CHAT_WIDTH = 'standard';
+  const CHAT_WIDTH_TOGGLE_EVENT = 'jenny:chat-width-toggle';
+  const CHAT_WIDTH_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h12"></path><path d="m4.5 5.5-2.5 2.5 2.5 2.5"></path><path d="m11.5 5.5 2.5 2.5-2.5 2.5"></path></svg>';
 
   function normalizeTranscriptView(value, fallback = DEFAULT_TRANSCRIPT_VIEW) {
     const token = typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -114,9 +121,104 @@
     return { button, sync };
   }
 
+  /* The width to apply on a toggle: Wide from anything else (remembering that
+     width), and back to the remembered width, or Standard, from Wide. */
+  function nextChatWidth(current, previous) {
+    if (current !== WIDE_CHAT_WIDTH) return { next: WIDE_CHAT_WIDTH, previous: current || FALLBACK_CHAT_WIDTH };
+    const back = previous && previous !== WIDE_CHAT_WIDTH ? previous : FALLBACK_CHAT_WIDTH;
+    return { next: back, previous: back };
+  }
+
+  function syncChatWidthToggles(documentRef) {
+    const wide = String(documentRef?.documentElement?.dataset?.chatWidth || '') === WIDE_CHAT_WIDTH;
+    for (const button of documentRef?.querySelectorAll?.('[data-chat-width-toggle]') || []) {
+      button.setAttribute('aria-pressed', String(wide));
+    }
+  }
+
+  /**
+   * Mount the Wide transcript button into one pane's utility cluster, right
+   * after the transcript view control. Idempotent per cluster. A click asks the
+   * shell's toggle controller (createChatWidthToggle) through a bubbling event,
+   * so the button holds no appearance state; aria-pressed follows
+   * <html data-chat-width> through syncChatWidthToggles.
+   */
+  function mountChatWidthToggle({ cluster, registerListener, listenerOptions, jt = moduleJt } = {}) {
+    const build = globalThis.inventoryActionButton;
+    if (!cluster || typeof build !== 'function' || typeof registerListener !== 'function') return null;
+    let button = cluster.querySelector('[data-chat-width-toggle]');
+    if (!button) {
+      const label = jt('chat.chatWidthToggle.label', 'Wide transcript');
+      const title = jt('chat.chatWidthToggle.title', 'Wide transcript (Ctrl+Alt+W)');
+      const html = build({
+        plain: true, className: 'chat-timeline-utility-button chat-width-toggle', ariaPressed: false,
+        ariaLabel: label, title, dataset: { 'chat-width-toggle': 'true' }, trustedHtml: CHAT_WIDTH_ICON,
+      });
+      const viewToggle = cluster.querySelector('[data-transcript-view-toggle]');
+      if (viewToggle) viewToggle.insertAdjacentHTML('afterend', html);
+      else cluster.insertAdjacentHTML('afterbegin', html);
+      button = cluster.querySelector('[data-chat-width-toggle]');
+    }
+    if (!button) return null;
+    registerListener(button, 'click', (event) => {
+      event.preventDefault();
+      button.dispatchEvent(new (button.ownerDocument.defaultView.CustomEvent)(CHAT_WIDTH_TOGGLE_EVENT, { bubbles: true, detail: { source: 'button' } }));
+    }, listenerOptions);
+    syncChatWidthToggles(button.ownerDocument);
+    return { button };
+  }
+
+  /**
+   * The one Wide toggle the shell owns (button events and Ctrl+Alt+W). It
+   * applies through the same applyAppearance path as Settings and the Jenny
+   * settings relay, then calls onApplied (Settings repaints its row). The width
+   * to return to is the last non-Wide width seen this session, whichever path
+   * set it. Returns { toggle, dispose }.
+   */
+  function createChatWidthToggle({ documentRef, getAppearance, applyAppearance, onApplied, appendClientLog } = {}) {
+    if (!documentRef || typeof getAppearance !== 'function' || typeof applyAppearance !== 'function') return null;
+    const currentWidth = () => String(documentRef.documentElement?.dataset?.chatWidth || '');
+    let previous = currentWidth() === WIDE_CHAT_WIDTH ? '' : currentWidth();
+    function toggle(source = 'shortcut') {
+      const current = String(getAppearance()?.chatWidthId || '');
+      const step = nextChatWidth(current, previous);
+      const applied = applyAppearance({ ...getAppearance(), chatWidthId: step.next });
+      const now = String(applied?.chatWidthId || current);
+      if (now === step.next) previous = step.previous;
+      syncChatWidthToggles(documentRef);
+      onApplied?.();
+      appendClientLog?.('INFO', 'chat.chat_width_toggle', { source, chatWidthId: now });
+      return now;
+    }
+    const onEvent = (event) => toggle(event?.detail?.source || 'button');
+    documentRef.addEventListener(CHAT_WIDTH_TOGGLE_EVENT, onEvent);
+    // Settings and the relay change the width too: keep every pane's button honest and
+    // remember a non-Wide choice as the width to return to.
+    const Observer = documentRef.defaultView?.MutationObserver;
+    const observer = typeof Observer === 'function' ? new Observer(() => {
+      const width = currentWidth();
+      if (width && width !== WIDE_CHAT_WIDTH) previous = width;
+      syncChatWidthToggles(documentRef);
+    }) : null;
+    observer?.observe(documentRef.documentElement, { attributes: true, attributeFilter: ['data-chat-width'] });
+    return {
+      toggle,
+      dispose() {
+        documentRef.removeEventListener(CHAT_WIDTH_TOGGLE_EVENT, onEvent);
+        observer?.disconnect();
+      },
+    };
+  }
+
   return {
     TRANSCRIPT_VIEWS,
     DEFAULT_TRANSCRIPT_VIEW,
+    WIDE_CHAT_WIDTH,
+    CHAT_WIDTH_TOGGLE_EVENT,
+    nextChatWidth,
+    syncChatWidthToggles,
+    mountChatWidthToggle,
+    createChatWidthToggle,
     normalizeTranscriptView,
     resolveTranscriptView,
     cycleTranscriptView,

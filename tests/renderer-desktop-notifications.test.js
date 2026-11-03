@@ -109,6 +109,49 @@ test('an errored turn becomes a failures candidate with the message clipped to 1
   assert.equal(sent.at(-1).body, 'Untitled chat', 'an untitled chat says so; no message means the title alone');
 });
 
+const primaryState = { sessions: [{ id: 's1', title: 'Budget review', session_role: 'primary' }, { id: 's2', title: '' }] };
+
+test('row 89: a scheduled check says what finished, under the jenny category, with the reply preview', () => {
+  const { controller, sent } = setup({ state: primaryState });
+  controller.onTerminal(terminal('complete', { applicationTurn: 'scheduled_check', applicationTurnTitle: 'Morning PR sweep' }, { messageId: 'assistant_stream-1' }));
+  controller.onTerminal(terminal('error', { streamId: 'stream-2', applicationTurn: 'scheduled_check', applicationTurnTitle: 'Morning PR sweep', message: 'The model stopped responding: engine exited' }));
+  controller.onTerminal(terminal('complete', { streamId: 'stream-3', applicationTurn: 'scheduled_check' }));
+  assert.deepEqual(sent, [
+    { category: 'jenny', key: 'turn:stream-1', sessionId: 's1', title: 'Check done: Morning PR sweep', body: 'Budget review', preview: 'Here is the summary.' },
+    { category: 'jenny', key: 'turn:stream-2', sessionId: 's1', title: 'Check failed: Morning PR sweep', body: 'Budget review · The model stopped responding' },
+    { category: 'jenny', key: 'turn:stream-3', sessionId: 's1', title: 'Check done', body: 'Budget review' },
+  ]);
+});
+
+test('row 89: a wake groups into the counting update toast; a digest names itself; an auto-resume stays a reply', () => {
+  const { controller, sent } = setup({ state: primaryState });
+  controller.onTerminal(terminal('complete', { applicationTurn: 'wake', content: 'Parser cleanup finished.' }));
+  controller.onTerminal(terminal('error', { streamId: 'stream-2', applicationTurn: 'wake', message: 'Model unavailable' }));
+  controller.onTerminal(terminal('complete', { streamId: 'stream-3', applicationTurn: 'digest' }));
+  controller.onTerminal(terminal('complete', { streamId: 'stream-4', applicationTurn: 'auto_resume' }));
+  assert.deepEqual(sent.map((c) => [c.category, c.title, c.group]), [
+    ['jenny', 'Jenny has an update', 'updates'],
+    ['jenny', 'Update failed', undefined],
+    ['jenny', 'While you were away', undefined],
+    ['replies', 'Reply ready', undefined],
+  ]);
+  assert.equal(sent[0].preview, 'Parser cleanup finished.');
+  assert.equal(sent[1].body, 'Budget review · Model unavailable');
+});
+
+test('row 89: another chat woken by its report or background job keeps the ordinary reply toast', () => {
+  const { controller, sent } = setup();
+  controller.onTerminal(terminal('complete', { applicationTurn: 'wake' }));
+  controller.onTerminal(terminal('error', { streamId: 'stream-2', applicationTurn: 'wake', message: 'Model unavailable' }));
+  assert.deepEqual(sent.map((c) => [c.category, c.title, c.group]), [['replies', 'Reply ready', undefined], ['failures', 'Run failed', undefined]]);
+});
+
+test('row 89: Stop on a Jenny-started turn still never notifies', () => {
+  const { controller, sent } = setup({ state: primaryState });
+  controller.onTerminal(terminal('error', { applicationTurn: 'scheduled_check', terminal_status: 'cancelled' }));
+  assert.deepEqual(sent, []);
+});
+
 test('user-intent terminals (Stop, Deny) never notify, in any spelling the timeline accepts', () => {
   const { controller, sent } = setup();
   for (const payload of [
@@ -353,11 +396,11 @@ test('a missing or broken bridge never throws; a failing send is logged once per
 });
 
 test('normalizeNotificationSettings is total and fills every default', () => {
-  assert.deepEqual(NOTIFICATION_CATEGORIES, ['replies', 'failures', 'permissions', 'questions', 'reminders']);
+  assert.deepEqual(NOTIFICATION_CATEGORIES, ['replies', 'failures', 'permissions', 'questions', 'reminders', 'jenny']);
   const defaults = normalizeNotificationSettings(undefined);
   assert.deepEqual(defaults, {
     enabled: true, onlyWhenUnfocused: true, sound: true, replyPreview: false,
-    categories: { replies: true, failures: true, permissions: true, questions: true, reminders: true },
+    categories: { replies: true, failures: true, permissions: true, questions: true, reminders: true, jenny: true },
   });
   assert.deepEqual(normalizeNotificationSettings(DEFAULT_NOTIFICATION_SETTINGS), defaults);
   const partial = normalizeNotificationSettings({ enabled: false, sound: 'yes', categories: { failures: false, bogus: true } });

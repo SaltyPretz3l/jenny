@@ -304,7 +304,7 @@ describe('prefs module — save / load round-trips', () => {
 
     const prefs = loadArtifactReviewPreferences(windowRef, STORAGE_KEY);
     saveArtifactReviewPreferences(windowRef, STORAGE_KEY, prefs);
-    assert.deepEqual(JSON.parse(store[STORAGE_KEY]), { enabled: true, width: 505, textWrap: { output: true, code: true } },
+    assert.deepEqual(JSON.parse(store[STORAGE_KEY]), { enabled: true, width: 505, textWrap: { output: true, code: true, diff: true } },
       'the legacy values carry over; only the retired flags are dropped');
 
     recordArtifactReviewWidth(prefs, 'session-a', 480);
@@ -529,10 +529,10 @@ describe('prefs module — extracted legacy helpers keep their behavior', () => 
       enabled: true, collapsed: true, width: 500, mode: 'code_review', userDismissed: true,
     });
     assert.deepEqual(normalized, {
-      enabled: false, width: 500, mode: 'code_review', textWrap: { output: true, code: true },
+      enabled: false, width: 500, mode: 'code_review', textWrap: { output: true, code: true, diff: true },
     });
     assert.deepEqual(normalizeArtifactReviewPreferences(null), {
-      enabled: false, width: 420, mode: 'artifact', textWrap: { output: true, code: true },
+      enabled: false, width: 420, mode: 'artifact', textWrap: { output: true, code: true, diff: true },
     });
   });
 });

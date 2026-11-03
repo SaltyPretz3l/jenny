@@ -45,7 +45,7 @@
   /* `container` is the card; the three lists are found inside it so the
    * markup keeps its headings in index.html with data-i18n like every card.
    * Every dependent switch is disabled while the master switch is off, and
-   * the reply preview also while reply notifications are off. */
+   * the reply preview also while neither replies nor Jenny's own turns notify. */
   function renderNotificationsSection({ container, state } = {}) {
     if (!container || typeof container.querySelector !== 'function') return;
     const toggleSwitch = globalThis.inventory?.toggleSwitch || globalThis.inventoryToggleSwitch?.toggleSwitch;
@@ -54,10 +54,11 @@
     const settings = readSettings(state);
     const off = settings.enabled !== true;
     const lists = { '#notificationsGeneralList': [], '#notificationsCategoryList': [], '#notificationsContentList': [] };
+    const previewUnused = settings.categories.replies !== true && settings.categories.jenny !== true;
     descriptors.listSettingDescriptors({ adapterId: ADAPTER_ID }).forEach((descriptor) => {
       const reply = descriptor.key === 'replyPreview';
       const list = descriptor.key.startsWith('categories.') ? '#notificationsCategoryList' : (reply ? '#notificationsContentList' : '#notificationsGeneralList');
-      const disabled = descriptor.key !== 'enabled' && (off || (reply && settings.categories.replies !== true));
+      const disabled = descriptor.key !== 'enabled' && (off || (reply && previewUnused));
       lists[list].push(binding.renderSettingRow(descriptor, binding.getPath(settings, descriptor.key), { inventory: { toggleSwitch }, disabled }));
     });
     Object.keys(lists).forEach((selector) => {

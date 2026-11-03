@@ -125,6 +125,20 @@ test('the IDE script manifest lists the same Changes view files', () => {
   assert.deepEqual(positions.slice().sort((a, b) => a - b), positions, 'in load order');
 });
 
+test('the Changes page mounts beside the shared artifact body instead of clearing it', async () => {
+  const h = buildHarness();
+  const shell = h.document.createElement('div');
+  shell.id = 'artifactReviewPreviewShell';
+  h.detailPanel.appendChild(shell);
+  assert.equal(h.rail.openCodeReviewTarget({ scope: 'turn', turnId: 't1' }), true);
+  await settle();
+  assert.equal(shell.isConnected, true, 'the file preview and artifact renders keep a live host');
+  const page = h.detailPanel.querySelector('.changes-detail-page');
+  assert.equal(page.parentElement, h.detailPanel);
+  h.rail.renderRailContent({ key: 'split', detailPanel: h.detailPanel, detailEmpty: null });
+  assert.equal(h.detailPanel.querySelectorAll('.changes-detail-page').length, 1, 'a re-render reuses the page');
+});
+
 test('opening a turn mounts the Changes view in the side panel and reveals that turn', async () => {
   const h = buildHarness();
   assert.equal(h.rail.openCodeReviewTarget({ scope: 'turn', turnId: 't1' }), true);
@@ -147,6 +161,33 @@ test('opening a file goes straight to its detail page; Open in Workspace passes 
   h.detailPanel.querySelector('[data-changes-open-workspace]')
     .dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true }));
   assert.deepEqual(h.opened, ['c-b.js']);
+});
+
+test('the page text actions attach once per page element, read the ledger detail and dispose with the rail', async () => {
+  const created = [];
+  const attached = [];
+  const disposed = [];
+  const h = buildHarness({
+    railDeps: {
+      getPageActionsModule: () => ({
+        createChangesPageActions: (actionDeps) => {
+          created.push(actionDeps);
+          return { attach: (el) => attached.push(el), dispose: () => disposed.push(created.length) };
+        },
+      }),
+    },
+  });
+  h.rail.openCodeReviewTarget({ scope: 'file', turnId: 't1', fileKey: 'default:b.js' });
+  await settle();
+  h.rail.renderRailContent({ key: 'split', detailPanel: h.detailPanel, detailEmpty: null });
+  assert.equal(created.length, 1);
+  assert.deepEqual(attached, [h.detailPanel.querySelector('.changes-detail-page')]);
+  assert.equal(created[0].getLedgerDetail().path, 'b.js');
+  created[0].openLedgerChange('c-b.js');
+  assert.deepEqual(h.opened, ['c-b.js']);
+  assert.equal(created[0].getWorkingTreeHunks('b.js'), null, 'no Working tree page, no hunks');
+  h.rail.dispose();
+  assert.equal(disposed.length, 1);
 });
 
 test('turn times come from the session messages', async () => {

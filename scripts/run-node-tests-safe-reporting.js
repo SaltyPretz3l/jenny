@@ -113,6 +113,7 @@ async function retryInfrastructureFailures(parsed, state, runCapturedChild) {
       ? firstAttemptOutput
       : `${firstAttemptOutput}\n----- serial infrastructure retry -----\n${retry.output || ''}`;
     reportFileResult(record, parsed.verbose);
+    state.progress?.settle(record, retry.output);
     if (record.terminationFailed) {
       return { file: record.file, terminationFailed: true };
     }

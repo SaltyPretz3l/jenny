@@ -399,9 +399,9 @@ test('composer setToggle is a no-op while the current session is locked, and wor
 test('composer slot disables denied tools during lockdown and permits local file switches', (t) => {
   const { JSDOM } = require('jsdom');
   const { createComposerToolsSlot } = require('../renderer/chat/renderer-composer-tools-slot');
-  const dom = new JSDOM('<div id="slot"><span id="composerChatChipHost"></span><div id="composerChatPanel"><div id="composerChatPanelChips"></div><div id="composerChatPanelList"></div><button data-chat-panel-action="reset"></button></div></div>');
+  const dom = new JSDOM('<div id="slot"><span id="composerChatChipHost"></span><div id="composerChatPanel"><span data-chat-panel-tally></span><div id="composerChatPanelList"><p data-chat-panel-empty hidden></p></div><button data-chat-panel-action="reset"></button></div></div>');
   t.after(() => dom.window.close());
-  dom.window.inventory = { toggleSwitch: ToggleSwitch.toggleSwitch, chip: Chip, popover: Popover, actionButton: require('../renderer/inventory/action-button') };
+  dom.window.inventory = { toggleSwitch: Object.assign(ToggleSwitch.toggleSwitch, { setChecked: ToggleSwitch.setChecked, setDisabled: ToggleSwitch.setDisabled }), chip: Chip, popover: Popover, actionButton: require('../renderer/inventory/action-button') };
   const state = { features: { featureFlags: { session_offline_lockdown: true } },
     sessions: [{ id: 'sess-1', lockdown: true }], currentSessionId: 'sess-1' };
   const controller = createComposerV2ToggleController({ state });

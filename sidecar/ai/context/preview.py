@@ -172,7 +172,7 @@ def preview_context(
         ui_language=config.ui_language,
     )
     overlays: list[str] = []
-    append_mode_runtime_overlays(overlays, request_context=request)
+    append_mode_runtime_overlays(overlays, request_context=request, config=config)
     if config.model_identity_overlay_enabled:
         overlays.append(
             _render_model_identity_block(provider=config.engine_type, model=config.model)

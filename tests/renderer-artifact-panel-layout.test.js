@@ -191,7 +191,8 @@ test('load errors retain Retry and non-artifact modes cannot expose a dirty arti
       assert.equal(h.panelEl.querySelector('#' + id).classList.contains('hidden'), true, mode + ':' + id);
     }
     assert.equal(h.panelEl.querySelector('[data-artifact-panel-v2-copy]').disabled, true);
-    assert.equal(h.panelEl.querySelector('[data-artifact-panel-v2-copy]').classList.contains('hidden'), true, 'artifact actions hide outside artifact mode');
+    // The file preview's own Copy (its loaded text) is the one exception.
+    assert.equal(h.panelEl.querySelector('[data-artifact-panel-v2-copy]').classList.contains('hidden'), mode !== 'file_preview', 'artifact actions hide outside artifact mode');
     assert.equal(h.panelEl.querySelector('[data-inv-segmented="artifact-view"]'), null);
     assert.equal(h.panelEl.querySelector('[data-artifact-switcher-trigger]'), null);
   }

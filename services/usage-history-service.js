@@ -10,6 +10,7 @@ const {
 } = require('./backend/generated-chat-lifecycle-contract');
 const { normalizeText } = require('./shared/normalize');
 const { boundInferencePerformance } = require('./performance/performance-contract');
+const { createUsageRollupStore } = require('./usage-rollup');
 
 const USAGE_HISTORY_SCHEMA_VERSION = 2;
 const USAGE_HISTORY_FILE = 'usage-history.json';
@@ -348,6 +349,7 @@ class UsageHistoryService extends EventEmitter {
     maxAgeDays = DEFAULT_MAX_AGE_DAYS,
     store = null,
     fsImpl = fs,
+    rollupStore = null,
   } = {}) {
     super();
     this._logger = typeof logger === 'function' ? logger : null;
@@ -363,6 +365,13 @@ class UsageHistoryService extends EventEmitter {
     this._lastRecordError = null;
     this._readOnlyReason = '';
     this._load();
+    // Durable daily aggregate (usage-rollup.js): seeded from the retained rows on first run.
+    this._rollup = rollupStore || createUsageRollupStore({ userDataPath, logger: this._logger, now: this._now });
+    try {
+      this._rollup.load(this._rows);
+    } catch (error) {
+      this._log('WARN', 'usage_history.rollup_load_failed', { errorCode: boundedText(error?.code, 40) });
+    }
   }
 
   _log(level, event, details = {}) {
@@ -508,9 +517,15 @@ class UsageHistoryService extends EventEmitter {
       this._log('WARN', 'usage_history.record_rejected', { reason: 'missing_stable_identity' });
       return { recorded: false, reason: 'missing_stable_identity' };
     }
+    const previous = this._rows.find((entry) => entry.record_id === row.record_id) || null;
     const nextRows = this._rows.filter((entry) => entry.record_id !== row.record_id);
     nextRows.push(row);
     const result = this._commit(nextRows);
+    try {
+      this._rollup.apply(previous, row); // an upsert applies only the difference
+    } catch (error) {
+      this._log('WARN', 'usage_history.rollup_apply_failed', { errorCode: boundedText(error?.code, 40) });
+    }
     this.emit('updated', { sessionId: row.session_id, recordId: row.record_id });
     return { recorded: true, durable: result.durable };
   }
@@ -620,6 +635,11 @@ class UsageHistoryService extends EventEmitter {
     return snapshot.recent_turns;
   }
 
+  getRollupSnapshot() {
+    return this._rollup.snapshot();
+  }
+
+  // The rollup is untouched here: lifetime stats survive chat deletes and the primary reset (owner O1).
   resetSession(sessionId) {
     const normalized = boundedText(sessionId, MAX_ID_CHARS);
     if (!normalized) {
@@ -649,6 +669,7 @@ class UsageHistoryService extends EventEmitter {
     const cleared = this._rows.length;
     try {
       const result = this._commit([]);
+      this._rollup.clear();
       this.emit('updated', { cleared: true, clearedTurnCount: cleared });
       return { ok: true, cleared_turn_count: cleared, durable: result.durable };
     } catch (error) {

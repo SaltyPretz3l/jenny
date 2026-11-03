@@ -1,17 +1,22 @@
 'use strict';
 
 // Desktop (OS toast) notifications for renderer-detected events: finished
-// replies, failed runs, permission requests and questions. The renderer sends
+// replies, failed runs, permission requests, questions and the turns Jenny
+// starts herself (row 89: checks, wake updates, digests). The renderer sends
 // fire-and-forget candidates over `notifications.notify`; this module gates
 // them on the feature flag, the windowUi.notifications preferences and window
 // focus, then shows a default toast. It never focuses, shows or raises the
 // window on emit; only a click restores + focuses it (reminder-notifier path).
+// Row 89: wake updates share one counting toast per chat until the user looks,
+// and the Jenny chat stays silent inside its quiet hours (Settings > Jenny chat).
 
 const { getBridgeChannel } = require('../ipc-contract');
+const { t } = require('../i18n-main');
+const { quietRemainingMs } = require('../primary-digest');
 const { normalizeNotificationSettings } = require('../shell-config-notifications-schema');
 const { createTrustedSenderAuthorizer } = require('./ipc-sender-authorization');
 
-const EMITTED_CATEGORIES = Object.freeze(['replies', 'failures', 'permissions', 'questions']);
+const EMITTED_CATEGORIES = Object.freeze(['replies', 'failures', 'permissions', 'questions', 'jenny']);
 const FIELD_LIMITS = Object.freeze({ key: 120, sessionId: 80, title: 120, body: 240, preview: 240 });
 const MAX_LIVE_NOTIFICATIONS = 5;
 const MAX_FAILURE_MESSAGES = 32;
@@ -41,10 +46,12 @@ function normalizeNotificationCandidate(raw) {
   const body = raw.body == null ? '' : clipField(raw.body, FIELD_LIMITS.body);
   if (sessionId == null || body == null) return null;
   const candidate = { category, key, sessionId, title, body };
-  if (category === 'replies') {
+  if (category === 'replies' || category === 'jenny') {
     const preview = clipField(raw.preview, FIELD_LIMITS.preview);
     if (preview) candidate.preview = preview;
   }
+  // A wake update groups with the chat's other updates; nothing else groups.
+  if (category === 'jenny' && raw.group === 'updates' && sessionId) candidate.group = 'updates';
   return candidate;
 }
 
@@ -87,8 +94,15 @@ function createDesktopNotifier({
   ipcMainLike = null,
   authorizeSender = null,
   isChildSession = () => false,
+  isPrimarySession = () => false,
+  now = Date.now,
 } = {}) {
   const liveNotifications = new Map();
+  // Grouped live key -> { count, lastKey }: the count survives the toast's own
+  // close (Windows closes it into the notification center after a few seconds)
+  // and resets only when the user looks: a click, the window gaining focus, or
+  // an update that arrives while the window is focused.
+  const groupCounts = new Map();
   const loggedFailureMessages = new Set();
   const loggedSuppressions = new Set();
   const notifyChannel = getBridgeChannel('notifications.notify', 'send');
@@ -142,6 +156,7 @@ function createDesktopNotifier({
   function closeAll() {
     const notifications = [...liveNotifications.values()];
     liveNotifications.clear();
+    groupCounts.clear();
     notifications.forEach(closeNotification);
   }
 
@@ -196,6 +211,21 @@ function createDesktopNotifier({
     }
   }
 
+  // Q1: inside the Jenny chat's quiet hours nothing from that chat toasts;
+  // what waits stays in Needs you. The window is plain arithmetic, so it goes
+  // before the session lookup. Any read failure means "not quiet".
+  function inPrimaryQuietHours(sessionId) {
+    if (!sessionId) return false;
+    try {
+      const chatUi = getShellConfigService?.()?.getChatUiState?.() || {};
+      if (quietRemainingMs(now(), chatUi.digestQuietStart, chatUi.digestQuietEnd) <= 0) return false;
+      return isPrimarySession(sessionId) === true;
+    } catch (error) {
+      logFailure('desktop_notifier.quiet_hours_failed', error);
+      return false;
+    }
+  }
+
   function supported() {
     try {
       if (isSupported() === true) return true;
@@ -232,22 +262,35 @@ function createDesktopNotifier({
       logFailure('desktop_notifier.child_lookup_failed', error);
     }
     if (childSession) return suppress('child_session', candidate);
+    if (inPrimaryQuietHours(candidate.sessionId)) return suppress('quiet_hours', candidate);
     let mainWindow;
+    let focused = false;
     try {
       mainWindow = getMainWindow?.() || null;
       if (mainWindow && mainWindow.isDestroyed?.()) mainWindow = null;
       if (mainWindow) observeWindow(mainWindow);
-      if (mainWindow && settings.onlyWhenUnfocused && isWindowFocused(mainWindow)) {
-        return suppress('focused', candidate);
-      }
+      focused = Boolean(mainWindow) && isWindowFocused(mainWindow);
+      if (focused && settings.onlyWhenUnfocused) return suppress('focused', candidate);
     } catch (error) {
       logFailure('desktop_notifier.window_failed', error);
       mainWindow = null;
     }
     if (!mainWindow) return suppress('no_window', candidate);
     if (!supported()) return false;
-    const liveKey = `${candidate.category}:${candidate.key}`;
-    if (liveNotifications.has(liveKey)) return suppress('duplicate', candidate);
+    const liveKey = candidate.group
+      ? `${candidate.category}:group:${candidate.group}:${candidate.sessionId}`
+      : `${candidate.category}:${candidate.key}`;
+    const group = candidate.group ? groupCounts.get(liveKey) : null;
+    const duplicate = candidate.group ? group?.lastKey === candidate.key : liveNotifications.has(liveKey);
+    if (duplicate) return suppress('duplicate', candidate);
+    // An update shown while the window is focused is being looked at: it starts a fresh count.
+    const count = candidate.group ? (focused ? 0 : group?.count || 0) + 1 : 0;
+    const title = count > 1 ? t('desktopNotifier.toast.updates', 'Jenny has {count} updates', { count }) : candidate.title;
+    if (candidate.group) {
+      const previous = liveNotifications.get(liveKey);
+      liveNotifications.delete(liveKey);
+      if (previous) closeNotification(previous);
+    }
     while (liveNotifications.size >= MAX_LIVE_NOTIFICATIONS) {
       const [oldestKey, oldest] = liveNotifications.entries().next().value;
       liveNotifications.delete(oldestKey);
@@ -258,7 +301,7 @@ function createDesktopNotifier({
       : candidate.body;
     try {
       const notification = notificationFactory({
-        title: candidate.title,
+        title,
         body,
         silent: settings.sound !== true,
       });
@@ -267,11 +310,13 @@ function createDesktopNotifier({
       };
       notification?.on?.('click', () => {
         forget();
+        groupCounts.delete(liveKey);
         openSession(candidate);
       });
       notification?.on?.('close', forget);
       liveNotifications.set(liveKey, notification);
       notification?.show?.();
+      if (candidate.group) groupCounts.set(liveKey, { count, lastKey: candidate.key });
       safeLog('INFO', 'desktop_notifier.shown', { category: candidate.category });
       return true;
     } catch (error) {

@@ -26,7 +26,7 @@ const IMPORTED_MESSAGE_KEY_ALLOWLIST = Object.freeze(new Set([
   'model_used', 'client_message_id', 'parent_stream_id', 'event_seq', 'turn_id',
   'phases', 'visible_segments', 'tool_steps', 'reasoning', 'attachments',
   'interactive_batch', 'tool_call', 'tool_result', 'proactive_suggestion', 'memory_note',
-  'skill_invocation', 'plugin_operation', 'message_reactions', 'context_compactions',
+  'skill_invocation', 'image_prompt_pin', 'plugin_operation', 'message_reactions', 'context_compactions',
   'context_compacted', 'discarded_drafts', 'finalizedAt', 'interactive_round_recap',
   'turnId', 'parentStreamId',
   'terminal_status', 'error_code', 'retryable', 'recovery_class', 'next_action',

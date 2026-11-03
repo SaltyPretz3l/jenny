@@ -59,6 +59,9 @@
       }
       windowRef.document.documentElement.dataset.pretextLayout =
         featureState?.featureFlags?.pretext_layout === true ? 'true' : 'false';
+      // Row 101 live box: the capped-body CSS applies only under this attribute.
+      windowRef.document.documentElement.dataset.reasoningLiveBox =
+        featureState?.featureFlags?.reasoning_live_box === true ? 'on' : 'off';
     }
 
     // KaTeX math reaches the stateless markdown pipeline through the shared

@@ -243,7 +243,8 @@
    * behavior: walk all lines from the start until we find one with actual
    * word content (skipping bare quotes/punctuation that some reasoning models
    * emit as the opening token), strip leading markdown list/heading markers,
-   * cap at 120 chars.
+   * cap at 500 chars. The row's CSS ellipsis does the visible clipping; the
+   * cap must stay above what a Wide chat width pane shows on one line.
    */
   function summaryFromEntries(entries, fallback = 'Reasoning') {
     const list = Array.isArray(entries) ? entries : [];
@@ -257,7 +258,7 @@
         if (!/\p{L}|\p{N}/u.test(line)) continue;
         if (HEADER_SKIP_LINE_RE.test(line) && lines.length > 1) continue;
         const cleaned = line.replace(LEADING_BLOCK_MARKER_RE, '');
-        if (cleaned) return cleaned.slice(0, 120);
+        if (cleaned) return Array.from(cleaned).slice(0, 500).join('');
       }
     }
     return fallback;

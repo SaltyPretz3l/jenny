@@ -558,18 +558,11 @@
       };
       if (panel) {
         registerListener(panel, 'keydown', (event) => {
-          if (event.key === 'Escape' && !panel.querySelector('[data-chat-panel-view="all"]').hidden) {
-            event.preventDefault();
-            event.stopPropagation();
-            panelApi()?.view('main');
-          }
-        }, { ...listenerOptions, capture: true });
-        registerListener(panel, 'keydown', (event) => {
-          if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) panelApi()?.rove(event);
+          if (event.key === 'ArrowUp' || event.key === 'ArrowDown') panelApi()?.moveFocus(event);
         }, listenerOptions);
-        registerListener(panel, 'focusin', (event) => {
-          const chip = event.target.closest('.composer-family-chip');
-          if (chip) panelApi()?.remember(chip);
+        // Every close (chip, Escape, click-away, Settings) drops the query.
+        registerListener(panel, 'inv-popover-toggle', (event) => {
+          if (event.target === panel && event.detail?.open === false) panelApi()?.clearFilter();
         }, listenerOptions);
         registerListener(panel, 'input', (event) => {
           if (event.target.matches('[data-chat-panel-filter]')) panelApi()?.render();
@@ -583,32 +576,23 @@
         if (chip) {
           const popoverEl = doc?.getElementById(chip.getAttribute('aria-controls') || '');
           inventory()?.popover?.toggle(popoverEl, { trigger: chip, focus: popoverEl !== panel });
-          if (popoverEl === panel && !panel.hidden) panelApi()?.focusChips();
+          if (popoverEl === panel && !panel.hidden) panelApi()?.focusFirst();
           return;
         }
         if (!panel?.contains(event.target)) return;
-        const family = event.target.closest('.composer-family-chip');
-        if (family) { panelApi()?.clickFamily(family.dataset.toolTarget); return; }
-        const expand = event.target.closest('[data-chat-panel-expand]');
-        if (expand) {
-          const open = expand.getAttribute('aria-expanded') !== 'true';
-          expand.setAttribute('aria-expanded', String(open));
-          doc.getElementById(expand.getAttribute('aria-controls')).hidden = !open;
-          return;
-        }
+        const members = event.target.closest('[data-chat-panel-members]');
+        if (members) { panelApi()?.toggleMembers(members.dataset.chatPanelMembers); return; }
         const fix = event.target.closest('[data-tool-fix]');
         if (fix) {
           if (fix.dataset.toolFix === 'settings') openSettings('tools');
-          if (fix.dataset.toolFix === 'project') {
-            panelApi()?.view('main', false);
-            // Row 63: the project pill sits on the composer bar, outside this panel.
-            doc.getElementById('composerProjectPillSlot')?.querySelector('button')?.click();
-          }
+          // Row 63: the project pill sits on the composer bar, outside this panel.
+          if (fix.dataset.toolFix === 'project') doc.getElementById('composerProjectPillSlot')?.querySelector('button')?.click();
           return;
         }
+        // Switch clicks are toggled by the inventory's delegated handler; handling them here would double-toggle.
+        const toolRow = event.target.closest('.composer-tool-row');
+        if (toolRow && !event.target.closest('.inv-toggle, .composer-tool-members')) { panelApi()?.toggleRow(toolRow.dataset.toolTarget); return; }
         const action = event.target.closest('[data-chat-panel-action]')?.dataset.chatPanelAction;
-        if (action === 'all-tools') panelApi()?.view('all');
-        if (action === 'back') panelApi()?.view('main');
         if (action === 'reset') panelApi()?.reset();
         if (action === 'settings') openSettings('tools');
       }, listenerOptions);

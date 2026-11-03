@@ -6,6 +6,9 @@
 // never aimed at the caller's own turn. The caller comes only from the live call binding.
 const { manifestSchema } = require('./tool-result');
 const { callDirectory, jsonToolResult, plainInput } = require('./session-directory-tool-support');
+const { checkLiveCall } = require('./propose-tool-support');
+const { actionRuleDenial } = require('../../backend/action-rule-gate');
+const { RULE_DENIED_MESSAGE } = require('../../primary-action-rules');
 
 const NAME = 'session_stop';
 // `purpose` is the approval card's intent line (every approval-gated tool declares it).
@@ -27,6 +30,11 @@ module.exports = {
   async execute(input = {}, context = {}) {
     if (!validInput(input)) return result({ ok: false, reason: 'invalid_request' });
     if (context.readOnly || context.planMode) return result({ ok: false, reason: 'mode_refused' });
+    // Row 87: a user's deny rule refuses the stop (the approval path already refused before any card).
+    const live = checkLiveCall(context);
+    if (live.ok && actionRuleDenial(context.backendService, { toolName: NAME, sessionId: live.sessionId, turnId: live.turnId, input })) {
+      return result({ ok: false, reason: 'rule_denied', message: RULE_DENIED_MESSAGE });
+    }
     return result(await callDirectory(context, 'stop', { sessionId: input.session_id }));
   },
 };

@@ -285,6 +285,12 @@ span.inv-artifact-figure-frame {
   text-decoration: underline;
 }
 
+/* Row 91: Edit prompt ends the title and size line. */
+.inv-artifact-figure-edit-prompt {
+  margin-inline-start: auto;
+  white-space: nowrap;
+}
+
 .inv-artifact-figure-action:disabled {
   cursor: default;
   opacity: 0.6;

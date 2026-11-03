@@ -423,6 +423,8 @@
       return _renderApprovalBlock({
         cardState: viewModel.approvalCard.state,
         resumeKey: viewModel.approvalCard.resumeKey,
+        alwaysAllowScope: viewModel.approvalCard.alwaysAllowScope,
+        rememberOffer: viewModel.approvalCard.rememberOffer,
         toolCallId: viewModel.callId,
         approvalId: viewModel.approvalId,
         toolName: viewModel.toolName,
@@ -853,7 +855,7 @@
       // their own row markup when the call carries no terminal report.
       if (options && options.subagentSummaryOnly === true) return '';
       const artifactCards = viewModel.generatedArtifacts.length && _artifactCardUtils?.renderArtifactCards
-        ? _artifactCardUtils.renderArtifactCards(viewModel.generatedArtifacts, viewModel.callId, { seed: viewModel.metadata?.provenance?.seed, prompt: viewModel.metadata?.provenance?.image_prompt, negativePrompt: viewModel.metadata?.provenance?.image_negative_prompt, sessionId: viewModel.sessionId })
+        ? _artifactCardUtils.renderArtifactCards(viewModel.generatedArtifacts, viewModel.callId, { seed: viewModel.metadata?.provenance?.seed, prompt: viewModel.metadata?.provenance?.image_prompt, negativePrompt: viewModel.metadata?.provenance?.image_negative_prompt, promptSource: viewModel.metadata?.provenance?.prompt_source, sessionId: viewModel.sessionId })
         : '';
       const pendingFigure = viewModel.toolName === 'image_generate' && viewModel.isRunning && !viewModel.generatedArtifacts.length
         ? (_artifactCardUtils?.renderImagePendingFigure?.(viewModel.callId, viewModel.input) || '') : '';

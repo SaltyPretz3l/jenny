@@ -13,12 +13,11 @@ const path = require('path');
 const R = require('../services/backend/chat-proposal-records');
 const S = require('../services/backend/chat-proposal-session-records');
 const { createChatProposalStore } = require('../services/backend/chat-proposal-store');
-const { createSessionMailStore } = require('../services/backend/session-mail-store');
 const { AttachmentAssetStore } = require('../services/attachment-asset-store');
 const { GENERAL_PROJECT_ID } = require('../services/projects/project-schema');
 const { resetPrimaryChat, forgetPreview } = require('../services/backend/primary-chat-reset');
 const { cleanupTrackedResources } = require('./helpers/resource-cleanup');
-const { freshStore, seedConversation } = require('./helpers/session-truncate-fixtures');
+const { setup, rpcCount } = require('./helpers/primary-chat-reset-fixtures');
 const F = require('./helpers/session-mail-fixtures');
 
 const NOW = new Date('2026-10-25T09:08:07.000Z');
@@ -45,101 +44,6 @@ function makeSessionProposal(sessionId, n = 1) {
   assert.equal(made.ok, true, JSON.stringify(made));
   return made.record;
 }
-
-// A fake BackendService: real store, recorders for every port the module reaches.
-function setup(t, options = {}) {
-  const { store, userDataPath } = freshStore();
-  t.after(() => store.dispose());
-  const created = store.createSession({ title: 'Jenny', projectId: GENERAL_PROJECT_ID, sessionRole: 'primary' });
-  const sessionId = created.id;
-  store.setSessionMeta(sessionId, { pinned: true });
-  seedConversation(store, sessionId);
-  const calls = {
-    cancel: [], discard: [], decide: [], journal: [], logs: [], rpc: [], prefs: [], history: [], order: [],
-  };
-  const memories = options.memories || [];
-  const candidates = options.candidates || [];
-  const mailStore = createSessionMailStore(store);
-  const service = {
-    sessionStore: store,
-    featureFlags: options.featureFlags || {},
-    options: { userDataPath: options.userDataPath || userDataPath },
-    _emitServiceLog: (level, event, details) => calls.logs.push({ level, event, details }),
-    sessionTurnActors: {
-      runSessionMutation(id, site, operation, commit, opts) {
-        calls.order.push('lease');
-        if (opts?.requireIdle && store.getActiveTurn(id)) {
-          return Promise.reject(Object.assign(new Error('a turn is already running'), { code: 'session_busy' }));
-        }
-        return Promise.resolve().then(operation).then(commit);
-      },
-    },
-    sessionRuntime: {
-      async cancelSessionAndWait(id, opts) {
-        calls.order.push('cancel');
-        calls.cancel.push({ id, opts });
-        return options.cancelResult || { ok: true };
-      },
-    },
-    chatMessages: {
-      async discard(request) {
-        calls.order.push('discard');
-        calls.discard.push(structuredClone(request));
-        if (options.discardResult) return options.discardResult;
-        const ids = new Set(request.message_ids);
-        const moved = mailStore.mutate(request.session_id, ({ mail }) => ({
-          mail: {
-            ...mail,
-            inbox: mail.inbox.filter((record) => !ids.has(record.envelope.message_id)),
-            discarded: [...mail.discarded, ...mail.inbox
-              .filter((record) => ids.has(record.envelope.message_id))
-              .map((record) => F.makeDiscard(Number(record.receive_sequence)))],
-          },
-        }));
-        return { ok: moved.ok, updated_count: ids.size };
-      },
-    },
-    chatProposals: {
-      async decide(request) {
-        calls.order.push('decide');
-        calls.decide.push(structuredClone(request));
-        return options.decideResult || { ok: true };
-      },
-    },
-    turnEventJournal: {
-      purgeTurnsAfter(id, surviving, opts) {
-        calls.order.push('journal');
-        calls.journal.push({ id, surviving: [...surviving], opts });
-        return options.journalResult || { ok: true, purged: 1, durable: true, reason: null };
-      },
-      flush() {},
-    },
-    sidecarClient: {
-      connected: true,
-      async request(method, params) {
-        calls.rpc.push({ method, params });
-        switch (method) {
-          case 'memory.list': return { memories, next_cursor: null };
-          case 'memory.pending.list': return { candidates, next_cursor: null };
-          case 'memory.delete': return { deleted: true, memory_id: params.memory_id };
-          case 'memory.pending.delete': return { deleted: true };
-          case 'conversations.purge': return { ok: true };
-          default: throw new Error(`unexpected rpc ${method}`);
-        }
-      },
-    },
-    projectAuthority: { captureSession: () => ({ project_id: GENERAL_PROJECT_ID }) },
-    async setSessionPreferences(id, preferences) {
-      calls.prefs.push({ id, preferences });
-      return store.setSessionPreferences(id, preferences);
-    },
-    primaryChatControls: { recordHistory: (kind) => calls.history.push(kind) },
-    ...(options.service || {}),
-  };
-  return { service, store, calls, sessionId, userDataPath, mailStore };
-}
-
-const rpcCount = (calls, method) => calls.rpc.filter((entry) => entry.method === method).length;
 
 test('refuses disabled when either kill switch is off', async (t) => {
   for (const featureFlags of [{ primary_chat_controls: false }, { primary_chat: false }]) {
@@ -520,7 +424,9 @@ function setupForget(t, extra = {}) {
 
 test('forget deletes only the primary memories and pending candidates; preview matches', async (t) => {
   const { service, store, sessionId, calls } = setupForget(t);
-  assert.deepEqual(await forgetPreview(service), { ok: true, schema_version: 1, memories: 2, pending: 1 });
+  assert.deepEqual(await forgetPreview(service), {
+    ok: true, schema_version: 1, memories: 2, pending: 1, scheduled_checks: 0,
+  });
   assert.equal(rpcCount(calls, 'memory.delete'), 0, 'preview deletes nothing');
 
   const result = await resetPrimaryChat(service, { forget: true, keep_copy: false, now: () => NOW });
@@ -578,7 +484,73 @@ test('forget is bounded at 500 memories per run', async (t) => {
   const result = await resetPrimaryChat(built.service, { forget: true, keep_copy: false, now: () => NOW });
   assert.equal(result.forgotten.memories, 500);
   assert.equal(rpcCount(built.calls, 'memory.delete'), 500);
-  assert.deepEqual(await forgetPreview(built.service), { ok: true, schema_version: 1, memories: 500, pending: 0 });
+  assert.deepEqual(await forgetPreview(built.service), {
+    ok: true, schema_version: 1, memories: 500, pending: 0, scheduled_checks: 0,
+  });
+});
+
+// Row 85 S5 (D11): Forget deletes the scheduled checks unless told to keep them; a plain
+// reset and plain reminders are never touched.
+function withReminders(t, reminders, extra = {}) {
+  const deleted = [];
+  const config = {
+    getState: () => ({ proactive: { reminders: reminders.filter((entry) => !deleted.includes(entry.id)) } }),
+    deleteReminder: (id) => { deleted.push(id); },
+  };
+  return { ...setupForget(t, { service: { configService: config }, ...extra }), deleted };
+}
+const REMINDERS = [
+  { id: 'chk_1', action: 'jenny_turn' },
+  { id: 'rem_plain', action: '' },
+  { id: 'chk_2', action: 'jenny_turn' },
+];
+
+test('forget deletes every scheduled check when the dialog box is ticked; plain reminders stay', async (t) => {
+  const { service, deleted } = withReminders(t, REMINDERS);
+  assert.equal((await forgetPreview(service)).scheduled_checks, 2);
+  const result = await resetPrimaryChat(service, { forget: true, keep_copy: false, delete_scheduled_checks: true, now: () => NOW });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.scheduled_checks_deleted, 2);
+  assert.deepEqual(deleted, ['chk_1', 'chk_2']);
+});
+
+test('forget keeps the checks when the box is unticked or was never shown', async (t) => {
+  for (const choice of [{ delete_scheduled_checks: false }, {}]) {
+    const { service, deleted } = withReminders(t, REMINDERS);
+    const result = await resetPrimaryChat(service, { forget: true, keep_copy: false, ...choice, now: () => NOW });
+    assert.equal(result.ok, true);
+    assert.equal(result.scheduled_checks_deleted, 0);
+    assert.deepEqual(deleted, []);
+  }
+});
+
+test('a reset without forget never touches reminders', async (t) => {
+  const { service, deleted } = withReminders(t, REMINDERS);
+  const result = await resetPrimaryChat(service, { keep_copy: false, delete_scheduled_checks: true, now: () => NOW });
+  assert.equal(result.ok, true);
+  assert.equal(result.scheduled_checks_deleted, 0);
+  assert.deepEqual(deleted, []);
+});
+
+test('a scheduled-check deletion failure is reported in limits without failing the reset', async (t) => {
+  const { service, deleted } = withReminders(t, REMINDERS);
+  const config = service.configService;
+  config.deleteReminder = (id) => {
+    if (id === 'chk_2') throw new Error('write failed');
+    deleted.push(id);
+  };
+  const result = await resetPrimaryChat(service, { forget: true, keep_copy: false, delete_scheduled_checks: true, now: () => NOW });
+  assert.equal(result.ok, true);
+  assert.equal(result.scheduled_checks_deleted, 1);
+  assert.ok(result.limits.includes('scheduled_checks'));
+});
+
+test('forget without a config service deletes no checks and still succeeds', async (t) => {
+  const { service } = setupForget(t);
+  assert.equal((await forgetPreview(service)).scheduled_checks, 0);
+  const result = await resetPrimaryChat(service, { forget: true, keep_copy: false, now: () => NOW });
+  assert.equal(result.ok, true);
+  assert.equal(result.scheduled_checks_deleted, 0);
 });
 
 test('memory_opt_out writes the per-chat preference through the backend path and keeps the others', async (t) => {

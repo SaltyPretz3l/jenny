@@ -411,6 +411,26 @@ test('projectNotesService is published on the backend service and forwards chang
   }
 });
 
+// --- emitSessionsChanged → sendBridgeEvent (row 94) ---
+
+test('emitSessionsChanged forwards a bounded sessions.onChanged invalidation and never throws', () => {
+  const { created, bridgeEvents } = createRecordingFixture();
+  try {
+    assert.equal(typeof created.backendService.emitSessionsChanged, 'function');
+    created.backendService.emitSessionsChanged({ session_ids: ['sess_a', 7, '', 'x'.repeat(129), 'sess_b'], reason: 'ignored', extra: 1 });
+    const sent = bridgeEvents.filter((entry) => entry.name === 'sessions.onChanged');
+    assert.deepEqual(sent.map((entry) => entry.payload), [{ session_ids: ['sess_a', 'sess_b'], reason: 'primary_chat_manage' }]);
+    const many = Array.from({ length: 50 }, (_unused, index) => `sess_${index}`);
+    created.backendService.emitSessionsChanged({ session_ids: many });
+    assert.equal(bridgeEvents.filter((entry) => entry.name === 'sessions.onChanged').at(-1).payload.session_ids.length, 20);
+    const before = bridgeEvents.length;
+    for (const bad of [undefined, null, {}, { session_ids: 'sess_a' }, { session_ids: [] }]) created.backendService.emitSessionsChanged(bad);
+    assert.equal(bridgeEvents.length, before, 'nothing to invalidate sends nothing');
+  } finally {
+    created.backendService.dispose?.();
+  }
+});
+
 // --- schedulerService.on('changed') → sendBridgeEvent (line 165) ---
 
 test('schedulerService.on(changed) closure fires sendBridgeEvent with scheduler.onChanged + snapshot', () => {

@@ -129,4 +129,5 @@ module.exports = {
   MAX_OVERVIEW_CHARS,
   buildProfileOverviewBlock,
   composeProfileOverviewContextBlock,
+  plainLabel,
 };

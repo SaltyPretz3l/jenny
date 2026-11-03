@@ -27,9 +27,38 @@ const METHODS = Object.freeze({
   'primaryChat.resume': 'resume',
   'primaryChat.grantLaunch': 'grantLaunch',
   'primaryChat.revokeLaunch': 'revokeLaunch',
+  'primaryChat.addRule': 'addActionRule',
+  'primaryChat.revokeRule': 'revokeActionRule',
   'primaryChat.reset': 'reset',
   'primaryChat.forgetPreview': 'forgetPreview',
+  'primaryChat.undoSettingChange': 'undoSettingChange',
+  'primaryChat.undoChatChange': 'undoChatChange',
 });
+
+const APP_VIEW_METHODS = Object.freeze({ 'appView.reportOutcome': 'recordOutcome', 'appView.reportLayout': 'reportLayout' });
+// Row 94 P4: terminal_run's report of the terminal the renderer used (services/terminal-tools-service.js).
+const TERMINAL_TOOLS_METHODS = Object.freeze({ 'terminalTools.reportRun': 'recordRun' });
+
+// The chat-manage service's undo reasons onto the contract's stable ones; the envelope degrades unknown ones.
+const CHAT_UNDO_REASONS = Object.freeze({ unknown: 'not_found', busy: 'session_busy' });
+const chatUndo = async (backend, value) => {
+  const answer = await backend?.primaryChatManage?.undo?.(value);
+  return answer && answer.ok === false && Object.hasOwn(CHAT_UNDO_REASONS, answer.reason)
+    ? { ...answer, reason: CHAT_UNDO_REASONS[answer.reason] } : answer;
+};
+
+// Row 85 D11: Forget may keep the scheduled checks. The key rides beside the contract's
+// closed reset schema (which owns the other three flags): checked as a boolean here,
+// forwarded only when present, so the plain request keeps its three-flag shape.
+function validateReset(raw) {
+  if (!raw || typeof raw !== 'object' || !Object.hasOwn(raw, 'delete_scheduled_checks')) {
+    return contract.validateResetRequest(raw);
+  }
+  const { delete_scheduled_checks: deleteChecks, ...rest } = raw;
+  const checked = contract.validateResetRequest(rest);
+  if (!checked.ok || typeof deleteChecks !== 'boolean') return { ok: false, reason: 'invalid_request' };
+  return { ok: true, value: { ...checked.value, delete_scheduled_checks: deleteChecks } };
+}
 
 const control = (method) => (backend, value) => backend?.primaryChatControls?.[method]?.(value);
 
@@ -40,12 +69,21 @@ const OPERATIONS = Object.freeze({
   resume: { validate: contract.validateEmptyRequest, call: control('resume') },
   grantLaunch: { validate: contract.validateGrantLaunchRequest, call: control('grantLaunch') },
   revokeLaunch: { validate: contract.validateRevokeLaunchRequest, call: control('revokeLaunch') },
+  addActionRule: { validate: contract.validateAddRuleRequest, call: control('addActionRule') },
+  revokeActionRule: { validate: contract.validateRevokeRuleRequest, call: control('revokeActionRule') },
   activity: { validate: contract.validateActivityRequest, call: (backend, value) => backend?.primaryActivityLog?.list?.(value) },
   permissions: { validate: contract.validateEmptyRequest, call: (backend) => backend?.primaryActivityLog?.permissions?.() },
   reset: {
-    validate: contract.validateResetRequest,
+    validate: validateReset,
     call: (backend, value, loadReset) => loadReset()?.resetPrimaryChat?.(backend, value),
   },
+  // Row 88: Activity's Undo of a Jenny-made settings batch (primary-settings-service.js).
+  undoSettingChange: {
+    validate: contract.validateUndoSettingChangeRequest,
+    call: (backend, value) => backend?.primarySettings?.undo?.(value),
+  },
+  // Row 94: Activity's Undo of a Jenny-made chat change (primary-chat-manage-service.js).
+  undoChatChange: { validate: contract.validateUndoChatChangeRequest, call: chatUndo },
   forgetPreview: {
     validate: contract.validateEmptyRequest,
     call: (backend, _value, loadReset) => loadReset()?.forgetPreview?.(backend),
@@ -73,7 +111,21 @@ function registerPrimaryChatIpc(ipcMain, { backendService, authorization, loadRe
       }
     };
   }
+  // Row 94 P3 / P4: app_view's decision reports and the renderer's layout (services/app-view-service.js), and
+  // terminal_run's report (services/terminal-tools-service.js). Each service validates the payload itself and answers
+  // `{ok}` only; nothing here reaches a write.
+  const ported = [...Object.entries(APP_VIEW_METHODS).map(([path, method]) => [path, 'appView', method]),
+    ...Object.entries(TERMINAL_TOOLS_METHODS).map(([path, method]) => [path, 'terminalTools', method])];
+  for (const [methodPath, port, method] of ported) {
+    handlers[methodPath] = (_event, payload) => {
+      try {
+        return backendService?.[port]?.[method]?.(payload) ?? { ok: false, reason: 'unavailable' };
+      } catch {
+        return { ok: false, reason: 'unavailable' };
+      }
+    };
+  }
   return registerIpcInvokeHandlers(ipcMain, handlers, authorization);
 }
 
-module.exports = { METHODS, registerPrimaryChatIpc };
+module.exports = { APP_VIEW_METHODS, METHODS, TERMINAL_TOOLS_METHODS, registerPrimaryChatIpc };

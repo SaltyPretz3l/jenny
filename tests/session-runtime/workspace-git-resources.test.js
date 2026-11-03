@@ -141,8 +141,9 @@ test('WorkspaceGitService holds one lease across repo detection and the requeste
   });
   const result = await service.getStatus();
   assert.equal(result.ok, true);
-  assert.equal(observed.length, 2);
-  assert.deepEqual(observed.map(item => item.capacity), [1, 1]);
+  // Each read first lists the configured keys (row 103), inside the same lease.
+  assert.deepEqual(observed.map(item => (item.args.includes('config') ? 'config' : 'git')), ['config', 'git', 'config', 'git']);
+  assert.deepEqual(observed.map(item => item.capacity), [1, 1, 1, 1]);
   assert.equal(admission.broker.snapshot().lease_count, 0);
 });
 

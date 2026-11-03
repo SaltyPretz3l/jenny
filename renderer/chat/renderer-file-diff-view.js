@@ -91,14 +91,18 @@
         let gutter;
         let markerText;
         let aria = '';
+        let lineAttrs;
         const newSideLine = marker === '+' || marker === ' ' ? newLine : 0;
         if (marker === '+') {
           lineClass = 'diff-line-add'; gutter = String(newLine++); markerText = '+';
+          lineAttrs = ` data-new-line="${gutter}"`;
           aria = ` aria-label="${escape(jt('chat.fileDiff.addedLine', 'Added line {line}: {content}', { line: gutter, content: content.slice(0, 240) }))}"`;
         } else if (marker === '-') {
           lineClass = 'diff-line-remove'; gutter = String(oldLine++); markerText = '−';
+          lineAttrs = ` data-old-line="${gutter}"`;
           aria = ` aria-label="${escape(jt('chat.fileDiff.removedLine', 'Removed line {line}: {content}', { line: gutter, content: content.slice(0, 240) }))}"`;
         } else if (marker === ' ') {
+          lineAttrs = ` data-old-line="${oldLine}" data-new-line="${newLine}"`;
           lineClass = 'diff-line-context'; gutter = String(newLine++); oldLine += 1; markerText = ' ';
         } else {
           rows.push(`<div class="diff-line ${lineClass}" role="listitem"><span class="diff-gutter"></span><span class="diff-marker"></span><span class="diff-content">${escape(text)}</span></div>`);
@@ -108,7 +112,7 @@
         const lineAnnotations = atLine ? atLine.filter((item) => !placed.has(item)) : NO_ANNOTATIONS;
         const severity = lineAnnotations.length && /^(high|medium|low)$/.test(lineAnnotations[0].severity) ? lineAnnotations[0].severity : 'medium';
         const severityAttr = lineAnnotations.length ? ` data-review-severity="${severity}"` : '';
-        rows.push(`<div class="diff-line ${lineClass}" role="listitem"${aria}${severityAttr}><span class="diff-gutter">${escape(gutter)}</span><span class="diff-marker">${markerText}</span><span class="diff-content" data-code-highlight-line data-language-id="${escape(languageId)}">${renderTokens(content, languageId, settings.highlight, escape, allowHighlight)}</span></div>`);
+        rows.push(`<div class="diff-line ${lineClass}" role="listitem"${lineAttrs}${aria}${severityAttr}><span class="diff-gutter">${escape(gutter)}</span><span class="diff-marker">${markerText}</span><span class="diff-content" data-code-highlight-line data-language-id="${escape(languageId)}">${renderTokens(content, languageId, settings.highlight, escape, allowHighlight)}</span></div>`);
         for (const item of lineAnnotations) {
           placed.add(item);
           rows.push(`<div class="diff-annotation" role="listitem">${item.html}</div>`);

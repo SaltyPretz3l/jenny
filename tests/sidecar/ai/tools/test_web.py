@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import html2text  # noqa: F401 - dev extra; fetch_url_tool markdown conversion needs it
 import pytest
 
+from sidecar.ai.tools.builtins import web as web_module
 from sidecar.ai.tools.builtins import web_http
 from sidecar.ai.tools.builtins.web import (
     _CachedFetchEntry,
@@ -840,6 +841,16 @@ class TestFetchUrlTool:
     def test_localhost_blocked(self) -> None:
         with pytest.raises(ToolExecutionFailure, match="CMP-WEB-0001"):
             fetch_url_tool({"url": "http://localhost/admin"}, None)
+
+    @pytest.mark.parametrize("url", ["http://localhost/admin", "http://127.0.0.1:8080/"])
+    def test_loopback_flag_opens_search_not_fetch(self, url: str) -> None:
+        # Row 103: tools_web_allow_loopback is for a local SearXNG (and MCP
+        # servers); fetch_url stays governed by the private-address flag alone.
+        configure_web_tools({"tools_web_allow_loopback": True})
+        searxng = web_module._provider_dispatch["searxng"]
+        assert getattr(searxng, "_allow_loopback", None) is True
+        with pytest.raises(ToolExecutionFailure, match="CMP-WEB-0001"):
+            fetch_url_tool({"url": url}, None)
 
     def test_ftp_scheme_blocked(self) -> None:
         with pytest.raises(ToolExecutionFailure, match="CMP-WEB-0007"):

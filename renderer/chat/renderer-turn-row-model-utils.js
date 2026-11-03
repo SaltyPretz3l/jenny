@@ -20,7 +20,7 @@
   ]);
 
   const normalizeId = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)).normalizeId;
-  const APPLICATION_TURNS = new Set(['handoff_preparation', 'wake', 'auto_resume']);
+  const APPLICATION_TURNS = new Set(['handoff_preparation', 'wake', 'auto_resume', 'scheduled_check', 'digest']);
 
   function normalizeRecoveryActionText(value) {
     return typeof value === 'string' ? value.trim() : '';

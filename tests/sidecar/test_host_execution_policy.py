@@ -21,6 +21,7 @@ from sidecar.ai.host_policy import (
     HOST_ALLOWED_TOOL_NAMES,
     HOST_EXECUTION_POLICY_VERSION,
     HostPolicyError,
+    host_tool_decision,
     host_tool_requires_one_off_approval,
 )
 from sidecar.ai.mcp import builtin_server
@@ -221,6 +222,19 @@ def test_initialize_ack_contains_policy_version_only_when_server_is_enforced() -
         brain_container=_InitializeContainer(desktop_config),
     )
     assert "host_execution_policy_version" not in desktop_response["result"]
+
+
+def test_next_step_card_tool_is_denied_in_hosted_mode() -> None:
+    raw = {**_host_config(version=1), "tools_next_step_enabled": True}
+    config = parse_runtime_config(raw)
+
+    assert "suggest_next_step" not in HOST_ALLOWED_TOOL_NAMES
+    assert host_tool_decision("suggest_next_step", config)[0] is False
+    assert all(
+        item.name != "suggest_next_step"
+        for item in _electron_bridge_runtime_descriptors(config)
+        if host_tool_decision(item, config)[0]
+    )
 
 
 def test_policy_v2_ack_and_bridge_descriptor_require_ready_worker() -> None:

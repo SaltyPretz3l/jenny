@@ -212,7 +212,7 @@ test('chat shell controller binds child wiring once', async () => {
   assert.equal(eventCallbacks.setSessionMessages('session-1', ['resolved question']), 'updated');
   assert.deepEqual(messageUpdates, [['session-1', ['resolved question']], { runtimeOnly: true }]);
 
-  assert.deepEqual(controller.listSlashCommands(), ['/help', '/context', '/compact', '/note', '/linked', '/handoff', '/remember', '/forget', '/memory', '/activity']);
+  assert.deepEqual(controller.listSlashCommands(), ['/help', '/context', '/compact', '/note', '/linked', '/handoff', '/remember', '/forget', '/memory', '/activity', '/reset', '/forget-chat', '/image']);
   await controller.tryExecuteSlashCommand('/compact');
   await controller.tryExecuteSlashCommand('/memory');
 

@@ -53,6 +53,27 @@ def _add_semantic_catalog_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--semantic-catalog-dims", dest="semantic_catalog_dims", default="0")
 
 
+def _add_web_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--web-enabled", dest="web_enabled", default="0")
+    parser.add_argument("--web-rate-limit-per-min", dest="web_rate_limit_per_min", default="30")
+    parser.add_argument("--web-max-fetch-bytes", dest="web_max_fetch_bytes", default="1048576")
+    parser.add_argument(
+        "--web-allow-private-addresses",
+        dest="web_allow_private_addresses",
+        default="0",
+    )
+    parser.add_argument("--web-allow-loopback", dest="web_allow_loopback", default="0")
+    parser.add_argument(
+        "--web-search-provider",
+        dest="web_search_provider",
+        default="duckduckgo",
+    )
+    # No CLI arg for provider API keys: argv is visible in process listings,
+    # so key-based providers are configurable only through the managed sidecar
+    # config channel (RuntimeConfig.tools_web_search_provider_keys).
+    parser.add_argument("--web-searxng-url", dest="web_searxng_url", default="")
+
+
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     _add_host_arguments(parser)
@@ -73,23 +94,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
         parser.add_argument(
             f"--{flag.replace('_', '-')}-enabled", dest=f"{flag}_enabled", default="1"
         )
-    parser.add_argument("--web-enabled", dest="web_enabled", default="0")
-    parser.add_argument("--web-rate-limit-per-min", dest="web_rate_limit_per_min", default="30")
-    parser.add_argument("--web-max-fetch-bytes", dest="web_max_fetch_bytes", default="1048576")
-    parser.add_argument(
-        "--web-allow-private-addresses",
-        dest="web_allow_private_addresses",
-        default="0",
-    )
-    parser.add_argument(
-        "--web-search-provider",
-        dest="web_search_provider",
-        default="duckduckgo",
-    )
-    # No CLI arg for provider API keys: argv is visible in process listings,
-    # so key-based providers are configurable only through the managed sidecar
-    # config channel (RuntimeConfig.tools_web_search_provider_keys).
-    parser.add_argument("--web-searxng-url", dest="web_searxng_url", default="")
+    _add_web_arguments(parser)
     parser.add_argument("--image-read-enabled", dest="image_read_enabled", default="0")
     parser.add_argument("--max-search-file-bytes", dest="max_search_file_bytes", default="2097152")
     parser.add_argument("--max-edit-file-bytes", dest="max_edit_file_bytes", default="2097152")

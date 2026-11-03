@@ -319,6 +319,11 @@ class ProjectApplicationService {
     }
   }
 
+  // Row 94 P3: whether the IDE has this project's folder open (app_view opens a project-relative file there).
+  isCurrentProject(project) {
+    return this._isCurrentProject(project);
+  }
+
   createProject(payload) {
     if (!hasExactKeys(payload, ['name'])) return projectFailure('invalid_project_request');
     return this._projectResult(this._projects.create({ name: payload.name }));

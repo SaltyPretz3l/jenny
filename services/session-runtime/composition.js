@@ -17,6 +17,7 @@ const { SessionRuntimeService } = require('./service');
 const { SessionRuntimeChatAdapter } = require('../backend/session-runtime-chat-adapter');
 const { CommandProposalRuntimeAdapter } = require('../backend/command-proposal-runtime-adapter');
 const { ResourceBroker } = require('./resource-broker');
+const { createWorkLeaseAdapter } = require('./work-lease-adapter');
 const { PhysicalPathResolver } = require('./physical-paths');
 const { CheckpointStore } = require('./checkpoint-store');
 const { RootRunBudgetStore } = require('./budgets');
@@ -45,7 +46,10 @@ function initializeSessionRuntimeComposition(service) {
     scheduler?.notifyLaneAvailability();
     eligibilityCoordinator?.wake();
   } });
-  const resourceBroker = new ResourceBroker({ limits: limits?.resources });
+  // Row 100: cross-process work leases (tests per tree, git writes per repository).
+  const workLeases = service.featureFlags?.work_leases === true
+    ? createWorkLeaseAdapter({ userDataPath, log }) : null;
+  const resourceBroker = new ResourceBroker({ limits: limits?.resources, workLeases });
   const pathResolver = new PhysicalPathResolver();
   const conversationStore = service.sessionStore.conversationStore;
   const checkpointStore = new CheckpointStore(path.join(userDataPath, 'session-runtime-checkpoints'), {
@@ -138,6 +142,8 @@ function initializeSessionRuntimeComposition(service) {
   resourceBroker.onAvailabilityChange(() => waitNotices.refresh());
   runtime = new SessionRuntimeService({ store, scheduler, chatAdapter, commandAdapter, resourceBroker, pathResolver,
     checkpointStore, budgetStore, lineageStore, conversationStore, eligibilityCoordinator });
+  runtime.workLeases = workLeases;
+  runtime.waitNotices = waitNotices; // the session directory reads who a parked chat waits on (row 100 P2)
   runtime.mutationJournalProof = mutationJournalProof;
   runtime.reconcileMutationPreparations = () => reconcileMutationPreparations(service, runtime);
   runtime.recoverPausedCancellations = () => recoverPausedCancellations(runtime);

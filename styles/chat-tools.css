@@ -292,6 +292,21 @@
   gap: var(--space-4);
 }
 
+/* What a command's "Always allow" covers (row 103): a muted footnote under
+   the actions, never a banner. */
+.tool-approval-scope-note {
+  margin: var(--space-3) 0 0;
+  color: var(--text-muted);
+  font-size: var(--tl-font-detail);
+  line-height: 1.5;
+}
+
+.tool-approval-scope-note code,
+.tool-approve-always-btn code {
+  font-family: var(--font-family-mono);
+  font-size: 0.92em;
+}
+
 .tool-approve-btn,
 .tool-deny-btn {
   flex: 0 1 auto;

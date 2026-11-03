@@ -7,11 +7,13 @@ const assert = require('node:assert/strict');
 const {
   DEFAULT_HOME,
   DEFAULT_HOME_LAYOUT,
+  DEFAULT_HOME_USAGE_STATS,
   HOME_LAYOUT_RAIL_WIDTH_DEFAULT,
   HOME_LAYOUT_RAIL_WIDTH_MAX,
   HOME_LAYOUT_RAIL_WIDTH_MIN,
   normalizeHomeConfig,
   normalizeHomeLayout,
+  normalizeHomeUsageStats,
 } = require('../services/home-config-schema');
 const { ShellConfigService } = require('../services/shell-config-service');
 const {
@@ -62,6 +64,33 @@ test('normalizeHomeLayout treats blank persisted widths as missing', () => {
   assert.deepEqual(normalizeHomeLayout({ railWidth: '   ' }), { railWidth: 360 });
   assert.deepEqual(normalizeHomeLayout({ rail_width: '\t' }), { railWidth: 360 });
   assert.deepEqual(normalizeHomeLayout({ railWidth: '520' }), { railWidth: 520 });
+});
+
+test('home usageStats.range defaults to 7d, accepts the six ranges and collapses anything else', () => {
+  assert.deepEqual(DEFAULT_HOME.usageStats, DEFAULT_HOME_USAGE_STATS);
+  assert.deepEqual(normalizeHomeConfig({}).usageStats, { range: '7d' });
+  for (const range of ['1d', '7d', '30d', '6mo', '1y', 'all']) {
+    assert.deepEqual(normalizeHomeConfig({ usageStats: { range } }).usageStats, { range });
+  }
+  for (const junk of ['forever', '', '1yr', 7, null, undefined, {}]) {
+    assert.deepEqual(normalizeHomeUsageStats({ range: junk }), { range: '7d' });
+  }
+  assert.deepEqual(normalizeHomeUsageStats(null), { range: '7d' });
+  assert.deepEqual(normalizeHomeUsageStats('30d'), { range: '7d' });
+  const once = normalizeHomeConfig({ usageStats: { range: '6mo' } });
+  assert.deepEqual(normalizeHomeConfig(once), once, 'idempotent');
+});
+
+test('updateHomeConfig persists a usageStats range without touching sibling sections', () => {
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-home-usage-'));
+  trackDirectory(userDataPath);
+  const service = new ShellConfigService({ userDataPath, env: {} });
+  service.updateHomeConfig({ calendar: { viewMode: 'week' }, focusMode: true });
+  const patched = service.updateHomeConfig({ usageStats: { range: '1y' } });
+  assert.deepEqual(patched.usageStats, { range: '1y' });
+  assert.equal(patched.calendar.viewMode, 'week');
+  assert.equal(patched.focusMode, true);
+  assert.deepEqual(service.updateHomeConfig({ usageStats: { range: 'bogus' } }).usageStats, { range: '7d' });
 });
 
 test('home layout round-trips through normalizeHomeConfig and is idempotent', () => {

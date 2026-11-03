@@ -294,6 +294,116 @@ test('a tool-only first assistant phase anchors to its article instead of fallin
   harness.pipeline.dispose();
 });
 
+// The projector claims a blank assistant segment (no content, no reasoning) and
+// renders no node for it, but the stream opens one after every tool boundary.
+function removeArticle(harness, messageId) {
+  harness.dom.window.document.querySelector(`[data-message-id="${messageId}"]`).remove();
+}
+
+test('a blank segment after a tool keeps the sprite on the tool row instead of hiding it', () => {
+  const harness = createHarness({
+    messages: [
+      { id: 'u1', role: 'user', status: 'complete', content: 'Inspect this' },
+      { id: 'tool1', role: 'assistant', kind: 'tool_use', status: 'complete', content: '' },
+      { id: 'result1', role: 'tool', kind: 'tool_result', status: 'complete', content: 'ok' },
+      { id: 'seg1', role: 'assistant', status: 'streaming', content: '', streamId: 'stream-1' },
+    ],
+  });
+  removeArticle(harness, 'seg1');
+  harness.multiStream.streams.set('session-1', 'stream-1');
+
+  harness.pipeline.updateAssistantSpritePosition();
+  harness.scheduler.flushNext();
+
+  assert.equal(harness.layer.classList.contains('visible'), true, harness.layer.dataset.suppressionReason);
+  assert.equal(harness.spriteRuntime.targetMessageId, 'tool1');
+  assert.equal(harness.sprite.dataset.spriteState, 'live');
+  harness.pipeline.dispose();
+});
+
+test('a later tool rendered only as a row inside the turn article anchors the sprite', () => {
+  const harness = createHarness({
+    messages: [
+      { id: 'u1', role: 'user', status: 'complete', content: 'Inspect this' },
+      { id: 'tool1', role: 'assistant', kind: 'tool_use', status: 'complete', content: '' },
+      { id: 'tool2', role: 'assistant', kind: 'tool_use', status: 'running', content: '' },
+      { id: 'seg2', role: 'assistant', status: 'streaming', content: '', streamId: 'stream-1' },
+    ],
+  });
+  removeArticle(harness, 'tool2');
+  removeArticle(harness, 'seg2');
+  const documentRef = harness.dom.window.document;
+  const row = documentRef.createElement('div');
+  row.className = 'chat-row';
+  row.dataset.rowKind = 'tool_call';
+  row.dataset.sourceMessageId = 'tool2';
+  row.getBoundingClientRect = () => ({ top: 260, bottom: 290, height: 30 });
+  documentRef.querySelector('[data-message-id="tool1"]').appendChild(row);
+  harness.multiStream.streams.set('session-1', 'stream-1');
+
+  harness.pipeline.updateAssistantSpritePosition();
+  harness.scheduler.flushNext();
+
+  assert.equal(harness.layer.classList.contains('visible'), true, harness.layer.dataset.suppressionReason);
+  assert.equal(harness.spriteRuntime.targetMessageId, 'tool2');
+  assert.equal(harness.spriteRuntime.targetY, 260);
+  harness.pipeline.dispose();
+});
+
+test('a live turn with only a blank segment waits below the prompt instead of hiding', () => {
+  const harness = createHarness({
+    messages: [
+      { id: 'u1', role: 'user', status: 'complete', content: 'Hello' },
+      { id: 'seg0', role: 'assistant', status: 'streaming', content: '', streamId: 'stream-1' },
+    ],
+  });
+  removeArticle(harness, 'seg0');
+  harness.multiStream.streams.set('session-1', 'stream-1');
+
+  harness.pipeline.updateAssistantSpritePosition();
+  harness.scheduler.flushNext();
+
+  assert.equal(harness.layer.classList.contains('visible'), true, harness.layer.dataset.suppressionReason);
+  assert.equal(harness.spriteRuntime.targetMessageId, 'u1');
+  assert.equal(harness.spriteRuntime.targetY, 172, 'the same lane as the preflight wait');
+  assert.equal(harness.sprite.dataset.spriteState, 'live');
+  harness.pipeline.dispose();
+});
+
+test('the anchor resolver lists the turn tool rows newest first only while no prose exists', () => {
+  const { resolveAssistantSpriteAnchor } = require('../renderer/chat/renderer-sprite-activity');
+  const toolOnly = [
+    { id: 'a0', role: 'assistant', content: 'Earlier turn' },
+    { id: 'u1', role: 'user' },
+    { id: 'tool1', role: 'assistant', kind: 'tool_use' },
+    { id: 'result1', role: 'tool', kind: 'tool_result' },
+    { id: 'tool2', role: 'assistant', kind: 'tool_use' },
+    { id: 'seg2', role: 'assistant', content: '' },
+  ];
+  const anchor = resolveAssistantSpriteAnchor(toolOnly, 'seg2', null);
+  assert.equal(anchor.message.id, 'seg2');
+  assert.deepEqual(anchor.fallbacks.map((message) => message.id), ['tool2', 'tool1']);
+  const withProse = toolOnly.map((message) => (message.id === 'tool1' ? { ...message, kind: '', content: 'Hi' } : message));
+  assert.deepEqual(resolveAssistantSpriteAnchor(withProse, 'seg2', null).fallbacks, []);
+  assert.deepEqual(resolveAssistantSpriteAnchor(toolOnly, 'missing', null).fallbacks, []);
+});
+
+test('a settled turn whose anchor is unmounted still hides', () => {
+  const harness = createHarness({
+    messages: [
+      { id: 'u1', role: 'user', status: 'complete', content: 'Hello' },
+      { id: 'a1', role: 'assistant', status: 'complete', content: 'Done' },
+    ],
+  });
+  removeArticle(harness, 'a1');
+
+  harness.pipeline.updateAssistantSpritePosition();
+  harness.scheduler.flushNext();
+
+  assert.equal(harness.layer.dataset.suppressionReason, 'missing_target');
+  harness.pipeline.dispose();
+});
+
 test('sprite placement is clamped to the rail layer bounds', () => {
   const messages = Array.from({ length: 9 }, (_, index) => ({
     id: `a${index + 1}`,

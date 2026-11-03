@@ -29,6 +29,7 @@ from sidecar.ai.routing import tool_restored_inputs as _tool_restored_inputs
 from sidecar.ai.routing.tool_resolution import contract_entry_for_call
 from sidecar.ai.tools import assembly as _tool_assembly
 from sidecar.ai.tools import contracts as _tool_contracts
+from sidecar.ai.tools import read_only_command_grant as _read_only
 from sidecar.ai.tools import sanitization as _sanitization
 from sidecar.ai.tools import schema_examples as _tools_schema_examples
 from sidecar.ai.tools.failure_taxonomy import classify as _classify_failure
@@ -48,6 +49,13 @@ TOOL_SEARCH_TOOL_NAME = _tool_assembly.TOOL_SEARCH_TOOL_NAME
 PLAN_MODE_OUTSIDE_ROOT_HINT = (
     "In Plan mode files outside the workspace cannot be read; plan to read them "
     "in the build step after the user approves (Build it)."
+)
+# 2026-10-31 session review: outside the Plan case the bare refusal left the model
+# probing other tools (glob, git_diff cwd, run_command cwd) at the same path.
+OUTSIDE_ROOT_HINT = (
+    "File tools only reach this chat's project folder. For another git worktree of "
+    "this repository, run_command with git -C <path> can read it where commands are "
+    "allowed (it asks first); otherwise ask the user to open that folder as its own project."
 )
 
 
@@ -86,17 +94,16 @@ def _is_deferred_tool_call(
     return bool(checker(call, tool_resolution_context))
 
 
-def _plan_mode_outside_root_hint(error_code: str, request_context: Any | None) -> str:
-    if error_code != CMP_TOOL_OUTSIDE_WORKSPACE:
-        return ""
-    if getattr(request_context, "plan_mode", False) is not True:
-        return ""
-    if getattr(request_context, "read_only", False) is not True:
+def _outside_root_hint(error_code: str, request_context: Any | None) -> str:
+    if error_code != CMP_TOOL_OUTSIDE_WORKSPACE or request_context is None:
         return ""
     live_run_mode = current_live_run_mode_state()
-    if live_run_mode is not None and not live_run_mode.snapshot()[1]:
-        return ""
-    return f" {PLAN_MODE_OUTSIDE_ROOT_HINT}"
+    plan_read_only = (
+        getattr(request_context, "plan_mode", False) is True
+        and getattr(request_context, "read_only", False) is True
+        and (live_run_mode is None or live_run_mode.snapshot()[1])
+    )
+    return f" {PLAN_MODE_OUTSIDE_ROOT_HINT if plan_read_only else OUTSIDE_ROOT_HINT}"
 
 
 def should_pause_for_live_prompt(
@@ -338,6 +345,9 @@ def pre_filter_tool_calls(  # noqa: PLR0913
                 plan_mode=plan_mode,
                 read_only=read_only,
             )
+            and not _read_only.is_allowed_verdict(
+                ro := _read_only.read_only_command_verdict(kernel, call, descriptor, runtime)
+            )
         ):
             log_event(
                 logger,
@@ -355,7 +365,7 @@ def pre_filter_tool_calls(  # noqa: PLR0913
             )
             tool_result = _blocked_outcome(
                 call,
-                output=(
+                output=_read_only.read_only_command_refusal(ro) or (
                     f"Tool '{call.tool_id}' is unavailable because this request "
                     "is read-only."
                 ),
@@ -683,7 +693,7 @@ def execute_tool_calls_sequentially(  # noqa: C901, PLR0912, PLR0913, PLR0915
             )
             failure_output = (
                 f"Tool '{call.tool_id}' failed: {_sentence(exc.message)}"
-                f"{_plan_mode_outside_root_hint(exc.code, request_context)}"
+                f"{_outside_root_hint(exc.code, request_context)}"
             )
             config = getattr(kernel, "_config", None)
             if getattr(config, "tool_result_envelope_enabled", False) is not True:

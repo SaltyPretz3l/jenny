@@ -83,6 +83,9 @@
     const onPreferenceError = typeof deps?.onPreferenceError === 'function' ? deps.onPreferenceError : noop;
     const setTimeoutImpl = typeof deps?.setTimeoutImpl === 'function' ? deps.setTimeoutImpl : setTimeout;
     const clearTimeoutImpl = typeof deps?.clearTimeoutImpl === 'function' ? deps.clearTimeoutImpl : clearTimeout;
+    const getShellWindowApi = typeof deps?.getShellWindowApi === 'function'
+      ? deps.getShellWindowApi
+      : () => globalThis.jennyShell?.window || null;
 
     let persistTimer = null;
     let pendingWrite = null;
@@ -222,6 +225,29 @@
     function flushIfPending() {
       if (hydrated && !suspended) void flushPersist({ force: true });
       else if (persistTimer !== null || pendingWrite) void flushPersist();
+    }
+
+    // Row 103 O2: write a pending debounced change now; nothing pending is a
+    // no-op. A bound, unsuspended root writes its live state; otherwise only a
+    // write captured with its own root token goes out (main refuses a stale one).
+    function flushPending() {
+      if (persistTimer === null && !pendingWrite) return Promise.resolve({ updated: false, skipped: true });
+      return flushPersist(hydrated && !suspended ? { force: true } : {});
+    }
+
+    // App quit ends in app.exit(), which never fires beforeunload: main's exit
+    // preflight request (sent for a native close and for before-quit) is the
+    // renderer's last turn, so the pending write is dispatched from it too. A
+    // listener only: the exit preflight module owns the reply.
+    let unsubscribeExitFlush = null;
+    try {
+      const shellWindow = getShellWindowApi();
+      if (typeof shellWindow?.onExitPreflightRequest === 'function') {
+        const unsubscribe = shellWindow.onExitPreflightRequest(() => { void flushPending(); });
+        unsubscribeExitFlush = typeof unsubscribe === 'function' ? unsubscribe : null;
+      }
+    } catch (error) {
+      logFailure('ide.persist_exit_hook_failed', error, 'workspace_ide_exit_hook_failed');
     }
 
     // A hydrate restores the saved layout but must not drop the tabs opened while
@@ -416,6 +442,8 @@
       clearPersistTimer();
       clearHydrateRetryTimer();
       pendingWrite = null;
+      try { unsubscribeExitFlush?.(); } catch (_error) { /* best-effort */ }
+      unsubscribeExitFlush = null;
     }
 
     function getState() {
@@ -433,6 +461,7 @@
       dispose,
       commitPreference,
       flushIfPending,
+      flushPending,
       flushPersist,
       getState,
       hydrateForContext,

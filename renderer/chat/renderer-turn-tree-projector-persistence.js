@@ -345,10 +345,33 @@
     //  2. Messages of a stream with NO event-covered turn (a live turn whose
     //     events have not persisted yet) group through the message-derived
     //     builder, matching fresh-session rendering during streaming.
+    //  3. A turn parked and resumed on a new stream keeps its turn_id, but only
+    //     the parked stream's events are persisted until the resumed stream
+    //     ends. A content row of a stream with no events in its turn regroups
+    //     that whole turn from its messages (as in 2) until those events land;
+    //     a lost row of a journaled stream is still left to the canary.
+    function streamTokenOf(id) {
+      const match = /(?:^|_)(stream_[0-9a-z-]+)/i.exec(String(id || ''));
+      return match ? match[1].toLowerCase() : '';
+    }
+
     function claimUnreferencedMessages(messages, threadTree, turns, turnById, byMessageId) {
       if (typeof extractMessageStreamId !== 'function') {
         return;
       }
+      const journaledStreamsByTurn = new Map();
+      const journaledStreams = (turn) => {
+        if (!journaledStreamsByTurn.has(turn)) {
+          const streams = new Set();
+          for (const event of (Array.isArray(turn.events) ? turn.events : [])) {
+            const token = streamTokenOf(String(event?.event_id || '').split(':')[0]);
+            if (token) streams.add(token);
+          }
+          journaledStreamsByTurn.set(turn, streams);
+        }
+        return journaledStreamsByTurn.get(turn);
+      };
+      const resumedTurnIds = new Set();
       const uncoveredStreamMessages = [];
       for (let index = 0; index < messages.length; index += 1) {
         const message = messages[index];
@@ -362,6 +385,12 @@
         }
         const coveredTurn = turnById[streamId];
         if (coveredTurn) {
+          const token = streamTokenOf(messageId);
+          const streams = token ? journaledStreams(coveredTurn) : null;
+          if (streams && streams.size && !streams.has(token) && !isBlankAssistantSegmentMessage(message)) {
+            resumedTurnIds.add(coveredTurn.turn_id);
+            continue;
+          }
           if (
             isBlankAssistantSegmentMessage(message)
             || isEventCoveredReasoningOnlySegment(message, coveredTurn)
@@ -375,7 +404,13 @@
         }
         uncoveredStreamMessages.push(message);
       }
-      if (!uncoveredStreamMessages.length || typeof buildTurnTreeFromMessages !== 'function') {
+      if (typeof buildTurnTreeFromMessages !== 'function') {
+        return;
+      }
+      for (const turnId of resumedTurnIds) {
+        regroupTurnFromMessages(turnId, messages, threadTree, turns, turnById, byMessageId);
+      }
+      if (!uncoveredStreamMessages.length) {
         return;
       }
       const liveTree = buildTurnTreeFromMessages(uncoveredStreamMessages, threadTree);
@@ -395,6 +430,32 @@
         const liveTurnId = normalizeId(liveByMessageId[liveMessageId]);
         if (!byMessageId[liveMessageId] && liveTurnId && turnById[liveTurnId]) {
           byMessageId[liveMessageId] = liveTurnId;
+        }
+      }
+    }
+
+    // Case 3: the turn's members (event-referenced or carrying its turn_id) rebuilt by the
+    // message-derived builder, swapped in place so the turn keeps its position.
+    function regroupTurnFromMessages(turnId, messages, threadTree, turns, turnById, byMessageId) {
+      const existing = turnById[turnId];
+      const memberIds = new Set(existing.source_message_ids);
+      const members = messages.filter((message) => {
+        const messageId = normalizeId(message && message.id);
+        return messageId && (memberIds.has(messageId) || extractMessageStreamId(message) === turnId);
+      });
+      const tree = buildTurnTreeFromMessages(members, threadTree);
+      const rebuilt = (Array.isArray(tree && tree.turns) ? tree.turns : [])
+        .find((turn) => normalizeId(turn && turn.turn_id) === turnId);
+      const position = turns.indexOf(existing);
+      if (!rebuilt || position === -1) {
+        return;
+      }
+      turns[position] = rebuilt;
+      turnById[turnId] = rebuilt;
+      const rebuiltByMessageId = tree.byMessageId && typeof tree.byMessageId === 'object' ? tree.byMessageId : {};
+      for (const messageId of Object.keys(rebuiltByMessageId)) {
+        if (normalizeId(rebuiltByMessageId[messageId]) === turnId) {
+          byMessageId[messageId] = turnId;
         }
       }
     }

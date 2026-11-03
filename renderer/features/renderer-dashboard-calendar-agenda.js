@@ -397,6 +397,71 @@
     return '<div class="cal-agenda" aria-label="' + escapeHtml(jt('dashboard.calendar.agenda.weekLabel', 'Agenda for the week')) + '">'
       + groups.join('')
       + standingMarkup
+      + buildJennyChecksMarkup(button, remindersModule?.listJennyChecks?.(safeReminders, nowDate) || [], nowDate)
+      + '</div>';
+  }
+
+  // ---- Jenny checks (row 85, owner pick A1) ----
+
+  function weekdayName(day) {
+    // 2026-11-01 is a Sunday, so day 0..6 maps onto that week.
+    return new Date(2026, 10, 1 + day).toLocaleDateString(globalThis.jennyI18n?.tag?.(), { weekday: 'short' });
+  }
+
+  function checkCadenceLabel(check) {
+    if (check.scheduleType === 'interval_minutes') {
+      return jt('dashboard.calendar.agenda.checkEvery', 'Every {count} min', { count: check.intervalMinutes });
+    }
+    if (check.scheduleType === 'once_at') {
+      const at = parseLocalDateTime(check.onceAt);
+      if (!at) return '';
+      const date = at.toLocaleDateString(globalThis.jennyI18n?.tag?.(), { month: 'short', day: 'numeric' });
+      return jt('dashboard.calendar.agenda.checkOnce', '{date} · {time}', { date, time: formatTimeShort(at) });
+    }
+    const time = formatTimeShort(parseLocalDateTime(`2026-11-02T${check.dailyAt}`));
+    const days = check.weekdays.join(',');
+    if (!days) return jt('dashboard.calendar.agenda.checkDaily', 'Every day · {time}', { time });
+    if (days === '1,2,3,4,5') return jt('dashboard.calendar.agenda.checkWeekdays', 'Weekdays · {time}', { time });
+    if (days === '0,6') return jt('dashboard.calendar.agenda.checkWeekends', 'Weekends · {time}', { time });
+    return jt('dashboard.calendar.agenda.checkDays', '{days} · {time}', { days: check.weekdays.map(weekdayName).join(', '), time });
+  }
+
+  function checkNextLabel(check, now) {
+    if (!check.enabled) return jt('dashboard.calendar.agenda.checkOff', 'off');
+    if (!check.nextAt) return jt('dashboard.calendar.agenda.checkDone', 'done');
+    const time = formatTimeShort(check.nextAt);
+    const key = formatLocalDate(check.nextAt);
+    if (key === formatLocalDate(now)) return jt('dashboard.calendar.agenda.checkNextToday', 'today {time}', { time });
+    if (key === formatLocalDate(addLocalDays(now, 1))) return jt('dashboard.calendar.agenda.checkNextTomorrow', 'tomorrow {time}', { time });
+    return jt('dashboard.calendar.agenda.checkNextDay', '{day} {time}', { day: weekdayName(check.nextAt.getDay()), time });
+  }
+
+  // One row per check: title (the instruction on hover), cadence, next run,
+  // Turn off / Turn on and Delete. Changing the instruction or time goes
+  // through Jenny's approval card, so there is no edit affordance here.
+  function buildJennyChecksMarkup(button, checks, now) {
+    if (!checks.length) return '';
+    return '<div class="cal-agenda__standing cal-agenda__checks">'
+      + '<span class="cal-agenda__standing-label" title="' + escapeHtml(jt('dashboard.calendar.agenda.jennyChecksHint', 'Jenny runs these in the Jenny chat when they come due. Any tool still asks you first.')) + '">'
+      + escapeHtml(jt('dashboard.calendar.agenda.jennyChecks', 'Jenny checks')) + '</span>'
+      + checks.map((check) => `<span class="cal-agenda__standing-row${check.enabled ? '' : ' cal-agenda__standing-row--off'}" data-cal-check-id="${escapeHtml(check.id)}">`
+        + `<span class="cal-agenda__standing-title" title="${escapeHtml(check.prompt)}">${escapeHtml(check.label)}</span>`
+        + `<span class="cal-agenda__standing-cadence">${escapeHtml(checkCadenceLabel(check))}</span>`
+        + `<span class="cal-agenda__check-next">${escapeHtml(checkNextLabel(check, now))}</span>`
+        + button({
+          variant: 'ghost', size: 'sm',
+          label: check.enabled ? jt('dashboard.calendar.agenda.checkTurnOff', 'Turn off') : jt('dashboard.calendar.agenda.checkTurnOn', 'Turn on'),
+          ariaLabel: check.enabled
+            ? jt('dashboard.calendar.agenda.checkTurnOffLabel', 'Turn off Jenny check: {title}', { title: check.label })
+            : jt('dashboard.calendar.agenda.checkTurnOnLabel', 'Turn on Jenny check: {title}', { title: check.label }),
+          dataset: { 'cal-check-toggle': check.id, 'cal-check-enable': String(!check.enabled) },
+        })
+        + button({
+          variant: 'ghost', size: 'sm', label: jt('dashboard.calendar.agenda.checkDelete', 'Delete'),
+          ariaLabel: jt('dashboard.calendar.agenda.checkDeleteLabel', 'Delete Jenny check: {title}', { title: check.label }),
+          dataset: { 'cal-reminder-dismiss': check.id },
+        })
+        + '</span>').join('')
       + '</div>';
   }
 

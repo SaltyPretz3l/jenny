@@ -14,6 +14,7 @@ from sidecar.ai.context.runtime_message_markers import (
     PLAN_REVISION_OVERLAY_HEADING,
     PROPOSE_MODE_OVERLAY_HEADING,
 )
+from sidecar.ai.feature_flags import read_only_commands_enabled
 
 # The renderer sends this when the user chose Keep planning without typing feedback.
 NO_PLAN_FEEDBACK = "<no feedback given>"
@@ -40,36 +41,52 @@ PLAN_MODE_GUIDANCE = str(_contract()["plan_mode_prompt"])
 APPROVED_PLAN_GUIDANCE = str(_contract()["approved_plan_prompt"])
 # Plan Plus (Propose mode); adapted from the 2026-10-05 spike's mode block.
 PROPOSE_MODE_GUIDANCE = str(_contract("propose-mode-contract.json")["propose_mode_prompt"])
+# Row 102: appended to the Plan and Propose overlays while read-only commands are enabled.
+READ_ONLY_COMMANDS_PROMPT_LINE = (
+    "You may run read-only shell commands with run_command (for example git log, git diff, "
+    "rg, dir, ls or cat on files inside the project); anything that writes, installs, runs "
+    "scripts or reaches outside the project is refused."
+)
 
 
-def build_plan_mode_overlay(*, plan_mode_active: bool) -> str:
+def build_plan_mode_overlay(*, plan_mode_active: bool, read_only_commands: bool = False) -> str:
     if not plan_mode_active:
         return ""
-    return f"{PLAN_MODE_OVERLAY_HEADING}\n{PLAN_MODE_GUIDANCE}"
+    overlay = f"{PLAN_MODE_OVERLAY_HEADING}\n{PLAN_MODE_GUIDANCE}"
+    return f"{overlay}\n{READ_ONLY_COMMANDS_PROMPT_LINE}" if read_only_commands else overlay
 
 
 def append_plan_mode_runtime_overlay(
     runtime_system_messages: list[str],
     *,
     plan_mode_active: bool,
+    read_only_commands: bool = False,
 ) -> None:
-    overlay = build_plan_mode_overlay(plan_mode_active=plan_mode_active)
+    overlay = build_plan_mode_overlay(
+        plan_mode_active=plan_mode_active, read_only_commands=read_only_commands
+    )
     if overlay:
         runtime_system_messages.append(overlay)
 
 
-def build_propose_mode_overlay(*, propose_mode_active: bool) -> str:
+def build_propose_mode_overlay(
+    *, propose_mode_active: bool, read_only_commands: bool = False
+) -> str:
     if not propose_mode_active:
         return ""
-    return f"{PROPOSE_MODE_OVERLAY_HEADING}\n{PROPOSE_MODE_GUIDANCE}"
+    overlay = f"{PROPOSE_MODE_OVERLAY_HEADING}\n{PROPOSE_MODE_GUIDANCE}"
+    return f"{overlay}\n{READ_ONLY_COMMANDS_PROMPT_LINE}" if read_only_commands else overlay
 
 
 def append_propose_mode_runtime_overlay(
     runtime_system_messages: list[str],
     *,
     propose_mode_active: bool,
+    read_only_commands: bool = False,
 ) -> None:
-    overlay = build_propose_mode_overlay(propose_mode_active=propose_mode_active)
+    overlay = build_propose_mode_overlay(
+        propose_mode_active=propose_mode_active, read_only_commands=read_only_commands
+    )
     if overlay:
         runtime_system_messages.append(overlay)
 
@@ -78,8 +95,14 @@ def append_mode_runtime_overlays(
     runtime_system_messages: list[str],
     *,
     request_context: object,
+    config: object = None,
 ) -> None:
-    """Request-scoped identity, mode and delegation overlays."""
+    """Request-scoped identity, mode and delegation overlays.
+
+    ``config`` (the runtime config; the request context carries none) adds the row 102
+    read-only-commands line to the Plan and Propose overlays when that feature is on.
+    """
+    read_only_commands = config is not None and read_only_commands_enabled(config)
     from sidecar.ai.context.primary_chat_overlay import build_primary_chat_overlay
 
     # Static, so it leads: toggling Plan or Propose mode never moves it.
@@ -87,10 +110,12 @@ def append_mode_runtime_overlays(
     append_plan_mode_runtime_overlay(
         runtime_system_messages,
         plan_mode_active=bool(getattr(request_context, "plan_mode", False)),
+        read_only_commands=read_only_commands,
     )
     append_propose_mode_runtime_overlay(
         runtime_system_messages,
         propose_mode_active=bool(getattr(request_context, "propose_mode", False)),
+        read_only_commands=read_only_commands,
     )
     contract = str(getattr(request_context, "sub_agent_delegation_contract", "") or "").strip()
     if contract:
@@ -166,6 +191,7 @@ def append_approved_plan_runtime_overlay(
 
 
 __all__ = [
+    "READ_ONLY_COMMANDS_PROMPT_LINE",
     "PLAN_MODE_GUIDANCE",
     "APPROVED_PLAN_GUIDANCE",
     "PROPOSE_MODE_GUIDANCE",

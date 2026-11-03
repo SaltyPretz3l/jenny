@@ -9,6 +9,7 @@ const {
   registerWorkspaceRootIpcHandlers: registerWorkspaceRootIpcHandlersWithDeps,
 } = require('../workspace-root-ipc');
 const { createWorkspaceBackupService } = require('../workspace-backup-service');
+const { createProjectFilePreviewService } = require('../project-file-preview-service');
 const { WORKSPACE_BACKUP_ERROR_CODES } = require('../backend/error-codes');
 const { invokeVersionedWorkspaceFile } = require('./workspace-file-ipc-result');
 
@@ -159,7 +160,13 @@ function registerWorkspaceIpcHandlers(
 function registerWorkspaceFsIpcHandlers(
   ipcMainLike,
   workspaceIdeService,
-  { watcher = null, versionedFileService = null, importService = null, authorization = {} } = {}
+  {
+    watcher = null, versionedFileService = null, importService = null, projectService = null,
+    logger = null, authorization = {},
+    projectFilePreviewService = projectService
+      ? createProjectFilePreviewService({ projectService, logger })
+      : null,
+  } = {}
 ) {
   const handlers = {
     'workspaceFs.getRootState': () => workspaceIdeService.getRootState(),
@@ -171,6 +178,13 @@ function registerWorkspaceFsIpcHandlers(
     ),
     'workspaceFs.readImage': (_, payload) => (
       invokeVersionedWorkspaceFile(versionedFileService, 'readImage', payload)
+    ),
+    // Read-only, project-scoped previews (primary chat file links); fail closed when absent.
+    'workspaceFs.readProjectText': (_, payload) => (
+      invokeVersionedWorkspaceFile(projectFilePreviewService, 'readText', payload)
+    ),
+    'workspaceFs.readProjectImage': (_, payload) => (
+      invokeVersionedWorkspaceFile(projectFilePreviewService, 'readImage', payload)
     ),
     'workspaceFs.readDocument': (_, payload) => (
       invokeVersionedWorkspaceFile(versionedFileService, 'readDocument', payload)

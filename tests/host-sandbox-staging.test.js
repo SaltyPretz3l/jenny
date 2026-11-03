@@ -7,20 +7,25 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { executeElectronToolRequest } = require('../services/backend/electron-tool-bridge');
+const { noteHostedRunCommandApproval } = require('../services/backend/hosted-command-bridge');
 const { SessionExecutionAuthority } = require('../services/backend/session-execution-authority');
 const { posixOnly } = require('./helpers/platform-skips');
 
 const UUID = /^[a-f0-9-]{36}$/u;
 
+// Each call carries the user's one-off approval of `ls` as call-1 (review item 6).
 function binding(rootPath) {
   const authority = Object.freeze({ project_id: 'project_test', root_path: rootPath,
     root_id: 'root_test', root_revision: 1, device_id: null, inode: null });
-  return new SessionExecutionAuthority({
+  const captured = new SessionExecutionAuthority({
     projectAuthority: { captureSession: () => authority, requireCurrent: () => authority },
     permissionStore: { getSnapshot: () => ({ version: 3, legacy_policies: { run_command: 'auto' }, rules: [] }) },
     knowledgeService: { getSidecarConfig: () => ({ knowledge_roots: [] }) },
     resolveProjectWorkspaceServices: () => ({}),
   }).captureSession('session-1', { requestId: 'stream-1' });
+  noteHostedRunCommandApproval(captured,
+    { tool_name: 'run_command', tool_call_id: 'call-1', tool_input: { command: 'ls' } });
+  return captured;
 }
 
 function fixture() {
@@ -51,7 +56,7 @@ function service(broker, fx, { staging = fx.staging } = {}) {
 
 function run(svc, fx) {
   return executeElectronToolRequest(svc, {
-    params: { tool_name: 'run_command', plan_mode: false, read_only: false,
+    params: { tool_name: 'run_command', tool_call_id: 'call-1', plan_mode: false, read_only: false,
       arguments: { command: 'ls' }, request_id: 'stream-1' },
     sessionId: 'session-1', streamId: 'stream-1', executionAuthority: binding(fx.project),
   });
@@ -204,7 +209,7 @@ test('an aborted job stops waiting for the staging lock', async () => {
     await state.running;
     const controller = new AbortController();
     const second = executeElectronToolRequest(svc, {
-      params: { tool_name: 'run_command', plan_mode: false, read_only: false,
+      params: { tool_name: 'run_command', tool_call_id: 'call-1', plan_mode: false, read_only: false,
         arguments: { command: 'ls' }, request_id: 'stream-1' },
       sessionId: 'session-1', streamId: 'stream-1', executionAuthority: binding(fx.project),
       abortSignal: controller.signal,

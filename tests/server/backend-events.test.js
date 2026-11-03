@@ -55,6 +55,15 @@ test('approval wakeups, live output and reasoning edits retain bounded useful da
   const chunk = streamEventDto({ type: 'tool_output_chunk', sessionId: 's', streamId: 't',
     lines: [{ stream: 'stderr', text: 'bounded' }], partial: 'wait', sequence: 2 });
   assert.equal(chunk.lines[0].text, 'bounded');
+  const testProgress = streamEventDto({ type: 'tool_test_progress', sessionId: 's', streamId: 't', callId: 'c', runner: 'pytest',
+    unit: 'file', totalUnit: 'tests', total: 10, done: 4, tests: 4, passed: 3, failed: 1, skipped: 0, percent: 40, elapsedMs: 5, etaMs: null,
+    failures: [{ file: 'a.py', name: 'test_a', at: 0.5 }, null], grid: { count: 2, group: 1, px: 6, states: 'pfpp' }, labels: ['a', 7],
+    labelsFrom: 0, final: false, secret: 'x' });
+  assert.deepEqual([testProgress.type, testProgress.percent, testProgress.total_unit, testProgress.eta_ms, testProgress.secret],
+    ['tool_test_progress', 40, 'tests', undefined, undefined]);
+  assert.deepEqual(testProgress.failures, [{ file: 'a.py', name: 'test_a', at: 0.5 }]);
+  assert.deepEqual(testProgress.grid, { count: 2, group: 1, px: 6, states: 'pf' });
+  assert.deepEqual(testProgress.labels, ['a', '']);
   const backend = new EventEmitter();
   const events = new BackendEvents({ backend, bootEpoch: 'boot' });
   backend.emit('chat-stream', { type: 'started', sessionId: 's', streamId: 't' });
@@ -123,5 +132,48 @@ test('a runtime pause withdrawal asks the browser to refresh its decision snapsh
     ['decision_changed', { session_id: 's', stream_id: 't', question_ref: 'question_s_t_call_q' }],
   ]);
   assert.equal(events.snapshot('s').stream_id, 't', 'a withdrawal is not a terminal');
+  events.dispose();
+});
+
+test('hosted test progress publishes at most once a second per call and keeps skipped grid labels', () => {
+  let clock = 0;
+  const backend = new EventEmitter();
+  const events = new BackendEvents({ backend, bootEpoch: 'boot', now: () => clock });
+  const published = [];
+  const publish = events.events.publish.bind(events.events);
+  events.events.publish = (type, payload) => { if (payload.event?.type === 'tool_test_progress') published.push(payload.event); publish(type, payload); };
+  const progress = (extra) => backend.emit('chat-stream', { type: 'tool_test_progress', sessionId: 's', streamId: 't', callId: 'c',
+    runner: 'pytest', unit: 'file', totalUnit: 'tests', total: 10, done: 1, percent: 10, grid: { count: 4, group: 1, px: 6, states: 'p---' },
+    labels: [], final: false, ...extra });
+  backend.emit('chat-stream', { type: 'started', sessionId: 's', streamId: 't' });
+  progress({ labels: ['a', 'b'], labelsFrom: 0 });
+  clock = 300; progress({ labels: ['c'], labelsFrom: 2 });
+  clock = 600; progress({ labels: ['d'], labelsFrom: 3 });
+  clock = 900; progress({});
+  assert.equal(published.length, 1, 'frames inside the second are held back');
+  clock = 1100; progress({ percent: 60 });
+  assert.equal(published.length, 2);
+  assert.deepEqual([published[1].labels_from, published[1].labels, published[1].percent], [2, ['c', 'd'], 60], 'the next frame carries the skipped labels');
+  clock = 1200; progress({ percent: 100, final: true });
+  assert.equal(published.length, 3, 'the final frame is never held back');
+  events.dispose();
+});
+
+test('hosted test progress drops carried labels when a multi-stage command changes stage', () => {
+  let clock = 0;
+  const backend = new EventEmitter();
+  const events = new BackendEvents({ backend, bootEpoch: 'boot', now: () => clock });
+  const published = [];
+  const publish = events.events.publish.bind(events.events);
+  events.events.publish = (type, payload) => { if (payload.event?.type === 'tool_test_progress') published.push(payload.event); publish(type, payload); };
+  const progress = (extra) => backend.emit('chat-stream', { type: 'tool_test_progress', sessionId: 's', streamId: 't', callId: 'c',
+    runner: 'pytest', unit: 'file', totalUnit: 'tests', total: 10, done: 1, percent: 10, grid: { count: 4, group: 1, px: 6, states: 'p---' },
+    labels: [], stage: 0, final: false, ...extra });
+  backend.emit('chat-stream', { type: 'started', sessionId: 's', streamId: 't' });
+  progress({ labels: ['a'], labelsFrom: 0 });
+  clock = 300; progress({ labels: ['b'], labelsFrom: 1 });
+  clock = 1100; progress({ stage: 1, labels: ['n'], labelsFrom: 0 });
+  assert.equal(published.length, 2);
+  assert.deepEqual([published[1].stage, published[1].labels_from, published[1].labels], [1, 0, ['n']], 'the old stage labels are not prepended');
   events.dispose();
 });

@@ -18,7 +18,7 @@ from sidecar.ai.error_codes import (
     CMP_TSRCH_DEFERRED_TOOL,
 )
 from sidecar.ai.execution_policy import desktop_policy_is_enforced, desktop_tool_decision
-from sidecar.ai.feature_flags import recall_tool_enabled
+from sidecar.ai.feature_flags import read_only_commands_enabled, recall_tool_enabled
 from sidecar.ai.host_policy import host_policy_is_enforced, host_tool_decision
 from sidecar.ai.mode_policy import policy_for_mode
 from sidecar.ai.tools import catalog as _catalog
@@ -345,6 +345,15 @@ def _safety_mode(config: Any | None) -> str:
     return "normal"
 
 
+def _read_only_command_listed(descriptor: CanonicalToolDescriptor, config: Any) -> bool:
+    """Row 102: the builtin run_command stays listed in Plan/Propose; dispatch enforces the rest."""
+    return (
+        descriptor.name == "run_command"
+        and descriptor.server_name == _catalog.BUILTIN_MCP_SERVER_NAME
+        and read_only_commands_enabled(config)
+    )
+
+
 def _strict_safety_mode_blocks(
     descriptor: CanonicalToolDescriptor,
     context: ToolAssemblyContext,
@@ -411,10 +420,13 @@ def _base_unavailable_reason(
             return MODE_SIDE_EFFECTING_REASON
     # Declared actions are the finer-grained read-only listing authority. Without
     # actions, preserve the scalar plus explicit read_only=False owner override.
-    if context.read_only and not _plan_artifact_policy.plan_artifact_mode_exemption(
-        descriptor,
-        plan_mode=context.plan_mode,
-        read_only=context.read_only,
+    if context.read_only and not (
+        _plan_artifact_policy.plan_artifact_mode_exemption(
+            descriptor,
+            plan_mode=context.plan_mode,
+            read_only=context.read_only,
+        )
+        or _read_only_command_listed(descriptor, context.config)
     ):
         actions = getattr(descriptor, "actions", None)
         if isinstance(actions, dict) and actions:

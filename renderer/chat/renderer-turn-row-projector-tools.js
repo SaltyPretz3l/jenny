@@ -113,10 +113,12 @@
             : [];
         } else if (event.kind === 'approval_resolved') {
           const approvalScope = normalizeId(event.payload && event.payload.approval_scope);
+          const alwaysAllowPrefix = normalizeId(event.payload && event.payload.always_allow_prefix);
           payload.approval_resolutions.push({
             status: normalizeToolLifecycleStatus(event.status),
             approval_state: normalizeToolLifecycleStatus(event.payload && event.payload.approval_state),
             ...(approvalScope ? { approval_scope: approvalScope } : {}),
+            ...(alwaysAllowPrefix ? { always_allow_prefix: alwaysAllowPrefix } : {}),
           });
         } else if (event.kind === 'tool_executing') {
           hasExecuting = true;
@@ -240,6 +242,10 @@
         }
         const stopApproval = toolUsePayload.session_stop_approval;
         if (stopApproval && typeof stopApproval === 'object' && !Array.isArray(stopApproval)) payload.session_stop_approval = stopApproval;
+        const settingsApproval = toolUsePayload.settings_change_approval;
+        if (settingsApproval && typeof settingsApproval === 'object' && !Array.isArray(settingsApproval)) payload.settings_change_approval = settingsApproval;
+        const scheduleApproval = toolUsePayload.schedule_change_approval;
+        if (scheduleApproval && typeof scheduleApproval === 'object' && !Array.isArray(scheduleApproval)) payload.schedule_change_approval = scheduleApproval;
       }
       for (const event of events) {
         if (event.kind !== 'approval_requested') {
@@ -270,6 +276,16 @@
         if (!payload.session_stop_approval && sessionStopApproval && typeof sessionStopApproval === 'object'
           && !Array.isArray(sessionStopApproval)) {
           payload.session_stop_approval = sessionStopApproval;
+        }
+        const settingsChangeApproval = event.payload && event.payload.settings_change_approval;
+        if (!payload.settings_change_approval && settingsChangeApproval && typeof settingsChangeApproval === 'object'
+          && !Array.isArray(settingsChangeApproval)) {
+          payload.settings_change_approval = settingsChangeApproval;
+        }
+        const scheduleChangeApproval = event.payload && event.payload.schedule_change_approval;
+        if (!payload.schedule_change_approval && scheduleChangeApproval && typeof scheduleChangeApproval === 'object'
+          && !Array.isArray(scheduleChangeApproval)) {
+          payload.schedule_change_approval = scheduleChangeApproval;
         }
       }
       row.tool_call_id = payload.tool_call_id;

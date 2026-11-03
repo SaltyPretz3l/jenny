@@ -492,6 +492,10 @@ const PRIMARY_ERROR_CODES = Object.freeze({
   CAPACITY: 'CMP-PRIMARY-0006',
   UNKNOWN_PROJECT: 'CMP-PRIMARY-0007',
   COPY_FAILED: 'CMP-PRIMARY-0008',
+  // Row 88: Activity's Undo of a Jenny-made settings batch.
+  ALREADY_UNDONE: 'CMP-PRIMARY-0009',
+  CHANGED_SINCE: 'CMP-PRIMARY-0010',
+  APPLY_FAILED: 'CMP-PRIMARY-0011',
 });
 
 // Live inference metrics and GPU-pressure bridge (row 59 checkpoint 6). Wire-stable;

@@ -14,20 +14,16 @@
       require('./renderer-changes-view-render'),
       require('./renderer-changes-history-model'),
       require('./renderer-suggested-changes-model'),
-      require('./renderer-changes-suggested-actions')
+      require('./renderer-changes-suggested-actions'),
+      require('./renderer-changes-view-actions')
     );
     return;
   }
-  root.rendererChangesView = factory(root.rendererChangesViewRender, root.rendererChangesHistoryModel, root.rendererSuggestedChangesModel, root.rendererChangesSuggestedActions);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (viewRender, historyModel, suggestedModel, suggestedActions) {
+  root.rendererChangesView = factory(root.rendererChangesViewRender, root.rendererChangesHistoryModel, root.rendererSuggestedChangesModel, root.rendererChangesSuggestedActions, root.rendererChangesViewActions);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (viewRender, historyModel, suggestedModel, suggestedActions, viewActions) {
   'use strict';
 
-  const TYPING_SELECTOR = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
   const SUGGESTION_PREFIX = 's:';
-
-  function isTyping(target) {
-    return Boolean(target && typeof target.closest === 'function' && target.closest(TYPING_SELECTOR));
-  }
 
   function createChangesView(deps = {}) {
     const host = deps.host === 'panel' ? 'panel' : 'dock';
@@ -84,11 +80,12 @@
     let unsubscribeGit = null;
     let elapsedTimer = null;
     const actions = suggestedActions.createSuggestedActions({
-      getClient,
-      getSessionId: () => sessionId,
+      getClient, getSessionId: () => sessionId,
       getRow: (id) => (lastSuggested ? lastSuggested.rows.find((row) => row.id === id) || null : null),
-      contextMenu: deps.contextMenu,
-      storage: deps.storage,
+      contextMenu: deps.contextMenu, storage: deps.storage,
+      getFilePath: (key) => filesByKey.get(key)?.file.path || '',
+      getFileChange: host === 'panel' ? (key) => changesByKey.get(key) || null : null,
+      appendClientLog,
     });
 
     function resetForSession(nextSessionId) {
@@ -351,6 +348,13 @@
       });
     }
 
+    // The panel detail page's Previous / Next: the adjacent change, as if picked from the list.
+    function stepDetail(direction) {
+      const keys = itemKeys();
+      const next = mode === 'detail' && detail ? keys[keys.indexOf(detail.key) + direction] : '';
+      if (next) openItem(next);
+    }
+
     function showList() {
       mode = 'history';
       detail = null;
@@ -395,11 +399,7 @@
     // The sheet closes after a re-render replaced the button that opened it,
     // so focus returns to the turn's current Undo/Redo button (or the view).
     function focusTurnAction(turnId) {
-      if (!mountEl) return;
-      const actions = mountEl.querySelectorAll('[data-changes-undo], [data-changes-redo]');
-      const match = Array.prototype.find.call(actions, (el) => (
-        el.getAttribute('data-changes-undo') === turnId || el.getAttribute('data-changes-redo') === turnId));
-      const target = match || mountEl.querySelector('.changes-view');
+      const target = mountEl && (viewActions.findTurnAction(mountEl, turnId) || mountEl.querySelector('.changes-view'));
       if (target && typeof target.focus === 'function') target.focus();
     }
 
@@ -441,6 +441,8 @@
         return;
       }
       if (target.closest('[data-changes-back]')) { showList(); return; }
+      const step = target.closest('[data-changes-step]');
+      if (step) { stepDetail(Number(step.getAttribute('data-changes-step'))); return; }
       const gitLink = target.closest('[data-changes-open-git]');
       if (gitLink) { if (openInGit) openInGit(gitLink.getAttribute('data-changes-open-git')); return; }
       const workspaceLink = target.closest('[data-changes-open-workspace]');
@@ -463,7 +465,7 @@
         const barHost = mountEl.querySelector('[data-changes-bar-host]');
         if (barHost && bar.handleKeydown(event, barHost)) return;
       }
-      if (isTyping(event.target) || actions.handleKeydown(event)) return;
+      if (viewActions.isTyping(event.target) || actions.handleKeydown(event)) return;
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       if (event.key === 'Escape') {
         if (popover) { closePopover(); event.preventDefault(); return; }
@@ -474,12 +476,8 @@
       if (!item) return;
       const keys = itemElements().map((el) => el.getAttribute('data-changes-item'));
       const index = keys.indexOf(item.getAttribute('data-changes-item'));
-      let next = '';
-      if (event.key === 'ArrowDown') next = keys[Math.min(keys.length - 1, index + 1)];
-      else if (event.key === 'ArrowUp') next = keys[Math.max(0, index - 1)];
-      else if (event.key === 'Home') next = keys[0];
-      else if (event.key === 'End') next = keys[keys.length - 1];
-      else if (event.key === 'Enter' || event.key === ' ') {
+      const next = viewActions.nextItemKey(keys, index, event.key);
+      if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault();
         openItem(keys[index]);
         return;
@@ -517,6 +515,8 @@
       if (!mountEl) return;
       closePopover();
       for (const [name, fn] of [['click', handleClick], ['keydown', handleKeydown], ['focusout', handleFocusOut], ['input', handleInput], ['contextmenu', actions.handleContextMenu]]) mountEl.removeEventListener(name, fn);
+      // The side panel's hidden page must not leave diff rows behind for its text actions and find.
+      if (host === 'panel') mountEl.replaceChildren();
       mountEl = null;
       // Leaving ends the finish summary and the elapsed timer.
       finish = null;
@@ -544,9 +544,7 @@
       mode = 'history';
       detail = null;
       renderView();
-      const block = Array.from(mountEl.querySelectorAll('[data-changes-turn-block]'))
-        .find((el) => el.getAttribute('data-changes-turn-block') === turn.turnId);
-      if (block && typeof block.scrollIntoView === 'function') block.scrollIntoView({ block: 'nearest' });
+      viewActions.scrollTurnIntoView(mountEl, turn.turnId);
       focusCurrent();
       return true;
     }
@@ -586,6 +584,7 @@
     return {
       dispose,
       focus: focusCurrent,
+      getDetail: () => detail,
       getHistory: () => lastHistory,
       getMode: () => mode,
       mount,

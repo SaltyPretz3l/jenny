@@ -234,6 +234,29 @@
    * slow bridge — showing stale rows).
    * @returns {boolean} true when the click was an undo click
    */
+  // Row 85: Turn off / Turn on for a Jenny check in the agenda's "Jenny checks"
+  // list. The Home write path merges `enabled` over the stored check, so its
+  // action, instruction and schedule are kept. True when the click was ours.
+  function handleCheckToggleClick(event, { shell, onAiPayload, onApplied, appendClientLog = () => {} } = {}) {
+    const trigger = event?.target?.closest?.('[data-cal-check-toggle]');
+    if (!trigger) return false;
+    const id = String(trigger.dataset?.calCheckToggle || '');
+    if (!id || typeof shell?.proactive?.upsertReminder !== 'function') return true;
+    trigger.disabled = true;
+    Promise.resolve(shell.proactive.upsertReminder({ id, enabled: trigger.dataset.calCheckEnable === 'true' }))
+      .then((payload) => {
+        if (Array.isArray(payload?.proactive?.reminders) && typeof onAiPayload === 'function') {
+          onAiPayload({ proactive: payload.proactive });
+        }
+        if (typeof onApplied === 'function') onApplied();
+      })
+      .catch((error) => {
+        trigger.disabled = false;
+        appendClientLog('WARN', 'home.calendar_check_toggle_failed', { message: String(error?.message || error || '') });
+      });
+    return true;
+  }
+
   function handleUndoJournalClick(event, {
     shell, onSnapshot, onAiPayload, onApplied, appendClientLog = () => {}, setTimeoutImpl,
   } = {}) {
@@ -275,6 +298,7 @@
     UNDO_REFUSAL_COPY,
     applyDeferredFocusAndAnnounce,
     computeRenderKey,
+    handleCheckToggleClick,
     handleUndoJournalClick,
     handleWeekNavClick,
     preserveFormValues,

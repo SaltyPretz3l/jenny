@@ -13,6 +13,7 @@ const {
 } = require('./backend-session-reference-scan');
 const { hydrateMessagesWithTerminalRepairs } = require('./terminal-repair-service');
 const { purgeSessionTodoList } = require('./session-todo-list-purge');
+const { beginFreedTally, runSessionPurges } = require('./session-delete-purges');
 const { resolveCanonicalTextMessageOwners } = require('./canonical-text-message-ownership');
 const { editUserMessageAndTruncate } = require('./backend-session-truncate');
 const { normalizeLinkedTaskId } = require('./session-store-migrations');
@@ -339,6 +340,7 @@ async function cleanupDeletedSession(
   { deleteShadow = false, artifactDeletion = null, artifactPreparationError = null } = {}
 ) {
   const cleanupErrors = [];
+  const tally = await beginFreedTally(service, sessionId, { assetPaths: deletedAssetPaths, payloadPaths: deletedPayloadPaths });
 
   if (deleteShadow) {
     try {
@@ -483,6 +485,7 @@ async function cleanupDeletedSession(
   if (typeof service.sessionStore?.purgeSessionRecoveryCopies === 'function') {
     await runDeleteCleanupStep(service, sessionId, cleanupErrors, 'recovery_copies', async () => {
       const result = service.sessionStore.purgeSessionRecoveryCopies(sessionId);
+      tally.add({ files: result?.removed });
       if (result?.failed > 0) throw new Error('recovery copies could not be removed');
     });
   }
@@ -511,9 +514,12 @@ async function cleanupDeletedSession(
     );
   }
 
+  await runSessionPurges(service, sessionId, cleanupErrors, runDeleteCleanupStep, tally);
+
   return {
     cleanup_status: cleanupErrors.length ? 'degraded' : 'complete',
     cleanup_errors: cleanupErrors,
+    freed: await tally.settle(),
   };
 }
 
@@ -677,7 +683,8 @@ async function setSessionPreferences(service, sessionId, preferences = {}) {
     const readOnly = runMode === 'plan' || runMode === 'propose' || stored.plan_mode === true;
     service.sidecarClient.notifySessionRunModeUpdated({ sessionId, approvalMode, readOnly });
     // The execution authority fails the in-flight request on its next
-    // revalidation (run_mode_changed); this line is the log's only cause.
+    // revalidation (run_mode_changed), except Ask -> Auto, which it follows;
+    // this line is the log's only cause.
     service._emitServiceLog?.('INFO', 'session.run_mode_pushed', {
       sessionId,
       streamId,
@@ -834,6 +841,7 @@ module.exports = {
   listSessions,
   createSession,
   createLinkedChildSession,
+  expandParentOf,
   renameSession,
   deleteSession,
   getSessionMessages,

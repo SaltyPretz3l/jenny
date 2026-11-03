@@ -19,7 +19,7 @@ _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _TOOL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _RESOURCE_CLASSES = frozenset(
-    {"tool_operations", "native_processes", "tests", "sandbox_commands", "filesystem"}
+    {"tool_operations", "native_processes", "tests", "sandbox_commands", "filesystem", "work"}
 )
 _MAX_REASON_CHARS = 200
 _MAX_PREPARED_INPUT_BYTES = 1024 * 1024

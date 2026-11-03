@@ -1,13 +1,16 @@
 'use strict';
 
 const path = require('path');
-const { executeHostedRunCommand } = require('./hosted-command-bridge');
+const { executeHostedRunCommand, noteHostedRunCommandApproval } = require('./hosted-command-bridge');
 
 const { TOOL_ERROR_CODES } = require('./error-codes');
 const { FORBIDDEN_STORAGE_KEYS } = require('./tool-result-metadata-bounds');
 const { getTrustedExecutionBinding } = require('./session-execution-authority');
 const { withQuestionWithdrawal } = require('./runtime-decision-control');
 const { emitToolProgress } = require('./chat-stream-tool-progress');
+const {
+  resolveTurnImagePrompt, claimPinnedRender, releasePinnedRender,
+} = require('./image-prompt-pin');
 
 const MAX_BRIDGE_METADATA_DEPTH = 6;
 const MAX_BRIDGE_METADATA_ITEMS = 100;
@@ -34,11 +37,14 @@ const ELECTRON_BRIDGE_TOOL_NAMES = new Set([
   'project_notes', 'conversations_recent', 'conversation_open', 'conversations_search',
   'exit_plan_mode',
   'ask_user',
+  'suggest_next_step',
   'propose_git_action',
   'propose_command',
   'propose_session',
   'complete_session_handoff',
   'session_message', 'sessions_list', 'session_status', 'session_transcript', 'session_stop', 'jenny_help',
+  'settings_get', 'settings_change', 'chat_organize', 'chat_configure', 'project_create', 'projects_list', 'app_view', 'schedule_list', 'schedule_change', 'away_digest',
+  'session_export', 'terminal_read', 'terminal_run',
 ]);
 
 function normalizeBridgeArguments(value) {
@@ -349,6 +355,7 @@ async function executeElectronToolRequest(
     sessionIncarnation = null,
     beforeProducer = null,
     onProgress = null,
+    imagePromptPin = null,
   } = {}
 ) {
   const payload = params && typeof params === 'object' && !Array.isArray(params) ? params : {};
@@ -496,6 +503,7 @@ async function executeElectronToolRequest(
       projectAuthority: trustedExecution?.authority || null,
       beforeProducer,
       ...(typeof onProgress === 'function' ? { onProgress } : {}),
+      ...(toolName === 'image_generate' && imagePromptPin ? { imagePromptPin } : {}),
       ...(toolName === 'ask_user' && runtimeDecisionControl ? {
         runtimeDecisionControl: withQuestionWithdrawal(runtimeDecisionControl, service, {
           sessionId: scopedSessionId, streamId: scopedStreamId, callId, turnId: logicalTurnId,
@@ -614,6 +622,8 @@ function buildManagedSidecarChatSendOptions({
         arguments: params?.tool_input || params?.arguments || {},
         decision: result?.decision,
       });
+      // The hosted bridge dispatches a worker command only on this record (review item 6).
+      if (service.hostMode === 'server') noteHostedRunCommandApproval(executionAuthority, params);
       return result;
     } catch (_error) {
       return false;
@@ -760,9 +770,10 @@ function buildManagedSidecarChatSendOptions({
       }
       // Human answers and image renders can take minutes without stream activity.
       const resumeAfterAnswers = suspendIdleWatchdog();
-      const run = (abortSignal, producer = beforeProducer, onProgress = null) => executeElectronToolRequest(service, {
+      const run = (abortSignal, producer = beforeProducer, onProgress = null, imagePromptPin = null) => executeElectronToolRequest(service, {
         beforeProducer: producer,
         onProgress,
+        imagePromptPin,
         runtimeDecisionControl: controller._runtimeDecisionControl,
         logicalTurnId: turnEventCollector?.turnId || streamId,
         params,
@@ -773,6 +784,13 @@ function buildManagedSidecarChatSendOptions({
       });
       try {
         if (params?.tool_name !== 'image_generate') return await run(controller.signal);
+        // Row 91: a /image turn draws the user's own text, read from the turn's canonical user
+        // message, and draws it once.
+        const imagePromptPin = resolveTurnImagePrompt(service.sessionStore, resolvedSessionId, turnIdentity);
+        if (imagePromptPin && !claimPinnedRender(service, resolvedSessionId, turnIdentity)) {
+          return bridgeFailure('image_generate', 'This reply already drew the user\'s image from their prompt. '
+            + 'Do not draw another; briefly acknowledge the image instead.', TOOL_ERROR_CODES.DISABLED);
+        }
         let producerAcknowledged = beforeProducer === null;
         const announceProducer = beforeProducer ? async () => {
           await beforeProducer(); producerAcknowledged = true;
@@ -783,12 +801,19 @@ function buildManagedSidecarChatSendOptions({
           if (!signal.aborted) emitToolProgress(service, runtime.getEventBase(),
             { callId: String(params.tool_call_id || ''), toolName: 'image_generate', progress });
         };
-        return await trackImageBridgeExecution(service, streamId, controller.signal,
-          (signal) => run(signal, announceProducer, reportProgress(signal)), (result) => {
-            if (producerAcknowledged) runtime.handleNotification({ method: 'tool.result',
-              params: { ...result, tool_call_id: params.tool_call_id, tool_input: params.arguments } },
-            { toolContext, handleToolNotification });
-          }, String(params.tool_call_id || ''));
+        let rendered = null;
+        try {
+          rendered = await trackImageBridgeExecution(service, streamId, controller.signal,
+            (signal) => run(signal, announceProducer, reportProgress(signal), imagePromptPin), (result) => {
+              if (producerAcknowledged) runtime.handleNotification({ method: 'tool.result',
+                params: { ...result, tool_call_id: params.tool_call_id, tool_input: params.arguments } },
+              { toolContext, handleToolNotification });
+            }, String(params.tool_call_id || ''));
+        } finally {
+          // A failed, cancelled or thrown render gives the turn its one image back.
+          if (imagePromptPin && rendered?.success !== true) releasePinnedRender(service, resolvedSessionId, turnIdentity);
+        }
+        return rendered;
       } finally {
         if (typeof resumeAfterAnswers === 'function') {
           resumeAfterAnswers();

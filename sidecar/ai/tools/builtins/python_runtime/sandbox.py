@@ -29,8 +29,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from sidecar.ai.config import read_environment_value
+from sidecar.ai.error_codes import CMP_TOOL_DISABLED
 from sidecar.ai.tools.builtins.python_runtime import bootstrap_subprocess
 from sidecar.ai.tools.builtins.python_runtime.job_object import JobObject
+from sidecar.ai.tools.contracts import ToolExecutionFailure
 
 PYTHON_RESULT_SCHEMA_VERSION = 1
 MAX_RESULT_JSON_BYTES = 4 * 1024 * 1024
@@ -388,19 +390,45 @@ def _child_environment(
     return env
 
 
+def create_scratch_dir() -> Path:
+    """A fresh per-run scratch directory, the authority root when no workspace is bound."""
+    return Path(tempfile.mkdtemp(prefix="jenny-pyexec-"))
+
+
+def _refuse_before_launch(work_dir: Path | None, error: Exception) -> Exception:
+    if work_dir is not None:
+        _cleanup_failed_execution(None, work_dir, error)
+    return error
+
+
 def execute_sandboxed(  # noqa: PLR0913 - keyword-only sandbox inputs.
     *,
     code: str,
     venv_python: Path,
     timeout_seconds: int,
     memory_limit_mb: int,
-    working_directory: Path | None = None,
+    working_directory: Path,
+    work_dir: Path | None = None,
     abort_event: threading.Event | None = None,
 ) -> SandboxExecutionResult:
+    """Run ``code`` with ``working_directory`` as its explicit authority root.
+
+    The root is the bound workspace or, in a chat with no project, the run's own
+    scratch directory (``create_scratch_dir``, passed as both ``working_directory``
+    and ``work_dir``). A passed ``work_dir`` is owned from here on: removed on any
+    failure and by ``cleanup``. A null or missing root fails closed before launch
+    (security review item 11): no run starts without bound authority.
+    """
+    if working_directory is None or not Path(working_directory).is_dir():
+        raise _refuse_before_launch(work_dir, ToolExecutionFailure(
+            code=CMP_TOOL_DISABLED,
+            message="tools workspace root is not configured",
+            retryable=False,
+        ))
     if abort_event is not None and abort_event.is_set():
-        raise SandboxExecutionCancelled(cleanup_confirmed=True)
-    work_dir = Path(tempfile.mkdtemp(prefix="jenny-pyexec-"))
-    launch_directory = working_directory or work_dir
+        raise _refuse_before_launch(work_dir, SandboxExecutionCancelled(cleanup_confirmed=True))
+    work_dir = work_dir or create_scratch_dir()
+    launch_directory = working_directory
     script_path = work_dir / "_script.py"
     result_path = work_dir / "_result.json"
     wrapper_path = Path(__file__).with_name("_exec_wrapper.py")
@@ -408,7 +436,8 @@ def execute_sandboxed(  # noqa: PLR0913 - keyword-only sandbox inputs.
     env = _child_environment(
         venv_python,
         work_dir,
-        working_directory,
+        # JENNY_WORKSPACE_ROOT names a bound workspace only, never the scratch root.
+        None if working_directory == work_dir else working_directory,
         posix=(os.name != "nt"),
     )
 

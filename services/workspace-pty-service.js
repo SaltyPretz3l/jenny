@@ -12,6 +12,12 @@
  * vars), byte-capped output forwarded over the bridge as workspacePty.onData /
  * onExit events (both carry sessionId and slot).
  *
+ * Output tail (row 94 P4 terminal_read): each live session also feeds a
+ * bounded, ANSI-stripped text tail (workspace-terminal-tail.js) from onData,
+ * before the output queue and fenced so a tail failure never touches the
+ * bridge path. A spawn starts a fresh tail; exit, kill and dispose clear it.
+ * liveTerminals() and readTail() are main-only read accessors (no IPC).
+ *
  * Pinned invariant: the native module loader is NEVER invoked before the
  * workspace root is confirmed, so a rootless install never loads native
  * code. Public methods return plain structured results and never throw
@@ -27,6 +33,7 @@ const { sanitizeSpawnEnv } = require('./backend/sanitize-spawn-env');
 const { TERMINAL_ERROR_CODES } = require('./backend/error-codes');
 const { t } = require('./i18n-main');
 const { createTerminalOutputQueue } = require('./workspace-terminal-output-queue');
+const { createTerminalTail } = require('./workspace-terminal-tail');
 const { detectProfiles, defaultProfileId, spawnCandidates, resolveContainedCwd } = require('./workspace-pty-profiles');
 
 const MAX_CHUNK_BYTES = 64 * 1024; // per onData event (matches the run-task service)
@@ -107,6 +114,7 @@ class WorkspacePtyService {
     this._fsPromises = fsPromises;
     this._sessions = new Map(); // slot -> { id, slot, pty, shell, cwd, ... }
     this._sessionCounter = 0;
+    this._outputSeq = 0; // orders slots by most recent output (ms timestamps tie)
     this._disposed = false;
     this._disposePromise = null;
   }
@@ -153,6 +161,7 @@ class WorkspacePtyService {
   _settleSession(session, info) {
     if (!session || session.settled) return false;
     session.settled = true;
+    this._dropTail(session);
     session.outputQueue.dispose({ flushPending: true });
     if (this._sessions.get(session.slot) === session) this._sessions.delete(session.slot);
     const { exitCode, signal } = info || {};
@@ -175,8 +184,28 @@ class WorkspacePtyService {
     const { pty } = session;
     pty.onExit((info) => this._settleSession(session, info));
     pty.onData((data) => {
+      this._feedTail(session, data);
       session.outputQueue.push('pty', data);
     });
+  }
+
+  // Never throws: a failing tail is dropped (logged once) and the queue path runs on.
+  _feedTail(session, data) {
+    try {
+      session.lastOutputAt = Date.now();
+      this._outputSeq += 1;
+      session.outputSeq = this._outputSeq;
+      session.tail?.push(data);
+    } catch (error) {
+      session.tail = null;
+      session.tailFailed = true;
+      this._log('WARN', 'workspace_pty.tail_failed', { message: String(error?.message || error || '').slice(0, 160) });
+    }
+  }
+
+  _dropTail(session) {
+    try { session.tail?.clear(); } catch (_error) { /* the tail is discarded either way */ }
+    session.tail = null;
   }
 
   async _waitForExit(session) {
@@ -359,6 +388,7 @@ class WorkspacePtyService {
       cols: safeCols, rows: safeRows, // last applied size; resize() skips a no-op
       outputQueue: this._createOutputQueue(id, safeSlot),
       terminationPromise: null,
+      tail: createTerminalTail(), tailFailed: false, lastOutputAt: null, outputSeq: 0,
     };
     this._sessions.set(safeSlot, session);
     // 6. Wire data/exit forwarding.
@@ -484,9 +514,41 @@ class WorkspacePtyService {
     return this._sessions.size > 0;
   }
 
+  // Live = registered, not settled and not being terminated.
+  _liveSessions() {
+    return [...this._sessions.values()]
+      .filter((session) => !session.settled && !session.terminationPromise)
+      .sort((a, b) => a.slot - b.slot);
+  }
+
+  liveTerminals() {
+    return this._liveSessions().map((session) => ({
+      slot: session.slot, session_id: session.id, last_output_at: session.lastOutputAt,
+    }));
+  }
+
+  // readTail({ slot?, lines? }): slot 1..MAX_SESSIONS, or omitted/null for the live slot
+  // with the most recent output (none yet: the lowest live slot).
+  readTail({ slot = null, lines } = {}) {
+    if (slot != null && !(Number.isInteger(slot) && slot >= 1 && slot <= MAX_SESSIONS)) {
+      return { ok: false, reason: 'invalid_input' };
+    }
+    const live = this._liveSessions();
+    const session = slot == null
+      ? live.reduce((best, s) => (!best || s.outputSeq > best.outputSeq ? s : best), null)
+      : live.find((s) => s.slot === slot);
+    if (!session) return { ok: false, reason: 'no_terminal' };
+    const tail = session.tail ? session.tail.read({ lines }) : { lines: [], truncated: session.tailFailed };
+    return {
+      ok: true, slot: session.slot, session_id: session.id, lines: tail.lines, truncated: tail.truncated,
+      running: true, last_output_at: session.lastOutputAt,
+    };
+  }
+
   // Window close / app shutdown (will-quit guard): never orphan a pty, never throw.
   dispose() {
     this._disposed = true;
+    for (const session of this._sessions.values()) this._dropTail(session);
     if (!this._disposePromise) {
       this._disposePromise = (async () => {
         if (this._sessions.size === 0) return { disposed: true, terminationConfirmed: true };

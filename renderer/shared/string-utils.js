@@ -230,6 +230,17 @@
     });
   }
 
+  /* Row 86 digest quiet hours (chatUi digestQuietStart / digestQuietEnd): "HH:MM" local time on the
+   * half hour, 00:00..23:30. Anything else is the default. The one normalizer for main and renderer. */
+  var DIGEST_QUIET_DEFAULTS = Object.freeze({ digestQuietStart: '22:00', digestQuietEnd: '07:00' });
+  var HALF_HOUR_CLOCK_RE = /^(?:[01]\d|2[0-3]):(?:00|30)$/;
+  function normalizeDigestQuietStart(value) {
+    return typeof value === 'string' && HALF_HOUR_CLOCK_RE.test(value) ? value : DIGEST_QUIET_DEFAULTS.digestQuietStart;
+  }
+  function normalizeDigestQuietEnd(value) {
+    return typeof value === 'string' && HALF_HOUR_CLOCK_RE.test(value) ? value : DIGEST_QUIET_DEFAULTS.digestQuietEnd;
+  }
+
   return {
     normalizeString,
     normalizeId,
@@ -243,5 +254,8 @@
     deriveSessionTitleFromMessage,
     isPrimarySession,
     isPrimarySessionId,
+    DIGEST_QUIET_DEFAULTS,
+    normalizeDigestQuietStart,
+    normalizeDigestQuietEnd,
   };
 });

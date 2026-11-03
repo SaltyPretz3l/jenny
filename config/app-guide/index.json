@@ -195,22 +195,23 @@
       "keywords": [
         "jenny chat",
         "primary chat",
-        "pinned",
+        "reset",
         "sessions_list",
-        "session_status",
-        "session_transcript",
         "session_stop",
+        "settings_change",
+        "chat_organize",
+        "chat_configure",
+        "project_create",
+        "projects_list",
+        "schedule_change",
+        "scheduled check",
         "propose_session",
-        "jenny_help",
         "what was i working on",
-        "orchestrate",
-        "status",
-        "profile",
-        "answers about jenny",
-        "cross-project"
+        "what did i miss",
+        "app_view"
       ],
       "path": "jenny-chat.md",
-      "summary": "The pinned Jenny chat: what it can see, what it can do, and what it never does."
+      "summary": "The pinned Jenny chat: what it can see, what it can do, and what it never does; Pause, Reset and Forget."
     },
     {
       "id": "settings-reference",
@@ -281,7 +282,7 @@
         "context too large"
       ],
       "path": "diagnostics-and-troubleshooting.md",
-      "summary": "The Diagnostics page, common problems, error codes, data location, archive and uninstall."
+      "summary": "The Diagnostics page, common problems, error codes, data location, archive and uninstall; where chats and transcripts are stored."
     },
     {
       "id": "command-line",

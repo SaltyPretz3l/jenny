@@ -83,6 +83,15 @@
     return index;
   }
 
+  // A session id is not a name anyone recognizes: an untitled chat says so,
+  // and a chat the summaries no longer list says THAT, because the work
+  // outlived the conversation it ran in. Exported so the Jenny chat's away
+  // facts (services/primary-away-facts.js) use the same wording.
+  function sessionTitleFor(sessionSummary) {
+    if (!sessionSummary) return jt('chat.awayDigest.deletedSession', 'Chat deleted');
+    return text(sessionSummary.title) || jt('chat.awayDigest.untitledSession', 'Untitled chat');
+  }
+
   // Tokens are re-projected, never passed through: the usage record carries
   // `cost_usd` and `cost_source`, and this digest never shows money.
   function tokensForStream(usageByStream, streamId) {
@@ -173,12 +182,7 @@
         key: 'work:' + workId,
         workId: workId,
         sessionId: sessionId,
-        // A session id is not a name anyone recognizes: an untitled chat says
-        // so, and a chat the summaries no longer list says THAT, because the
-        // work outlived the conversation it ran in.
-        sessionTitle: sessionGone
-          ? jt('chat.awayDigest.deletedSession', 'Chat deleted')
-          : (text(sessionSummary.title) || jt('chat.awayDigest.untitledSession', 'Untitled chat')),
+        sessionTitle: sessionTitleFor(sessionSummary),
         sessionGone: sessionGone,
         outcome: summary.status,
         startedAt: text(summary.created_at),
@@ -280,6 +284,7 @@
   return {
     buildAwayDigest: buildAwayDigest,
     tokensForStream: tokensForStream,
+    sessionTitleFor: sessionTitleFor,
     isAfter: isAfter,
     createSettleReads: createSettleReads,
     RETENTION_MS: RETENTION_MS,

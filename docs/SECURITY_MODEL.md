@@ -134,7 +134,7 @@ and a 16-char SHA-256 prefix.
 
 ## Python Runtime Threat Model
 
-Last reviewed: 2026-10-26
+Last reviewed: 2026-11-02
 
 This document is the ground-truth threat model for the
 `python_execute` tool (`sidecar/ai/tools/builtins/python_runtime/`).
@@ -158,8 +158,14 @@ approves a call whose payload turns out to be hostile.
 ### Layers in play
 
 1. **Tool contract** — `sidecar/ai/tools/builtins/python_runtime/tool.py`
-   validates the request (allowed modes, size caps, workspace root
-   presence) before dispatch.
+   validates the request (allowed modes, size caps) and binds the run's
+   authority root before dispatch: the bound workspace root, or, in a chat with
+   no project, the run's own scratch directory (`create_scratch_dir`). The tool
+   stays offered without a project (manifest `workspace_required: false`), but
+   it never runs with a null root: `execute_sandboxed` refuses a null or missing
+   root with `CMP-TOOL-0002` ("tools workspace root is not configured", the
+   `WorkspaceGuard.require_root` shape) before anything launches (security
+   review item 11, 2026-11-02).
 2. **Interpreter bootstrap** — `interpreter.py` ensures the venv
    exists under `{userData}/python-runtime/.venv` and is owned
    exclusively by Jenny. No user-writable `PYTHONPATH` injection.
@@ -199,9 +205,15 @@ approves a call whose payload turns out to be hostile.
 
 - Scratch directory is an ephemeral `tempfile.mkdtemp(prefix="jenny-pyexec-")`
   holding the script, the result file and generated output. Cleaned on every
-  exit path (success, exception, timeout).
-- The child's `cwd` is the bound workspace root when one exists, and the
-  scratch directory otherwise (`execute_sandboxed` in `sandbox.py`).
+  exit path (success, exception, timeout, a refused root, a pre-set cancel).
+- The child's `cwd` is the run's explicit authority root (`execute_sandboxed` in
+  `sandbox.py`): the bound workspace root when one exists, otherwise that run's
+  scratch directory, bound explicitly as the root (passed as both
+  `working_directory` and `work_dir`). The files the runner itself mediates (the
+  script, the result JSON and figure images, resolved strictly inside the scratch
+  directory in `output.py`) stay contained to it; chart attachments keep flowing
+  through the trusted-attachment admission (`trusted_attachments.py`). Per-call
+  approval is unchanged.
 - `env` is rebuilt from scratch, with no inherited parent env (`_child_environment`):
   `PATH` (the venv interpreter's directory, then `System32` and `SYSTEMROOT` on Windows
   or `/usr/local/bin`, `/usr/bin`, `/bin` on POSIX), `TEMP`, `TMP` and `JENNY_OUTPUT_DIR`
@@ -209,7 +221,7 @@ approves a call whose payload turns out to be hostile.
   else scratch), `VIRTUAL_ENV`, and `OPENBLAS_NUM_THREADS`, `OMP_NUM_THREADS`,
   `MKL_NUM_THREADS`, `NUMEXPR_NUM_THREADS` = `1`. Windows adds `SYSTEMROOT`, `WINDIR`
   and `COMSPEC`; POSIX adds `HOME` and `TMPDIR` (scratch) and `LANG`/`LC_ALL` = `C.UTF-8`.
-  `JENNY_WORKSPACE_ROOT` names the workspace when one is bound.
+  `JENNY_WORKSPACE_ROOT` names the workspace when one is bound, never the scratch root.
 - Wrapper stdout/stderr pipes are drained concurrently and retain at most
   512 KiB aggregate. Overflow terminates the owned process instead of buffering
   to completion; the versioned result JSON is stat/read/decode bounded to 4 MiB.
@@ -241,8 +253,9 @@ point.
 
 #### Filesystem read outside workspace
 
-- The subprocess starts in the workspace (or scratch) directory, but has no
-  jail. It can `open('/etc/passwd')` or `open(r'C:\Users\...')`.
+- The subprocess starts in its authority root (the workspace, or the run's
+  scratch directory), but that root is a working directory and containment for
+  the runner's own files, not a jail. It can `open('/etc/passwd')` or `open(r'C:\Users\...')`.
 - Impact: a hostile payload can exfiltrate files it can read as the
   Jenny user. Mitigation layer: output size cap in `output.py`
   limits what the model sees; tool approval gate limits when the

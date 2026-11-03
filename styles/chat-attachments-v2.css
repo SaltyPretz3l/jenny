@@ -57,6 +57,16 @@
   font-weight: 500;
 }
 
+.message-image-prompt-pill {
+  gap: var(--space-1);
+}
+
+.message-image-prompt-pill svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .attachment-tray .attachment-chip,
   .attachment-chip-remove,

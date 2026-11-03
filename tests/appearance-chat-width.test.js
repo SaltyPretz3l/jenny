@@ -41,8 +41,9 @@ function createRoot() {
   };
 }
 
-test('chat width presets expose the narrow/standard reading-measure ladder', () => {
-  assert.deepEqual(getChatWidthPresets().map((preset) => preset.id), ['narrow', 'standard']);
+test('chat width presets expose the narrow/standard/wide reading-measure ladder', () => {
+  assert.deepEqual(getChatWidthPresets().map((preset) => preset.id), ['narrow', 'standard', 'full']);
+  assert.equal(getChatWidthPresets().find((preset) => preset.id === 'full').label, 'Wide');
   for (const preset of getChatWidthPresets()) {
     assert.ok(preset.label, `${preset.id} has a label`);
     assert.ok(preset.description, `${preset.id} has a description`);
@@ -60,11 +61,24 @@ test('normalizeAppearancePreferences defaults and coerces chatWidthId', () => {
   assert.equal(normalizeAppearancePreferences({ chatWidthId: null }).chatWidthId, 'standard');
 });
 
+test('Wide is stored as full and round-trips', () => {
+  assert.equal(normalizeAppearancePreferences({ chatWidthId: 'full' }).chatWidthId, 'full');
+  assert.equal(normalizeAppearancePreferences({ chatWidthId: ' FULL ' }).chatWidthId, 'full');
+  const storage = createStorage();
+  assert.equal(saveAppearancePreferences(storage, { chatWidthId: 'full' }).chatWidthId, 'full');
+  assert.equal(loadAppearancePreferences(storage).chatWidthId, 'full');
+  const { root } = createRoot();
+  applyAppearanceToDocument(root, { chatWidthId: 'full' });
+  assert.equal(root.dataset.chatWidth, 'full');
+});
+
 test('ids stored before the rename land on the Standard default', () => {
   // `default` was written for every profile whether or not the user chose it.
   assert.equal(normalizeAppearancePreferences({ chatWidthId: 'default' }).chatWidthId, 'standard');
   assert.equal(normalizeAppearancePreferences({ chatWidthId: 'wide' }).chatWidthId, 'standard');
   assert.equal(normalizeAppearancePreferences({ chatWidthId: 'WIDE' }).chatWidthId, 'standard');
+  // Row 92: the new Wide preset is `full`, so an old stored `wide` never turns it on.
+  assert.notEqual(normalizeAppearancePreferences({ chatWidthId: 'wide' }).chatWidthId, 'full');
   const storage = createStorage(JSON.stringify({ paletteId: 'signal', chatWidthId: 'default' }));
   assert.equal(loadAppearancePreferences(storage).chatWidthId, 'standard');
 });

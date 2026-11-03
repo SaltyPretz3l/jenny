@@ -54,6 +54,7 @@ def reuse_key(
     sse_enabled: bool,
     resources_enabled: bool,
     allow_private_addresses: bool,
+    allow_loopback: bool,
 ) -> str:
     """Digest of everything that shapes a server's transport.
 
@@ -74,6 +75,7 @@ def reuse_key(
             "sse_enabled": bool(sse_enabled),
             "resources_enabled": bool(resources_enabled),
             "allow_private_addresses": bool(allow_private_addresses),
+            "allow_loopback": bool(allow_loopback),
         }
     )
 
@@ -108,6 +110,7 @@ def connect_servers(
                 sse_enabled=client._sse_enabled,
                 resources_enabled=client._resources_enabled,
                 allow_private_addresses=client._allow_private_addresses,
+                allow_loopback=client._allow_loopback,
             )
             state.keys[server.name] = key
             if reuse_from is not None and _adopt(client, reuse_from, server.name, key):

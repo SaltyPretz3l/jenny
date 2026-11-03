@@ -22,6 +22,7 @@
     includeWorkspace: false,
     workspaceReview: null,
     removeWorkspaceData: false,
+    removeSkills: false,
     progress: null,
     operationId: '',
     errorReason: '',
@@ -110,6 +111,13 @@
       + '</ul></section>';
   }
 
+  // Row 103: the user's own skills in ~/.companion/skills stay unless this is checked.
+  function skillsOption() {
+    return '<section class="data-lifecycle-review-card">'
+      + toggle.toggleSwitch({ id: 'remove-skills', label: jt('uninstall.skills.remove', 'Also remove my skills'), description: jt('uninstall.skills.removeDescription', 'Off by default. The skills you wrote in .companion/skills are not part of any archive.'), checked: state.removeSkills })
+      + '</section>';
+  }
+
   function renderArchiveReview() {
     var protection = '<section class="data-lifecycle-review-card"><h2>' + escapeHtml(jt('uninstall.archive.protectionTitle', 'Protection')) + '</h2>'
       + '<div class="data-lifecycle-choice-row" role="radiogroup" aria-label="' + escapeHtml(jt('uninstall.archive.protectionAriaLabel', 'Archive protection')) + '">'
@@ -141,7 +149,7 @@
           : (state.includeWorkspace ? '<p class="data-lifecycle-warning">' + escapeHtml(jt('uninstall.archive.reviewRequired', 'Workspace data must be reviewed before removal can begin.')) + '</p>' : ''))
         + '</section>'
       : '';
-    host.innerHTML = shell(categoriesMarkup() + destination + protection + workspace,
+    host.innerHTML = shell(categoriesMarkup() + destination + protection + workspace + skillsOption(),
       button('back', jt('uninstall.actions.back', 'Back'), 'secondary') + button('archive-remove', state.includeWorkspace && !state.workspaceReview ? jt('uninstall.archive.reviewWorkspaceScope', 'Review workspace scope') : jt('uninstall.archive.createAndRemove', 'Create archive & remove'), 'primary', { size: 'lg' }),
       { title: jt('uninstall.archive.reviewTitle', 'Review your recoverable archive'), subtitle: jt('uninstall.archive.reviewSubtitle', 'Jenny will verify every item before authorizing removal.') });
     toggle.initToggleHandlers(host);
@@ -158,6 +166,7 @@
       + '<li><span aria-hidden="true">&#8212;</span>' + escapeHtml(jt('uninstall.permanent.retainedExternalItems', 'Ollama models, shared caches, and external knowledge stay')) + '</li>'
       + '<li><span aria-hidden="true">&#8212;</span>' + escapeHtml(jt('uninstall.permanent.projectFilesStay', 'Ordinary project files stay')) + '</li></ul></section>'
       + workspace
+      + skillsOption()
       + '<section class="data-lifecycle-review-card">'
       + textField({ id: 'permanentConfirmation', label: jt('uninstall.permanent.confirmationInstruction', 'Type {phrase} to continue', { phrase: PERMANENT_CONFIRMATION_MATCHERS[0] }), maxLength: 64, placeholder: PERMANENT_CONFIRMATION_MATCHERS[0] })
       + '</section>';
@@ -306,6 +315,7 @@
     }
     if (event.detail.id === 'remove-workspace-after-archive') state.removeWorkspaceData = event.detail.checked;
     if (event.detail.id === 'remove-workspace') state.removeWorkspaceData = event.detail.checked;
+    if (event.detail.id === 'remove-skills') state.removeSkills = event.detail.checked;
   });
 
   host.addEventListener('click', async function (event) {
@@ -314,8 +324,8 @@
     var action = target.dataset.action;
     if (action === 'cancel') root.close();
     else if (action === 'back') { workspaceReviewGate.bump(); state.view = 'landing'; render(); }
-    else if (action === 'review-archive') { workspaceReviewGate.bump(); state.removeWorkspaceData = false; state.view = 'archive'; render(); }
-    else if (action === 'review-permanent') { state.removeWorkspaceData = false; state.view = 'permanent'; render(); }
+    else if (action === 'review-archive') { workspaceReviewGate.bump(); state.removeWorkspaceData = false; state.removeSkills = false; state.view = 'archive'; render(); }
+    else if (action === 'review-permanent') { state.removeWorkspaceData = false; state.removeSkills = false; state.view = 'permanent'; render(); }
     else if (action === 'encrypted' || action === 'plain') {
       state.encrypted = action === 'encrypted';
       render();
@@ -353,14 +363,14 @@
       var workspaceReviewId = state.workspaceReview ? state.workspaceReview.reviewId : '';
       var archive = archiveOptions(workspaceReviewId);
       state.workspaceReview = null;
-      await prepareRemoval({ choice: 'archive_and_remove', archive: archive, removeWorkspaceData: state.removeWorkspaceData });
+      await prepareRemoval({ choice: 'archive_and_remove', archive: archive, removeWorkspaceData: state.removeWorkspaceData, removeSkills: state.removeSkills });
     } else if (action === 'app-only') {
       state.removalMode = 'app_only';
       await prepareRemoval({ choice: 'app_only' });
     } else if (action === 'permanent-remove') {
       var field = host.querySelector('#permanentConfirmation');
       state.removalMode = 'permanent';
-      await prepareRemoval({ choice: 'permanent', confirmation: field ? field.value : '', removeWorkspaceData: state.removeWorkspaceData });
+      await prepareRemoval({ choice: 'permanent', confirmation: field ? field.value : '', removeWorkspaceData: state.removeWorkspaceData, removeSkills: state.removeSkills });
     } else if (action === 'cancel-operation' && state.operationId) {
       state.cancelRequested = true;
       render();

@@ -267,16 +267,16 @@ test('listPermissions and getState attach project names', async () => {
   assert.match(snapshot.paused_at, /Z$/);
   assert.equal(snapshot.permissions.length, 2);
   assert.deepEqual(snapshot.history.map((entry) => entry.kind), ['permission_granted', 'permission_granted', 'paused']);
-  assert.deepEqual(snapshot.flags, { controls: true, launch_permission: true, activity_log: true });
+  assert.deepEqual(snapshot.flags, { controls: true, launch_permission: true, activity_log: true, action_rules: true });
 });
 
 test('getState reflects flags and works when the primary chat is off', () => {
   const { controls, state } = harness();
   state.flags = { primary_chat_controls: false, primary_activity_log: false };
-  assert.deepEqual(controls.getState().flags, { controls: false, launch_permission: true, activity_log: false });
+  assert.deepEqual(controls.getState().flags, { controls: false, launch_permission: true, activity_log: false, action_rules: true });
   state.flags = { primary_chat: false };
   const off = controls.getState();
-  assert.deepEqual(off.flags, { controls: false, launch_permission: false, activity_log: false });
+  assert.deepEqual(off.flags, { controls: false, launch_permission: false, activity_log: false, action_rules: false });
   assert.equal(off.session_id, null);
 });
 
@@ -307,6 +307,47 @@ test('matchLaunchPermission: exact project beats wildcard, run-mode scoping, rev
   assert.equal(match({ destinationProjectId: 'project_b', runMode: 'plan' }), null, 'primary chat off');
 });
 
+test('settings batches: recorded and found by change id, undone once; recordHistory cannot mint them (row 88)', () => {
+  const { controls, config } = harness();
+  const CID = `sc_${'a'.repeat(32)}`;
+  const changes = [{ key: 'time_format_24h', before: false, after: true }];
+  assert.equal(controls.recordHistory('setting_changed'), false);
+  assert.equal(controls.recordHistory('setting_undone'), false);
+  assert.equal(controls.findSettingChange(CID), null);
+  assert.equal(controls.recordSettingChange({ change_id: 'bad', changes }), false, 'a malformed entry is dropped and reported');
+  assert.equal(controls.recordSettingChange({ change_id: CID, changes }), true);
+  assert.deepEqual(controls.findSettingChange(CID), { entry: { kind: 'setting_changed', at: config.block.history[0].at, change_id: CID, changes }, undone: false });
+  assert.equal(controls.recordSettingUndone(CID), true);
+  assert.equal(controls.findSettingChange(CID).undone, true);
+});
+
+test('chat changes: recorded and found by change id, undone once; recordHistory cannot mint them (row 94)', () => {
+  const { controls, config } = harness();
+  const CID = `sc_${'b'.repeat(32)}`;
+  const record = { change_id: CID, session_id: OTHER, action: 'archive', field: 'archived_at', before: null, after: '2026-11-01T00:00:00.000Z' };
+  assert.equal(controls.recordHistory('chat_changed'), false);
+  assert.equal(controls.recordHistory('chat_change_undone'), false);
+  assert.equal(controls.findChatChange(CID), null);
+  assert.equal(controls.recordChatChange({ ...record, change_id: 'bad' }), false, 'a malformed entry is dropped and reported');
+  assert.equal(controls.recordChatChange({ ...record, action: 'delete' }), false);
+  assert.equal(controls.recordChatChange(), false);
+  assert.equal(controls.recordChatChange(record), true);
+  assert.deepEqual(controls.findChatChange(CID), { entry: { kind: 'chat_changed', at: config.block.history[0].at, ...record }, undone: false });
+  assert.equal(controls.findSettingChange(CID), null, 'the two families do not alias');
+  assert.equal(controls.recordChatChangeUndone(CID), true);
+  assert.equal(controls.findChatChange(CID).undone, true);
+  assert.deepEqual(config.block.history.map((row) => row.kind), ['chat_changed', 'chat_change_undone']);
+});
+
+test('chat changes honour the primary-chat gate (row 94)', () => {
+  const { controls, state } = harness();
+  const CID = `sc_${'c'.repeat(32)}`;
+  state.flags = { primary_chat: false };
+  const record = { change_id: CID, session_id: OTHER, action: 'pin', field: 'pinned', before: false, after: true };
+  assert.equal(controls.recordChatChange(record), false);
+  assert.equal(controls.recordChatChangeUndone(CID), false);
+});
+
 test('recordHistory validates the kind, bounds the log, and emits', () => {
   const { controls, config, events } = harness();
   assert.equal(controls.recordHistory('reset'), true);
@@ -316,8 +357,8 @@ test('recordHistory validates the kind, bounds the log, and emits', () => {
   assert.deepEqual(config.block.history.map((entry) => entry.kind), ['reset', 'forgot', 'reset']);
   assert.equal(config.block.history[2].permission_id, undefined);
   assert.equal(events.length, 3);
-  for (let i = 0; i < 60; i += 1) controls.recordHistory('reset');
-  assert.equal(config.block.history.length, 50);
+  for (let i = 0; i < 210; i += 1) controls.recordHistory('reset');
+  assert.equal(config.block.history.length, 200);
   const off = harness();
   off.state.flags = { primary_chat: false };
   assert.equal(off.controls.recordHistory('reset'), false);
@@ -327,4 +368,39 @@ test('a throwing emit or log never breaks a write', async () => {
   const { controls, config } = harness({ emit: () => { throw new Error('bridge'); }, log: () => { throw new Error('log'); } });
   assert.equal((await controls.pause()).ok, true);
   assert.equal(config.block.history.length, 1);
+});
+
+test('recordScheduleEvent writes the closed schedule entry and is the only writer of those kinds (row 85)', () => {
+  const { controls, config, state } = harness();
+  for (const kind of ['schedule_created', 'schedule_skipped', 'schedule_missed']) assert.equal(controls.recordHistory(kind), false, kind);
+  assert.equal(controls.recordScheduleEvent(), false);
+  assert.equal(controls.recordScheduleEvent({ kind: 'paused', reminder_id: 'rem_1', label: 'x' }), false, 'not a schedule kind');
+  assert.equal(controls.recordScheduleEvent({ kind: 'schedule_created', reminder_id: '', label: 'x' }), false, 'malformed is dropped');
+  assert.equal(controls.recordScheduleEvent({ kind: 'schedule_skipped', reminder_id: 'rem_1', label: 'x', reason: 'Bad Reason' }), false);
+  assert.equal(controls.recordScheduleEvent({ kind: 'schedule_created', reminder_id: 'rem_1', label: 'Morning', by: 'jenny', extra: 1 }), true);
+  assert.equal(controls.recordScheduleEvent({ kind: 'schedule_skipped', reminder_id: 'rem_1', label: 'Morning', reason: 'paused', by: null }), true);
+  assert.deepEqual(config.block.history, [
+    { kind: 'schedule_created', at: config.block.history[0].at, reminder_id: 'rem_1', label: 'Morning', by: 'jenny' },
+    { kind: 'schedule_skipped', at: config.block.history[1].at, reminder_id: 'rem_1', label: 'Morning', reason: 'paused' },
+  ]);
+  state.flags = { primary_chat: false };
+  assert.equal(controls.recordScheduleEvent({ kind: 'schedule_created', reminder_id: 'rem_2', label: 'x' }), false);
+});
+
+test('row 86 digest record: getDigest, updateDigest merges known fields, recordDigestSkipped is the only writer', () => {
+  const { controls, config, state } = harness();
+  assert.deepEqual(controls.getDigest(), normalizePrimaryChat({}).digest);
+  assert.equal(controls.updateDigest({ lastPresentAt: '2026-10-25T08:00:00.000Z', unknown: 1 }), true);
+  assert.equal(controls.updateDigest({ lastDigestAt: '2026-10-25T09:00:00.000Z' }), true);
+  assert.equal(controls.updateDigest({ unknown: 1 }), false, 'nothing known to write');
+  assert.deepEqual(controls.getDigest(), {
+    lastPresentAt: '2026-10-25T08:00:00.000Z', lastDigestAt: '2026-10-25T09:00:00.000Z', lastDigestUntil: null,
+  });
+  assert.equal(controls.recordHistory('digest_skipped'), false, 'managed kind');
+  assert.equal(controls.recordDigestSkipped('Not A Token'), false, 'malformed is dropped');
+  assert.equal(controls.recordDigestSkipped('quiet_hours'), true);
+  assert.deepEqual(config.block.history, [{ kind: 'digest_skipped', at: '2026-10-25T12:00:00.000Z', reason: 'quiet_hours' }]);
+  state.flags = { primary_chat: false };
+  assert.equal(controls.updateDigest({ lastPresentAt: '2026-10-25T09:00:00.000Z' }), false);
+  assert.equal(controls.recordDigestSkipped('cap'), false);
 });

@@ -281,3 +281,43 @@ test('side panel motion: the column grows over a locked measure; the reader does
   });
   assert.equal(collector.failures.length, 0, `${collector.failures.length} failed:\n${collector.failures.join('\n')}`);
 });
+
+// A one-line tool row whose summary is a long command (labels clip at 500 chars since row 92): its
+// toggle must shrink to the measure and ellipsize in every width, including after Wide -> Standard.
+test('reading layout: a long command row stays inside the measure after Wide -> Standard -> Narrow', { skip: SKIP, timeout: 120000 }, async () => {
+  const collector = createCollector();
+  await withBrowser(async (browser) => {
+    const page = await mountReadingLayout(browser, { viewport: { width: 1455, height: 900 }, split: false });
+    await page.evaluate((command) => {
+      const anchor = document.querySelector('#chatView .chat-row[data-row-kind="tool_run"]');
+      const holder = document.createElement('div');
+      holder.innerHTML = '<div class="chat-row" data-row-id="long-cmd" data-row-kind="tool"><span class="chat-row-node-dot" aria-hidden="true"></span>'
+        + '<div class="tool-call-row tool-call-row--minimal" data-tool-status="error" data-expanded="false"><div class="tool-call-row-header">'
+        + '<div class="tool-call-row-toggle" role="button" tabindex="0" data-tool-row-toggle="true">'
+        + '<span class="status-dot status-dot--error" aria-hidden="true"></span><span class="tool-call-main">'
+        + '<span class="tool-call-name">Bash</span><span class="tool-call-summary tool-call-row-summary"></span></span>'
+        + '<span class="tool-call-status-cluster"><span class="tool-call-status-label">1 failed · 0 passed</span>'
+        + ' <span class="tool-result-duration">682ms</span></span></div></div></div></div>';
+      holder.querySelector('.tool-call-row-summary').textContent = command;
+      anchor.after(holder.firstElementChild);
+    }, `Run ${'node --test --test-concurrency=1 tests-js/ '.repeat(10)}`);
+    for (const chatWidth of ['full', 'standard', 'narrow']) {
+      await setReadingAppearance(page, { fontScale: 'default', chatWidth });
+      const m = await page.evaluate(() => {
+        const row = document.querySelector('[data-row-id="long-cmd"] .tool-call-row');
+        const summary = row.querySelector('.tool-call-row-summary');
+        return {
+          row: row.getBoundingClientRect().width,
+          toggle: row.querySelector('.tool-call-row-toggle').getBoundingClientRect().width,
+          overflow: row.scrollWidth - row.clientWidth,
+          clipped: summary.scrollWidth > summary.clientWidth,
+        };
+      });
+      collector.ok(m.toggle <= m.row + 1, `${chatWidth}: toggle ${fmt(m.toggle)} within row ${fmt(m.row)}`);
+      collector.ok(m.overflow <= 1, `${chatWidth}: row does not overflow (${fmt(m.overflow)}px)`);
+      collector.ok(m.clipped, `${chatWidth}: the long summary ellipsizes`);
+    }
+    await page.close();
+  });
+  assert.equal(collector.failures.length, 0, `${collector.failures.length} failed:\n${collector.failures.join('\n')}`);
+});

@@ -53,12 +53,37 @@ function isAffectedSource(relPath) {
 
 // Prefer the repo venv (same resolution as scripts/tests/run-dist-tests.js) so
 // the pytest lane sees the sidecar's installed dependencies.
-function resolvePythonExecutable(root = ROOT) {
+function resolvePythonExecutable(root = ROOT, exists = fs.existsSync) {
   const venvPython = process.platform === 'win32'
     ? path.join(root, '.venv', 'Scripts', 'python.exe')
     : path.join(root, '.venv', 'bin', 'python');
-  if (fs.existsSync(venvPython)) return venvPython;
+  if (exists(venvPython)) return venvPython;
   return process.platform === 'win32' ? 'python' : 'python3';
+}
+
+function hasPytest(executable) {
+  const result = spawnSync(executable, ['-c', 'import pytest'], {
+    stdio: 'ignore',
+    shell: false,
+    windowsHide: true,
+  });
+  return result.status === 0;
+}
+
+// Decides whether the python lane can run. Without a root venv the fallback
+// interpreter is used only when it can import pytest; the main checkout's venv
+// is never borrowed (its editable install would test the main checkout's
+// sidecar code instead of this tree's).
+function resolvePythonLane(root = ROOT, { exists = fs.existsSync, probe = hasPytest } = {}) {
+  const python = resolvePythonExecutable(root, exists);
+  if (python !== 'python' && python !== 'python3') return { ok: true, python, message: null };
+  if (probe(python)) return { ok: true, python, message: null };
+  return {
+    ok: false,
+    python,
+    message: `[affected] python lane: no .venv in ${root} and ${python} has no pytest; ` +
+      'create the worktree venv with scripts/worktree-agent.ps1 -WithVenv (or run from the main checkout)',
+  };
 }
 
 // Pure decision logic: maps changed sources -> a test plan. Accepts injectable
@@ -218,8 +243,14 @@ function runChild(plan) {
     nodeExit = runLane(process.execPath, [path.join(ROOT, RUNNER_PATH), ...nodeArgs]);
   }
   if (pytestArgs) {
-    console.log(`[affected] python lane: ${pytestArgs.length - 3} test file(s) -> pytest -q`);
-    pyExit = runLane(resolvePythonExecutable(), pytestArgs);
+    const pythonLane = resolvePythonLane(ROOT);
+    if (!pythonLane.ok) {
+      console.log(pythonLane.message);
+      pyExit = 1;
+    } else {
+      console.log(`[affected] python lane: ${pytestArgs.length - 3} test file(s) -> pytest -q`);
+      pyExit = runLane(pythonLane.python, pytestArgs);
+    }
   }
   // Both lanes always run; a failure in either fails the whole selection.
   return nodeExit !== 0 ? nodeExit : pyExit;
@@ -266,4 +297,5 @@ module.exports = {
   buildLanePlan,
   isAffectedSource,
   resolvePythonExecutable,
+  resolvePythonLane,
 };

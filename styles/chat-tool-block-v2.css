@@ -132,6 +132,59 @@
   outline-offset: 1px;
 }
 
+/* Row 95: the quiet "..." button renderer-chat-path-open.js inserts after a path chip (tool rows and
+   prose chips). It opens the chip's context menu; hidden until the chip or the button is hovered,
+   focused, or its menu is open. */
+.chat-path-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 16px;
+  /* Zero net inline advance (2 + 18 - 20): inserted on first hover, it floats over the
+     text after the chip instead of reflowing the line. Hidden is visibility: hidden (not
+     hit-tested), released 150ms late so the pointer can travel from the chip onto it. */
+  position: relative;
+  z-index: 1;
+  margin-inline-start: 2px;
+  margin-inline-end: -20px;
+  padding: 0;
+  vertical-align: -2px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: var(--surface-popover-background);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--tl-font-meta);
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--transition-fast), color var(--transition-fast), visibility 0s linear 150ms;
+}
+
+.tool-path-chip:hover + .chat-path-more,
+.tool-path-chip:focus-visible + .chat-path-more,
+.chat-inline-path:hover + .chat-path-more,
+.chat-inline-path:focus-visible + .chat-path-more,
+.chat-path-more:hover,
+.chat-path-more:focus-visible,
+.chat-path-more[aria-expanded="true"] {
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 0s;
+}
+
+.chat-path-more:hover,
+.chat-path-more[aria-expanded="true"] {
+  color: var(--text-primary);
+}
+
+.chat-path-more:focus-visible {
+  outline: 1px solid var(--accent, currentColor);
+  outline-offset: 1px;
+}
+
 /* The combined-card rule above pushes the duration right with
    margin-inline-start:auto; in the minimal row the summary already absorbs the
    slack, so the right cluster packs naturally. */
@@ -294,5 +347,10 @@
 @media (prefers-reduced-motion: reduce) {
   .tool-call-row-body {
     transition: none;
+  }
+
+  /* No fade, but keep the late release so the pointer can still reach the button. */
+  .chat-path-more {
+    transition: visibility 0s linear 150ms;
   }
 }

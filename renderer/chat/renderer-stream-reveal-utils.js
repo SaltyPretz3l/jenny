@@ -110,6 +110,7 @@
       structureSignature: 0,
       sessionId: '',
       tokenFadeTracker: null,
+      reasoningTokenFadeTracker: null,
       previousDomCount: 0,
       previousTailFingerprint: '',
       lastThinkingMarkup: '',
@@ -226,6 +227,24 @@
       return message;
     }
 
+    // chat_stream_token_fade: a `(el, html, index)` writer that fades a tail
+    // unit's new text through the runtime tracker in `slot` (scoped by
+    // `scopeKey`), or null when the flag is off or motion is reduced.
+    function makeTailFadeWriter(slot, scopeKey) {
+      if (!isTokenFadeEnabled() || reducedMotionQuery.matches
+        || typeof tokenFadeUtils.createStreamTokenFadeTracker !== 'function') {
+        return null;
+      }
+      if (!runtime[slot]) {
+        runtime[slot] = tokenFadeUtils.createStreamTokenFadeTracker({ setInnerHtml: setInnerHtmlPreservingCodeScroll });
+      }
+      const tracker = runtime[slot];
+      return (el, html, index) => {
+        tracker.reset(scopeKey);
+        tracker.applyTailUnit(el, html, index);
+      };
+    }
+
     function patchBubbleUnits(bubble, patchModel, doc) {
       streamDomPatchUtils.noteRowSubtreeWrite?.(bubble);
       const units = patchModel.streamUnits;
@@ -253,17 +272,8 @@
         // chat_stream_token_fade: only the growing tail unit fades its new
         // text (a fresh tail unit fades its first line once); every other
         // write stays the plain innerHTML path.
-        const fadeTail = i === units.length - 1 && isTokenFadeEnabled() && !reducedMotionQuery.matches
-          && typeof tokenFadeUtils.createStreamTokenFadeTracker === 'function';
-        if (fadeTail && !runtime.tokenFadeTracker) {
-          runtime.tokenFadeTracker = tokenFadeUtils.createStreamTokenFadeTracker({ setInnerHtml: setInnerHtmlPreservingCodeScroll });
-        }
-        const writeUnit = (el, plainWrite) => {
-          if (fadeTail) {
-            runtime.tokenFadeTracker.reset(runtime.streamingMessageId);
-            runtime.tokenFadeTracker.applyTailUnit(el, unitData.html, i);
-          } else plainWrite();
-        };
+        const fadeTail = i === units.length - 1 ? makeTailFadeWriter('tokenFadeTracker', runtime.streamingMessageId) : null;
+        const writeUnit = (el, plainWrite) => (fadeTail ? fadeTail(el, unitData.html, i) : plainWrite());
         if (i < existingUnits.length) {
           writeUnit(existingUnits[i], () => setInnerHtmlPreservingCodeScroll(existingUnits[i], unitData.html));
         } else {
@@ -289,10 +299,29 @@
     const reasoningHandoff = autocollapseUtils.createReasoningHandoffTracker?.({
       chatTimeline, escapeSelectorValue, buildOptions: buildAutoCollapseOptions,
     }) || { remember() {}, rememberById() {}, clear() {}, replay() { return 0; } };
-    const replayReasoningHandoff = () => reasoningHandoff.replay();
+    // Every rebuild path replays the hand-off, so the live box re-syncs here
+    // too: a rebuilt reasoning body arrives without its marker (row 101,
+    // found live in the streaming-article rebuild and the turn-root lane).
+    const replayReasoningHandoff = () => {
+      const replayed = reasoningHandoff.replay();
+      liveBoxFollow.sync(chatTimeline);
+      return replayed;
+    };
+    // Row 101: the growing reasoning tail fades its new text like the answer
+    // bubble does. Own tracker (its per-unit segments are keyed by unit index,
+    // so it must not share the bubble's), reset per reasoning block.
+    const getReasoningTailWriter = (blockKey) => makeTailFadeWriter('reasoningTokenFadeTracker', `${runtime.streamingMessageId}:${blockKey}`);
     const { patchReasoningStack } = reasoningPatchUtils.createReasoningStackPatcher({
-      getRuntime: () => runtime, isStreamPaintV2Enabled, noteHeaderPatch, buildAutoCollapseOptions,
+      getRuntime: () => runtime, isStreamPaintV2Enabled, noteHeaderPatch, buildAutoCollapseOptions, getReasoningTailWriter,
     });
+    // Row 101 Phase 2: a capped live reasoning body follows its own bottom
+    // (flag reasoning_live_box). Resolved here, not at factory time, so the
+    // script order in index.html cannot leave it unresolved.
+    const liveBoxFollow = resolveStreamRevealModule('rendererReasoningLiveBoxFollow', './renderer-reasoning-live-box-follow')
+      .createReasoningLiveBoxFollow?.({
+        reducedMotionQuery,
+        isEnabled: () => settings.state?.features?.featureFlags?.reasoning_live_box === true,
+      }) || { sync() {}, dispose() {} };
 
     function buildStreamingBubbleMarkup(message) {
       const messageId = String(message && message.id || '');
@@ -441,6 +470,7 @@
         anchorStreamingArticleMarker(runtime, chatTimeline);
       }
       reasoningHandoff.rememberById(streamingMessage ? runtime.streamingArticleMessageId : '');
+      liveBoxFollow.sync(chatTimeline);
     }
 
     // One predicate, one vocabulary: the boolean gate and the reason string it
@@ -693,6 +723,7 @@
       // drifted, undoing the sweep commitFullRender had just done.
       stampStreamingArticleMarker(article, runtime.streamingMessageId, chatTimeline);
       reasoningHandoff.remember(article);
+      liveBoxFollow.sync(article);
 
       runtime.sessionId = String(patchOptions.currentSessionId || '');
       runtime.structureSignature = patchOptions.structureSignature ?? 0;
@@ -819,6 +850,7 @@
         for (const cleanup of settleCleanups) cleanup();
         settleCleanups.clear();
         reasoningHandoff.dispose?.();
+        liveBoxFollow.dispose();
         resetState();
       },
       resetState,

@@ -234,6 +234,14 @@ class ToolResourceOperations {
       if (validatePreparation) resources = Object.freeze(resources.filter(resource => (
         resource.type !== 'capacity' || !['native_processes', 'sandbox_commands'].includes(resource.key)
       )));
+      // Row 100: a sidecar-spawned command also takes the cross-process work
+      // leases its command line needs. Sandboxed commands are out of v1 scope.
+      else if (params.tool_name === 'run_command' && this.broker.workLeases) {
+        const work = this.broker.workLeases.resourcesFor({ argumentsValue: params.arguments,
+          workspacePath: this.identity.workspacePath || '', sessionId: this.identity.sessionId || null });
+        if (work.length) resources = Object.freeze([...resources, ...work]);
+        record.runInBackground = work.length > 0 && params.arguments.run_in_background === true;
+      }
     } catch (_error) {
       record.state = 'rejected';
       return response(id, 'rejected', 'tool_resource_identity_invalid');
@@ -359,6 +367,10 @@ class ToolResourceOperations {
       if (cleanup === 'confirmed') {
         const needsRelease = record.state !== 'settled';
         record.state = 'settled';
+        // A started background job keeps its work leases until it exits.
+        const jobWork = needsRelease && record.lease && record.runInBackground && status === 'succeeded'
+          ? this.broker.detachWork(record.lease) : null;
+        if (jobWork) this.broker.workLeases.transferToJob(jobWork, { sessionId: this.identity.sessionId, toolCallId: id });
         if (needsRelease && record.lease
           && !this.broker.release(record.lease, { producerSettled: true })) {
           return response(id, 'rejected', 'tool_resource_cleanup_missing');

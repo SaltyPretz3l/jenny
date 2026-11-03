@@ -30,6 +30,7 @@
   <link rel="stylesheet" href="styles/composer-workspace-nudge.css">
   <link rel="stylesheet" href="styles/chat-send-outbox.css">
   <link rel="stylesheet" href="styles/data-lifecycle.css">
+  <link rel="stylesheet" href="styles/settings-data-storage.css">
   <!-- xterm.css (PTY terminal): vendored from node_modules under CSP 'self'. -->
   <link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css">
 </head>
@@ -380,7 +381,6 @@
             <div class="attachment-notice hidden" id="attachmentNotice" role="status" aria-live="polite"></div>
             <div class="send-outbox" id="sendOutbox" aria-live="polite" hidden></div>
             <div class="runtime-queue" id="runtimeQueue" hidden></div>
-            <div class="background-jobs-strip hidden" id="backgroundJobsStrip" role="group" aria-label="Background jobs" data-i18n-aria-label="composer.backgroundJobsLabel" aria-hidden="true"></div>
             <div class="composer-message-strip hidden" id="composerMessageStrip"></div>
             <div class="composer-status-notice hidden" id="composerStatusNotice" role="status" aria-live="polite"></div>
             <div class="composer-failed-send-notice hidden" id="composerV2FailedSendNotice" data-composer-v2="off" role="alert" aria-live="assertive"></div>
@@ -408,18 +408,11 @@
                     <div class="composer-toggle-slot" id="composerToolToggleSlot" data-rail-config>
                       <span id="composerChatChipHost"></span>
                       <div class="inv-popover composer-chat-panel" id="composerChatPanel" data-inv-popover="composer-chat" role="dialog" aria-modal="false" aria-labelledby="composerChatPanelTitle" hidden>
-                        <div class="composer-chat-view" data-chat-panel-view="main">
-                          <div class="composer-chat-panel-head"><span id="composerChatPanelTitle" data-i18n="composer.chatPanel.title">Tools for this chat</span><button type="button" class="composer-chat-link" data-chat-panel-action="all-tools" data-i18n="composer.chatPanel.allTools">All tools ›</button></div>
-                          <div class="composer-chat-panel-chips" id="composerChatPanelChips" role="group" aria-label="Tools for this chat" data-i18n-aria-label="composer.chatPanel.title"></div>
-                          <div class="composer-chat-panel-row composer-chat-posture" id="composerChatPosture" hidden><span class="status-dot" id="composerChatPostureDot" aria-hidden="true"></span><span id="composerChatPostureText"></span></div>
-                          <div class="composer-chat-panel-foot"><button type="button" class="composer-chat-link" data-chat-panel-action="reset" data-i18n="composer.chatPanel.reset" hidden>Reset to defaults</button><button type="button" class="composer-chat-link" data-chat-panel-action="settings" data-i18n="composer.chatPanel.settings">Full settings</button></div>
-                        </div>
-                        <div class="composer-chat-view" data-chat-panel-view="all" hidden>
-                          <div class="composer-chat-panel-head"><button type="button" class="composer-chat-link composer-chat-back" data-chat-panel-action="back" data-i18n="composer.chatPanel.back">‹ All tools</button></div>
-                          <input type="search" class="composer-chat-filter" data-chat-panel-filter hidden aria-label="Filter tools" data-i18n-aria-label="composer.chatPanel.filter">
-                          <div class="composer-chat-list" id="composerChatPanelList"></div>
-                          <div class="composer-chat-panel-foot composer-chat-always-on" data-i18n="composer.chatPanel.alwaysOn">Always on: questions, to-dos, plan, status, skills</div>
-                        </div>
+                        <div class="composer-chat-panel-head"><span class="composer-chat-panel-title" id="composerChatPanelTitle" data-i18n="composer.chatPanel.title">Tools for this chat</span><span class="composer-chat-panel-tally" data-chat-panel-tally></span></div>
+                        <div class="composer-chat-panel-row composer-chat-posture" id="composerChatPosture" hidden><span class="status-dot" id="composerChatPostureDot" aria-hidden="true"></span><span id="composerChatPostureText"></span></div>
+                        <input type="search" class="composer-chat-filter" data-chat-panel-filter hidden placeholder="Find a tool" data-i18n-placeholder="composer.chatPanel.findTool" aria-label="Find a tool" data-i18n-aria-label="composer.chatPanel.findTool">
+                        <div class="composer-chat-list" id="composerChatPanelList"><p class="composer-chat-empty" data-chat-panel-empty hidden></p><p class="composer-chat-always-on" data-i18n="composer.chatPanel.alwaysOn">Always on: questions, to-dos, plan, status, skills</p></div>
+                        <div class="composer-chat-panel-foot"><button type="button" class="composer-chat-link" data-chat-panel-action="reset" data-i18n="composer.chatPanel.reset" hidden>Reset to defaults</button><button type="button" class="composer-chat-link" data-chat-panel-action="settings" data-i18n="composer.chatPanel.toolSettings">Tool settings</button></div>
                       </div>
                     </div>
                   </div>
@@ -908,6 +901,13 @@
                 </div>
               </section>
 
+              <section class="settings-card" data-settings-section="jennyChat" id="jennyChatSettingsSection">
+                <div class="settings-card-header"><h3 data-i18n="settings.jennyChat.heading">Jenny chat</h3></div>
+                <p class="settings-copy" data-i18n="settings.jennyChat.description">How the Jenny chat behaves when you are not in it.</p>
+                <div class="settings-group settings-group--flush" role="group" aria-labelledby="jennyChatDigestsHeading"><h4 class="settings-group-heading" id="jennyChatDigestsHeading" data-i18n="settings.jennyChat.digests.heading">Digests</h4><div class="settings-toggle-list" id="jennyChatDigestsList"></div></div>
+                <div class="settings-group settings-group--flush" role="group" aria-labelledby="jennyChatQuietHeading"><h4 class="settings-group-heading" id="jennyChatQuietHeading" data-i18n="settings.jennyChat.quietHours.heading">Quiet hours</h4><div class="settings-toggle-list" id="jennyChatQuietList"></div></div>
+              </section>
+
               <section class="settings-card" data-settings-section="dictation" id="dictationSettingsSection">
                 <div class="settings-card-header">
                   <h3 data-i18n="settings.dictation.heading">Dictation</h3>
@@ -982,6 +982,11 @@
                     <div class="settings-setup-actions" id="setupSettingsActions" data-renders="setup-run-again"></div>
                   </div>
                   <div id="setupProgressContainer" data-renders="setup-progress" aria-live="polite"></div>
+                </div>
+                <div class="settings-group" role="group" aria-labelledby="dataStorageHeading" id="dataStorageGroup" data-storage-group hidden>
+                  <h4 class="settings-group-heading" id="dataStorageHeading" data-i18n="dataStorage.heading">Your data</h4>
+                  <p class="settings-group-copy" data-i18n="dataStorage.description">Everything Jenny keeps on this PC, largest first. Click a folder to open it in File Explorer.</p>
+                  <div id="dataStorageMount"></div>
                 </div>
                 <div class="settings-group" role="group" aria-labelledby="dataPrivacyHeading" data-settings-merged-section="dataPrivacy">
                   <h4 class="settings-group-heading" id="dataPrivacyHeading" data-i18n="settings.dataPrivacy.heading">Data &amp; Privacy</h4>
@@ -1182,6 +1187,8 @@
   <!-- KaTeX protect-then-render module; precedes markdown-utils so the
        consumer sees window.markdownMathUtils at eval time (mermaid precedent). -->
   <script defer src="renderer/shared/markdown-math-utils.js"></script>
+  <!-- Absolute-path rule shared by the inline path chips, the chat path controller and file-link-detect (row 95). -->
+  <script defer src="renderer/shared/workspace-path-resolve.js"></script>
   <!-- Inline prose path chips; precedes markdown-utils (math precedent). -->
   <script defer src="renderer/shared/markdown-inline-paths.js"></script>
   <script defer src="renderer/shared/markdown-sanitize-policy.js"></script>
@@ -1222,7 +1229,6 @@
   <script defer src="renderer/chat/renderer-chat-citation-jump-utils.js"></script>
   <script defer src="renderer/chat/renderer-chat-codebase-cite-utils.js"></script>
   <script defer src="renderer/chat/renderer-chat-path-open.js"></script>
-  <script defer src="renderer/chat/renderer-background-jobs.js"></script>
   <script defer src="renderer/chat/chatbar-utils.js"></script>
   <script defer src="reasoning-effort-profiles.js"></script>
   <script defer src="reasoning-effort-controls.js"></script>
@@ -1265,6 +1271,7 @@
   <script defer src="renderer/inventory/chip.js"></script>
   <script defer src="renderer/inventory/popover.js"></script>
   <script defer src="renderer/inventory/segmented-control.js"></script>
+  <script defer src="renderer/inventory/heatmap-calendar.js"></script>
   <script defer src="renderer/features/personality-form.js"></script>
   <script defer src="renderer/inventory/settings-field.js"></script>
   <script defer src="renderer/inventory/checkbox.js"></script>
@@ -1272,6 +1279,7 @@
   <script defer src="renderer/inventory/index.js"></script>
   <script defer src="renderer/features/renderer-data-lifecycle-utils.js"></script>
   <script defer src="renderer/features/renderer-data-lifecycle.js"></script>
+  <script defer src="renderer/features/renderer-data-storage.js"></script>
   <script defer src="renderer/features/renderer-update-dialog-utils.js"></script>
   <script defer src="renderer/shared/activity-utils.js"></script>
   <script defer src="renderer/shared/activity-dom-utils.js"></script>
@@ -1289,6 +1297,7 @@
   <script defer src="renderer/shell/renderer-thinking-panel-settle-utils.js"></script>
   <script defer src="renderer/chat/renderer-reasoning-autocollapse-utils.js"></script>
   <script defer src="renderer/chat/renderer-stream-token-fade-utils.js"></script>
+  <script defer src="renderer/chat/renderer-reasoning-live-box-follow.js"></script>
   <script defer src="renderer/chat/renderer-stream-reasoning-patch-utils.js"></script>
   <script defer src="renderer/chat/renderer-stream-reveal-utils.js"></script>
   <script defer src="renderer/chat/renderer-source-utils.js"></script>
@@ -1317,6 +1326,7 @@
   <script defer src="renderer/chat/renderer-proposal-session-cards.js"></script>
   <script defer src="renderer/chat/renderer-proposal-cards.js"></script>
   <script defer src="renderer/chat/renderer-proposal-card-actions.js"></script>
+  <script defer src="renderer/chat/renderer-next-step-card.js"></script>
   <script defer src="renderer/chat/renderer-session-message-rows.js"></script>
   <script defer src="renderer/chat/renderer-chat-messages-copy.js"></script>
   <script defer src="renderer/chat/renderer-chat-messages-store.js"></script>
@@ -1324,6 +1334,7 @@
   <script defer src="renderer/chat/renderer-chat-send-modal.js"></script>
   <script defer src="renderer/chat/renderer-chat-messages-review.js"></script>
   <script defer src="renderer/chat/renderer-primary-chat-store.js"></script>
+  <script defer src="renderer/chat/renderer-primary-rules.js"></script>
   <script defer src="renderer/chat/renderer-primary-activity.js"></script>
   <script defer src="renderer/chat/renderer-primary-reset-dialog.js"></script>
   <script defer src="renderer/chat/renderer-slash-activity-command.js"></script>
@@ -1380,6 +1391,8 @@
 <script defer src="renderer/chat/renderer-stream-tool-patch-utils.js"></script>
 <script defer src="renderer/chat/renderer-stream-tool-live-tail.js"></script>
 <script defer src="renderer/chat/renderer-stream-image-render-progress.js"></script>
+<script defer src="renderer/chat/renderer-tool-test-summary.js"></script>
+<script defer src="renderer/chat/renderer-stream-test-progress.js"></script>
 <script defer src="renderer/chat/renderer-stream-waiting-line.js"></script>
 <script defer src="renderer/chat/renderer-stream-activity-typed.js"></script>
 <script defer src="renderer/chat/renderer-stream-activity-row.js"></script>
@@ -1403,6 +1416,7 @@
 <script defer src="renderer/chat/renderer-send-preflight-utils.js"></script>
 <script defer src="renderer/chat/renderer-send-receipts.js"></script>
 <script defer src="renderer/chat/renderer-send-completion.js"></script>
+<script defer src="renderer/chat/renderer-image-prompt.js"></script>
 <script defer src="renderer/chat/renderer-skill-slash-commands.js"></script>
 <script defer src="renderer/chat/renderer-mcp-prompt-slash-commands.js"></script>
 <script defer src="renderer/chat/renderer-runtime-refusals.js"></script>
@@ -1446,6 +1460,7 @@
   <script defer src="renderer/features/renderer-dashboard-widgets-scratchpad.js"></script>
   <script defer src="renderer/features/renderer-dashboard-loops.js"></script>
   <script defer src="renderer/features/renderer-dashboard-widget-away-digest.js"></script>
+  <script defer src="renderer/features/renderer-dashboard-widget-usage-stats.js"></script>
   <script defer src="renderer/features/renderer-dashboard-daybook.js"></script>
   <script defer src="renderer/features/renderer-dashboard-page-menu.js"></script>
   <script defer src="renderer/features/renderer-dashboard-manager.js"></script>
@@ -1457,7 +1472,6 @@
   <script defer src="renderer/shell/model-library/model-library-sources.js"></script>
   <script defer src="renderer/features/setup-scenes/scene-utils.js"></script>
   <script defer src="renderer/features/setup-scenes/scene-workspace-root.js"></script>
-  <script defer src="renderer/features/setup-scenes/scene-local-model.js"></script>
   <script defer src="renderer/features/setup-scenes/scene-endpoint.js"></script>
   <script defer src="renderer/features/setup-scenes/scene-personality.js"></script>
   <script defer src="renderer/features/setup-scenes/scene-skills.js"></script>
@@ -1543,6 +1557,7 @@
   <script defer src="renderer/features/renderer-attachment-event-utils.js"></script>
   <script defer src="renderer/features/renderer-display-media-picker.js"></script>
   <script defer src="renderer/shell/renderer-session-unread.js"></script>
+  <script defer src="renderer/shell/renderer-app-view-controller.js"></script>
   <script defer src="renderer/shell/renderer-chats-panel-tree.js"></script>
   <script defer src="renderer/shell/renderer-chats-panel-scroll.js"></script>
   <script defer src="renderer/shell/renderer-chats-panel-model.js"></script>
@@ -1740,7 +1755,12 @@
 <!-- Session rail detail entry points (row 59 checkpoint 2, contract C3); configured by renderer-shell-artifact-bridge.js and the lifecycle composition. -->
 <script defer src="renderer/features/renderer-chat-workspace-detail.js"></script>
 <!-- Read-only chat-rail file preview (file_preview rail mode); the pure render module must precede its controller, and both must precede renderer-shell-artifact-bridge.js, which builds the controller. -->
+<!-- Panel text actions (row 99): composer insert, then the shared selection/copy/Ask Jenny and find modules the file preview and Changes attach to. -->
+<script defer src="renderer/chat/renderer-composer-insert.js"></script>
+<script defer src="renderer/features/renderer-panel-code-actions.js"></script>
+<script defer src="renderer/features/renderer-panel-code-find.js"></script>
 <script defer src="renderer/features/renderer-artifact-file-preview-render.js"></script>
+<script defer src="renderer/features/renderer-artifact-file-preview-actions.js"></script>
 <script defer src="renderer/features/renderer-artifact-file-preview.js"></script>
 <!-- Tasks rail stub: render module precedes the controller consumed by renderer-shell-artifact-bridge.js. -->
 <script defer src="renderer/features/renderer-task-rail-render.js"></script>
@@ -1761,6 +1781,7 @@
   <!-- Session rail (row 59 checkpoint 2): model, markup, controller; mounted per pane by the transcript bindings below. -->
   <script defer src="renderer/chat/renderer-session-rail-model.js"></script>
   <script defer src="renderer/chat/renderer-session-rail-render.js"></script>
+  <script defer src="renderer/chat/renderer-session-rail-jobs.js"></script>
   <script defer src="renderer/chat/renderer-session-rail-performance.js"></script>
   <script defer src="renderer/chat/renderer-session-rail.js"></script>
   <script defer src="renderer/chat/renderer-chat-event-transcript-bindings.js"></script>

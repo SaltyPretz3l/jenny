@@ -147,3 +147,63 @@ test('bindUnreadSync applies only the latest read for a chat when reads resolve 
   await flush();
   assert.deepEqual(applied, [['s1', 0]], 'the older non-zero count never overwrites the newer zero');
 });
+
+// Row 94: the sessions.onChanged push after the primary chat changed other chats.
+function sessionsBridge() {
+  let listener = null;
+  return { onChanged: (fn) => { listener = fn; return () => { listener = null; }; }, emit: (event) => listener?.(event), hasListener: () => listener !== null };
+}
+
+test('bindSessionsChangedSync coalesces a burst into one refresh carrying the distinct chat ids', async () => {
+  const timers = makeTimers();
+  const bridge = sessionsBridge();
+  const refreshed = [];
+  const dispose = unread.bindSessionsChangedSync({
+    bridge, refresh: async (ids) => { refreshed.push(ids); }, setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
+  });
+  bridge.emit({ session_ids: ['s1', 's2'], reason: 'primary_chat_manage' });
+  bridge.emit({ session_ids: ['s1', 7, ''], reason: 'primary_chat_manage' });
+  bridge.emit({ nonsense: true });
+  assert.equal(timers.queue.length, 1);
+  timers.run();
+  await flush();
+  assert.deepEqual(refreshed, [['s1', 's2']]);
+  dispose();
+  assert.equal(bridge.hasListener(), false);
+});
+
+test('bindSessionsChangedSync survives a failing refresh, runs a follow-up for events that arrived meanwhile and stops on dispose', async () => {
+  const timers = makeTimers();
+  const bridge = sessionsBridge();
+  const refreshed = [];
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const dispose = unread.bindSessionsChangedSync({
+    bridge,
+    refresh: async (ids) => { refreshed.push(ids); if (refreshed.length === 1) { await gate; throw new Error('boom'); } },
+    setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
+  });
+  bridge.emit({ session_ids: ['a'] });
+  timers.run();
+  await flush();
+  bridge.emit({ session_ids: ['b'] });
+  timers.run();
+  await flush();
+  assert.deepEqual(refreshed, [['a']], 'one refresh at a time');
+  release();
+  await flush();
+  await flush();
+  timers.run();
+  await flush();
+  assert.deepEqual(refreshed, [['a'], ['b']]);
+  bridge.emit({ session_ids: ['c'] });
+  dispose();
+  timers.run();
+  await flush();
+  assert.deepEqual(refreshed, [['a'], ['b']], 'a disposed binding refreshes nothing');
+});
+
+test('bindSessionsChangedSync tolerates a missing bridge or refresh', () => {
+  assert.equal(typeof unread.bindSessionsChangedSync({ bridge: null, refresh() {} }), 'function');
+  assert.equal(typeof unread.bindSessionsChangedSync({ bridge: sessionsBridge() }), 'function');
+});

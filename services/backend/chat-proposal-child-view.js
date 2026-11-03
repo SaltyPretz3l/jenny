@@ -37,12 +37,17 @@ function runMode(summary) {
 }
 
 // Newest first: the newest assistant row and the newest row's turn, within the bounded scan.
-function newestRows(rows) {
+// A fork (row 94 P2) starts with the source's history copied in: rows older than the child's first turn are
+// not the child's work, so the scan stops at them.
+function newestRows(rows, firstTurnId = '') {
   const list = Array.isArray(rows) ? rows : [];
   let assistant = null;
   let newestTurnId = '';
+  let seenFirst = false;
   for (let i = list.length - 1; i >= 0 && i >= list.length - ROW_SCAN; i -= 1) {
     const row = list[i];
+    if (firstTurnId && row?.turn_id === firstTurnId) seenFirst = true;
+    else if (seenFirst) break;
     if (!newestTurnId && typeof row?.turn_id === 'string') newestTurnId = row.turn_id;
     if (!assistant && row?.role === 'assistant') assistant = row;
     if (assistant && newestTurnId) break;
@@ -89,7 +94,7 @@ function deriveChildView(facts = {}) {
   const summary = facts.summary;
   if (!summary) return withKey({ phase: 'gone' });
   const { work = null, activeTurn = null, probe = null } = facts;
-  const { assistant, newestTurnId } = newestRows(facts.rows);
+  const { assistant, newestTurnId } = newestRows(facts.rows, text(facts.firstTurnId));
   let phase;
   if (summary.archived_at) phase = 'archived';
   else {

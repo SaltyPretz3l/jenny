@@ -1,15 +1,17 @@
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./renderer-chat-messages-copy'), require('./renderer-chat-messages-dialog'));
+    module.exports = factory(require('./renderer-chat-messages-copy'), require('./renderer-chat-messages-dialog'), require('./renderer-approval-block'),
+      require('./renderer-primary-rules'));
     return;
   }
-  root.rendererPrimaryActivity = factory(root.rendererChatMessagesCopy, root.rendererChatMessagesDialog);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (copy, dialogs) {
+  root.rendererPrimaryActivity = factory(root.rendererChatMessagesCopy, root.rendererChatMessagesDialog, root.rendererApprovalBlock, root.rendererPrimaryRules);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (copy, dialogs, approvalBlock, rules) {
   'use strict';
 
   // The Activity dialog of the profile-wide Jenny chat (row 76): what it did across the user's chats
-  // (Activity pane) and what it may do (Permissions pane: standing launch permissions with a grant form,
-  // live message grants, one-turn grants). It reuses the Review dialog's shell and chat-review__* grammar.
+  // (Activity pane) and what it may do (Permissions pane: "Your rules" with its add form (row 87,
+  // renderer-primary-rules.js, folding in row 76's launch permissions), live message grants, one-turn grants). It reuses the Review dialog's shell and chat-review__* grammar.
+  // A setting_changed (row 88) or chat_changed (row 94) entry shows what Jenny changed, with an Undo until it is undone.
   // Everything shown comes from window.jennyShell.primaryChat; titles, project names and details belong
   // to other chats and reach the DOM only through escapeHtml. A fetch repaints, never a local guess.
 
@@ -20,6 +22,9 @@
   const PENDING_WORDS = new Set(['pending', 'prepared', 'queued', 'reserved', 'live']);
   const WORK_PENDING_WORDS = new Set(['queued', 'pending', 'running', 'starting', 'started', 'active', 'in_progress', 'claimed']);
   const HISTORY_KINDS = new Set(['paused', 'resumed', 'reset', 'forgot']);
+  const CHANGE_ID = /^sc_[0-9a-f]{32}$/u;
+  const KEYED_ATTRS = ['data-primary-permission-revoke', 'data-primary-rule-revoke', 'data-primary-message-grant-revoke', 'data-primary-setting-undo'];
+  const FOCUS_SELECTOR = [...KEYED_ATTRS, ...rules.FOCUS_ATTRS].map((attr) => `[${attr}]`).concat('.inv-segmented-option--on').join(', ');
 
   function kindLabel(entry) {
     switch (entry.kind) {
@@ -40,7 +45,12 @@
       case 'resumed': return jt('chat.primary.kind.resumed', 'Resumed');
       case 'reset': return jt('chat.primary.kind.reset', 'Reset');
       case 'forgot': return jt('chat.primary.kind.forgot', 'Forgot');
-      default: return String(entry.kind || '').replace(/_/g, ' ');
+      case 'setting_changed': return jt('chat.primary.kind.setting_changed', 'Settings changed');
+      case 'chat_changed': return entry.action === 'project_create'
+        ? jt('chat.primary.kind.project_created', 'Project created') : jt('chat.primary.kind.chat_changed', 'Chat changed');
+      case 'digest': return jt('chat.primary.kind.digest', 'Digest');
+      case 'digest_skipped': return jt('chat.primary.kind.digest_skipped', 'Digest held back');
+      default: return copy.scheduleKindLabel?.(entry.kind) || String(entry.kind || '').replace(/_/g, ' ');
     }
   }
 
@@ -50,6 +60,17 @@
       case 'resumed': return jt('chat.primary.history.resumed', 'You resumed Jenny.');
       case 'reset': return jt('chat.primary.history.reset', 'You reset the Jenny chat.');
       default: return jt('chat.primary.history.forgot', 'You had Jenny forget this chat.');
+    }
+  }
+
+  // Row 86: why a digest was held back, from its reason token (services/primary-digest.js).
+  function digestHeldText(reason) {
+    switch (reason) {
+      case 'quiet_hours': return jt('chat.primary.digest.held.quietHours', 'Quiet hours. It runs when they end if you are here.');
+      case 'engine_cold': return jt('chat.primary.digest.held.engineCold', 'Waiting for the model to load. It runs after your next message.');
+      case 'cap': return jt('chat.primary.digest.held.cap', 'One digest every 6 hours at most.');
+      case 'paused': return jt('chat.primary.digest.held.paused', 'Jenny was paused.');
+      default: return jt('chat.primary.digest.held.other', 'It could not start.');
     }
   }
 
@@ -95,6 +116,7 @@
       case 'grant': return jt('chat.primary.auth.grant', 'under a grant');
       case 'approval': return jt('chat.primary.auth.approval', 'approved by you');
       case 'user': return jt('chat.primary.auth.user', 'sent by you');
+      case 'rule': return jt('chat.primary.auth.rule', 'under your rule');
       default: return '';
     }
   }
@@ -105,7 +127,7 @@
     const word = entry.kind === 'proposal' ? entry.status.split('/')[0] : entry.status;
     let tone = 'ok';
     if (ERROR_WORDS.has(word)) tone = 'error';
-    else if (PENDING_WORDS.has(word) || (entry.kind === 'woken' && WORK_PENDING_WORDS.has(word))) tone = 'pending';
+    else if (PENDING_WORDS.has(word) || (['woken', 'schedule_fired', 'digest'].includes(entry.kind) && WORK_PENDING_WORDS.has(word))) tone = 'pending';
     const auth = authLabel(entry);
     const label = wordLabel(word);
     return { tone, label: auth ? `${label} · ${auth}` : label };
@@ -120,12 +142,91 @@
     return sameDay ? copy.formatTime(value) : copy.formatGrantExpiry(value);
   }
 
-  function entryMarkup(entry) {
+  /** { text, tone, dot, undo } of a setting change's status line, from the entry and the local undo state. */
+  function settingStatus(entry, localState, approvedText) {
+    if (entry.undone_at) {
+      return { text: jt('chat.primary.settings.undone', 'Undone by you · {when}', { when: whenText(entry.undone_at) }), tone: 'muted', dot: 'muted', undo: false };
+    }
+    if (localState === 'pending') return { text: jt('chat.primary.settings.undoing', 'Undoing…'), tone: 'pending', dot: 'pending', undo: false };
+    if (localState === 'changed_since') {
+      return { text: jt('chat.primary.settings.changedSince', 'Changed since; not undone'), tone: 'pending', dot: 'pending', undo: true };
+    }
+    return { text: approvedText || jt('chat.primary.settings.approved', 'Approved by you'), tone: 'ok', dot: 'ok', undo: true };
+  }
+
+  function settingChangeMarkup(change) {
+    if (!copy.isObject(change)) return '';
+    const name = approvalBlock.settingName(change.key);
+    const before = approvalBlock.settingValueText(change.key, change.before, change.before_label);
+    const after = approvalBlock.settingValueText(change.key, change.after, change.after_label);
+    if (!name || !before || !after) return '';
+    return '<li class="primary-activity__change">'
+      + `<span class="primary-activity__setting-name">${escapeHtml(name)}</span> `
+      + `<span class="primary-activity__setting-before">${escapeHtml(before)}</span> `
+      + '<span class="primary-activity__setting-arrow" aria-hidden="true">→</span>'
+      + `<span class="sr-only"> ${escapeHtml(jt('approval.block.settingTo', 'to'))} </span> `
+      + `<span class="primary-activity__setting-after">${escapeHtml(after)}</span></li>`;
+  }
+
+  // A Jenny-made change (setting_changed, chat_changed): chip, optional chat title, a body, the status line and its Undo.
+  function changeEntryMarkup(entry, ui, undoStates, spec) {
+    const id = typeof entry.change_id === 'string' && CHANGE_ID.test(entry.change_id) ? entry.change_id : '';
+    const status = settingStatus(entry, id && undoStates ? undoStates.get(id) : undefined, spec.approved);
+    const undo = id && status.undo ? ui.actionButton({
+      plain: true, className: 'chat-review__link primary-activity__undo', label: jt('chat.primary.settings.undo', 'Undo'), dataset: { [spec.undoAttr]: id },
+    }) : '';
+    return `<li class="chat-review__item" data-activity-kind="${entry.kind}"${id ? ` data-change-id="${id}"` : ''}>`
+      + `<div class="chat-review__head"><span class="chat-review__chip primary-activity__kind">${escapeHtml(kindLabel(entry))}</span>`
+      + `${spec.title ? ` <strong>${escapeHtml(spec.title)}</strong>` : ''}<span class="chat-review__meta"> · ${escapeHtml(whenText(entry.at))}</span></div>`
+      + `${spec.body}<div class="chat-review__status" data-tone="${status.tone}"><span class="status-dot status-dot--${status.dot}" aria-hidden="true"></span>`
+      + `<span class="chat-review__state">${escapeHtml(status.text)}</span>${undo}</div></li>`;
+  }
+
+  function settingEntryMarkup(entry, ui, undoStates) {
+    const list = (Array.isArray(entry.changes) ? entry.changes : []).map(settingChangeMarkup).join('');
+    return changeEntryMarkup(entry, ui, undoStates, { undoAttr: 'primary-setting-undo', body: list ? `<ul class="primary-activity__changes">${list}</ul>` : '' });
+  }
+
+  const chatValue = (value, mode) => (typeof value === 'string' && value ? (mode ? modeName(value) : copy.clip(value, 60)) : jt('chat.primary.chat.defaultValue', 'default'));
+
+  /** The one readable line of a chat_changed entry; the caller escapes it. */
+  function chatChangeText(entry) {
+    const from = chatValue(entry.before);
+    const to = chatValue(entry.after);
+    switch (entry.action) {
+      case 'rename': return typeof entry.before === 'string' && entry.before
+        ? jt('chat.primary.chat.renamed', 'Renamed "{from}" to "{to}"', { from, to }) : jt('chat.primary.chat.renamedTo', 'Renamed to "{to}"', { to });
+      case 'pin': case 'unpin': return entry.action === 'pin' ? jt('chat.primary.chat.pinned', 'Pinned') : jt('chat.primary.chat.unpinned', 'Unpinned');
+      case 'archive': case 'unarchive': return entry.action === 'archive' ? jt('chat.primary.chat.archived', 'Archived') : jt('chat.primary.chat.unarchived', 'Unarchived');
+      case 'move_to_project': return entry.project && entry.project.name
+        ? jt('chat.primary.chat.movedTo', 'Moved to {project}', { project: copy.projectName(entry.project.name) })
+        : jt('chat.primary.chat.movedAway', 'Moved to another project');
+      case 'set_model': return jt('chat.primary.chat.model', 'Model: {from} → {to}', { from, to });
+      case 'set_effort': return jt('chat.primary.chat.effort', 'Effort: {from} → {to}', { from, to });
+      case 'set_run_mode': return jt('chat.primary.chat.runMode', 'Run mode: {from} → {to}', { from: chatValue(entry.before, true), to: chatValue(entry.after, true) });
+      // Row 94 P2: the project is gone after an Undo, so the line falls back to the plain sentence.
+      case 'project_create': return entry.project && entry.project.name
+        ? jt('chat.primary.chat.projectCreated', 'Created the project {project}', { project: copy.projectName(entry.project.name) })
+        : jt('chat.primary.chat.projectCreatedPlain', 'Created a project');
+      default: return '';
+    }
+  }
+
+  function chatEntryMarkup(entry, ui, undoStates) {
+    const line = chatChangeText(entry);
+    const body = line ? `<p class="chat-review__body">${escapeHtml(line)}</p>` : '';
+    return changeEntryMarkup(entry, ui, undoStates, { undoAttr: 'primary-chat-undo', approved: jt('chat.primary.chat.applied', 'Done by Jenny'), title: entry.title ? copy.clip(entry.title, 120) : '', body });
+  }
+
+  function entryMarkup(entry, ui, undoStates, model) {
+    if (rules.isRuleEntry(entry)) return rules.activityEntryMarkup(entry, model, whenText);
+    if (entry.kind === 'setting_changed') return settingEntryMarkup(entry, ui, undoStates);
+    if (entry.kind === 'chat_changed') return chatEntryMarkup(entry, ui, undoStates);
     const project = entry.project && entry.project.name ? copy.projectName(entry.project.name) : '';
     const when = whenText(entry.at);
     const title = entry.title ? copy.clip(entry.title, 120) : '';
     const meta = `${project ? `${escapeHtml(project)} · ` : ''}${escapeHtml(when)}`;
-    const detail = HISTORY_KINDS.has(entry.kind) ? historyText(entry.kind) : (entry.detail || '');
+    const detail = HISTORY_KINDS.has(entry.kind) ? historyText(entry.kind) : entry.kind === 'digest_skipped' ? digestHeldText(entry.reason) : (copy.scheduleDetail?.(entry) || entry.detail || '');
     const status = statusFor(entry);
     const dot = status ? (status.tone === 'error' ? 'error' : status.tone === 'pending' ? 'pending' : 'ok') : '';
     return `<li class="chat-review__item" data-activity-kind="${escapeHtml(entry.kind)}">`
@@ -139,68 +240,40 @@
   const note = (text) => `<p class="chat-review__note">${escapeHtml(text)}</p>`;
   const errorNotice = (text) => `<p class="chat-review__notice" data-tone="error" role="alert">${escapeHtml(text)}</p>`;
 
-  function activityPaneMarkup(activity) {
+  function activityPaneMarkup(activity, ui, undoStates, model) {
     if (activity === undefined) return note(jt('common.loading', 'Loading…'));
     if (!activity) return errorNotice(jt('chat.primary.unavailable', "Jenny's activity is not available right now."));
     const entries = Array.isArray(activity.entries) ? activity.entries.filter((entry) => copy.isObject(entry) && typeof entry.kind === 'string') : [];
     if (!entries.length) return note(jt('chat.primary.activity.empty', 'Nothing yet.'));
-    return `<ul class="chat-review__list">${entries.map(entryMarkup).join('')}</ul>`
+    return `<ul class="chat-review__list">${entries.map((entry) => entryMarkup(entry, ui, undoStates, model)).join('')}</ul>`
       + (activity.truncated ? note(jt('chat.primary.activity.older', 'Older entries are not shown.')) : '');
+  }
+
+  function modeName(mode) {
+    switch (mode) {
+      case 'ask': return jt('chat.primary.mode.ask', 'Ask');
+      case 'auto': return jt('chat.primary.mode.auto', 'Auto');
+      case 'plan': return jt('chat.primary.mode.plan', 'Plan');
+      case 'propose': return jt('chat.primary.mode.propose', 'Propose');
+      default: return String(mode);
+    }
   }
 
   function modesText(modes) {
     if (!Array.isArray(modes)) return jt('chat.primary.perm.anyMode', 'Any run mode');
-    const names = modes.map((mode) => {
-      switch (mode) {
-        case 'ask': return jt('chat.primary.mode.ask', 'Ask');
-        case 'auto': return jt('chat.primary.mode.auto', 'Auto');
-        case 'plan': return jt('chat.primary.mode.plan', 'Plan');
-        case 'propose': return jt('chat.primary.mode.propose', 'Propose');
-        default: return String(mode);
-      }
-    });
+    const names = modes.map(modeName);
     return jt('chat.primary.perm.onlyModes', 'Only while Jenny is in {modes}', { modes: names.join(', ') });
   }
 
-  function permRow(title, meta, revokeAttr, revokeId, id, actionButton) {
-    const act = revokeAttr ? actionButton({
-      plain: true, className: 'chat-review__link primary-activity__perm-act', label: jt('common.revoke', 'Revoke'), dataset: { [revokeAttr]: revokeId },
-    }) : '';
+  function permRow(title, meta, revokeAttr, revokeId, id, actionButton, label) {
+    const act = revokeAttr ? actionButton({ plain: true, className: 'chat-review__link primary-activity__perm-act', label: label || jt('common.revoke', 'Revoke'),
+      dataset: { [revokeAttr]: revokeId } }) : '';
     return `<div class="primary-activity__perm" data-permission-id="${escapeHtml(id)}"><div class="primary-activity__perm-title">${escapeHtml(title)}</div>`
       + `<div class="primary-activity__perm-meta">${escapeHtml(meta)}</div>${act}</div>`;
   }
 
   const kicker = (text) => `<div class="primary-activity__kicker">${escapeHtml(text)}</div>`;
   const live = (row) => copy.isObject(row) && !row.revoked_at && row.live !== false;
-  const everyProject = () => jt('chat.primary.everyProject', 'Every project');
-
-  function launchRows(perms, ui) {
-    const rows = (Array.isArray(perms.launch) ? perms.launch : []).filter((row) => copy.isObject(row) && !row.revoked_at);
-    if (!rows.length) return note(jt('chat.primary.permissions.none', 'None. Jenny shows you a choice before starting a chat.'));
-    return rows.map((row) => {
-      const title = row.project && row.project.name ? row.project.name
-        : (row.project_id === '*' ? everyProject() : jt('chat.primary.unknownProject', 'A project that no longer exists'));
-      const max = Number.isSafeInteger(row.max_children_per_turn) ? row.max_children_per_turn : 1;
-      const children = jtn('chat.primary.perm.children', max, { count: max }, '1 chat per request', '{count} chats per request');
-      const meta = `${modesText(row.run_modes)} · ${children} · ${jt('chat.primary.perm.granted', 'granted {when}', { when: whenText(row.created_at) })}`;
-      return permRow(title, meta, 'primary-permission-revoke', row.permission_id, row.permission_id, ui.actionButton);
-    }).join('');
-  }
-
-  function formMarkup(form, projects, ui) {
-    const options = projects.map((project) => ({ value: project.id, label: project.name })).concat([{ value: '*', label: everyProject() }]);
-    const value = options.some((option) => option.value === form.project) ? form.project : options[0].value;
-    return '<div class="primary-activity__form">'
-      + `<span>${escapeHtml(jt('chat.primary.permissions.allowIn', 'Allow in'))}</span>`
-      + ui.selectField({
-        id: 'primary-grant-project', ariaLabel: jt('chat.primary.permissions.projectLabel', 'Project'), value, options, dataset: { 'primary-grant-project': '1' },
-      })
-      + ui.checkbox({
-        id: 'primary-grant-auto', label: jt('chat.primary.permissions.autoOnly', 'only while Jenny is in Auto'), checked: form.auto, dataset: { 'primary-grant-auto': '1' },
-      })
-      + ui.actionButton({ variant: 'secondary', size: 'sm', label: jt('chat.primary.permissions.allow', 'Allow'), dataset: { 'primary-grant-submit': '1' } })
-      + '</div>';
-  }
 
   function messageGrantRows(perms, ui) {
     const rows = (Array.isArray(perms.message_grants) ? perms.message_grants : []).filter(live);
@@ -216,50 +289,34 @@
   function turnGrantRows(perms, ui) {
     const rows = (Array.isArray(perms.turn_grants) ? perms.turn_grants : []).filter(live);
     if (!rows.length) return note(jt('chat.primary.permissions.noTurnGrants', 'None live. A /linked request grants one for an hour.'));
-    return rows.map((row) => permRow(
-      jt('chat.primary.perm.turnGrant', 'A /linked request'),
-      jt('chat.primary.perm.expires', 'expires {when}', { when: whenText(row.expires_at) }),
-      '', '', row.authorization_ref, ui.actionButton,
-    )).join('');
+    return rows.map((row) => permRow(jt('chat.primary.perm.turnGrant', 'A /linked request'),
+      jt('chat.primary.perm.expires', 'expires {when}', { when: whenText(row.expires_at) }), '', '', row.authorization_ref, ui.actionButton)).join('');
   }
 
   function permissionsPaneMarkup(model, ui) {
     if (model.perms === undefined) return note(jt('common.loading', 'Loading…'));
     if (!model.perms) return errorNotice(jt('chat.primary.unavailable', "Jenny's activity is not available right now."));
-    const flags = model.state && model.state.flags;
-    const canGrant = Boolean(flags && flags.launch_permission);
-    return kicker(jt('chat.primary.permissions.launchKicker', 'Jenny may start chats in'))
-      + launchRows(model.perms, ui)
-      + (canGrant ? formMarkup(model.form, model.projects, ui) : '')
+    return rules.sectionMarkup(model, ui, { permRow, modesText, whenText, note })
       + kicker(jt('chat.primary.permissions.messageKicker', 'Message grants')) + messageGrantRows(model.perms, ui)
       + kicker(jt('chat.primary.permissions.turnKicker', 'One-turn grants')) + turnGrantRows(model.perms, ui);
   }
 
   function bodyMarkup(model, ui) {
-    const tabs = ui.segmentedControl({
-      id: 'primary-activity-tabs',
-      value: model.pane,
-      options: [
-        { value: 'activity', label: jt('chat.primary.activity.tab', 'Activity') },
-        { value: 'permissions', label: jt('chat.primary.permissions.tab', 'Permissions') },
-      ],
-      dataset: { 'primary-activity-tabs': '1' },
-    });
+    const tabs = ui.segmentedControl({ id: 'primary-activity-tabs', value: model.pane, dataset: { 'primary-activity-tabs': '1' }, options: [
+      { value: 'activity', label: jt('chat.primary.activity.tab', 'Activity') }, { value: 'permissions', label: jt('chat.primary.permissions.tab', 'Permissions') },
+    ] });
     const notice = model.notice ? errorNotice(model.notice) : '';
     return `<div class="primary-activity__tabs">${tabs}</div>${notice}`
-      + `<div class="primary-activity__pane" data-primary-pane="activity"${model.pane === 'activity' ? '' : ' hidden'}>${activityPaneMarkup(model.activity)}</div>`
+      + `<div class="primary-activity__pane" data-primary-pane="activity"${model.pane === 'activity' ? '' : ' hidden'}>${activityPaneMarkup(model.activity, ui, model.undo, model)}</div>`
       + `<div class="primary-activity__pane" data-primary-pane="permissions"${model.pane === 'permissions' ? '' : ' hidden'}>${permissionsPaneMarkup(model, ui)}</div>`;
   }
 
-  function defaultBridge() {
+  function shellApi(name) {
     const shell = globalThis.window ? globalThis.window.jennyShell : globalThis.jennyShell;
-    return (shell && shell.primaryChat) || null;
+    return (shell && shell[name]) || null;
   }
-
-  function defaultMessagesBridge() {
-    const shell = globalThis.window ? globalThis.window.jennyShell : globalThis.jennyShell;
-    return (shell && shell.chatMessages) || null;
-  }
+  const defaultBridge = () => shellApi('primaryChat');
+  const defaultMessagesBridge = () => shellApi('chatMessages');
 
   function cleanProjects(list) {
     const rows = Array.isArray(list) ? list : (list && Array.isArray(list.projects) ? list.projects : []);
@@ -312,15 +369,10 @@
       if (!host) return;
       const active = documentRef.activeElement;
       const focusKey = active && host.contains(active) ? focusKeyOf(active) : '';
-      const select = host.querySelector('[data-primary-grant-project]');
-      const auto = host.querySelector('[data-primary-grant-auto]');
-      if (select) s.form.project = select.value;
-      if (auto) s.form.auto = auto.checked;
-      host.innerHTML = bodyMarkup({
-        pane: s.pane, notice: s.notice, activity: s.activity, perms: s.perms, state: s.state, projects: s.projects, form: s.form,
-      }, ui);
+      rules.captureForm(host, s.form);
+      host.innerHTML = bodyMarkup(model(s), ui);
       if (focusKey) {
-        const next = Array.from(host.querySelectorAll('[data-primary-grant-project], [data-primary-grant-auto], [data-primary-grant-submit], [data-primary-permission-revoke], [data-primary-message-grant-revoke], .inv-segmented-option--on'))
+        const next = Array.from(host.querySelectorAll(FOCUS_SELECTOR))
           .find((node) => focusKeyOf(node) === focusKey);
         if (next) next.focus();
       }
@@ -342,11 +394,18 @@
       node.textContent = word;
     }
 
+    function model(s) {
+      return {
+        pane: s.pane, notice: s.notice, activity: s.activity, perms: s.perms, state: s.state, projects: s.projects, form: s.form, undo: s.undo,
+        sessions: state.sessions, primaryId: s.sessionId,
+      };
+    }
+
     function focusKeyOf(node) {
-      for (const attr of ['data-primary-permission-revoke', 'data-primary-message-grant-revoke']) {
+      for (const attr of KEYED_ATTRS) {
         if (node.hasAttribute(attr)) return `${attr}=${node.getAttribute(attr)}`;
       }
-      for (const attr of ['data-primary-grant-project', 'data-primary-grant-auto', 'data-primary-grant-submit']) {
+      for (const attr of rules.FOCUS_ATTRS) {
         if (node.hasAttribute(attr)) return attr;
       }
       return node.classList && node.classList.contains('inv-segmented-option') ? 'tab' : '';
@@ -368,6 +427,10 @@
         s.activity = activityResp && activityResp.ok === true ? activityResp : null;
         s.perms = permsResp && permsResp.ok === true ? permsResp : null;
         s.projects = projects;
+        // An undone change needs no local state; the reloaded entry is the truth.
+        if (s.activity && Array.isArray(s.activity.entries)) {
+          for (const row of s.activity.entries) if (copy.isObject(row) && row.undone_at && row.change_id) s.undo.delete(row.change_id);
+        }
         if (!s.sessionId) s.sessionId = String((s.state && s.state.session_id) || (s.activity && s.activity.session_id) || '');
         paint(s);
       } while (s.dirty);
@@ -383,18 +446,15 @@
       });
     }
 
-    async function allow(s) {
-      const host = s.mountRoot.querySelector('[data-primary-activity-body]');
-      const select = host && host.querySelector('[data-primary-grant-project]');
-      const auto = host && host.querySelector('[data-primary-grant-auto]');
-      if (!select) return;
-      s.form.project = select.value;
-      s.form.auto = Boolean(auto && auto.checked);
-      const response = await call('grantLaunch', { schema_version: 1, project_id: select.value, run_modes: s.form.auto ? ['auto'] : null });
+    async function addRule(s) {
+      const form = rules.settleForm(rules.captureForm(s.mountRoot.querySelector('[data-primary-activity-body]'), s.form), model(s));
+      if (!form) return;
+      const { method, request } = rules.submission(form);
+      const response = await call(method, request);
       if (session !== s) return;
       if (response && response.ok === true) s.notice = '';
-      else if (response && response.reason === 'capacity') s.notice = jt('chat.primary.grantCapacity', 'The permission list is full; revoke one first.');
-      else s.notice = jt('chat.primary.grantFailed', 'Could not grant that permission.');
+      else if (response && response.reason === 'capacity') s.notice = jt('chat.primary.rules.capacity', 'The rule list is full; remove one first.');
+      else s.notice = jt('chat.primary.rules.addFailed', 'Could not add that rule.');
       if (s.notice) paint(s);
       await load(s);
     }
@@ -403,6 +463,8 @@
       let response;
       if (kind === 'launch') {
         response = await call('revokeLaunch', { schema_version: 1, permission_id: id });
+      } else if (kind === 'rule') {
+        response = await call('revokeRule', { schema_version: 1, rule_id: id });
       } else {
         const bridge = defaultMessagesBridge();
         try {
@@ -416,14 +478,39 @@
       await load(s);
     }
 
+    async function undo(s, changeId, method) {
+      if (s.undo.get(changeId) === 'pending') return;
+      s.undo.set(changeId, 'pending');
+      paint(s);
+      const response = await call(method, { schema_version: 1, change_id: changeId });
+      if (session !== s) return;
+      if (response && response.ok === true) { s.undo.delete(changeId); s.notice = ''; }
+      else if (response && response.reason === 'changed_since') { s.undo.set(changeId, 'changed_since'); s.notice = ''; }
+      else if (response && response.reason === 'already_undone') { s.undo.delete(changeId); }
+      else {
+        const why = method === 'undoChatChange' && response ? response.reason : '';
+        s.undo.delete(changeId);
+        s.notice = why === 'session_busy' ? jt('chat.primary.chat.undoBusy', 'That chat is busy right now; try again when it is idle.')
+          : why === 'not_found' ? jt('chat.primary.chat.undoGone', 'That change can no longer be undone.') : jt('chat.primary.settings.undoFailed', 'Could not undo that change.');
+      }
+      paint(s);
+      await load(s);
+    }
+
     function onClick(s, event) {
       const target = event.target;
       if (!target || typeof target.closest !== 'function') return;
-      if (target.closest('[data-primary-grant-submit]')) { void allow(s); return; }
+      if (target.closest('[data-primary-rule-submit]')) { void addRule(s); return; }
+      const rule = target.closest('[data-primary-rule-revoke]');
+      if (rule) { void revoke(s, 'rule', rule.getAttribute('data-primary-rule-revoke')); return; }
       const launch = target.closest('[data-primary-permission-revoke]');
       if (launch) { void revoke(s, 'launch', launch.getAttribute('data-primary-permission-revoke')); return; }
       const grant = target.closest('[data-primary-message-grant-revoke]');
       if (grant) { void revoke(s, 'message', grant.getAttribute('data-primary-message-grant-revoke')); return; }
+      const settingUndo = target.closest('[data-primary-setting-undo]');
+      if (settingUndo) { void undo(s, settingUndo.getAttribute('data-primary-setting-undo'), 'undoSettingChange'); return; }
+      const chatUndo = target.closest('[data-primary-chat-undo]');
+      if (chatUndo) { void undo(s, chatUndo.getAttribute('data-primary-chat-undo'), 'undoChatChange'); return; }
       const step = target.closest('[data-step-modal-action]');
       if (step && step.getAttribute('data-step-modal-action') === 'close') { close(); return; }
       if (!target.closest('.inv-step-modal')) close();
@@ -444,7 +531,7 @@
       if (session) close();
       const s = {
         sessionId: String(o.sessionId || '').trim(), pane: o.pane === 'permissions' ? 'permissions' : 'activity', notice: '',
-        activity: undefined, perms: undefined, state: null, projects: [], form: { project: '', auto: false },
+        activity: undefined, perms: undefined, state: null, projects: [], form: { ...rules.DEFAULT_FORM }, undo: new Map(),
         handle: null, mountRoot: null, unsubscribe: null, loading: false, dirty: false, scheduled: false,
       };
       session = s;
@@ -466,6 +553,10 @@
       s.handle = handle;
       s.mountRoot = handle.mountRoot;
       handle.mountRoot.addEventListener('click', (event) => onClick(s, event));
+      // The rule form's later lists follow its earlier choices, so a change there repaints.
+      handle.mountRoot.addEventListener('change', (event) => {
+        if (event.target && typeof event.target.closest === 'function' && event.target.closest('[data-primary-rule-effect], [data-primary-rule-action]')) paint(s);
+      });
       if (typeof ui.segmentedControl.initSegmentedHandlers === 'function') ui.segmentedControl.initSegmentedHandlers(handle.mountRoot);
       handle.mountRoot.addEventListener('inv-segmented-change', (event) => {
         if (!event.detail || event.detail.id !== 'primary-activity-tabs') return;

@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 
 const { waitForToolApproval } = require('../services/backend/chat-stream-tool-handling');
 const { buildExactApprovalPresentation } = require('../services/backend/chat-stream-tool-approval');
+const { getManagedActiveTurnState } = require('../services/backend/backend-active-turn-state');
 
 // The approval card must show what will run: the live request carries the
 // decisive arguments exactly (no secret redaction, no 512-char clip), while the
@@ -79,6 +80,7 @@ test('a 2,000-char run_command reaches the approval card exactly: unredacted and
   assert.deepEqual(pendingUse.exact_approval, exact);
   // Electron recorded the hash of what it displayed.
   assert.equal(pendingFor(service, 'call-exact').exactApprovalSha256, exact.sha256);
+  assert.deepEqual(pendingFor(service, 'call-exact').exactApproval, exact);
 
   // The persisted transcript and the turn events keep today's redacted snapshot.
   const row = service.messages.find((message) => message.kind === 'tool_use');
@@ -89,6 +91,27 @@ test('a 2,000-char run_command reaches the approval card exactly: unredacted and
   assert.equal(JSON.stringify(turnEvents).includes('exact_approval'), false);
 
   pendingFor(service, 'call-exact').resolve(true, 'approved');
+  assert.equal(await promise, true);
+});
+
+test('a chat reopened mid-wait gets the exact presentation back from the active-turn snapshot', async () => {
+  const service = createService();
+  service.activeStreams = new Map([['stream-call-reopen', new AbortController()]]);
+  service.sessionStore.getActiveTurn = () => ({
+    request_id: 'stream-call-reopen', stream_id: 'stream-call-reopen', status: 'streaming',
+  });
+  const command = 'node --version && node --test --test-concurrency=1 tests-js\\';
+  const { promise } = requestApproval(service, 'call-reopen', {
+    tool_name: 'run_command',
+    tool_input: { command, cwd: '.', timeout_seconds: 120, purpose: 'Reproduce the run' },
+  });
+  const live = service.emitted.find((event) => event.type === 'tool_approval_needed').exact_approval;
+
+  const snapshot = getManagedActiveTurnState(service, 'session-call-reopen');
+
+  assert.deepEqual(snapshot.pending_approval.exact_approval, live);
+  assert.equal(snapshot.pending_approval.exact_approval.fields[0].text, command);
+  pendingFor(service, 'call-reopen').resolve(true, 'approved');
   assert.equal(await promise, true);
 });
 

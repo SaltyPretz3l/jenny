@@ -49,6 +49,17 @@
       + (id && actions.length ? renderTools(kind, id, sessionId, actions, labels) : '') + '</div>';
   }
 
+  /* Row 91: Edit prompt carries the prompt, seed and size the host re-arms the composer with. */
+  function renderEditPrompt(o, label) {
+    const edit = o.editPrompt;
+    if (!edit || !edit.prompt || !o.sessionId || !label) return '';
+    return `<button type="button" class="inv-artifact-figure-action inv-artifact-figure-edit-prompt" data-image-edit-prompt`
+      + ` data-session-id="${escapeHtml(o.sessionId)}" data-image-prompt="${escapeHtml(edit.prompt)}"`
+      + (Number.isInteger(edit.seed) ? ` data-image-seed="${Number(edit.seed)}"` : '')
+      + (positiveInteger(edit.width) && positiveInteger(edit.height) ? ` data-image-width="${Number(edit.width)}" data-image-height="${Number(edit.height)}"` : '')
+      + `>${escapeHtml(label)}</button>`;
+  }
+
   /* A generated image artifact. The image source can arrive later: the card utils hydrate
    * img[data-inv-artifact-image-key] and flip data-inv-artifact-image-state. */
   function renderFigure(opts) {
@@ -65,6 +76,7 @@
       + (o.title || o.meta || o.prompt ? '<figcaption class="inv-artifact-figure-caption">'
         + (o.title ? `<span class="inv-artifact-figure-title" title="${escapeHtml(o.title)}">${escapeHtml(o.title)}</span>` : '')
         + (o.meta ? `<span class="inv-artifact-figure-meta">${escapeHtml(o.meta)}</span>` : '')
+        + renderEditPrompt(o, labels.editPrompt)
         + (o.prompt ? `<span class="inv-artifact-figure-prompt" title="${escapeHtml(o.promptTitle || o.prompt)}">${escapeHtml(o.prompt)}</span>` : '')
         + '</figcaption>' : '')
       + '</figure>';

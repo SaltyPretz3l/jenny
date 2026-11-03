@@ -85,3 +85,25 @@ test('the jump-to-latest host enters briefly and honors reduced motion', () => {
   const reducedMotion = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
   assert.match(blockFor(reducedMotion, selector), /animation:\s*none/);
 });
+
+test('the live reasoning box is flag-scoped, holds through the collapse and keeps its cap under reduced motion', () => {
+  // Row 101 Phase 2: the cap applies only under the root flag attribute, in the Thinking view
+  // (Answers view excluded), to a streaming body and to a marked body while its panel is open
+  // (the settle collapse, and an earlier phase that settled open mid-turn).
+  const css = readStyle('chat-machinery.css');
+  const start = css.indexOf(':root[data-reasoning-live-box="on"] .chat-timeline:not([data-transcript-view="answers"])');
+  assert.notEqual(start, -1, 'expected the flag-scoped live box rule');
+  const rule = css.slice(start, css.indexOf('}', start));
+  assert.match(rule, /\.reasoning-row-block\[data-reasoning-status="streaming"\] \.reasoning-row-panel\.expanded > \.reasoning-row-panel-body/);
+  assert.match(rule, /:root\[data-reasoning-live-box="on"\] \.reasoning-row-panel\.expanded > \.reasoning-row-panel-body\[data-live-box="true"\]/);
+  assert.match(rule, /max-height:\s*max\(\s*calc\(1\.62em \* 10\),\s*calc\(var\(--chat-thread-viewport-h, 70vh\) - var\(--chat-thread-offset, 0px\) - var\(--composer-safe-offset, 0px\) - var\(--tl-row-h, 30px\) - 3em\)\s*\)/);
+  assert.match(rule, /overflow-y:\s*auto;/);
+  assert.doesNotMatch(rule, /overscroll-behavior/, 'the wheel chains to the timeline at the box edges');
+  const fade = blockFor(css, ':root[data-reasoning-live-box="on"] .reasoning-row-panel-body[data-live-box="true"].has-scrolled');
+  assert.match(fade, /mask-image:\s*linear-gradient\(to bottom, transparent 0, #000 2\.4em\)/);
+  // Reduced motion never lifts the cap: no reduced-motion block mentions the box.
+  for (const chunk of css.split('@media (prefers-reduced-motion: reduce)').slice(1)) {
+    const body = chunk.slice(0, chunk.indexOf('\n}'));
+    assert.doesNotMatch(body, /data-live-box|reasoning-live-box/);
+  }
+});

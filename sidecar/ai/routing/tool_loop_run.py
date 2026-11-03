@@ -589,6 +589,7 @@ class _ToolLoopRun(_ToolCallPhasesMixin, _FinalResponseMixin):
                 if plan_deadline_row is not None:
                     self.working_messages.append(plan_deadline_row)
                 self._drain_pending_mail(_iteration)
+                _tl_hub.background_job_notices.drain_job_notices(self, _iteration)
                 # -- Emit iteration-start *before* model call -----------------
                 runtime.emit(
                     _tl_hub.IterationStartEvent(

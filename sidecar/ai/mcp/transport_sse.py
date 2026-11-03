@@ -72,6 +72,7 @@ class SSEMCPTransport(MCPTransport):
         *,
         request_timeout_seconds: float | None = None,
         allow_private_addresses: bool = False,
+        allow_loopback: bool = False,
     ) -> None:
         self._config = config
         url = str(config.url or "").strip()
@@ -84,14 +85,16 @@ class SSEMCPTransport(MCPTransport):
         # SSRF guard BEFORE any request is ever possible. Keep the validated
         # pinned IP so every request connects to the vetted address instead of
         # re-resolving the hostname (defeats DNS rebinding).
-        # ``allow_private_addresses`` mirrors the owner's
-        # ``tools_web_allow_private_addresses`` decision so a self-hosted server
-        # on a LAN / tailnet / CGNAT address is reachable under the same single
-        # opt-in that governs the fetch and search paths. It relaxes only the
-        # address-class check -- the redirect refusal and the no-credentials-in-URL
-        # rules still apply.
+        # ``allow_private_addresses`` mirrors ``tools_web_allow_private_addresses``
+        # (a self-hosted server on a LAN / tailnet / CGNAT address, loopback
+        # included) and ``allow_loopback`` mirrors ``tools_web_allow_loopback``
+        # (a server on this machine only). Both relax only the address-class
+        # check; cloud metadata, the redirect refusal and the
+        # no-credentials-in-URL rule still apply.
         try:
-            validated = validate_public_url(url, allow_private=allow_private_addresses)
+            validated = validate_public_url(
+                url, allow_private=allow_private_addresses, allow_loopback=allow_loopback
+            )
         except (ValueError, PermissionError) as error:
             raise MCPError(
                 code=CMP_MCP_CONFIG_INVALID,
@@ -114,6 +117,7 @@ class SSEMCPTransport(MCPTransport):
                 config.auth,
                 server_name=config.name,
                 allow_private_addresses=allow_private_addresses,
+                allow_loopback=allow_loopback,
             )
 
     @property

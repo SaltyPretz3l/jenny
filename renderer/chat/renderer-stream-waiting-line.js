@@ -30,6 +30,59 @@
     return String(value == null ? '' : value).trim();
   }
 
+  // Row 100 P2 (owner pick B): who holds a work lease, in plain words; the
+  // command and the process are the line's hover text. A kind or work this
+  // table does not know keeps the older sentences.
+  // One literal call per string, so the string ledger can read each default.
+  // By holder kind, then by the holder's work; `other_chat` is a chat with no title.
+  const HOLDER_COPY = {
+    chat: {
+      tests: (p) => jt('chat.streamActivity.holder.chatTests', 'Waiting for "{title}" to finish its tests.', p),
+      git_change: (p) => jt('chat.streamActivity.holder.chatGit', 'Waiting for "{title}" to finish a git change.', p),
+      install: (p) => jt('chat.streamActivity.holder.chatInstall', 'Waiting for "{title}" to finish an install.', p),
+    },
+    other_chat: {
+      tests: () => jt('chat.streamActivity.holder.otherChatTests', 'Waiting for another chat to finish its tests.'),
+      git_change: () => jt('chat.streamActivity.holder.otherChatGit', 'Waiting for another chat to finish a git change.'),
+      install: () => jt('chat.streamActivity.holder.otherChatInstall', 'Waiting for another chat to finish an install.'),
+    },
+    jenny_window: {
+      tests: () => jt('chat.streamActivity.holder.windowTests', 'Waiting for another Jenny window to finish its tests.'),
+      git_change: () => jt('chat.streamActivity.holder.windowGit', 'Waiting for another Jenny window to finish a git change.'),
+      install: () => jt('chat.streamActivity.holder.windowInstall', 'Waiting for another Jenny window to finish an install.'),
+    },
+    claude_code: {
+      tests: () => jt('chat.streamActivity.holder.claudeTests', 'Waiting for a Claude Code session to finish its tests.'),
+      git_change: () => jt('chat.streamActivity.holder.claudeGit', 'Waiting for a Claude Code session to finish a git change.'),
+      install: () => jt('chat.streamActivity.holder.claudeInstall', 'Waiting for a Claude Code session to finish an install.'),
+    },
+  };
+
+  function holderSentence(typed, title) {
+    const holder = typed.holder;
+    if (!holder) return null;
+    if (holder.count > 1) {
+      return holder.kind === 'chat' && title
+        ? jt('chat.streamActivity.holder.chatAndMore', 'Waiting for "{title}" and {count} more to finish.', { title: TITLE_TOKEN, count: holder.count - 1 })
+        : jt('chat.streamActivity.holder.several', 'Waiting for {count} runs to finish.', { count: holder.count });
+    }
+    if (holder.kind === 'test_run') return jt('chat.streamActivity.holder.testRun', 'Waiting for a test run outside Jenny to finish.');
+    if (holder.kind === 'git') return jt('chat.streamActivity.holder.gitLock', 'Waiting for another git command in this repository to finish.');
+    const kind = holder.kind === 'chat' && !title ? 'other_chat' : holder.kind;
+    const copy = Object.hasOwn(HOLDER_COPY, kind) && Object.hasOwn(HOLDER_COPY[kind], holder.what) ? HOLDER_COPY[kind][holder.what] : null;
+    return copy ? copy({ title: TITLE_TOKEN }) : null;
+  }
+
+  // The hover text of a work-lease wait: the holder's command and its process.
+  function holderTitle(typed) {
+    const holder = typed.holder;
+    if (!holder) return '';
+    const parts = [];
+    if (holder.label) parts.push(holder.label);
+    if (holder.pid) parts.push(jt('chat.streamActivity.holder.process', 'process {pid}', { pid: holder.pid }));
+    return parts.join(' · ');
+  }
+
   // The words of a waiting line: `before` + linked title + `after`, then `sub`.
   function waitingCopy(typed, title) {
     if (typed.waitState === 'stuck') {
@@ -41,6 +94,12 @@
       };
     }
     const sub = jt('chat.streamActivity.continuesOnItsOwn', 'Continues on its own.');
+    const named = holderSentence(typed, typed.blockingSessionId ? title : '');
+    if (named) {
+      const at = named.indexOf(TITLE_TOKEN);
+      return at < 0 ? { before: named, linked: '', after: '', sub }
+        : { before: named.slice(0, at), linked: title, after: named.slice(at + TITLE_TOKEN.length), sub };
+    }
     if (typed.blockingSessionId && title) {
       const sentence = jt('chat.streamActivity.waitingForChat', 'Waiting for "{title}" to finish a command in this folder.', { title: TITLE_TOKEN });
       const at = sentence.indexOf(TITLE_TOKEN);
@@ -77,9 +136,12 @@
     if (typed.blockingSessionId && typeof options.getSessionTitle === 'function') {
       try { title = normalizeId(options.getSessionTitle(typed.blockingSessionId)); } catch (_error) { title = ''; }
     }
-    const key = [typed.waitState, typed.blockingSessionId, title].join('\n');
+    const hover = holderTitle(typed);
+    const key = [typed.waitState, typed.blockingSessionId, title, JSON.stringify(typed.holder)].join('\n');
     if (label.getAttribute('data-wait-key') === key) return;
     label.setAttribute('data-wait-key', key);
+    if (hover) label.title = hover;
+    else label.removeAttribute('title');
     label.classList.remove('turn-activity-label--path');
     label.textContent = '';
     const copy = waitingCopy(typed, title);
@@ -134,7 +196,24 @@
   function releaseLabel(label) {
     if (!label || !label.hasAttribute('data-wait-key')) return;
     label.removeAttribute('data-wait-key');
+    label.removeAttribute('title');
     label.textContent = '';
+  }
+
+  // A work-lease wait's holder from the notice (row 100 P2), or null.
+  function holderOf(payload) {
+    const kind = normalizeId(payload && payload.holderKind);
+    if (!kind) return null;
+    const count = Number(payload.holderCount);
+    const pid = Number(payload.holderPid);
+    return {
+      kind,
+      what: normalizeId(payload.holderWhat),
+      label: normalizeId(payload.holderLabel).slice(0, 120),
+      pid: Number.isSafeInteger(pid) && pid > 0 ? pid : null,
+      count: Number.isSafeInteger(count) && count > 0 ? count : 1,
+      jobIds: Array.isArray(payload.holderJobIds) ? payload.holderJobIds.map(normalizeId).filter(Boolean).slice(0, 8) : [],
+    };
   }
 
   // Applies one `runtime_waiting` notice to the stream's tracked entry.
@@ -153,6 +232,7 @@
       waitState,
       workId: normalizeId(payload && payload.workId),
       blockingSessionId: normalizeId(payload && payload.blockingSessionId),
+      holder: holderOf(payload),
       // The wait began at its first notice; a later one only updates why.
       startedAt: isWaiting(entry) ? entry.typed.startedAt : entry.lastEventAt,
     };
@@ -176,6 +256,16 @@
   function createQueries(tracked) {
     return {
       isWaitingStream: (streamId) => isWaiting(tracked.get(normalizeId(streamId))),
+      // The chats waiting behind one of this app's background jobs (row 100 P2, the rail's "N waiting").
+      waitersForJob(jobId) {
+        const id = normalizeId(jobId);
+        const sessions = new Set();
+        if (!id) return [];
+        for (const entry of tracked.values()) {
+          if (isWaiting(entry) && entry.typed.waitState === 'waiting' && entry.typed.holder?.jobIds.includes(id)) sessions.add(entry.sessionId);
+        }
+        return [...sessions].filter(Boolean);
+      },
       isWaitingWork(workId) {
         const id = normalizeId(workId);
         if (!id) return false;

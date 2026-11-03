@@ -182,6 +182,81 @@
       return applyAppZoomPercent(APP_ZOOM_DEFAULT);
     }
 
+    // Row 88 D8: the Jenny chat's settings tools read and change palette, typography, text size
+    // and chat width through main's one-shot appearance relay. A change goes through
+    // applyAppearancePreferences with the merged stored preferences, exactly what the Settings
+    // appearance controls write; the reply carries the values now in effect (a refused save shows
+    // the old value, which main reports as a failed apply). Option lists are the model presets the
+    // Settings option sources use, so no Settings page has to be mounted. Never throws.
+    const RELAY_FIELDS = [
+      ['paletteId', 'getPalettePresets'], ['typographyId', 'getTypographyPresets'],
+      ['fontScaleId', 'getFontScalePresets'], ['chatWidthId', 'getChatWidthPresets'],
+    ];
+    const RELAY_REQUEST_ID = /^ar_[0-9]{1,12}$/;
+    function appearanceModel() {
+      return settings.appearanceModel || globalThis.appearanceUtils
+        || (typeof require === 'function' ? require('../shared/appearance-utils') : null);
+    }
+    function relaySnapshot() {
+      const model = appearanceModel();
+      const current = normalizeAppearancePreferences(state.ui.appearance);
+      const values = {};
+      const options = {};
+      for (const [field, getter] of RELAY_FIELDS) {
+        values[field] = String(current[field]);
+        options[field] = (model[getter]() || []).map((preset) => ({ value: String(preset.id), label: String(preset.label || preset.id) }));
+      }
+      return { values, options };
+    }
+    function relayApply(requested) {
+      const source = requested && typeof requested === 'object' && !Array.isArray(requested) ? requested : null;
+      const keys = source ? Object.keys(source) : [];
+      const { options } = relaySnapshot();
+      const allowed = keys.length > 0 && keys.every((key) => Array.isArray(options[key])
+        && typeof source[key] === 'string' && options[key].some((option) => option.value === source[key]));
+      if (!allowed) return false;
+      applyAppearancePreferences({ ...state.ui.appearance, ...source });
+      if (state.ui?.activeView === 'settings') fwd.renderSettings?.();
+      return true;
+    }
+    function handleAppearanceRelayRequest(payload) {
+      const requestId = payload && typeof payload.request_id === 'string' ? payload.request_id : '';
+      const respond = windowObject?.jennyShell?.appearance?.respondRelay;
+      if (!RELAY_REQUEST_ID.test(requestId) || typeof respond !== 'function') return;
+      let reply;
+      try {
+        if (payload.op === 'read') reply = { request_id: requestId, ok: true, ...relaySnapshot() };
+        else if (payload.op === 'apply') {
+          reply = relayApply(payload.values)
+            ? { request_id: requestId, ok: true, ...relaySnapshot() }
+            : { request_id: requestId, ok: false, reason: 'invalid_value' };
+        } else reply = { request_id: requestId, ok: false, reason: 'unavailable' };
+      } catch (error) {
+        appendClientLog('WARN', 'appearance.relay_failed', { message: error?.message || String(error) });
+        reply = { request_id: requestId, ok: false, reason: 'unavailable' };
+      }
+      try {
+        Promise.resolve(respond(reply)).catch(() => {});
+      } catch (_error) { /* an unsendable reply degrades to main's timeout */ }
+    }
+    let relayUnsubscribe = null;
+    function bindAppearanceRelay() {
+      if (relayUnsubscribe) return disposeAppearanceRelay;
+      const subscribe = windowObject?.jennyShell?.appearance?.onRelayRequest;
+      if (typeof subscribe !== 'function') return disposeAppearanceRelay;
+      try {
+        relayUnsubscribe = subscribe(handleAppearanceRelayRequest) || (() => {});
+      } catch (_error) {
+        relayUnsubscribe = null;
+      }
+      return disposeAppearanceRelay;
+    }
+    function disposeAppearanceRelay() {
+      const unsubscribe = relayUnsubscribe;
+      relayUnsubscribe = null;
+      if (typeof unsubscribe === 'function') { try { unsubscribe(); } catch (_error) { /* best effort */ } }
+    }
+
     function isDefaultAppearancePreferences(preferences) {
       const normalized = normalizeAppearancePreferences(preferences);
       const defaults = getDefaultAppearancePreferences();
@@ -213,6 +288,8 @@
       applyAppearancePreferences,
       applyAppZoomPercent,
       applyChatZoomPercent,
+      bindAppearanceRelay,
+      disposeAppearanceRelay,
       buildSelectOptionMarkup,
       isDefaultAppearancePreferences,
       refreshChatZoomLayout,

@@ -25,7 +25,6 @@
 
   const TEXT_MAX = 64 * 1024;
   const LINKS_MAX = 200;
-  const PATH_MAX = 1024;
   const LINE_MAX = 100000000;
 
   const PATH_CHAR = '[^\\s"\'<>|*?:;,()\\[\\]{}]';
@@ -47,43 +46,19 @@
     return Number.isInteger(n) && n >= 1 && n <= LINE_MAX ? n : 0;
   }
 
-  // Folds '.' and '..' segments; null when '..' climbs above the start.
-  function foldSegments(rel) {
-    const out = [];
-    for (const segment of rel.split('/')) {
-      if (!segment || segment === '.') continue;
-      if (segment === '..') {
-        if (out.length === 0) return null;
-        out.pop();
-        continue;
-      }
-      out.push(segment);
-    }
-    return out.length ? out.join('/') : null;
-  }
+  // The containment rule lives in workspace-path-resolve.js (row 95), shared with the chat
+  // path chips: browser global first, node require for tests.
+  const resolver = (typeof globalThis !== 'undefined' && globalThis.jennyWorkspacePathResolve)
+    || (typeof require === 'function' ? require('./workspace-path-resolve') : null);
 
   function normalizeRoot(rootPath) {
-    const root = String(rootPath || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
-    return root;
+    return String(rootPath || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
   }
 
   // A detected path -> its root-relative form, or null when it is outside the root.
   // cwdRel: the root-relative folder a relative path is printed from ('' = the root).
   function resolveInRoot(rawPath, root, cwdRel) {
-    let p = String(rawPath || '').replace(/\\/g, '/');
-    if (!p || p.length > PATH_MAX) return null;
-    const absolute = DRIVE_RE.test(p) || p.startsWith('/');
-    if (!absolute) {
-      return foldSegments(cwdRel ? cwdRel + '/' + p : p);
-    }
-    if (!root) return null;
-    const winRoot = DRIVE_RE.test(root + '/');
-    const prefix = root + '/';
-    const head = p.slice(0, prefix.length);
-    const inside = winRoot ? head.toLowerCase() === prefix.toLowerCase() : head === prefix;
-    if (!inside) return null;
-    p = p.slice(prefix.length);
-    return foldSegments(p);
+    return resolver ? resolver.relativeInRoot(rawPath, root, cwdRel) : null;
   }
 
   function looksLikeFile(rawPath) {

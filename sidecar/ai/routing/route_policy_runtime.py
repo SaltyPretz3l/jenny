@@ -67,6 +67,26 @@ _BLOCK_MESSAGE = (
 )
 
 
+# Row 88: a settings change applies only through the card the app builds for that call, so it asks
+# in Auto too and no AUTO rule skips it (the main-side port refuses a call that had no card).
+# Rows 94 P1 / 85 Q2 / 94 P2 / 94 P4: chat_configure, schedule_change, project_create,
+# session_export and terminal_run also ask in Auto (moved here from tool_execution.py, which sits
+# at its size ceiling).
+_ALWAYS_ASK_CARD_REASON = "App settings change only with your approval."
+_ALWAYS_ASK_CARD_REASONS = {
+    "chat_configure": "A chat's model, effort or run mode changes only with your approval.",
+    "schedule_change": "A scheduled check changes only with your approval.",
+    "project_create": "A new project gets a folder only with your approval.",
+    "session_export": "A copy of a chat is saved to your Downloads folder only with your approval.",
+    "terminal_run": "A command runs in your terminal only with your approval.",
+}
+ALWAYS_ASK_CARD_TOOLS = frozenset({"settings_change", *_ALWAYS_ASK_CARD_REASONS})
+
+
+def always_ask_card_reason(tool_name: str) -> str:
+    return _ALWAYS_ASK_CARD_REASONS.get(tool_name, _ALWAYS_ASK_CARD_REASON)
+
+
 def destructive_tool_approval_reason(tool_name: str, arguments: dict[str, Any]) -> str:
     if tool_name == "delete_file":
         target = str(arguments.get("path") or arguments.get("file_path") or "this path").strip()

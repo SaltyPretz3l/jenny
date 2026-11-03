@@ -11,7 +11,8 @@
   // has not seen gets a 600-weight title plus a 6 px accent dot in the time slot, with the
   // word "unread" for assistive tech. Unread is sidebar-only and independent of inclusion.
   // The signal is the session summary's unread_message_count; bindUnreadSync keeps it current
-  // between summary refreshes from the chatMessages change events.
+  // between summary refreshes from the chatMessages change events; bindSessionsChangedSync (row 94) refreshes
+  // the whole list when an agent changed other chats.
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const SCHEMA_VERSION = 1;
@@ -96,5 +97,57 @@
     };
   }
 
-  return { count, titleClass, markup, patchMailCounts, bindUnreadSync };
+  /**
+   * Row 94: sessions.onChanged says an agent changed other chats (rename, pin, archive, move, model, mode).
+   * A burst coalesces into one refresh(sessionIds); at most one runs at a time and events that land during
+   * it earn one follow-up. A failed refresh is swallowed: the next push or summary refresh catches up.
+   * @param {object} options {bridge, refresh(sessionIds, {projectsChanged}), setTimeout?, clearTimeout?}
+   * @returns {function} dispose
+   */
+  function bindSessionsChangedSync(options) {
+    const o = options || {};
+    const bridge = o.bridge;
+    if (!bridge || typeof bridge.onChanged !== 'function' || typeof o.refresh !== 'function') return function noop() {};
+    const setTimer = typeof o.setTimeout === 'function' ? o.setTimeout : function (fn, ms) { return setTimeout(fn, ms); };
+    const clearTimer = typeof o.clearTimeout === 'function' ? o.clearTimeout : function (handle) { clearTimeout(handle); };
+    const pending = new Set();
+    let projectsChanged = false;
+    let timer = null;
+    let running = false;
+    let disposed = false;
+
+    function schedule() {
+      if (disposed || timer !== null || running || pending.size === 0) return;
+      timer = setTimer(function () {
+        timer = null;
+        if (disposed) return;
+        const ids = Array.from(pending);
+        const flags = { projectsChanged: projectsChanged };
+        pending.clear();
+        projectsChanged = false;
+        running = true;
+        Promise.resolve().then(function () { return o.refresh(ids, flags); }).catch(function () { /* the next push catches up */ }).then(function () {
+          running = false;
+          schedule();
+        });
+      }, SYNC_DELAY_MS);
+    }
+
+    const unsubscribe = bridge.onChanged(function (event) {
+      const ids = event && Array.isArray(event.session_ids) ? event.session_ids : [];
+      ids.forEach(function (id) { if (typeof id === 'string' && id && pending.size < 200) pending.add(id); });
+      if (event && event.projects_changed === true) projectsChanged = true;
+      schedule();
+    });
+
+    return function dispose() {
+      disposed = true;
+      if (timer !== null) clearTimer(timer);
+      timer = null;
+      pending.clear();
+      if (typeof unsubscribe === 'function') { try { unsubscribe(); } catch (_error) { /* best effort */ } }
+    };
+  }
+
+  return { count, titleClass, markup, patchMailCounts, bindUnreadSync, bindSessionsChangedSync };
 });

@@ -15,6 +15,7 @@ from sidecar.ai.error_codes import CMP_TOOL_INVALID_PATH, CMP_TOOL_OUTSIDE_WORKS
 from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.ai.routing.router import ToolExecutionOutcome
 from sidecar.ai.routing.tool_call_execution import (
+    OUTSIDE_ROOT_HINT,
     PLAN_MODE_OUTSIDE_ROOT_HINT,
     execute_tool_calls_sequentially,
 )
@@ -113,14 +114,16 @@ def test_list_dir_outside_root_in_plan_mode_carries_the_hint() -> None:
     assert PLAN_MODE_OUTSIDE_ROOT_HINT in outcome.output
 
 
-def test_non_plan_outside_root_refusal_is_unchanged() -> None:
+def test_non_plan_outside_root_refusal_names_the_project_folder_and_worktree_route() -> None:
+    # 2026-10-31 session review: the bare refusal sent the model probing glob_files,
+    # git_diff cwd and run_command cwd at a sibling git worktree.
     build = SimpleNamespace(plan_mode=False, read_only=False)
     outcome = _run(_failure(), request_context=build)
     assert PLAN_MODE_OUTSIDE_ROOT_HINT not in outcome.output
-    assert outcome.output == (
-        f"Tool 'read_file' failed: {_ESCAPE_MESSAGE}. "
-        "Review the error and retry with corrected arguments if applicable."
-    )
+    assert outcome.error_code == CMP_TOOL_OUTSIDE_WORKSPACE
+    assert outcome.output.startswith(f"Tool 'read_file' failed: {_ESCAPE_MESSAGE}. ")
+    assert OUTSIDE_ROOT_HINT in outcome.output
+    assert "git -C" in OUTSIDE_ROOT_HINT
 
 
 def test_missing_request_context_adds_no_hint() -> None:
@@ -137,6 +140,7 @@ def test_read_only_subagent_outside_plan_mode_adds_no_hint() -> None:
 def test_other_plan_mode_failures_add_no_hint() -> None:
     outcome = _run(_failure(CMP_TOOL_INVALID_PATH), request_context=_PLAN)
     assert PLAN_MODE_OUTSIDE_ROOT_HINT not in outcome.output
+    assert OUTSIDE_ROOT_HINT not in outcome.output
 
 
 def test_leaving_plan_mode_mid_turn_drops_the_hint() -> None:

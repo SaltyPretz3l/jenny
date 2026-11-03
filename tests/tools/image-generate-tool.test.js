@@ -146,7 +146,7 @@ test('happy path uses exact argv, publishes after release, records provenance an
   assert.deepEqual(result.metadata.generatedArtifacts, [f.artifact]);
   assert.deepEqual(result.metadata.provenance, { backend: 'sdcpp', family: 'test_family', engine_tag: 'test-tag',
     model_set_id: ID, quant: 'Q4_K', model_label: 'test_family · Q4_K', seed: 42, width: 1472, height: 1120, steps: 25, cfg_scale: 4,
-    image_prompt: 'A quiet garden', image_negative_prompt: 'blur' });
+    image_prompt: 'A quiet garden', prompt_source: 'model', image_negative_prompt: 'blur' });
   const [, owner, memory] = f.calls.find(([kind]) => kind === 'suspend');
   assert.deepEqual(owner, { kind: 'builtin', tool_name: 'image_generate', call_id: 'call-1', stream_id: 'stream-1' });
   assert.deepEqual(memory, { minTotalVramMb: 8000, requiredFreeMb: 3002 });

@@ -157,6 +157,7 @@
       cancelViewportFrame,
       noteProgrammaticWrite: (reason) => scrollCoordinator?.noteProgrammaticWrite?.(reason),
       onFollowWrite: (scrollTop) => schedulingController?.tailCushion?.noteScrollPosition(scrollTop),
+      isLiveReasoningTail: () => viewportLiveFollowUtils.isLiveReasoningTailIn?.(chatTimeline || chatThreadScroll) === true,
     });
     const {
       liveFollowRuntime,

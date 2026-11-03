@@ -9,6 +9,8 @@
  */
 
 const { PRIMARY_ERROR_CODES: CODES } = require('./backend/error-codes');
+const { CHANGE_ID } = require('./primary-settings-contract');
+const { PRIMARY_ACTION_RULE_SHAPES, isRuleId, normalizeRuleTarget } = require('./shell-config-primary-chat');
 
 const SCHEMA_VERSION = 1;
 const ACTIVITY_DEFAULT_LIMIT = 60;
@@ -29,6 +31,9 @@ const REASON_CLASSES = Object.freeze({
   session_busy: [CODES.BUSY, true],
   capacity: [CODES.CAPACITY, false],
   copy_failed: [CODES.COPY_FAILED, false],
+  already_undone: [CODES.ALREADY_UNDONE, false],
+  changed_since: [CODES.CHANGED_SINCE, false],
+  apply_failed: [CODES.APPLY_FAILED, true],
 });
 
 function fail(reason, { retryable = null } = {}) {
@@ -116,6 +121,28 @@ function validateRevokeLaunchRequest(raw) {
   return ok({ permission_id: raw.permission_id });
 }
 
+// Row 87: `{schema_version: 1, action, target, effect, run_modes?}`. The action offers only the effects and targets in
+// PRIMARY_ACTION_RULE_SHAPES, so a launch allow (a row 76 permission, not a rule) is invalid here.
+function validateAddRuleRequest(raw) {
+  if (!closed(raw, ['action', 'target', 'effect', 'run_modes']) || !has(raw, 'action') || !has(raw, 'target') || !has(raw, 'effect')
+    || typeof raw.action !== 'string' || !Object.hasOwn(PRIMARY_ACTION_RULE_SHAPES, raw.action)) return INVALID;
+  const shape = PRIMARY_ACTION_RULE_SHAPES[raw.action];
+  if (typeof raw.effect !== 'string' || !shape.effects.includes(raw.effect)) return INVALID;
+  const target = normalizeRuleTarget(raw.action, raw.target); // exact keys, a bounded id, never '*'
+  if (!target) return INVALID;
+  let runModes = null;
+  if (has(raw, 'run_modes') && raw.run_modes !== null) {
+    if (!validRunModes(raw.run_modes)) return INVALID;
+    runModes = [...raw.run_modes];
+  }
+  return ok({ action: raw.action, target, effect: raw.effect, run_modes: runModes });
+}
+
+function validateRevokeRuleRequest(raw) {
+  if (!closed(raw, ['rule_id']) || !has(raw, 'rule_id') || !isRuleId(raw.rule_id)) return INVALID;
+  return ok({ rule_id: raw.rule_id });
+}
+
 function validateResetRequest(raw) {
   if (!closed(raw, ['forget', 'keep_copy', 'memory_opt_out'])) return INVALID;
   const flag = (key, fallback) => (has(raw, key) ? raw[key] : fallback);
@@ -124,6 +151,26 @@ function validateResetRequest(raw) {
   const optOut = flag('memory_opt_out', false);
   if ([forget, keepCopy, optOut].some((value) => typeof value !== 'boolean')) return INVALID;
   return ok({ forget, keep_copy: keepCopy, memory_opt_out: optOut });
+}
+
+// Row 88: `{ schema_version: 1, change_id: 'sc_<32 hex>' }`.
+function validateUndoSettingChangeRequest(raw) {
+  if (!closed(raw, ['change_id']) || typeof raw.change_id !== 'string' || !CHANGE_ID.test(raw.change_id)) return INVALID;
+  return ok({ change_id: raw.change_id });
+}
+
+// Row 94: the `sessions.onChanged` invalidation `{ session_ids, reason }`, bounded; null when there is nothing to invalidate.
+function sessionsChangedPayload(event) {
+  const ids = Array.isArray(event && event.session_ids)
+    ? event.session_ids.filter((id) => typeof id === 'string' && id.length >= 1 && id.length <= 128).slice(0, 20) : [];
+  if (!ids.length) return null;
+  // Row 94 P2: a project made or removed by the Jenny chat also tells the project switcher to re-read.
+  return { session_ids: ids, reason: 'primary_chat_manage', ...(event.projects_changed === true ? { projects_changed: true } : {}) };
+}
+
+// Row 94: the same request shape for Activity's Undo of a Jenny-made chat change.
+function validateUndoChatChangeRequest(raw) {
+  return validateUndoSettingChangeRequest(raw);
 }
 
 module.exports = {
@@ -136,5 +183,10 @@ module.exports = {
   validateActivityRequest,
   validateGrantLaunchRequest,
   validateRevokeLaunchRequest,
+  validateAddRuleRequest,
+  validateRevokeRuleRequest,
   validateResetRequest,
+  validateUndoSettingChangeRequest,
+  validateUndoChatChangeRequest,
+  sessionsChangedPayload,
 };

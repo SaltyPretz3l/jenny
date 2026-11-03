@@ -156,7 +156,10 @@
       activateWorkspaceSession = noopAsync,
       openArtifactTarget = noopAsync,
       openIdeFileAtLine = noopAsync,
+      revealIdePath = noopAsync,
       openFilePreviewTarget = noopAsync,
+      openProjectFileInIde = null,
+      getProjectRoots = null,
       focusComposer = noop,
     } = callbacks;
 
@@ -172,21 +175,14 @@
         state,
         setActiveView: (...a) => setActiveView(...a),
         openIdeFileAtLine: (...a) => openIdeFileAtLine(...a),
+        // A folder chip shows the folder in the IDE explorer tree (true only when it was revealed).
+        revealInIdeTree: async (relPath) => (await revealIdePath(relPath, { expandSelf: true })) === true,
         openFilePreviewTarget: (...a) => openFilePreviewTarget(...a),
+        // Another registered project's file (primary chat links): the IDE route and the folder list.
+        openProjectFileInIde: openProjectFileInIde && ((...a) => openProjectFileInIde(...a)),
+        getProjectRoots: getProjectRoots && ((...a) => getProjectRoots(...a)),
         showToastMessage: (...a) => showToastMessage(...a),
         appendClientLog: (...a) => appendClientLog(...a),
-      }).attach();
-    }
-
-    // The background-job subscription is page-lifetime.
-    const backgroundJobsUtils = windowRef.rendererBackgroundJobs || null;
-    if (backgroundJobsUtils && typeof backgroundJobsUtils.createBackgroundJobsStrip === 'function') {
-      backgroundJobsUtils.createBackgroundJobsStrip({
-        windowRef,
-        container: windowRef.document?.getElementById?.('backgroundJobsStrip') || null,
-        jennyShell: windowRef.jennyShell || null,
-        showToastMessage: (...a) => showToastMessage(...a),
-        getActiveSessionId: () => String(state.currentSessionId || '').trim(),
       }).attach();
     }
 

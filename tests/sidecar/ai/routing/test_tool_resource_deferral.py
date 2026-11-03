@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from sidecar.ai.error_codes import CMP_RESOURCE_EXCEEDED
+from sidecar.ai.routing import tool_resource_deferral
 from sidecar.ai.routing.loop_events import ToolExecutingEvent, ToolResultEvent
 from sidecar.ai.routing.loop_runtime import LoopRuntime
 from sidecar.ai.routing.router import ToolExecutionOutcome
@@ -21,6 +24,7 @@ from sidecar.ai.routing.tool_resource_deferral import (
     suspend_loop_for_resource,
 )
 from sidecar.ai.tools.models import ToolCallRequest
+from sidecar.runtime import continuation_codec_fields
 from sidecar.runtime.approval_plan import FrozenExecutionInputs, stable_hash
 
 
@@ -336,3 +340,18 @@ def test_second_call_wait_after_effect_is_a_paired_failure_without_checkpoint() 
         ToolExecutingEvent, ToolResultEvent, ToolExecutingEvent, ToolResultEvent,
     ]
     assert checkpoints == []
+
+
+def test_resource_classes_match_the_node_continuation_contract() -> None:
+    # Row 100 added "work"; both Python allowlists follow the Node proof owner.
+    root = Path(__file__).resolve().parents[4]
+    source = (root / "services/session-runtime/continuation-contracts.js").read_text(encoding="utf-8")
+    block = re.search(r"const RESOURCE_CLASSES = new Set\(\[(.*?)\]\);", source, re.S)
+    assert block is not None
+    node_classes = set(re.findall(r"'([a-z_]+)'", block.group(1)))
+    assert "work" in node_classes
+    assert node_classes == set(tool_resource_deferral._RESOURCE_CLASSES)
+    assert node_classes == set(continuation_codec_fields._RESOURCE_CLASSES)
+    for resource_class in sorted(node_classes):
+        wait = ToolResourceWait(operation_id="call_1", resource_class=resource_class)
+        assert wait.resource_class == resource_class

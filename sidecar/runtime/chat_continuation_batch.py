@@ -38,7 +38,10 @@ def preflight_pending_batch(
 
     if not run.mode_policy.allow_tools or not run.kernel._config.tools_enabled:
         attention("tools_disabled")
-    shadow = LoopRuntime(request_id=run.request_id, current_iteration=1)
+    # The live request context: the read-only command check classifies against its root.
+    shadow = LoopRuntime(
+        request_id=run.request_id, current_iteration=1, request_context=run.request_context
+    )
     scratch_outcomes: list[Any] = []
     route, _index = apply_route_policy_pre_dispatch(
         kernel=run.kernel,
@@ -85,6 +88,10 @@ def preflight_pending_batch(
     )
     if policy.denied or tuple(policy.allowed) != result.tool_calls:
         attention("tool_policy_changed")
+    # The loop's own gate escalates a verify run after this turn's writes; so does the recheck.
+    policy = _tool_loop.verify_after_write.escalate_after_writes(
+        policy, outcomes=run.outcomes, tool_contract=run.tool_contract
+    )
     _check_approval(run, result, policy, approvals)
     scratch_messages: list[dict[str, object]] = []
     scratch_calls: list[Any] = []

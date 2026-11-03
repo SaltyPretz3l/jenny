@@ -10,6 +10,7 @@ const { EventEmitter } = require('events');
 const { Readable, Writable } = require('stream');
 
 const { SidecarClient } = require('../services/backend/sidecar-client');
+const { notifyJobSettled } = require('../services/backend/sidecar-client-notifications');
 
 function createMockProcess() {
   const stdout = new Readable({ read() {} });
@@ -111,5 +112,39 @@ test('notifySessionMailArrived writes the mid-turn rows for the live request and
   client._setSidecarFeatureFlags({ multiplexer: true, chat_cancel: true });
   client.detachProcess();
   assert.equal(client.notifySessionMailArrived({ sessionId: 's', requestId: 'r', rows }), false);
+  assert.equal(writes.length, 1);
+});
+
+test('notifyJobSettled writes the mid-turn background-job notice for the live request and reports the hand-off', () => {
+  const client = new SidecarClient();
+  const proc = createMockProcess();
+  const writes = [];
+  proc.stdin.write = (chunk) => {
+    writes.push(Buffer.from(chunk));
+    return true;
+  };
+  client.attachProcess(proc);
+  const jobs = [{ job_id: '3869b0f37a73', command: 'npm test', state: 'failed', exit_code: 1 }];
+
+  assert.equal(notifyJobSettled(client, { sessionId: ' session-dst ', requestId: 'req-1', jobs }), true);
+
+  assert.equal(writes.length, 1);
+  const payload = Buffer.concat(writes).toString('utf8');
+  const body = JSON.parse(payload.slice(payload.indexOf('\r\n\r\n') + 4));
+  assert.equal(body.method, 'session.job_settled');
+  assert.equal(body.id, undefined, 'a notification: no response expected');
+  assert.deepEqual(body.params, { session_id: 'session-dst', request_id: 'req-1', jobs });
+
+  for (const bad of [{ requestId: 'req-1', jobs }, { sessionId: 's', jobs }, { sessionId: 's', requestId: 'r', jobs: [] },
+    { sessionId: 's', requestId: 'r', jobs: 'x' }, undefined]) {
+    assert.equal(notifyJobSettled(client, bad), false, JSON.stringify(bad));
+  }
+  proc.stdin.write = () => { throw new Error('pipe closed'); };
+  assert.equal(notifyJobSettled(client, { sessionId: 's', requestId: 'r', jobs }), false, 'a throwing write is not a hand-off');
+  client._setSidecarFeatureFlags({ multiplexer: false, chat_cancel: true });
+  assert.equal(notifyJobSettled(client, { sessionId: 's', requestId: 'r', jobs }), false, 'never without the multiplexer');
+  client._setSidecarFeatureFlags({ multiplexer: true, chat_cancel: true });
+  client.detachProcess();
+  assert.equal(notifyJobSettled(client, { sessionId: 's', requestId: 'r', jobs }), false);
   assert.equal(writes.length, 1);
 });

@@ -241,6 +241,7 @@ def _serialize_loop_event(
                 "emitted_lines": int(event.emitted_lines),
                 "dropped_lines": int(event.dropped_lines),
                 "elapsed_ms": int(event.elapsed_ms),
+                **({"test_progress": event.test_progress} if event.test_progress else {}),
             },
         )
     if isinstance(event, ToolResultEvent):

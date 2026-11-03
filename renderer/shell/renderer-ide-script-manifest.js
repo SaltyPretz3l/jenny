@@ -115,6 +115,7 @@
     // The Changes view (row 34 S5); renderer-code-review-rail.js CHANGES_VIEW_SCRIPTS lists the same files.
     Object.freeze(['renderer/features/renderer-changes-history-model.js', 'rendererChangesHistoryModel']),
     Object.freeze(['renderer/features/renderer-changes-view-render.js', 'rendererChangesViewRender']),
+    Object.freeze(['renderer/features/renderer-changes-view-actions.js', 'rendererChangesViewActions']),
     Object.freeze(['renderer/features/renderer-changes-suggested-actions.js', 'rendererChangesSuggestedActions']),
     Object.freeze(['renderer/features/renderer-changes-view.js', 'rendererChangesView']),
     Object.freeze(['renderer/features/renderer-changes-undo-plan.js', 'rendererChangesUndoPlan']),

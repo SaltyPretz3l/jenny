@@ -12,11 +12,16 @@ const MAX_RETAINED_WORKSPACE_CHILDREN = 50;
 const KNOWN_RUNTIME_CHILDREN = Object.freeze([
   'background-memory',
   'logs',
+  // Builtin MCP server operation ledger; default root when no state root is set (sidecar/ai/config.py).
+  'operation-ledger',
   'jenny_memory.db',
   'memory.db',
   'ollama-catalog.json',
   'sidecar.log',
 ]);
+// The user's own skills (row 103): never a known child, removed only on the
+// uninstall assistant's explicit "Also remove my skills" choice.
+const RUNTIME_SKILLS_NAME = 'skills';
 
 const KNOWN_USER_DATA_CHILDREN = Object.freeze([
   '.jenny',
@@ -30,6 +35,7 @@ const KNOWN_USER_DATA_CHILDREN = Object.freeze([
   'compile-cache',
   'Cookies',
   'Cookies-journal',
+  'chatgpt-plan-usage.json', // chatgpt-plan-usage-store.js
   'cost-tracker.json',
   'Crashpad',
   'data-lifecycle',
@@ -40,6 +46,8 @@ const KNOWN_USER_DATA_CHILDREN = Object.freeze([
   'Dictionary',
   'disabled-startup-shortcuts',
   'engines',
+  // Per-chat "Export" copies and the primary-chat reset copy (primary-chat-reset.js).
+  'exports',
   'GPUCache',
   'GrShaderCache',
   'home-ai-journal.json',
@@ -56,16 +64,22 @@ const KNOWN_USER_DATA_CHILDREN = Object.freeze([
   'Local Storage',
   'logs',
   'mcp-servers.json',
+  'model-fit-observations.json', // main/backend-service-wiring.js, model-fit-observation-store.js
+  'model-load-durations.json', // main/backend-service-wiring.js, model-load-duration-store.js
   'model-recommendation-catalog.json',
   'model-recommendation-catalog.json.meta.json',
   'Network',
   'Network Persistent State',
+  'ninfer-serve.pid', // ninfer-lifecycle.js
+  // Builtin MCP server operation ledger under the Electron state root (sidecar/ai/config.py).
+  'operation-ledger',
   'ollama-catalog.json',
   'ollama-process.json',
   'personality',
   'plugins',
   'Preferences',
   'project-delete-operations.json',
+  'profile-owner.json', // host/profile-ownership.js
   'project-notes',
   'projects.json',
   'QuotaManager',
@@ -75,6 +89,8 @@ const KNOWN_USER_DATA_CHILDREN = Object.freeze([
   'session-runtime-budgets',
   'session-runtime-lineage',
   'session-runtime-checkpoints',
+  // Per-session shadow store directory, derived from session-shadow.json (session-storage-fs-utils.js).
+  'session-shadow',
   'session-shadow.json',
   'Session Storage',
   'sessions',
@@ -83,7 +99,10 @@ const KNOWN_USER_DATA_CHILDREN = Object.freeze([
   'SharedStorage',
   'SharedStorage-wal',
   'shell-config.json',
+  // Canonical sidecar memory (not a derived index) and its WAL siblings (managed-sidecar-config.js).
   'sidecar-memory.db',
+  'sidecar-memory.db-wal',
+  'sidecar-memory.db-shm',
   'SingletonCookie',
   'SingletonLock',
   'SingletonSocket',
@@ -94,14 +113,19 @@ const KNOWN_USER_DATA_CHILDREN = Object.freeze([
   'Trust Tokens',
   'Trust Tokens-journal',
   'turn-event-journal.json',
+  'turn-event-journal.json.journal', // turn-event-journal.js partition root
   'update-state.json',
   'usage-history.json',
+  'usage-rollup.json', // usage-rollup.js (durable daily usage aggregate for Home stats)
   'VideoDecodeStats',
   'vllm-process.json',
   'WebStorage',
   'window-state.json',
+  'workspace-active-use.json', // workspace-active-use-tracker.js
   // Hot-exit backups of unsaved IDE buffers (workspace-backup-service.js, row 82 D3).
   'workspace-backups',
+  // Change-set undo store (sidecar workspace_mutation_journal_store.py under the Electron state root).
+  'workspace-recovery',
   'workspace-snapshots',
   // Rebuildable sidecar indexes and their WAL siblings (derived-indexes.js).
   ...DERIVED_INDEX_CHILDREN,
@@ -173,6 +197,7 @@ function buildCleanupTargets({
   removeWorkspaceData = false,
   workspaceRemovalScope = 'archived',
   includeUserData = true,
+  removeSkills = false,
 } = {}) {
   if (includeUserData && !String(userDataPath || '').trim()) {
     throw new TypeError('buildCleanupTargets requires userDataPath.');
@@ -197,6 +222,9 @@ function buildCleanupTargets({
     const root = path.resolve(runtimePath);
     for (const name of KNOWN_RUNTIME_CHILDREN) {
       targets.push({ kind: 'runtime_child', root, name, path: path.join(root, name) });
+    }
+    if (removeSkills === true) {
+      targets.push({ kind: 'runtime_skills', root, name: RUNTIME_SKILLS_NAME, path: path.join(root, RUNTIME_SKILLS_NAME) });
     }
   }
   if (removeWorkspaceData && workspaceRoot) {
@@ -227,6 +255,9 @@ function validateCleanupTarget(target) {
   if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return false;
   if (target.kind === 'runtime_child') {
     return KNOWN_RUNTIME_CHILDREN.includes(target.name) && relative === target.name;
+  }
+  if (target.kind === 'runtime_skills') {
+    return target.name === RUNTIME_SKILLS_NAME && relative === RUNTIME_SKILLS_NAME;
   }
   if (target.kind === 'user_data_child') {
     return KNOWN_USER_DATA_CHILDREN.includes(target.name) && relative === target.name;
@@ -401,5 +432,6 @@ module.exports = {
   WORKSPACE_PURGE_ONLY_NAMES,
   buildCleanupTargets,
   cleanupJennyData,
+  listOwnedDerivedFiles,
   validateCleanupTarget,
 };

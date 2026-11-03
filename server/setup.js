@@ -117,7 +117,7 @@ async function chooseSettings(previous, prompts, { probeModelsImpl = probeModels
   const model = result.models.includes(selected) ? selected : result.models[numeric];
   if (!model) throw new Error('model_missing');
   source.model_endpoint.model = model;
-  source.workspace_root = await prompts.yes('Enable typed file tools in Jennyâ€™s private workspace', source.workspace_root !== null)
+  source.workspace_root = await prompts.yes('Enable typed file tools in Jenny\'s private workspace', source.workspace_root !== null)
     ? template.workspace_root : null;
   const sandbox = source.workspace_root !== null && await prompts.yes(
     'Enable approved commands in the offline disposable sandbox', previous.source ? Boolean(previous.source.execution) : true);

@@ -333,6 +333,9 @@
   function artifactDedupKey(artifact, index) {
     const artifactType = String(artifact?.artifactType || '').trim();
     if (artifactType === GENERATED_FILE_FILTER || artifact?.sourceKind === 'generated_artifact') {
+      // create_artifact `replaces` rewrites a file in place under a fresh id: one card per path.
+      const displayPath = String(artifact?.generatedFile?.displayPath || '').trim().replace(/\\/g, '/');
+      if (displayPath) return `generated-path:${String(artifact?.sessionId || '')}::${displayPath}`;
       const artifactId = String(artifact?.generatedFile?.artifactId || artifact?.id || '').trim();
       if (artifactId) return `generated:${artifactId}`;
     }

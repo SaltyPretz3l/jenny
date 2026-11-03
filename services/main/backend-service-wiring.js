@@ -423,14 +423,13 @@ function createBackendServiceWithDeps({
   // call). Poll timer is unref'd — no shutdown threading needed.
   // Each job carries its turn's execution root from registration; there is
   // no global-root fallback (a project-bound job would be polled elsewhere).
-  const backgroundJobTracker = createBackgroundJobTracker({
-    sendBridgeEvent,
-    log,
-  });
+  const backgroundJobTracker = createBackgroundJobTracker({ sendBridgeEvent, log });
   backendService.backgroundJobTracker = backgroundJobTracker;
-  backendService.on('background-job-started', (info) => {
-    backgroundJobTracker.registerJob(info || {});
-  });
+  backendService.on('background-job-started', (info) => backgroundJobTracker.registerJob(info || {}));
+  backendService.on('background-job-started', (info) => backendService.sessionRuntime?.workLeases?.noteJobStarted(info || {})); // row 100: the job keeps its work leases until it settles
+  backgroundJobTracker.onJobSettled((job) => backendService.sessionRuntime?.workLeases?.noteJobSettled(job || {}));
+  require('../background-job-wake').wireBackgroundJobWake(backendService, backgroundJobTracker, { log }); // a finished job wakes its chat
+  require('./test-progress-taskbar').wireTestProgressTaskbar(backendService, backgroundJobTracker, { getMainWindow, log }); // row 96: taskbar progress
 
   // Propose-mode suggestions (row 35): Electron owns the per-session record;
   // accept applies one suggestion through the sidecar's journaled write.
@@ -454,9 +453,10 @@ function createBackendServiceWithDeps({
   backendService.chatMessages = require('../chat-messaging-wiring').createChatMessagingService({
     backendService, emit: (event) => sendBridgeEvent('chatMessages.onChanged', event), log,
   });
+  backendService.emitSessionsChanged = (event) => { try { const payload = require('../primary-chat-contract').sessionsChangedPayload(event); if (payload) sendBridgeEvent('sessions.onChanged', payload); } catch (_error) { /* row 94: best-effort invalidation */ } };
   // Row 76: the primary chat's controls (pause, launch permissions, history) and its activity log.
-  require('./primary-chat-wiring').attachPrimaryChat(backendService, { configService: () => shellConfigService, emit: (event) => sendBridgeEvent('primaryChat.onChanged', event), log });
-
+  require('./primary-chat-wiring').attachPrimaryChat(backendService, { configService: () => shellConfigService, emit: (event) => sendBridgeEvent('primaryChat.onChanged', event), sendBridgeEvent, log, getMainWindow, getDownloadsDir: () => app.getPath('downloads'), protectedPaths: () => [app.getPath('userData'), ...(app.isPackaged ? [processRef.resourcesPath, path.dirname(app.getPath('exe'))] : [])] });
+  require('./settings-change-broadcast').createSettingsChangeBroadcast({ shellConfigService, sendBridgeEvent, getWindow: getMainWindow, log }); // row 88 D6: repaint on any chatUi / windowUi / IDE-preferences commit
   // Live inference metrics and GPU-pressure warnings (row 59 checkpoint 6): the intake the
   // notification router feeds, the shared GPU sampler and the bridge service. Desktop only.
   require('./performance-wiring').createPerformanceWiring({

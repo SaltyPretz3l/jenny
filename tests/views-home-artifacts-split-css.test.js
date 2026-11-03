@@ -38,14 +38,16 @@ test('home and artifacts split CSS loads immediately after the base view stylesh
   // W11 split the hero band out of the dashboard sheet; it loads immediately
   // after it so the two can never disagree about cascade order.
   assert.equal(imports[viewIndex + 4], './styles/views-home-hero.css');
-  assert.equal(imports[viewIndex + 5], './styles/views-home-calendar.css');
-  assert.equal(imports[viewIndex + 6], './styles/views-home-calendar-agenda.css');
-  assert.equal(imports[viewIndex + 7], './styles/views-home-calendar-week.css');
-  assert.equal(imports[viewIndex + 8], './styles/views-home-calendar-month.css');
-  assert.equal(imports[viewIndex + 9], './styles/views-home-calendar-form.css');
-  assert.equal(imports[viewIndex + 10], './styles/views-artifacts.css');
-  assert.equal(imports[viewIndex + 11], './styles/views-home-setup.css');
-  assert.equal(imports[viewIndex + 12], './styles/ide-view.css');
+  // Row 98's usage stats card styles only its own .us-* classes, so it follows the hero.
+  assert.equal(imports[viewIndex + 5], './styles/views-home-usage-stats.css');
+  assert.equal(imports[viewIndex + 6], './styles/views-home-calendar.css');
+  assert.equal(imports[viewIndex + 7], './styles/views-home-calendar-agenda.css');
+  assert.equal(imports[viewIndex + 8], './styles/views-home-calendar-week.css');
+  assert.equal(imports[viewIndex + 9], './styles/views-home-calendar-month.css');
+  assert.equal(imports[viewIndex + 10], './styles/views-home-calendar-form.css');
+  assert.equal(imports[viewIndex + 11], './styles/views-artifacts.css');
+  assert.equal(imports[viewIndex + 12], './styles/views-home-setup.css');
+  assert.equal(imports[viewIndex + 13], './styles/ide-view.css');
 });
 
 test('surface effect canvas selectors live in their focused stylesheet', () => {

@@ -601,9 +601,8 @@
       }
       // The undo lifecycle (IPC, snapshot application, inline refusal note) is
       // owned by the runtime module; this dispatch only yields to it.
-      if (runtimeModule?.handleUndoJournalClick?.(event, {
-        shell, appendClientLog, onSnapshot, onAiPayload, onApplied: requestRender,
-      })) { return; }
+      const runtimeClick = { shell, appendClientLog, onSnapshot, onAiPayload, onApplied: requestRender };
+      if (runtimeModule?.handleUndoJournalClick?.(event, runtimeClick) || runtimeModule?.handleCheckToggleClick?.(event, runtimeClick)) return;
       const reminderDismiss = event.target?.closest?.('[data-cal-reminder-dismiss]');
       if (reminderDismiss) {
         const reminderId = String(reminderDismiss.dataset.calReminderDismiss || '');

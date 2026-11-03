@@ -75,7 +75,7 @@
         + '<span class="tool-marker-banner-detail">' + escapeHtml(code) + '</span>'
         + (summary
           ? '<span class="tool-marker-banner-meta" title="' + escapeHtml(summary) + '">'
-            + escapeHtml(summary.length > 140 ? summary.slice(0, 137) + '...' : summary)
+            + escapeHtml(summary.length > 500 ? summary.slice(0, 497) + '...' : summary)
             + '</span>'
           : '')
     );

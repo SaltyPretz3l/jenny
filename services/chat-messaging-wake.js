@@ -82,18 +82,24 @@ function wakePrompt(entry) {
 }
 
 // The destination's own authority, exactly as a plain send from that chat would carry it.
-function buildWakeRequest(entry, summary, title) {
+function wakeAuthority(summary) {
   const mode = String(summary?.run_mode || '').toLowerCase();
+  return {
+    preferredModel: typeof summary?.preferred_model === 'string' ? summary.preferred_model : '',
+    reasoningEffort: typeof summary?.reasoning_effort === 'string' ? summary.reasoning_effort : undefined,
+    planMode: summary?.plan_mode === true || mode === 'plan',
+    approvalMode: mode === 'auto' ? 'auto_run' : 'prompt',
+  };
+}
+
+function buildWakeRequest(entry, summary, title) {
   return {
     sessionId: entry.destination,
     prompt: wakePrompt(entry),
     visiblePrompt: `Woken by a ${entry.kind} from ${wakeTitle(title)}`,
     applicationTurn: APPLICATION_TURN_WAKE, // no bubble: the mail card above says what woke the chat
     attachments: [],
-    preferredModel: typeof summary?.preferred_model === 'string' ? summary.preferred_model : '',
-    reasoningEffort: typeof summary?.reasoning_effort === 'string' ? summary.reasoning_effort : undefined,
-    planMode: summary?.plan_mode === true || mode === 'plan',
-    approvalMode: mode === 'auto' ? 'auto_run' : 'prompt',
+    ...wakeAuthority(summary),
   };
 }
 
@@ -435,6 +441,7 @@ module.exports = {
   buildWakeRequest,
   createWakeOps,
   isTurnSettledEvent,
+  wakeAuthority,
   wakeIdempotencyKey,
   wakeTitle,
 };

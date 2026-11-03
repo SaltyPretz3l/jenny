@@ -100,8 +100,13 @@
   justify-content: center;
 }
 
-.composer[data-toolbar-compact] .composer-toolbar-left .composer-tools-chip .inv-chip-label {
+.composer[data-toolbar-compact] .composer-toolbar-left .composer-tools-chip :is(.inv-chip-label, .inv-chip-count) {
   display: none;
+}
+
+/* Collapsed, the "N off" count becomes an amber icon. */
+.composer[data-toolbar-compact] .composer-toolbar-left .composer-tools-chip--off .inv-chip-icon {
+  color: var(--accent-amber);
 }
 
 .composer[data-toolbar-compact] .composer-settings-summary {

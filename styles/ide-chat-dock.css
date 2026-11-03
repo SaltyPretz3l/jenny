@@ -122,6 +122,12 @@
   padding: 0 var(--space-4) var(--space-4);
 }
 
+/* Row 92: the dock sets its own widths, so Chat width (and its Wide toggle) does not apply here. */
+.ide-chat-dock .chat-width-toggle,
+.ide-chat-dock-body .chat-width-toggle {
+  display: none;
+}
+
 /* ── Chat 2 (row 40 W6b): split view's second pane hosted whole in the Workspace.
  * Its root also carries .ide-chat-dock-body; its kicker (title, close) heads it. */
 .wb-view-host > .chat-pane[data-pane-hosted] {

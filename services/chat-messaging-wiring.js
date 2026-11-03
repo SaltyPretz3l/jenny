@@ -156,6 +156,8 @@ function createChatMessagingService({
     flushSession: (sessionId) => store()?.flushSession?.(sessionId) === true,
     reconcileAdmissionSnapshots,
     notifyCoordinationChanged: (sessionId) => backendService.chatWorkspace?.notifyCoordinationChanged?.(sessionId),
+    // Row 87: read lazily; the primary chat's rules are attached after this service.
+    isRuleLive: (ruleId) => backendService.primaryActionRules?.isLive?.(ruleId) === true,
     emit,
     log: (level, event, details) => log(level, event, details),
     wake: createLazyWakeOps(backendService, mailStore, {

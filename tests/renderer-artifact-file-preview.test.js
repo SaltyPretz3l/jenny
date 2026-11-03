@@ -333,6 +333,22 @@ describe('sandboxed HTML routing', () => {
     assert.equal(h.calls.frameDisposes, 0, 'the live frame remains mounted');
   });
 
+  test('repaints keep an unchanged code body, so scroll, selection and find survive', async (t) => {
+    const h = makeHarness(t, {
+      workspaceFs: { readText: () => Promise.resolve(textPayload('alpha\nbravo\ncharlie')) },
+    });
+    await h.controller.openFilePreviewTarget({ path: 'src/app.js' });
+    const list = h.host.querySelector('.artifact-file-preview-code');
+    h.controller.renderRailContent(h.surface);
+    h.controller.renderRailContent(h.surface);
+    assert.equal(h.host.querySelector('.artifact-file-preview-code'), list, 'the same body stays mounted');
+
+    h.host.innerHTML = '<div class="artifact-preview-other">another owner wrote here</div>';
+    h.controller.renderRailContent(h.surface);
+    assert.ok(h.host.querySelector('.artifact-file-preview-code'), 'a body replaced by someone else is rebuilt');
+    assert.notEqual(h.host.querySelector('.artifact-file-preview-code'), list);
+  });
+
   test('holding the live frame across repaints preserves the fill options', async (t) => {
     const h = makeHarness(t, {
       workspaceFs: { readText: () => Promise.resolve(textPayload('<h1>Preview</h1>')) },
@@ -639,5 +655,86 @@ describe('lifecycle', () => {
       .dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
     assert.equal(h.calls.ideEvents.length, before, 'the delegate no longer fires after dispose');
     assert.equal(await h.controller.openFilePreviewTarget({ path: 'a/b.js' }), false, 'disposed controllers decline');
+  });
+});
+
+describe('text actions (copy, reload, menu)', () => {
+  function actionHarness(t, content, readOverrides) {
+    const toasts = [];
+    const reads = [];
+    const h = makeHarness(t, {
+      workspaceFs: { readText: (payload) => { reads.push(payload); return Promise.resolve(textPayload(content, readOverrides)); } },
+      deps: { showToastMessage: (message) => toasts.push(message) },
+    });
+    const clipboard = [];
+    h.dom.window.jennyShell = { clipboard: { writeText: (text) => { clipboard.push(text); return Promise.resolve(); } } };
+    h.doc.getElementById('artifactReviewPanel').insertAdjacentHTML('beforeend', '<button type="button" data-artifact-panel-v2-copy>Copy</button>');
+    const click = (selector) => h.doc.querySelector(selector)
+      .dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    return Object.assign(h, { toasts, clipboard, reads, click });
+  }
+
+  test('hydrate attaches the body actions to the rendered code list', async (t) => {
+    const h = actionHarness(t, 'alpha\nbravo');
+    await h.controller.openFilePreviewTarget({ path: 'src/app.js' });
+    assert.equal(h.host.querySelector('.artifact-file-preview-code').getAttribute('tabindex'), '0');
+    assert.equal(h.host.querySelectorAll('.panel-code-ask').length, 1);
+  });
+
+  test('header Copy in file_preview copies the whole loaded text, past the rendered window', async (t) => {
+    const full = Array.from({ length: 5000 }, (_, i) => `line ${i + 1}`).join('\n');
+    const h = actionHarness(t, full);
+    await h.controller.openFilePreviewTarget({ path: 'big/file.txt' });
+    assert.equal(h.host.querySelectorAll('.artifact-file-preview-row').length, 2000);
+
+    h.click('[data-artifact-panel-v2-copy]');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(h.clipboard, [full]);
+    assert.deepEqual(h.toasts, ['Copied']);
+  });
+
+  test('header Copy on a byte-capped read toasts the partial message', async (t) => {
+    const h = actionHarness(t, 'a\nb\nc', { truncated: true });
+    await h.controller.openFilePreviewTarget({ path: 'big/file.txt' });
+
+    h.click('[data-artifact-panel-v2-copy]');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(h.clipboard, ['a\nb\nc']);
+    assert.deepEqual(h.toasts, ['Copied the first 3 lines']);
+  });
+
+  test('header Copy outside file_preview mode is ignored', async (t) => {
+    const h = actionHarness(t, 'alpha');
+    await h.controller.openFilePreviewTarget({ path: 'src/app.js' });
+    h.state.ui.artifactReview.mode = 'code_review';
+
+    h.click('[data-artifact-panel-v2-copy]');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(h.clipboard, []);
+  });
+
+  test('the Reload menu item re-reads the same target', async (t) => {
+    const shown = [];
+    globalThis.inventoryContextMenu = { show: (options) => shown.push(options) };
+    t.after(() => { delete globalThis.inventoryContextMenu; });
+    const h = actionHarness(t, 'alpha\nbravo');
+    await h.controller.openFilePreviewTarget({ path: 'src/app.js', line: 2 });
+    const before = h.reads.length;
+
+    h.host.querySelector('.artifact-file-preview-row')
+      .dispatchEvent(new h.dom.window.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    shown[0].items.find((item) => item.label === 'Reload file').action();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(h.reads.length, before + 1);
+    assert.equal(h.reads[before].path, 'src/app.js');
+    assert.deepEqual(h.controller.getFilePreviewTarget(), { path: 'src/app.js', line: 2, column: null });
+  });
+
+  test('dispose releases the body attachments', async (t) => {
+    const h = actionHarness(t, 'alpha\nbravo');
+    await h.controller.openFilePreviewTarget({ path: 'src/app.js' });
+    h.controller.dispose();
+    assert.equal(h.host.querySelectorAll('.panel-code-ask').length, 0);
   });
 });

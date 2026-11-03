@@ -72,3 +72,51 @@ test('/activity is registered as a built-in that needs a session and reaches the
   assert.equal((await outcome.completion).ok, true);
   assert.deepEqual(calls.opens, [{ sessionId: PRIMARY, pane: 'activity' }]);
 });
+
+// Row 90: /reset and /forget-chat open the row 76 confirms; nothing resets without them.
+const { createPrimaryResetCommandHandler } = require('../renderer/chat/renderer-slash-activity-command');
+
+function resetHarness(extra = {}) {
+  const calls = { reset: [], forget: [], toasts: [] };
+  const dialog = {
+    confirmReset(request) { calls.reset.push([this, request]); return Promise.resolve({ ok: true }); },
+    confirmForget(request) { calls.forget.push([this, request]); return Promise.resolve({ ok: true }); },
+  };
+  const state = extra.state || { sessions: [{ id: PRIMARY, session_role: 'primary' }, { id: OTHER }] };
+  const deps = { state, getDialog: () => dialog, showToast: (...args) => calls.toasts.push(args), ...extra.deps };
+  return { calls, dialog, reset: createPrimaryResetCommandHandler(deps), forget: createPrimaryResetCommandHandler({ ...deps, forget: true }) };
+}
+
+test('/reset and /forget-chat open their confirm on the shared dialog for the Jenny chat', () => {
+  const { calls, dialog, reset, forget } = resetHarness();
+  assert.deepEqual(reset({ sessionId: PRIMARY }), { ok: true });
+  assert.deepEqual(forget({ sessionId: PRIMARY }), { ok: true });
+  assert.deepEqual(calls.reset, [[dialog, { sessionId: PRIMARY }]]);
+  assert.deepEqual(calls.forget, [[dialog, { sessionId: PRIMARY }]]);
+  assert.deepEqual(calls.toasts, []);
+});
+
+test('/reset typed in another chat opens nothing and says where it works', () => {
+  const { calls, reset, forget } = resetHarness();
+  assert.deepEqual(reset({ sessionId: OTHER }), { ok: false, handled: true, code: 'not_primary' });
+  assert.deepEqual(forget({ sessionId: '' }), { ok: false, handled: true, code: 'not_primary' });
+  assert.deepEqual(calls.reset, []);
+  assert.deepEqual(calls.forget, []);
+  assert.equal(calls.toasts[0][0], 'This command works in the Jenny chat.');
+});
+
+test('/reset reports an unavailable dialog: not built yet, or chat controls turned off', () => {
+  const missing = resetHarness({ deps: { getDialog: () => null } });
+  assert.deepEqual(missing.reset({ sessionId: PRIMARY }), { ok: false, handled: true, code: 'unavailable' });
+  assert.equal(missing.calls.toasts.length, 1);
+  const off = resetHarness({ state: { sessions: [{ id: PRIMARY, session_role: 'primary' }], features: { featureFlags: { primary_chat_controls: false } } } });
+  assert.deepEqual(off.forget({ sessionId: PRIMARY }), { ok: false, handled: true, code: 'unavailable' });
+  assert.deepEqual(off.calls.forget, []);
+});
+
+test('/reset toasts when the confirm cannot mount (no bridge or modal)', async () => {
+  const { calls, reset } = resetHarness({ deps: { getDialog: () => ({ confirmReset: () => Promise.resolve({ ok: false, reason: 'unavailable' }) }) } });
+  assert.deepEqual(reset({ sessionId: PRIMARY }), { ok: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls.toasts, [["Jenny's activity is not available right now."]]);
+});

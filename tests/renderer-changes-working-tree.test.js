@@ -122,6 +122,16 @@ test('rows stack the file name over its folder, with notes and colored counts, a
   assert.equal(h.root.querySelectorAll('.file-diff-open[data-changes-wt-open]').length, 4);
 });
 
+test('getFileHunks gives the parsed hunks of a loaded file only', async () => {
+  const h = harness();
+  assert.equal(h.page.getFileHunks('sidecar/ai/trailing_row.py'), null, 'not loaded yet');
+  await flush();
+  const hunks = h.page.getFileHunks('sidecar/ai/trailing_row.py');
+  assert.deepEqual({ ...hunks[0], lines: undefined }, { oldStart: 12, oldLines: 2, newStart: 12, newLines: 3, lines: undefined });
+  assert.equal(hunks[0].lines.length, 4);
+  assert.equal(h.page.getFileHunks('tests/test_row.py'), null, 'a closed file has no diff');
+});
+
 test('expanding a closed file loads its diff once; a second click collapses without a new request', async () => {
   const h = harness();
   await flush();
@@ -368,6 +378,7 @@ test('the Working tree / This chat switch reports the scope and hides the page b
   assert.deepEqual(h.calls.scope, ['this_chat']);
   assert.equal(h.page.getScope(), 'this_chat');
   assert.equal(h.root.querySelector('.changes-wt-scroll').hidden, true);
+  assert.equal(h.root.querySelectorAll('.diff-line').length, 0, 'the hidden page keeps no diff rows for text actions and find');
   assert.equal(h.root.querySelector('.changes-scope-branch'), null, 'the branch line belongs to the working tree');
   assert.equal(h.document.activeElement.getAttribute('data-value'), 'this_chat', 'focus stays on the switch');
   const listed = h.calls.list.length;
@@ -375,6 +386,7 @@ test('the Working tree / This chat switch reports the scope and hides the page b
   await flush();
   assert.deepEqual(h.calls.scope, ['this_chat', 'working_tree']);
   assert.equal(h.root.querySelector('.changes-wt-scroll').hidden, false);
+  assert.equal(h.root.querySelectorAll('.diff-line').length, 4, 'the open file shows its rows again');
   assert.ok(h.calls.list.length >= listed, 'returning to the page may refresh');
 });
 

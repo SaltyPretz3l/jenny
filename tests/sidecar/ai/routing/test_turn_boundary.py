@@ -248,6 +248,7 @@ def _router(tmp_path: Any, engine: _Engine, metadata_by_tool: dict[str, dict[str
             model="qwen",
             tools_workspace_root=str(tmp_path),
             electron_tool_bridge_enabled=True,
+            tools_next_step_enabled=True,
         ),
         mode="assist",
     )
@@ -337,6 +338,57 @@ def test_a_proposal_without_the_boundary_metadata_lets_the_model_continue(tmp_pa
     assert decision.response_text == "Carrying on in this chat."
 
 
+def _next_step_call(call_id: str = "n1") -> ToolCallRequest:
+    return ToolCallRequest("suggest_next_step", {"recap": "Done."}, call_id)
+
+
+def test_a_closing_next_step_card_ends_the_turn_and_keeps_its_text(tmp_path: Any) -> None:
+    # Live check 2026-11-01: a further generation drew a reasoning row and filler after the card.
+    engine = _Engine(
+        [
+            GenerationResult(content="Two improvements.", tool_calls=(_next_step_call(),)),
+            GenerationResult(content="MUST NOT BE GENERATED"),
+        ]
+    )
+    router = _router(tmp_path, engine, {})
+
+    decision = _decide(router)
+
+    assert engine.calls == 1
+    assert decision.turn_boundary is None
+    assert decision.response_text == "Two improvements."
+
+
+def test_a_streamed_next_step_turn_does_not_repeat_its_text_in_chat_done() -> None:
+    finished: list[tuple[str, str]] = []
+    loop = SimpleNamespace(
+        request_id="r", session_id="s", outcomes=[],
+        runtime=SimpleNamespace(streaming=True, audit=lambda *_a, **_k: None),
+        streamed_event_types={"chat.token"},
+        _finish_text=lambda text, *, reason: finished.append((text, reason)),
+    )
+    tb.finish_loop_at_next_step(loop, raw_content="Already streamed.")
+    assert finished == [("", "next_step_card")]
+
+
+def test_a_next_step_card_followed_by_another_call_lets_the_model_continue(tmp_path: Any) -> None:
+    engine = _Engine(
+        [
+            GenerationResult(
+                content="", tool_calls=(_next_step_call(), ToolCallRequest("read_file", {}, "r1"))
+            ),
+            GenerationResult(content="Carrying on."),
+        ]
+    )
+    router = _router(tmp_path, engine, {})
+
+    decision = _decide(router)
+
+    assert engine.calls == 2
+    assert decision.response_text == "Carrying on."
+    assert tb.ends_turn_at_next_step([_outcome("suggest_next_step", success=False)]) is False
+
+
 # --- chat.done ----------------------------------------------------------------------------
 
 
@@ -407,6 +459,16 @@ def test_an_ordinary_empty_turn_still_gets_the_fallback_and_no_completion_fields
     done = _render(dataclasses.replace(decision, response_text=""))["params"]
     assert done["response_text"].strip() != ""
     assert done["completion_source"] == "deterministic_tool_fallback"
+    assert "completion_reason" not in done and "proposal_id" not in done
+
+
+def test_a_next_step_end_with_no_new_text_gets_no_fallback_and_no_completion_fields(
+    tmp_path: Any,
+) -> None:
+    engine = _Engine([GenerationResult(content="", tool_calls=(_next_step_call(),))])
+    done = _render(_decide(_router(tmp_path, engine, {})))["params"]
+    assert done["response_text"] == ""
+    assert done["completion_source"] == "model"
     assert "completion_reason" not in done and "proposal_id" not in done
 
 

@@ -17,6 +17,7 @@ const {
 const { buildInteractiveQuestionBatchVisibleText } = require('./interactive-session-utils');
 const { finishTerminalReport, prepareTerminalReport } = require('./session-report-admission');
 const { finishMidTurnMail, releaseMidTurnMailForStream, settleMidTurnMail } = require('./session-mail-mid-turn');
+const { undrawnImagePromptFields } = require('./image-prompt-pin');
 
 function supportsManagedTerminalCoordinator(ctx) {
   return Boolean(
@@ -199,6 +200,7 @@ async function settleManagedAssistantCompletion(ctx) {
       ...(ctx.resumableStop ? { resumableStop: ctx.resumableStop } : {}),
       ...completionEventFields(ctx.completion),
       ...(ctx.discardedDrafts ? { discardedDrafts: ctx.discardedDrafts } : {}),
+      ...undrawnImagePromptFields(ctx.service, ctx.resolvedSessionId, ctx.turnLease?.identity),
       ...ctx.eventBase,
     },
   });

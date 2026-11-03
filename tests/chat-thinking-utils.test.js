@@ -415,6 +415,11 @@ test('summaryFromEntries skips fence lines and filler-only lines of a prettified
   assert.equal(summaryFromEntries([{ text: 'Okay.\n\nSo the plan is clear.' }]), 'So the plan is clear.');
   assert.equal(summaryFromEntries([{ text: 'Okay.' }]), 'Okay.');
   assert.equal(summaryFromEntries([{ text: 'Okay the user wants the cache fixed.\n\nLet me check.' }]), 'Okay the user wants the cache fixed.');
+  // Row 92: the row's CSS ellipsis clips at the pane width; 120 characters cut
+  // a Wide chat width row short.
+  const longLine = 'The user is asking about the sidecar test suite. '.repeat(6).trim();
+  assert.equal(summaryFromEntries([{ text: longLine }]), longLine);
+  assert.equal(Array.from(summaryFromEntries([{ text: 'y'.repeat(2000) }])).length, 500);
 });
 
 for (const { name, raw, code } of STREAM_CONTEXT_FIXTURES) {

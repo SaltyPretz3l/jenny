@@ -27,6 +27,10 @@ Contracts:
   only on the lines a batch actually emits, so lines dropped by backpressure
   never pay for the redaction pipeline on the pipe-reader thread.
 - ``on_chunk`` never blocks the pipe drain and never raises.
+- An optional progress source (a ``TestProgressTracker``) sees every complete line BEFORE
+  backpressure can drop it, and its snapshot rides the batch as ``test_progress`` (at most
+  every ``PROGRESS_MIN_INTERVAL_SECONDS``; a progress-only batch when no lines are pending,
+  and one final batch from ``close()``).
 """
 
 from __future__ import annotations
@@ -35,7 +39,7 @@ import codecs
 import re
 import threading
 import time
-from typing import Callable
+from typing import Callable, Protocol
 
 from sidecar.ai.tools.sanitization import sanitize_tool_output
 
@@ -56,11 +60,30 @@ _MAX_PARTIAL_CHARS = MAX_STREAM_LINE_CHARS
 # the sanitizer's own truncation marker on a genuinely long line.
 _MAX_RAW_LINE_CHARS = 2 * MAX_STREAM_LINE_CHARS
 
+# A progress snapshot rides a batch at most this often while its counts change.
+PROGRESS_MIN_INTERVAL_SECONDS = 0.25
+
+
+class ProgressSource(Protocol):
+    """The slice of ``TestProgressTracker`` the streamer drives."""
+
+    def feed_line(self, line: str) -> None: ...
+
+    def has_update(self) -> bool: ...
+
+    def wants_wake(self) -> bool:
+        """True while a snapshot is due now or will become due (e.g. a decay deadline)."""
+        ...
+
+    def snapshot(self, *, final: bool = False) -> dict[str, object] | None: ...
+
+
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 
 
-def _strip_ansi(text: str) -> str:
-    return _ANSI_ESCAPE_RE.sub("", text)
+def strip_ansi(text: str) -> str:
+    """Remove ANSI CSI/OSC escapes (v1: no cursor emulation)."""
+    return _ANSI_ESCAPE_RE.sub("", text) if "\x1b" in text else text
 
 
 def _collapse_carriage_returns(line: str) -> str:
@@ -79,8 +102,11 @@ class ToolOutputStreamer:
         emit: Callable[[dict[str, object]], None],
         tool_name: str = "run_command",
         clock: Callable[[], float] = time.monotonic,
+        progress: ProgressSource | None = None,
     ) -> None:
         self._emit = emit
+        self._progress = progress
+        self._last_progress_at: float | None = None
         self._tool_name = tool_name
         self._clock = clock
         self._lock = threading.Lock()
@@ -138,6 +164,8 @@ class ToolOutputStreamer:
         line = _collapse_carriage_returns(raw_line.rstrip("\r")).rstrip()
         if not line:
             return
+        if self._progress is not None:
+            self._progress.feed_line(line)  # before backpressure can drop the line
         self._pending.append({"stream": stream, "text": line[:_MAX_RAW_LINE_CHARS]})
         # Backpressure: keep the tail live — drop the OLDEST pending lines.
         while len(self._pending) > MAX_STREAM_PENDING_LINES:
@@ -146,7 +174,7 @@ class ToolOutputStreamer:
 
     def _render_line(self, raw_line: str) -> str:
         """ANSI-strip and sanitize one raw line for emission ("" drops it)."""
-        line = _collapse_carriage_returns(_strip_ansi(raw_line)).rstrip()
+        line = _collapse_carriage_returns(strip_ansi(raw_line)).rstrip()
         if not line:
             return ""
         return sanitize_tool_output(
@@ -169,8 +197,13 @@ class ToolOutputStreamer:
         if self._flush_timer is not None:
             return
         # Schedule when there are pending lines OR the partial snapshot moved
-        # (progress bars rewrite one line and never emit a newline).
-        if not self._pending and self._partial_snapshot_locked() == self._last_partial_snapshot:
+        # (progress bars rewrite one line and never emit a newline) OR a progress
+        # source has something due (its running cells decay with time, not output).
+        if (
+            not self._pending
+            and self._partial_snapshot_locked() == self._last_partial_snapshot
+            and not self._progress_wants_flush_locked()
+        ):
             return
         timer = threading.Timer(STREAM_FLUSH_INTERVAL_SECONDS, self._flush_pending)
         timer.daemon = True
@@ -179,12 +212,39 @@ class ToolOutputStreamer:
 
     # ── flush / close ─────────────────────────────────────────────────
 
-    def _take_batch_locked(self) -> dict[str, object] | None:
+    def _progress_wants_flush_locked(self) -> bool:
+        if self._progress is None:
+            return False
+        try:
+            return self._progress.wants_wake()
+        except Exception:  # noqa: BLE001 - progress is best-effort
+            return False
+
+    def _progress_payload_locked(self, *, final: bool = False) -> dict[str, object] | None:
+        if self._progress is None:
+            return None
+        now = self._clock()
+        try:
+            if not final:
+                last = self._last_progress_at
+                if last is not None and now - last < PROGRESS_MIN_INTERVAL_SECONDS:
+                    return None
+                if not self._progress.has_update():
+                    return None
+            snapshot = self._progress.snapshot(final=final)
+        except Exception:  # noqa: BLE001 - progress is best-effort
+            return None
+        if snapshot is not None:
+            self._last_progress_at = now
+        return snapshot
+
+    def _take_batch_locked(self, *, with_progress: bool = True) -> dict[str, object] | None:
         if self._flush_timer is not None:
             self._flush_timer.cancel()
             self._flush_timer = None
         partial = self._partial_snapshot_locked()
-        if not self._pending and partial == self._last_partial_snapshot:
+        progress = self._progress_payload_locked() if with_progress else None
+        if not self._pending and partial == self._last_partial_snapshot and progress is None:
             return None
         taken = self._pending[:MAX_STREAM_BATCH_LINES]
         self._pending = self._pending[MAX_STREAM_BATCH_LINES:]
@@ -195,8 +255,13 @@ class ToolOutputStreamer:
         ]
         self._emitted_lines += len(lines)
         self._last_partial_snapshot = partial
+        return self._make_batch_locked(lines, partial, progress)
+
+    def _make_batch_locked(
+        self, lines: list[dict[str, str]], partial: str, progress: dict[str, object] | None
+    ) -> dict[str, object]:
         self._sequence += 1
-        return {
+        batch: dict[str, object] = {
             "sequence": self._sequence,
             "lines": lines,
             "partial": partial,
@@ -204,6 +269,9 @@ class ToolOutputStreamer:
             "dropped_lines": self._dropped_lines,
             "elapsed_ms": max(0, int((self._clock() - self._started_at) * 1000)),
         }
+        if progress is not None:
+            batch["test_progress"] = progress
+        return batch
 
     def _flush_pending(self) -> None:
         with self._lock:
@@ -233,10 +301,16 @@ class ToolOutputStreamer:
                     self._append_line_locked(stream, partial)
                     self._partial[stream] = ""
             while True:
-                batch = self._take_batch_locked()
+                batch = self._take_batch_locked(with_progress=False)
                 if batch is None:
                     break
                 batches.append(batch)
+            final = self._progress_payload_locked(final=True)
+            if final is not None:
+                if batches:
+                    batches[-1]["test_progress"] = final
+                else:
+                    batches.append(self._make_batch_locked([], "", final))
         for batch in batches:
             self._safe_emit(batch)
 

@@ -451,6 +451,8 @@
             // The scope is the button that was pressed ("Allow once" vs
             // "Always allow"), never a modifier read from elsewhere in the block.
             const alwaysAllow = toolApproveBtn.getAttribute('data-approval-scope') === 'always';
+            // Row 87 C1: "Always allow for chats Jenny started" also asks the backend to save its offered rule.
+            const remember = toolApproveBtn.getAttribute('data-approval-remember') === 'linked_children' ? 'linked_children' : undefined;
             const originSessionId = String(getSessionId() || '').trim();
             const approvalRow = toolApproveBtn.closest('.approval-gap-row') || block;
             const fallbackTarget = approvalRow ? resolveApprovalFocusFallback(approvalRow) : null;
@@ -458,7 +460,7 @@
             // can itself blur it, so this must reflect focus at click time.
             const heldFocus = !!(approvalRow && doc && approvalRow.contains(doc.activeElement));
             setApprovalBlockBusy(block, true);
-            answerLiveApproval(toolApproveBtn, callId, originSessionId, (liveId) => window.jennyShell.tools.approve(liveId, { alwaysAllow })).then((result) => {
+            answerLiveApproval(toolApproveBtn, callId, originSessionId, (liveId) => window.jennyShell.tools.approve(liveId, remember ? { alwaysAllow, remember } : { alwaysAllow })).then((result) => {
               // CTL-009 refusal handling — see handleApprovalOutcomeRefused.
               if (handleApprovalOutcomeRefused(result, {
                 block, callId, logEvent: 'tool.approve_refused', title: jt('chat.transcript.approvalFailedTitle', 'Approval Failed'),
@@ -589,6 +591,20 @@
           }).catch((error) => {
             showComposerActionError(error, jt('chat.transcript.artifactActionFailedTitle', 'Artifact Action Failed'));
           });
+          return;
+        }
+        const editPromptButton = event.target.closest('[data-image-edit-prompt]');
+        if (editPromptButton) {
+          event.preventDefault();
+          // Row 91: the image's prompt, size and seed back in its chat's composer.
+          const { imagePrompt: prompt, imageSeed, imageWidth, imageHeight } = editPromptButton.dataset;
+          const armed = state?.imagePromptController?.editPrompt?.({
+            sessionId: editPromptButton.dataset.sessionId || getSessionId(), prompt,
+            seed: imageSeed === undefined ? undefined : Number(imageSeed),
+            width: Number(imageWidth), height: Number(imageHeight),
+          }) === true;
+          if (!armed) showComposerActionError(new Error(jt('chat.artifactFigure.editPromptUnavailable', 'The prompt could not be put back in the composer.')),
+            jt('chat.transcript.artifactActionFailedTitle', 'Artifact Action Failed'));
           return;
         }
         const imageActionButton = event.target.closest('[data-image-action]');
@@ -941,9 +957,12 @@
         globalThis.rendererTranscriptViewUtils?.mountTranscriptViewControl?.({
           cluster: utilityCluster, chatTimeline, getSessionId, registerListener, listenerOptions,
         });
+        // Row 92: the Wide transcript toggle, just after the view control.
+        globalThis.rendererTranscriptViewUtils?.mountChatWidthToggle?.({ cluster: utilityCluster, registerListener, listenerOptions });
         // Row 59 checkpoint 2: this pane's session rail (its own session's facts); it disposes with the bind.
         globalThis.rendererSessionRail?.mountSessionRail?.({ pane: utilityCluster.parentElement, cluster: utilityCluster, chatTimeline, getSessionId,
-          refreshIntervalMs: 5000,
+          refreshIntervalMs: 5000, // row 100 P2: the titles of chats waiting on a background job ('' if untitled)
+          getJobWaiters: (jobId) => (state.streamWaits?.waitersForJob?.(jobId) || []).map((id) => String(state.sessions?.find?.((entry) => entry.id === id)?.title || '').trim()),
           // This pane's own queue: split view keeps attachments per session.
           getAttachments: () => globalThis.rendererComposerSessionState?.getQueuedAttachments?.(state, getSessionId())
             ?? state.attachments?.queued ?? [],

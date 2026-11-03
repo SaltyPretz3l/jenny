@@ -87,6 +87,8 @@ def _policy_to_wire(snapshot: ToolPolicySnapshot) -> dict[str, Any]:
                         "mode": list(rule.match.mode),
                         "path_prefix": rule.match.path_prefix,
                         "mcp_server": rule.match.mcp_server,
+                        "command_prefix": rule.match.command_prefix,
+                        "command_exact": rule.match.command_exact,
                     }.items()
                     if value is not None and value != []
                 },

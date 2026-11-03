@@ -139,6 +139,8 @@
   state.safetyMode = chatUiNormalizers.normalizeSafetyMode?.(persistedChatZoomState?.safetyMode) || state.safetyMode || 'normal';
   state.unattendedGuardMinutes = chatUiNormalizers.normalizeUnattendedGuardMinutes?.(persistedChatZoomState?.unattendedGuardMinutes) ?? state.unattendedGuardMinutes ?? 0;
   state.autoApproveStreakCap = chatUiNormalizers.normalizeAutoApproveStreakCap?.(persistedChatZoomState?.autoApproveStreakCap) ?? state.autoApproveStreakCap ?? 50;
+  state.digestQuietStart = chatUiNormalizers.normalizeDigestQuietStart?.(persistedChatZoomState?.digestQuietStart) ?? state.digestQuietStart ?? '22:00';
+  state.digestQuietEnd = chatUiNormalizers.normalizeDigestQuietEnd?.(persistedChatZoomState?.digestQuietEnd) ?? state.digestQuietEnd ?? '07:00';
   // Fallback mirrors services/shell-config-zoom-state.js APP_ZOOM_DEFAULT.
   state.ui.appZoomPercent = Number(
     persistedWindowUiState?.appZoomPercent ?? state.ui.appZoomPercent ?? 110
@@ -177,7 +179,6 @@
       setupSceneFactories: {
         acknowledgement: (window.rendererSetupSceneAcknowledgement || {}).createScene,
         workspaceRoot: (window.rendererSetupSceneWorkspaceRoot || {}).createScene,
-        localModel: (window.rendererSetupSceneLocalModel || {}).createScene,
         endpoint: (window.rendererSetupSceneEndpoint || {}).createScene,
         personality: (window.rendererSetupScenePersonality || {}).createScene,
         skills: (window.rendererSetupSceneSkills || {}).createScene,
@@ -246,8 +247,9 @@
     renderOfflineManagerSafe, bindOfflineShellEventsSafe, handleOfflineModeChangeSafe, refreshApprovedMemoriesSafe,
     refreshPendingMemoriesSafe, refreshMemoryStatusSafe, renderApprovedMemoryManagerSafe, ensureIdeLoaded,
     renderIdeSafe, activateIdeSafe, layoutIdeEditorSafe, reconcileChatDockHostSafe,
-    prepareChatDockSessionTransitionSafe, getIdeCommandItemsSafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe,
+    prepareChatDockSessionTransitionSafe, getIdeCommandItemsSafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe, revealIdePathSafe,
     openIdeTestOutputSafe, openIdeGitViewSafe, revealIdeChangesSafe, openIdeHelpOverlaySafe,
+    openIdeTerminalSafe, runIdeTaskTerminalSafe, closeIdeBottomPanelSafe,
     refreshCompanionStateSafe, shouldRenderHomePanelSafe, renderHomePanelSafe, applyCompanionPayload,
     getAvailableCompanionDeferPresets,
     renderDashboardSafe, refreshAwayDigestSafe = (...a) => Promise.resolve(state.awayDigestReader?.refresh?.(...a) ?? false),
@@ -264,6 +266,12 @@
       chatShellController?.syncTurnElapsedClock?.();
     }));
   }
+  // Row 88 D6: chatUi / windowUi / IDE-preference commits from any writer repaint the shell and Settings at once.
+  const externalSettingsSync = window.rendererSettingsSupport?.createExternalSettingsSync?.({
+    state, windowRef: window, renderAll: () => renderAll(), renderSettings: () => renderSettings(), appendClientLog: (...a) => appendClientLog(...a),
+    reapplyIde: () => { if (state.ui?.activeView === 'ide') activateIdeSafe?.(); },
+  });
+  if (externalSettingsSync) registerRendererCleanup(externalSettingsSync.bind());
   initializeEagerServices();
   const composerStatusController = (window.rendererComposerV2Status || {}).createComposerV2StatusController?.({
     state,
@@ -864,7 +872,8 @@
       openSkillsScopeFolderSafe, bindSkillsShellEventsSafe, refreshOfflineStateSafe, renderOfflineManagerSafe,
       bindOfflineShellEventsSafe, handleOfflineModeChangeSafe, refreshApprovedMemoriesSafe, refreshPendingMemoriesSafe, refreshMemoryStatusSafe, renderApprovedMemoryManagerSafe,
       renderIdeSafe, activateIdeSafe, layoutIdeEditorSafe,
-      reconcileChatDockHostSafe, getIdeCommandItemsSafe, openIdeHelpOverlaySafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe,
+      reconcileChatDockHostSafe, getIdeCommandItemsSafe, openIdeHelpOverlaySafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe, revealIdePathSafe,
+      openIdeTerminalSafe, runIdeTaskTerminalSafe, closeIdeBottomPanelSafe,
       refreshCompanionStateSafe, shouldRenderHomePanelSafe, renderHomePanelSafe,
       applyCompanionPayload, getAvailableCompanionDeferPresets, initSetupControllerSafe, applySetupBackendStatusSafe, openSetupTileSafe,
       showSetupHelpSafe, showFactoryResetSafe, handleRunSetupAgain, buildAttachmentBudget,

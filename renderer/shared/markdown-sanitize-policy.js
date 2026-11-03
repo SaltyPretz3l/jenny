@@ -113,6 +113,12 @@
       else node.removeAttribute('align');
     }
 
+    // A link resolves against the same page, so a click would open the share:
+    // the anchor keeps its text and loses the href, like a disallowed scheme.
+    if (tagName === 'a' && node.hasAttribute('href') && reachesFileHost(node.getAttribute('href'))) {
+      node.removeAttribute('href');
+    }
+
     if (tagName === 'img') {
       if (node.hasAttribute('src') && reachesFileHost(node.getAttribute('src'))) node.removeAttribute('src');
       node.setAttribute('loading', 'lazy');

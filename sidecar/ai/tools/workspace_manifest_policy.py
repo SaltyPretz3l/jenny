@@ -246,6 +246,33 @@ class _GitInventory:
     degraded_reason: str | None
 
 
+@dataclass(frozen=True)
+class GitPathInventory:
+    """Git's tracked and unignored untracked paths below one directory.
+
+    Keys are relative to that directory and normalized by :func:`inventory_key`;
+    ``directories`` holds every parent directory of a listed path.
+    """
+
+    files: frozenset[str]
+    directories: frozenset[str]
+
+
+def read_covering_git_inventory(root: Path, *, timeout_seconds: float) -> GitPathInventory | None:
+    """The bounded ``git ls-files`` inventory of ``root``, or None to walk the filesystem.
+
+    None when no git marker is found, git fails, times out or exceeds its path
+    budget, or git answers for a repository that does not index ``root`` (an
+    ignored folder inside a repository).
+    """
+    if not _git_marker_present(root):
+        return None
+    inventory = _read_git_inventory(root, timeout_seconds=timeout_seconds)
+    if inventory.files is None or not _inventory_covers(inventory, root):
+        return None
+    return GitPathInventory(files=inventory.files, directories=inventory.directories)
+
+
 def build_manifest_scan_policy(
     root: Path,
     *,
@@ -620,6 +647,11 @@ def _inventory_key(path: str) -> str:
     return normalized.casefold() if _INVENTORY_CASE_INSENSITIVE else normalized
 
 
+def inventory_key(path: str) -> str:
+    """Normalize a relative path the way inventory keys are (case-folded on Windows)."""
+    return _inventory_key(path)
+
+
 def _safe_inventory_path(path: str) -> bool:
     if not path or _INVENTORY_PATH_CONTROL_CHARS_RE.search(path):
         return False
@@ -639,11 +671,14 @@ def _looks_like_test_name(name: str) -> bool:
 
 __all__ = [
     "FILE_CLASSIFICATIONS",
+    "GitPathInventory",
     "ManifestScanPolicy",
     "RankedFileCandidate",
     "build_manifest_scan_policy",
     "classify_workspace_path",
     "empty_classification_counts",
+    "inventory_key",
     "make_ranked_file_candidate",
     "order_ranked_files",
+    "read_covering_git_inventory",
 ]

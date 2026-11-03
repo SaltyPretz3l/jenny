@@ -152,3 +152,44 @@ test('a preparation turn draws no user row; an auto-resume draws one quiet note'
   assert.equal(doc.querySelector('article').dataset.messageRole, 'system');
   assert.equal(doc.querySelector('.hover-row, .chat-bubble'), null);
 });
+
+// Row 85 (owner pick C1): a fired scheduled check draws the same quiet line, naming its title, and
+// its label is never replayed by Retry or Edit.
+test('a fired scheduled check draws one quiet note with its title and offers no Retry or Edit', () => {
+  const pipeline = pipelineFor('primary');
+  const fired = normalizeChatMessages([{ id: 'user_sched', role: 'user', content: 'Scheduled check: What finished overnight', application_turn: 'scheduled_check', timestamp: '2026-11-02T08:00:00.000Z' }]);
+  assert.equal(actions.applicationTurnOf(fired[0]), 'scheduled_check');
+  assert.equal(actions.applicationTurnNoteText(fired[0]), 'Scheduled check · What finished overnight');
+  const doc = new JSDOM(`<body>${pipeline.buildMessageArticleMarkup(fired[0], fired)}</body>`).window.document;
+  assert.match(doc.querySelector('.chat-app-turn-note').textContent, /^Scheduled check · What finished overnight/);
+  assert.equal(doc.querySelector('.hover-row, .chat-bubble'), null);
+  assert.equal(actions.buildMessageActionModel(fired[0], { messages: fired }).actions.edit.visible, false);
+  const store = { sessionStore: { getSession: () => ({ messages: [{ id: 'u1', role: 'user', application_turn: 'scheduled_check' }] }) } };
+  assert.throws(() => assertRegenerateAnchorAdmissible(store, 's', 'u1'), (error) => error.code === 'application_turn_retry_refused');
+  assert.equal(normalizeRequestApplicationTurn('scheduled_check'), 'scheduled_check');
+});
+
+// Row 86: a "While you were away" digest turn draws row 85's quiet note with its time and is treated like a
+// scheduled check by Retry and Edit.
+test('a digest turn draws the "While you were away" quiet note and offers no Retry or Edit', () => {
+  const pipeline = pipelineFor('primary');
+  const digest = normalizeChatMessages([
+    { id: 'user_digest', role: 'user', content: 'While you were away', application_turn: 'digest', timestamp: '2026-11-02T09:14:00.000Z' },
+    { id: 'asst_digest', role: 'assistant', content: 'One thing needs you.', timestamp: '2026-11-02T09:14:05.000Z' },
+  ]);
+  assert.equal(actions.applicationTurnOf(digest[0]), 'digest');
+  assert.equal(actions.applicationTurnNoteText(digest[0]), 'While you were away');
+  const doc = new JSDOM(`<body>${pipeline.buildMessageArticleMarkup(digest[0], digest)}</body>`).window.document;
+  const note = doc.querySelector('.chat-app-turn-note');
+  assert.equal(note.getAttribute('role'), 'note');
+  assert.equal(note.firstElementChild.textContent, 'While you were away');
+  assert.ok(doc.querySelector('.chat-app-turn-note-time'));
+  assert.equal(doc.querySelector('.hover-row, .chat-bubble'), null);
+  assert.equal(actions.buildMessageActionModel(digest[0], { messages: digest }).actions.edit.visible, false);
+  const regenerate = actions.resolveRegenerateRequest('asst_digest', digest, { latestReplyAssistantMessageId: 'asst_digest' });
+  assert.equal(regenerate.allowed, false);
+  assert.equal(regenerate.reason, 'Send a message to continue.');
+  assert.equal(resolveHandoffPreparationErrorNotice({ id: 'asst_digest' }, digest), true, 'a failed digest shows no Retry on its error card');
+  const store = { sessionStore: { getSession: () => ({ messages: [{ id: 'u1', role: 'user', application_turn: 'digest' }] }) } };
+  assert.throws(() => assertRegenerateAnchorAdmissible(store, 's', 'u1'), (error) => error.code === 'application_turn_retry_refused');
+});

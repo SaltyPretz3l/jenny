@@ -59,6 +59,20 @@ The rail has six groups.
 - Run first-run setup again: Settings > Profile, data and updates > Setup > Run setup again.
 - Back up or remove your data: Settings > Profile, data and updates > Data and removal.
 
+## Settings Jenny can change
+
+In the Jenny chat you can ask Jenny to change a few settings for you. She reads them with settings_get and changes them with settings_change. Each change shows a card with the old and new value, and nothing changes until you approve it. Up to five settings can change in one card, all or none. Jenny can change these:
+
+- Time and language: the 24-hour clock, the interface language.
+- Chats: the default run mode (Ask, Plan or Propose), the default transcript view.
+- Window: the zoom level.
+- Appearance: the palette, the typography, the text size and the chat width.
+- Notifications: on or off, sound, only when the window is not focused, and each category (replies, failures, permissions, questions and reminders).
+- Memory: take notes, ask before saving, pause saving and use memory in chats.
+- Editor: font size, tab size and auto save.
+
+Jenny never changes API keys, models, engines, safety settings or tool permissions, and she cannot make Auto the default run mode. Open Settings yourself for those. She can undo her own settings changes from Activity.
+
 ## Language and time
 
 Settings > Appearance offers many interface languages and an optional 24-hour clock. Language and direction changes need a restart; the 24-hour setting updates times at once. Translations are model-authored, so some wording may stay in English. Arabic mirrors the layout, while code and paths stay left to right.

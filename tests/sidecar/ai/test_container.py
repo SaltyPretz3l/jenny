@@ -11,6 +11,7 @@ from sidecar.ai.config import RuntimeConfig
 from sidecar.ai.container import (
     _apply_context_length_override,
     _default_mcp_servers,
+    _mcp_connect_plan,
     _sub_agent_slot_allocator_for_config,
 )
 from sidecar.ai.mcp.transport_base import MCPTransport
@@ -44,6 +45,19 @@ def test_default_mcp_servers_forward_web_configuration(tmp_path: Path) -> None:
     assert args[args.index("--workspace-manifest-enabled") + 1] == "1"
     assert "--rich-files-enabled" in args
     assert args[args.index("--rich-files-enabled") + 1] == "1"
+
+
+def test_loopback_flag_reaches_builtin_server_and_mcp_connect_plan(tmp_path: Path) -> None:
+    # Row 103: the loopback-only flag travels on its own; the private flag is
+    # untouched (it still implies loopback at the validator).
+    config = RuntimeConfig(tools_web_enabled=True, tools_web_allow_loopback=True)
+    args = list(_default_mcp_servers(config, tmp_path)[0].args)
+    assert args[args.index("--web-allow-loopback") + 1] == "1"
+    assert args[args.index("--web-allow-private-addresses") + 1] == "0"
+    plan = _mcp_connect_plan(config, tmp_path)
+    assert (plan.allow_loopback, plan.allow_private_addresses) == (True, False)
+    default_args = list(_default_mcp_servers(RuntimeConfig(), tmp_path)[0].args)
+    assert default_args[default_args.index("--web-allow-loopback") + 1] == "0"
 
 
 def test_default_mcp_servers_forward_connections(tmp_path: Path) -> None:
@@ -196,7 +210,7 @@ def test_default_mcp_servers_forward_shell_security_and_git_tracking_flags(
 
 @pytest.mark.parametrize(
     "flag",
-    ["shell_noninteractive_env", "shell_head_tail_output", "edit_match_fallbacks"],
+    ["shell_noninteractive_env", "shell_head_tail_output", "edit_match_fallbacks", "test_progress"],
 )
 def test_default_mcp_servers_forward_row60_default_on_flags(tmp_path: Path, flag: str) -> None:
     option = f"--{flag.replace('_', '-')}-enabled"

@@ -126,7 +126,7 @@ function setup(host, overrides = {}) {
     buildLedger: () => ledger,
     getTurnTime: TIME.getTurnTime,
     formatTime: () => '2:41 PM',
-    actionButton: (o) => `<button data-${Object.keys(o.dataset || {})[0] || 'x'}="${Object.values(o.dataset || {})[0] || ''}">${o.label}</button>`,
+    actionButton: overrides.actionButton || ((o) => `<button data-${Object.keys(o.dataset || {})[0] || 'x'}="${Object.values(o.dataset || {})[0] || ''}">${o.label}</button>`),
     renderDiffBody: () => '<div class="diff-line diff-line-add">+x</div>',
     openChangeDiff: (c) => { opened.push(c.path); return true; },
     undoController: overrides.undoController || null,
@@ -193,6 +193,66 @@ test('side panel opens a detail page with All changes and the unified diff', () 
   assert.equal(mountEl.querySelector('.changes-view').getAttribute('data-changes-mode'), 'history');
 });
 
+test('the side panel detail page steps to the previous and next change, disabled at the ends', () => {
+  const { dom, mountEl } = setup('panel', { actionButton: require('../renderer/inventory/action-button') });
+  const click = (el) => el.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  const position = () => mountEl.querySelector('.changes-detail-position').textContent;
+  const step = (direction) => mountEl.querySelector(`[data-changes-step="${direction}"]`);
+  click(mountEl.querySelectorAll('[data-changes-item]')[0]);
+  assert.match(position(), /Change 1 of 3/);
+  assert.equal(step(-1).disabled, true);
+  assert.equal(step(1).disabled, false);
+  assert.equal(step(1).getAttribute('aria-label'), 'Next file');
+  assert.equal(step(-1).getAttribute('aria-label'), 'Previous file');
+  click(step(1));
+  assert.match(position(), /Change 2 of 3/);
+  assert.equal(step(-1).disabled, false);
+  click(step(1));
+  assert.match(position(), /Change 3 of 3/);
+  assert.equal(step(1).disabled, true);
+  click(step(-1));
+  assert.match(position(), /Change 2 of 3/);
+  assert.equal(mountEl.querySelector('.changes-view').getAttribute('data-changes-mode'), 'detail');
+});
+
+test('the dock has no Previous / Next, and unmounting the side panel view leaves no rows behind', () => {
+  const dock = setup('dock', { actionButton: require('../renderer/inventory/action-button') });
+  assert.equal(dock.mountEl.querySelector('[data-changes-step]'), null);
+  const panel = setup('panel');
+  panel.mountEl.querySelector('[data-changes-item]').dispatchEvent(new panel.dom.window.MouseEvent('click', { bubbles: true }));
+  assert.ok(panel.mountEl.querySelector('.diff-line'));
+  panel.view.unmount();
+  assert.equal(panel.mountEl.children.length, 0);
+  panel.view.mount(panel.mountEl);
+  assert.ok(panel.mountEl.querySelector('.changes-view'), 'mounting again renders afresh');
+});
+
+test('the side panel file row menu adds Copy diff and Ask Jenny to the path menu; the dock does not', async () => {
+  const run = async (host) => {
+    const { dom, mountEl } = setup(host, { ledger: { changes: [change({ path: 'a.js', hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-x', '+y'] }] })], notices: [] } });
+    const win = dom.window;
+    const shown = [];
+    const copied = [];
+    const composer = [];
+    win.inventoryContextMenu = { show: (options) => shown.push(options) };
+    win.rendererIdePathMenu = require('../renderer/features/renderer-ide-path-menu');
+    win.rendererPanelCodeActions = require('../renderer/features/renderer-panel-code-actions');
+    win.jennyShell = { clipboard: { writeText: async (text) => copied.push(text) } };
+    win.rendererComposerInsert = { insertIntoComposer: (payload) => { composer.push(payload.text); return true; } };
+    mountEl.querySelector('.changes-history-file').dispatchEvent(new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    return { shown, copied, composer };
+  };
+  const panel = await run('panel');
+  const labels = panel.shown[0].items.filter((entry) => !entry.separator).map((entry) => entry.label);
+  assert.deepEqual(labels.slice(-2), ['Copy diff', 'Ask Jenny about this file']);
+  await panel.shown[0].items.find((entry) => entry.label === 'Copy diff').action();
+  panel.shown[0].items.find((entry) => entry.label === 'Ask Jenny about this file').action();
+  assert.deepEqual(panel.copied, ['--- a/a.js\n+++ b/a.js\n@@ -1,1 +1,1 @@\n-x\n+y\n']);
+  assert.deepEqual(panel.composer, ['`a.js` ']);
+  const dock = await run('dock');
+  assert.ok(!dock.shown[0].items.some((entry) => entry.label === 'Copy diff'));
+});
+
 test('Undo… shows only for undoable turns and an undone turn offers Redo', () => {
   const undone = { t1: { status: 'undone', undoneAt: 5000, canRedo: true, files: { 'a.js': 'undone', 'b.js': 'kept' } } };
   const calls = [];
@@ -240,4 +300,26 @@ test('dispose detaches listeners', () => {
   view.dispose();
   mountEl.querySelector('[data-changes-item]').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
   assert.deepEqual(opened, []);
+});
+
+test('context menu on a changed-file row offers Reveal and Copy for its workspace-relative path', () => {
+  const { dom, mountEl } = setup('dock');
+  const win = dom.window;
+  const shown = [];
+  const revealed = [];
+  win.inventoryContextMenu = { show: (options) => shown.push(options) };
+  win.rendererIdePathMenu = require('../renderer/features/renderer-ide-path-menu');
+  win.jennyShell = { workspaceFs: { revealInFolder: async (payload) => { revealed.push(payload.path); } } };
+  const rows = Array.from(mountEl.querySelectorAll('.changes-history-file'));
+  const event = new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 5, clientY: 6 });
+  rows[1].dispatchEvent(event);
+  assert.equal(event.defaultPrevented, true);
+  assert.equal(shown.length, 1);
+  assert.deepEqual(shown[0].items.filter((item) => !item.separator).map((item) => item.label),
+    ['Reveal in File Explorer', 'Open in Default App', 'Copy Path', 'Copy Relative Path', 'Copy Name']);
+  shown[0].items.find((item) => item.label === 'Reveal in File Explorer').action();
+  assert.deepEqual(revealed, [rows[1].querySelector('.changes-history-path').textContent]);
+  const outside = new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+  mountEl.querySelector('.changes-view-title').dispatchEvent(outside);
+  assert.equal(outside.defaultPrevented, false);
 });

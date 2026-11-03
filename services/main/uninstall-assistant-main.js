@@ -39,6 +39,7 @@ function normalizeRemovalOptions(payload) {
     confirmation,
     archive,
     removeWorkspaceData: source.removeWorkspaceData === true,
+    removeSkills: source.removeSkills === true,
   };
 }
 

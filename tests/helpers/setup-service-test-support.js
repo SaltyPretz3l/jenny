@@ -75,6 +75,10 @@ function createConfigService(state = {}) {
       store.toolsWorkspaceRoot = '';
       return this.getState();
     },
+    setToolsWorkspaceRoot(rootPath) {
+      store.toolsWorkspaceRoot = String(rootPath || '');
+      return this.getState();
+    },
     getToolsWorkspaceRoot: () => store.toolsWorkspaceRoot,
     getWorkspaceRootStatus: () => store.workspaceRootStatus || (
       store.toolsWorkspaceRoot

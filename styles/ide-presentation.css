@@ -63,3 +63,8 @@
 .ide-presentation-chip-dismiss:hover {
   color: var(--text-primary);
 }
+
+/* app_view (row 94 P3): the same chip, hosted by the chat composer and floating just above it. */
+.app-view-chip {
+  bottom: calc(100% + 8px);
+}

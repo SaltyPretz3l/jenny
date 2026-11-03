@@ -48,6 +48,8 @@ function createChatWorkspaceService({ backendService, emit = () => {}, log = () 
     getWorktreeEntries: () => backendService.worktreeService?._registryService?.listAll?.() || [],
     getExecutionEnvironment: () => resolveExecutionEnvironment(backendService),
     getWorkspaceTestSource: () => backendService.workspaceTestRunnerService || null,
+    // Backgrounded run_command jobs, running and finished (the tracker owns them).
+    getBackgroundJobTracker: () => backendService.backgroundJobTracker || null,
     // Linked chat turns: the session runtime's work index (read-only; absent when the runtime is not composed).
     getRuntimeStore: () => backendService.sessionRuntime?.store || null,
     isActivityEnabled: () => backendService.featureFlags?.activity_monitor === true,
@@ -57,6 +59,10 @@ function createChatWorkspaceService({ backendService, emit = () => {}, log = () 
   // Terminal context-usage persistence, artifact registration and session
   // completion all surface as chat-stream events; no new producer hook needed.
   backendService.on?.('chat-stream', (event) => service.handleChatStreamEvent(event));
+  // A background job registered, settled or was evicted: those sessions' rails refetch.
+  backendService.backgroundJobTracker?.onChanged?.((sessionIds) => {
+    for (const sessionId of sessionIds) service.notifyCoordinationChanged(sessionId);
+  });
   return service;
 }
 

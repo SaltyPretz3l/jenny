@@ -47,8 +47,12 @@ async function createToolPreferenceService(title, tempPrefix) {
   markManagedSidecarReady(service);
   // These pins cover the composer toggles only. The row 69 session-directory gate adds its own
   // deny-list entries for an unlinked chat (tests/session-directory-tool-gate.test.js); its kill
-  // switch keeps it out of the payloads asserted here.
-  service.featureFlags = { ...service.featureFlags, session_directory_tool_gate: false };
+  // switch keeps it out of the payloads asserted here. So do the row 88 settings-tool gate's, the row 94 chat, placement, app-view, export and terminal gates' and the row 85 schedule-tool gate's.
+  service.featureFlags = {
+    ...service.featureFlags, session_directory_tool_gate: false, primary_settings_writes: false, primary_chat_manage: false,
+    primary_chat_placement: false, primary_app_view: false, primary_chat_export: false, terminal_tools: false,
+    primary_scheduled_checks: false,
+  };
   const created = await service.createSession({
     title,
     preferences: {

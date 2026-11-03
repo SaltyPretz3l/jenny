@@ -19,6 +19,18 @@ const {
 } = require('../artifact-metadata-utils');
 const { isPrimaryRole } = require('./primary-session');
 
+// The record fields an internal caller may set on a new branch (row 94 P2: a primary-chat proposal's fork
+// carries the reserved incarnation, its spawned_from proof, reporting and the accepted preferences).
+const BRANCH_SESSION_FIELD_KEYS = Object.freeze([
+  'session_incarnation', 'spawned_from', 'session_mail', 'preferred_model', 'reasoning_effort',
+  'run_mode', 'plan_mode', 'pre_plan_run_mode', 'lockdown',
+]);
+
+function branchSessionFields(fields) {
+  if (!fields || typeof fields !== 'object' || Array.isArray(fields)) return {};
+  return Object.fromEntries(BRANCH_SESSION_FIELD_KEYS.filter((key) => Object.hasOwn(fields, key)).map((key) => [key, fields[key]]));
+}
+
 function isBranchableMessage(message) {
   if (!message || typeof message !== 'object' || Array.isArray(message)) {
     return false;
@@ -119,7 +131,8 @@ function branchMessage(message, artifactRewrite) {
   // Addressed session messages keep their canonical id (`ctx_<message_id>` / `ctxr_<message_id>`) and a
   // first-turn handoff keeps `ctxh_<proposal>`: a re-minted id would fail validation and silently drop
   // the row. They are inert history in the fork; mail state (inbox/outbox/snapshots) lives in
-  // session_mail, which a fork never copies, and a fork gets no spawned_from or proposal link.
+  // session_mail, which a fork never copies, and a fork gets no spawned_from or proposal link of its
+  // source (a primary-chat proposal's fork gets that proposal's own, through options.sessionFields).
   if (message?.role === 'context') return structuredClone(message);
   const branched = {
     ...message,
@@ -212,6 +225,8 @@ function updateLinkedSessionIds(store, sessionId, linkedSessionId) {
  * @param {Function} [options.artifactRewrite] - Per-entry generated-artifact
  *   rewriter; when present, copied tool results carry rewritten artifact
  *   references instead of the default strip-and-mark behavior
+ * @param {Object} [options.sessionFields] - Internal: record fields set on the
+ *   branch (only BRANCH_SESSION_FIELD_KEYS; never renderer-authored)
  * @returns {Object|null} Session summary of the new branch, or null on error
  */
 function forkSession(sessionStore, sourceSessionId, atMessageId, options = {}) {
@@ -294,6 +309,7 @@ function forkSession(sessionStore, sourceSessionId, atMessageId, options = {}) {
     message_seq_counter: branchMessageSeqCounter,
     turn_events: [],
     active_turn: null,
+    ...branchSessionFields(options.sessionFields),
   });
 
   let summary;
@@ -380,6 +396,13 @@ async function forkSessionWithArtifacts(sessionStore, sourceSessionId, atMessage
   const { artifactService, maxArtifactCopyBytes, ...forkOptions } = (
     options && typeof options === 'object' && !Array.isArray(options) ? options : {}
   );
+  // A pre-generated id (row 94 P2: a proposal's reserved child id) must be fresh before any artifact is
+  // copied under it, or a failed fork's cleanup would remove that session's artifacts.
+  const requestedBranchId = String(forkOptions.branchSessionId || '').trim();
+  if (requestedBranchId
+    && (requestedBranchId === String(sourceSessionId) || sessionStore.getSession(requestedBranchId))) {
+    return null;
+  }
   const carriedEntries = collectCarriedArtifactEntries(sessionStore, sourceSessionId, atMessageId);
   const carryableEntries = normalizeGeneratedArtifactMetadataList(carriedEntries);
   if (
@@ -389,7 +412,7 @@ async function forkSessionWithArtifacts(sessionStore, sourceSessionId, atMessage
     return forkSession(sessionStore, sourceSessionId, atMessageId, forkOptions);
   }
 
-  const branchSessionId = createSessionId();
+  const branchSessionId = requestedBranchId || createSessionId();
   const releasePruneProtection = typeof artifactService.markSessionPruneProtected === 'function'
     ? artifactService.markSessionPruneProtected(branchSessionId)
     : () => {};

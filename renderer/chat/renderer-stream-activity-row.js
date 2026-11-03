@@ -67,6 +67,7 @@
     'tool_result',
     'tool_output_chunk',
     'tool_progress',
+    'tool_test_progress',
   ]);
   const TERMINAL_TYPES = new Set(['complete', 'error']);
   // Chrome-only telemetry: proves nothing about turn progress, so it neither

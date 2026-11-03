@@ -33,8 +33,9 @@ If a tool is hidden from the model to save context, the model can ask for it wit
 - Worktrees and code intelligence: worktree_list, worktree_create, worktree_select and worktree_delete manage isolated Git worktrees; lsp gives read-only diagnostics, symbols and definitions from language servers.
 - Skills: load_skill reads a skill on demand. See skills-and-mcp.
 - Questions and plans: ask_user asks you structured questions; exit_plan_mode submits a plan for review.
+- Next step: suggest_next_step ends a reply with a short recap and up to three reply buttons; a click sends that reply as your next message. It never waits.
 - Proposals: propose_git_action, propose_command and propose_session hand a decision to you instead of acting. propose_session offers a new linked chat.
-- Sessions and messaging: sessions_list, session_status, session_transcript, session_stop and session_message let a chat see other chats, check their status, read their transcripts, message them and stop them. See linked-chats-and-messaging and jenny-chat.
+- Sessions and messaging: sessions_list, session_status, session_transcript, session_stop and session_message let a chat see other chats, check their status, read their transcripts, message them and stop them. In the Jenny chat, chat_organize and chat_configure also rename, pin or archive other chats, move them and set their model, effort and run mode, always with your approval and an Undo in Activity; projects_list and project_create find or create the project for a folder before Jenny offers a chat there; app_view opens a place in the app for you to see; session_export saves a copy of a chat to Downloads; terminal_read reads the IDE terminal (project chats too, for the project the IDE has open) and terminal_run runs one line there, always with a card. See linked-chats-and-messaging and jenny-chat.
 - Diagnostics: jenny_status returns a read-only snapshot of backend, runtime, logs and budgets. connections_list reports configured connections. jenny_help searches this guide.
 - MCP: tools from approved MCP servers appear as mcp__server__tool. See skills-and-mcp.
 

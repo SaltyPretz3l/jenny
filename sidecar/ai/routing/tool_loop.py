@@ -40,9 +40,11 @@ from sidecar.ai.feature_flags import (
     is_resource_discipline_enabled,  # noqa: F401
 )
 from sidecar.ai.routing import (  # noqa: F401
+    background_job_notices,
     heuristic_fires,
     loop_event_emit,
     mutation_change_set_lifecycle,
+    pending_todos,
     plan_presentation,
     promise_nudge,
     propose_presentation,
@@ -51,10 +53,12 @@ from sidecar.ai.routing import (  # noqa: F401
     tool_loop_cycle_recovery,
     tool_loop_recovery,
     tool_loop_text_tool_calls,
+    verify_after_write,
     write_progress,
 )
 from sidecar.ai.routing.auto_checkpoint import maybe_create_auto_checkpoint  # noqa: F401
 from sidecar.ai.routing.loop_events import (
+    BackgroundJobNoticeConsumedEvent,  # noqa: F401
     IterationStartEvent,  # noqa: F401
     MailConsumedEvent,  # noqa: F401
     TokenDeltaEvent,
@@ -84,7 +88,11 @@ from sidecar.ai.routing.tool_observation import (
     KIND_TURN_FAILED,  # noqa: F401
     KIND_USER_APPROVAL_REQUESTED,  # noqa: F401
 )
-from sidecar.ai.routing.turn_boundary import finish_loop_at_boundary  # noqa: F401
+from sidecar.ai.routing.turn_boundary import (
+    ends_turn_at_next_step,  # noqa: F401
+    finish_loop_at_boundary,  # noqa: F401
+    finish_loop_at_next_step,  # noqa: F401
+)
 from sidecar.ai.routing.visible_reply import finalize_visible_reply
 from sidecar.ai.tools import text_tool_calls  # noqa: F401
 from sidecar.ai.tools.assembly import current_info_remediation

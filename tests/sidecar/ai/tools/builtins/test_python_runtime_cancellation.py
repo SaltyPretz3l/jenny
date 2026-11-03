@@ -112,6 +112,7 @@ def test_pre_set_event_does_not_spawn_or_leave_scratch(
             venv_python=Path(sys.executable),
             timeout_seconds=30,
             memory_limit_mb=512,
+            working_directory=tmp_path,
             abort_event=abort_event,
         )
     assert caught.value.cleanup_confirmed is True
@@ -178,6 +179,7 @@ def test_unconfirmed_cleanup_still_surfaces_as_cancellation(
             venv_python=Path(sys.executable),
             timeout_seconds=30,
             memory_limit_mb=512,
+            working_directory=tmp_path,
             abort_event=abort_event,
         )
     assert caught.value.cleanup_confirmed is False

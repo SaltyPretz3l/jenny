@@ -53,6 +53,10 @@ const MAX_FORGET_MEMORIES = 500;
 const MAX_DISCARD_IDS = 100; // chat-messaging-contract MAX_MESSAGE_IDS
 const DISCARDABLE_MAIL = new Set(['queued', 'excluded_by_user']);
 
+// Row 85 D11: Forget also deletes the scheduled checks (reminders with `action: 'jenny_turn'`)
+// unless the person keeps them; plain reminders and a reset without forget are never touched.
+const SCHEDULED_CHECK_ACTION = 'jenny_turn';
+
 const refuse = (reason) => ({ ok: false, reason });
 
 function reasonToken(error, fallback = 'error') {
@@ -282,6 +286,26 @@ async function forgetMemories(service, sessionId, ctx) {
   return forgotten;
 }
 
+function scheduledCheckIds(service) {
+  const reminders = service.configService?.getState?.()?.proactive?.reminders;
+  return (Array.isArray(reminders) ? reminders : [])
+    .filter((reminder) => reminder?.action === SCHEDULED_CHECK_ACTION && typeof reminder.id === 'string' && reminder.id)
+    .map((reminder) => reminder.id);
+}
+
+async function deleteScheduledChecks(service, ctx) {
+  let deleted = 0;
+  let ids = [];
+  await ctx.step('scheduled_checks', 'scheduled_checks', () => { ids = scheduledCheckIds(service); });
+  for (const id of ids) {
+    await ctx.step('scheduled_checks', 'scheduled_checks', () => {
+      service.configService.deleteReminder(id);
+      deleted += 1;
+    });
+  }
+  return deleted;
+}
+
 async function setMemoryOptOut(service, sessionId) {
   const current = service.sessionStore.getSession(sessionId)?.context_preferences || {};
   const write = typeof service.setSessionPreferences === 'function'
@@ -322,7 +346,9 @@ function createContext(service, sessionId) {
   return { limits, limit, fail, step };
 }
 
-async function runReset(service, sessionId, { forget, keepCopy, memoryOptOut, now }) {
+async function runReset(service, sessionId, {
+  forget, keepCopy, memoryOptOut, deleteChecks, now,
+}) {
   const store = service.sessionStore;
   const before = store.getSession(sessionId);
   if (!before) return refuse('not_found');
@@ -351,6 +377,7 @@ async function runReset(service, sessionId, { forget, keepCopy, memoryOptOut, no
 
   await purgeConversationIndex(service, sessionId);
   const forgotten = forget ? await forgetMemories(service, sessionId, ctx) : null;
+  const checksDeleted = forget && deleteChecks ? await deleteScheduledChecks(service, ctx) : 0;
   if (memoryOptOut) await ctx.step('memory_opt_out', 'memory_opt_out', () => setMemoryOptOut(service, sessionId));
   await ctx.step('history', 'history', async () => {
     if ((await service.primaryChatControls?.recordHistory?.(forget ? 'forgot' : 'reset')) === false) {
@@ -370,6 +397,7 @@ async function runReset(service, sessionId, { forget, keepCopy, memoryOptOut, no
     copy: copyPath !== null,
     memories: forgotten?.memories ?? 0,
     pending: forgotten?.pending ?? 0,
+    scheduledChecksDeleted: checksDeleted,
     limits: ctx.limits,
   });
   return {
@@ -379,13 +407,15 @@ async function runReset(service, sessionId, { forget, keepCopy, memoryOptOut, no
     cleared: { messages, mail, proposals },
     copy_path: copyPath,
     forgotten,
+    scheduled_checks_deleted: checksDeleted,
     limits: ctx.limits,
   };
 }
 
-// resetPrimaryChat(service, { forget, keep_copy, memory_opt_out, now }) -> { ok: true, ... } | { ok: false, reason }.
+// resetPrimaryChat(service, { forget, keep_copy, memory_opt_out, delete_scheduled_checks, now }) -> { ok: true, ... } | { ok: false, reason }.
 async function resetPrimaryChat(service, {
-  forget = false, keep_copy: keepCopy = true, memory_opt_out: memoryOptOut = false, now = () => new Date(),
+  forget = false, keep_copy: keepCopy = true, memory_opt_out: memoryOptOut = false,
+  delete_scheduled_checks: deleteChecks = false, now = () => new Date(),
 } = {}) {
   if (controlsDisabled(service)) return refuse('disabled');
   const sessionId = primaryId(service);
@@ -403,7 +433,8 @@ async function resetPrimaryChat(service, {
       MUTATION_SITE,
       () => null,
       () => runReset(service, sessionId, {
-        forget: forget === true, keepCopy: keepCopy !== false, memoryOptOut: memoryOptOut === true, now,
+        forget: forget === true, keepCopy: keepCopy !== false, memoryOptOut: memoryOptOut === true,
+        deleteChecks: deleteChecks !== false, now,
       }),
       { requireIdle: true }
     );
@@ -421,7 +452,13 @@ async function forgetPreview(service) {
   if (!sessionId) return refuse('not_found');
   try {
     const { memories, candidates } = await primaryMemories(service, sessionId);
-    return { ok: true, schema_version: SCHEMA_VERSION, memories: memories.length, pending: candidates.length };
+    return {
+      ok: true,
+      schema_version: SCHEMA_VERSION,
+      memories: memories.length,
+      pending: candidates.length,
+      scheduled_checks: scheduledCheckIds(service).length,
+    };
   } catch (error) {
     emit(service, 'WARN', 'primary_chat.reset_step_failed', { sessionId, step: 'preview', reason: reasonToken(error) });
     return refuse('unavailable');

@@ -1327,6 +1327,7 @@ def test_python_execute_tool_working_directory_and_chart_attachment(
         lambda _config, **_kwargs: tmp_path / "python.exe",
     )
     monkeypatch.setattr(tool_module, "execute_sandboxed", execute)
+    monkeypatch.setattr(tool_module, "create_scratch_dir", lambda: work_dir)
 
     with caplog.at_level("INFO", logger=tool_module.__name__):
         result = tool_module.python_execute_tool(
@@ -1334,8 +1335,10 @@ def test_python_execute_tool_working_directory_and_chart_attachment(
             WorkspaceGuard(str(workspace_root) if use_workspace else None),
         )
 
-    expected_working_directory = workspace_root.resolve() if use_workspace else None
+    # Without a bound workspace the run's scratch dir is the explicit root (item 11).
+    expected_working_directory = workspace_root.resolve() if use_workspace else work_dir
     assert captured["working_directory"] == expected_working_directory
+    assert captured["work_dir"] == (None if use_workspace else work_dir)
     assert len(result.trusted_attachments) == 1
     assert result.trusted_attachments[0]["kind"] == "chart"
     assert result.trusted_attachments[0]["source_tool"] == "python_execute"
@@ -1472,11 +1475,14 @@ def test_windows_sandbox_starts_process_suspended_before_job_assignment(
     monkeypatch.setattr(sandbox_module.subprocess, "Popen", _FakeProcess)
     monkeypatch.setattr(sandbox_module, "JobObject", _FakeJobObject)
 
+    scratch_root = sandbox_module.create_scratch_dir()
     result = sandbox_module.execute_sandboxed(
         code="print(1)",
         venv_python=tmp_path / "python.exe",
         timeout_seconds=5,
         memory_limit_mb=128,
+        working_directory=scratch_root,
+        work_dir=scratch_root,
     )
     work_dir = result.work_dir
     try:
@@ -1538,6 +1544,8 @@ def test_posix_sandbox_timeout_kills_process_group(
             venv_python=tmp_path / "python",
             timeout_seconds=5,
             memory_limit_mb=128,
+            working_directory=scratch_dir,
+            work_dir=scratch_dir,
         )
 
     assert killpg_calls == [(4321, 9)]
@@ -1622,7 +1630,8 @@ def test_windows_sandbox_working_directory_and_scratch_environment(
         venv_python=tmp_path / "python.exe",
         timeout_seconds=5,
         memory_limit_mb=128,
-        working_directory=workspace_root if use_workspace else None,
+        working_directory=workspace_root if use_workspace else scratch_dir,
+        work_dir=None if use_workspace else scratch_dir,
     )
     try:
         process = processes[0]
@@ -2131,6 +2140,7 @@ def test_sandbox_settles_the_ledger_confirmed_only_after_a_clean_exit(
             venv_python=tmp_path / "python.exe",
             timeout_seconds=5,
             memory_limit_mb=128,
+            working_directory=tmp_path,
         )
         result.cleanup()
         assert settled == [True]
@@ -2141,6 +2151,7 @@ def test_sandbox_settles_the_ledger_confirmed_only_after_a_clean_exit(
                 venv_python=tmp_path / "python.exe",
                 timeout_seconds=0,
                 memory_limit_mb=128,
+                working_directory=tmp_path,
             )
         assert settled == [False]
 

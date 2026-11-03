@@ -237,8 +237,10 @@ test('Electron cancellation or stale authority while ready never starts and rele
 test('hosted command refuses authority revoked during the start handshake before broker submission', async () => {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-project-'));
   const setup = fixture(project); let submitted = 0; let acknowledged = false;
-  const { executeHostedRunCommand } = require('../../services/backend/hosted-command-bridge');
+  const { executeHostedRunCommand, noteHostedRunCommandApproval } = require('../../services/backend/hosted-command-bridge');
   const stagingRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-stage-'));
+  noteHostedRunCommandApproval(setup.binding,
+    { tool_name: 'run_command', tool_call_id: 'operation:1', tool_input: { command: 'echo test' } });
   const result = await executeHostedRunCommand({ sessionRuntime: {}, hostExecutionPolicyVersion: 2,
     hostExecutionStagingRoot: stagingRoot,
     configService: { getToolsWorkspaceRoot: () => os.tmpdir() },
@@ -256,7 +258,7 @@ test('hosted command refuses authority revoked during the start handshake before
 });
 
 test('hosted command scopes input to the captured project and fails closed without that scope', async () => {
-  const { executeHostedRunCommand } = require('../../services/backend/hosted-command-bridge');
+  const { executeHostedRunCommand, noteHostedRunCommandApproval } = require('../../services/backend/hosted-command-bridge');
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-scope-'));
   const stagingRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-stage-'));
   const workspace = path.join(base, 'hosted-test-workspace');
@@ -272,6 +274,8 @@ test('hosted command scopes input to the captured project and fails closed witho
   ]) {
     const setup = fixture(scenario.root);
     const calls = [];
+    noteHostedRunCommandApproval(setup.binding,
+      { tool_name: 'run_command', tool_call_id: 'operation:1', tool_input: { command: 'true', cwd: 'nested' } });
     const result = await executeHostedRunCommand({ hostExecutionPolicyVersion: 2,
       hostExecutionStagingRoot: stagingRoot,
       configService: { getToolsWorkspaceRoot: () => scenario.workspace },

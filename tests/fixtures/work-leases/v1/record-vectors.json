@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "description": "Ticket reading rules. 'record' is the parsed JSON object (or 'raw' a raw file text); expect is 'valid' or 'corrupt'. For valid records, 'normalized' lists the effective values a reader must use.",
+  "cases": [
+    {
+      "name": "complete v1 record",
+      "record": {"v": 1, "ticket": "3f9a0c1d2e4b5a69", "seq": 42, "state": "waiting", "enforcement": "blocking",
+        "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}],
+        "owner": {"app": "jenny-sidecar", "pid": 10, "pid_start": 2000.0, "host": {"name": "desktop-a", "boot": 1000.0}, "profile": null, "session": "s1", "label": "npm test"},
+        "purpose": "run_command", "created_at": 5000.0, "granted_at": null, "heartbeat_at": 5000.0, "ttl_s": null, "paths": null, "priority": 0},
+      "expect": "valid",
+      "normalized": {"state": "waiting", "enforcement": "blocking", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]}
+    },
+    {
+      "name": "minimal record with only the required fields",
+      "record": {"v": 1, "ticket": "3f9a0c1d2e4b5a69", "seq": 1, "state": "held",
+        "resources": [{"key": "git-write@repo"}],
+        "owner": {"pid": 10, "host": {"name": "desktop-a"}}},
+      "expect": "valid",
+      "normalized": {"state": "held", "enforcement": "blocking", "resources": [{"key": "git-write@repo", "units": "all", "capacity": null}]}
+    },
+    {
+      "name": "future version with extra fields is read by the v1 rules",
+      "record": {"v": 3, "ticket": "3f9a0c1d2e4b5a69", "seq": 7, "state": "draining", "enforcement": "blocking",
+        "resources": [{"key": "tests@tree:g:/repo", "units": "most", "capacity": 1, "weight_curve": [1, 2]}],
+        "owner": {"pid": 10, "host": {"name": "desktop-a"}, "region": "x"}, "lineage": ["a"]},
+      "expect": "valid",
+      "normalized": {"state": "held", "enforcement": "blocking", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]}
+    },
+    {
+      "name": "missing owner pid is corrupt",
+      "record": {"v": 1, "ticket": "3f9a0c1d2e4b5a69", "seq": 1, "state": "held", "resources": [{"key": "git-write@repo"}], "owner": {"host": {"name": "desktop-a"}}},
+      "expect": "corrupt"
+    },
+    {
+      "name": "missing host name is corrupt",
+      "record": {"v": 1, "ticket": "3f9a0c1d2e4b5a69", "seq": 1, "state": "held", "resources": [{"key": "git-write@repo"}], "owner": {"pid": 10, "host": {}}},
+      "expect": "corrupt"
+    },
+    {
+      "name": "non-integer version is corrupt",
+      "record": {"v": "1", "ticket": "3f9a0c1d2e4b5a69", "seq": 1, "state": "held", "resources": [{"key": "git-write@repo"}], "owner": {"pid": 10, "host": {"name": "desktop-a"}}},
+      "expect": "corrupt"
+    },
+    {
+      "name": "resources must be a list of objects with string keys",
+      "record": {"v": 1, "ticket": "3f9a0c1d2e4b5a69", "seq": 1, "state": "held", "resources": ["git-write@repo"], "owner": {"pid": 10, "host": {"name": "desktop-a"}}},
+      "expect": "corrupt"
+    },
+    {
+      "name": "more than 16 resources is corrupt",
+      "record": {"v": 1, "ticket": "3f9a0c1d2e4b5a69", "seq": 1, "state": "held",
+        "resources": [{"key": "k1@repo"}, {"key": "k2@repo"}, {"key": "k3@repo"}, {"key": "k4@repo"}, {"key": "k5@repo"}, {"key": "k6@repo"}, {"key": "k7@repo"}, {"key": "k8@repo"}, {"key": "k9@repo"}, {"key": "k10@repo"}, {"key": "k11@repo"}, {"key": "k12@repo"}, {"key": "k13@repo"}, {"key": "k14@repo"}, {"key": "k15@repo"}, {"key": "k16@repo"}, {"key": "k17@repo"}],
+        "owner": {"pid": 10, "host": {"name": "desktop-a"}}},
+      "expect": "corrupt"
+    },
+    {
+      "name": "advisory enforcement is preserved",
+      "record": {"v": 1, "ticket": "3f9a0c1d2e4b5a69", "seq": 1, "state": "held", "enforcement": "advisory",
+        "resources": [{"key": "tests@tree:g:/repo", "units": 1, "capacity": 1}], "owner": {"pid": 10, "host": {"name": "desktop-a"}}},
+      "expect": "valid",
+      "normalized": {"state": "held", "enforcement": "advisory", "resources": [{"key": "tests@tree:g:/repo", "units": 1, "capacity": 1}]}
+    },
+    {
+      "name": "zero or negative units count as exclusive",
+      "record": {"v": 1, "ticket": "3f9a0c1d2e4b5a69", "seq": 1, "state": "held",
+        "resources": [{"key": "deps@tree:g:/repo", "units": 0, "capacity": -2}], "owner": {"pid": 10, "host": {"name": "desktop-a"}}},
+      "expect": "valid",
+      "normalized": {"state": "held", "enforcement": "blocking", "resources": [{"key": "deps@tree:g:/repo", "units": "all", "capacity": null}]}
+    },
+    {
+      "name": "invalid JSON text is corrupt",
+      "raw": "{\"v\": 1, \"ticket\": ",
+      "expect": "corrupt"
+    }
+  ]
+}

@@ -15,7 +15,9 @@ const { normalizeGeneratedArtifactMetadata } = require('./artifact-metadata-util
 const { normalizeComparablePath } = require('./worktree-path-policy');
 
 const MAX_OUTPUT_ITEMS = 10;
-const MAX_TASK_ITEMS = 10;
+// Twenty finished background jobs (the tracker's per-session history) plus
+// the live rows of every source.
+const MAX_TASK_ITEMS = 30;
 const MAX_TITLE_BYTES = 512;
 const MAX_LABEL_CHARS = 160;
 const EXECUTION_ENVIRONMENTS = new Set(['local', 'sandbox', 'hosted']);
@@ -228,6 +230,66 @@ function linkedItem(row) {
   };
 }
 
+// Background run_command jobs (services/main/background-job-tracker.js
+// snapshots): running/killing are live, completed/failed settled history.
+const JOB_BUCKETS = Object.freeze({
+  running: 'active',
+  killing: 'active',
+  completed: 'completed',
+  failed: 'failed',
+});
+
+function msOrNull(value) {
+  return Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+// Row 96: a running test job's live progress (tracker-clamped; re-bounded here for the rail wire).
+function jobProgressFields(progress) {
+  if (!progress || typeof progress !== 'object') return {};
+  const finite = (value) => typeof value === 'number' && Number.isFinite(value);
+  return {
+    progress_percent: finite(progress.percent) ? Math.min(100, Math.max(0, progress.percent)) : null,
+    progress_failed: finite(progress.failed) ? Math.max(0, Math.floor(progress.failed)) : 0,
+    progress_marks: (Array.isArray(progress.failureMarks) ? progress.failureMarks : []).filter(finite).slice(0, 50)
+      .map((mark) => Math.min(1, Math.max(0, mark))),
+  };
+}
+
+// `row` is one tracker snapshot already filtered to this session.
+function jobItem(row, sessionId) {
+  return {
+    source_kind: 'background_job',
+    operation_id: `job:${row.jobId}`,
+    session_id: sessionId,
+    job_id: row.jobId,
+    command: boundedTitle(row.command) || '',
+    state: row.state,
+    started_at_ms: msOrNull(row.startedAtMs),
+    ended_at_ms: msOrNull(row.endedAtMs),
+    exit_code: Number.isInteger(row.exitCode) ? row.exitCode : null,
+    stop_requested: row.stopRequested === true,
+    ...jobProgressFields(row.progress),
+  };
+}
+
+function backgroundJobEntries(rows, seen, entries) {
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const id = typeof row?.jobId === 'string' && row.jobId ? `job:${row.jobId}` : '';
+    // A job the person stopped counts as finished, not as a failure the header keeps flagging.
+    const state = row?.state === 'failed' && row.stopRequested === true ? 'completed' : row?.state;
+    const bucket = id && !seen.has(id) && Object.hasOwn(JOB_BUCKETS, state) ? JOB_BUCKETS[state] : null;
+    if (!bucket) continue;
+    seen.add(id);
+    entries.push({
+      bucket,
+      live: bucket === 'active',
+      at: msOrNull(row.endedAtMs) || msOrNull(row.startedAtMs) || 0,
+      row,
+      job: true,
+    });
+  }
+}
+
 function workspaceTestEntries(rows, seen, entries) {
   for (const row of Array.isArray(rows) ? rows : []) {
     const id = String(row?.runId || '');
@@ -262,27 +324,33 @@ function linkedEntries(rows, seen, entries) {
 // `rows` is the workspace_test activity rows already filtered to this session
 // (null when that source is unsupported). `linkedRows` is the runtime work
 // summaries of the session's direct linked children (null when the session
-// runtime is unavailable). session_runtime (the session's own work) has no
+// runtime is unavailable). `jobRows` is the background-job tracker's
+// snapshots for this session (null when the tracker is unavailable).
+// session_runtime (the session's own work) has no
 // per-session source yet and is reported unsupported unless a caller says
 // otherwise, so coverage stays partial and a zero count is withheld (null =
 // "not known"): a nonzero count is a certain lower bound, zero would claim
 // completeness. Rows are deduplicated across sources by operation id.
 function buildBackgroundTasksSection({
-  sampledAt, sessionId, rows, workspaceTestSupported, sessionRuntimeSupported = false, linkedRows = null, failedSources = [],
+  sampledAt, sessionId, rows, workspaceTestSupported, sessionRuntimeSupported = false, linkedRows = null, jobRows = null,
+  failedSources = [],
 }) {
   const linkedSupported = Array.isArray(linkedRows);
+  const jobsSupported = Array.isArray(jobRows);
   const unsupported = [];
   if (!workspaceTestSupported) unsupported.push('workspace_test');
   if (!sessionRuntimeSupported) unsupported.push('session_runtime');
   if (!linkedSupported) unsupported.push('linked_chat_turn');
+  if (!jobsSupported) unsupported.push('background_job');
   const coverage = unsupported.length === 0 ? 'complete' : 'partial';
   let counts = { active: null, waiting: null, failed: null, completed: null };
   let items = [];
-  if (workspaceTestSupported || linkedSupported) {
+  if (workspaceTestSupported || linkedSupported || jobsSupported) {
     const seen = new Set();
     const entries = [];
     if (workspaceTestSupported) workspaceTestEntries(rows, seen, entries);
     if (linkedSupported) linkedEntries(linkedRows, seen, entries);
+    if (jobsSupported) backgroundJobEntries(jobRows, seen, entries);
     const tally = { active: 0, waiting: 0, failed: 0, completed: 0 };
     for (const entry of entries) tally[entry.bucket] += 1;
     counts = Object.fromEntries(Object.entries(tally)
@@ -290,7 +358,8 @@ function buildBackgroundTasksSection({
     items = entries
       .sort((left, right) => Number(!left.live) - Number(!right.live) || right.at - left.at)
       .slice(0, MAX_TASK_ITEMS)
-      .map((entry) => (entry.linked ? linkedItem(entry.row) : taskItem(entry.row, sessionId)));
+      .map((entry) => (entry.job ? jobItem(entry.row, sessionId)
+        : entry.linked ? linkedItem(entry.row) : taskItem(entry.row, sessionId)));
   }
   return section(failedSources.length ? 'stale' : 'available', {
     sampledAt,

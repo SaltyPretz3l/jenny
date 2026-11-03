@@ -1,0 +1,421 @@
+{
+  "version": 1,
+  "description": "Liveness. 'me' is the observer's host; 'probe' is the injected pid probe (available=false means the observer cannot probe pids; start=null means the start time is unknown to the observer). observer_resumed_recently defaults to false. stale_after_s is 60 and unknown_start_horizon_s is 600 for every case. expect is 'live' or 'dead'.",
+  "cases": [
+    {
+      "name": "same host, pid alive, same start time",
+      "me": {
+        "name": "desktop-a",
+        "boot": 1000.0
+      },
+      "owner": {
+        "pid": 10,
+        "pid_start": 2000.0,
+        "host": {
+          "name": "desktop-a",
+          "boot": 1000.0
+        }
+      },
+      "heartbeat_at": 5000.0,
+      "now": 5010.0,
+      "probe": {
+        "available": true,
+        "alive": true,
+        "start": 2000.0
+      },
+      "expect": "live"
+    },
+    {
+      "name": "same host, pid gone",
+      "me": {
+        "name": "desktop-a",
+        "boot": 1000.0
+      },
+      "owner": {
+        "pid": 10,
+        "pid_start": 2000.0,
+        "host": {
+          "name": "desktop-a",
+          "boot": 1000.0
+        }
+      },
+      "heartbeat_at": 5000.0,
+      "now": 5010.0,
+      "probe": {
+        "available": true,
+        "alive": false,
+        "start": null
+      },
+      "expect": "dead"
+    },
+    {
+      "name": "same host, pid reused by a newer process",
+      "me": {
+        "name": "desktop-a",
+        "boot": 1000.0
+      },
+      "owner": {
+        "pid": 10,
+        "pid_start": 2000.0,
+        "host": {
+          "name": "desktop-a",
+          "boot": 1000.0
+        }
+      },
+      "heartbeat_at": 5000.0,
+      "now": 5010.0,
+      "probe": {
+        "available": true,
+        "alive": true,
+        "start": 2050.0
+      },
+      "expect": "dead"
+    },
+    {
+      "name": "same host, start time within the 2 s tolerance",
+      "me": {
+        "name": "desktop-a",
+        "boot": 1000.0
+      },
+      "owner": {
+        "pid": 10,
+        "pid_start": 2000.0,
+        "host": {
+          "name": "desktop-a",
+          "boot": 1000.0
+        }
+      },
+      "heartbeat_at": 5000.0,
+      "now": 5010.0,
+      "probe": {
+        "available": true,
+        "alive": true,
+        "start": 2001.5
+      },
+      "expect": "live"
+    },
+    {
+      "name": "same host name, previous boot",
+      "me": {
+        "name": "desktop-a",
+        "boot": 9000.0
+      },
+      "owner": {
+        "pid": 10,
+        "pid_start": 2000.0,
+        "host": {
+          "name": "desktop-a",
+          "boot": 1000.0
+        }
+      },
+      "heartbeat_at": 5000.0,
+      "now": 9100.0,
+      "probe": {
+        "available": true,
+        "alive": true,
+        "start": 2000.0
+      },
+      "expect": "dead"
+    },
+    {
+      "name": "same host, boot time drift under 120 s is the same boot",
+      "me": {
+        "name": "desktop-a",
+        "boot": 1030.0
+      },
+      "owner": {
+        "pid": 10,
+        "pid_start": 2000.0,
+        "host": {
+          "name": "desktop-a",
+          "boot": 1000.0
+        }
+      },
+      "heartbeat_at": 5000.0,
+      "now": 5010.0,
+      "probe": {
+        "available": true,
+        "alive": true,
+        "start": 2000.0
+      },
+      "expect": "live"
+    },
+    {
+      "name": "same host, unknown boot times fall through to the pid probe",
+      "me": {
+        "name": "desktop-a",
+        "boot": null
+      },
+      "owner": {
+        "pid": 10,
+        "pid_start": 2000.0,
+        "host": {
+          "name": "desktop-a",
+          "boot": 1000.0
+        }
+      },
+      "heartbeat_at": 5000.0,
+      "now": 5010.0,
+      "probe": {
+        "available": true,
+        "alive": true,
+        "start": 2000.0
+      },
+      "expect": "live"
+    },
+    {
+      "name": "same host, no probe, fresh heartbeat",
+      "me": {
+        "name": "desktop-a",
+        "boot": 1000.0
+      },
+      "owner": {
+        "pid": 10,
+        "pid_start": 2000.0,
+        "host": {
+          "name": "desktop-a",
+          "boot": 1000.0
+        }
+      },
+      "heartbeat_at": 5000.0,
+      "now": 5020.0,
+      "probe": {
+        "available": false,
+        "alive": false,
+        "start": null
+      },
+      "expect": "live"
+    },
+    {
+      "name": "same host, no probe, stale heartbeat",
+      "me": {
+        "name": "desktop-a",
+        "boot": 1000.0
+      },
+      "owner": {
+        "pid": 10,
+        "pid_start": 2000.0,
+        "host": {
+          "name": "desktop-a",
+          "boot": 1000.0
+        }
+      },
+      "heartbeat_at": 5000.0,
+      "now": 5090.0,
+      "probe": {
+        "available": false,
+        "alive": false,
+        "start": null
+      },
+      "expect": "dead"
+    },
+    {
+      "name": "other host, fresh heartbeat",
+      "me": {
+        "name": "desktop-a",
+        "boot": 1000.0
+      },
+      "owner": {
+        "pid": 10,
+        "pid_start": 2000.0,
+        "host": {
+          "name": "container-7",
+          "boot": 3000.0
+        }
+      },
+      "heartbeat_at": 5000.0,
+      "now": 5030.0,
+      "probe": {
+        "available": true,
+        "alive": false,
+        "start": null
+      },
+      "expect": "live"
+    },
+    {
+      "name": "other host, heartbeat older than 60 s",
+      "me": {
+        "name": "desktop-a",
+        "boot": 1000.0
+      },
+      "owner": {
+        "pid": 10,
+        "pid_start": 2000.0,
+        "host": {
+          "name": "container-7",
+          "boot": 3000.0
+        }
+      },
+      "heartbeat_at": 5000.0,
+      "now": 5061.0,
+      "probe": {
+        "available": true,
+        "alive": true,
+        "start": 2000.0
+      },
+      "expect": "dead"
+    },
+    {
+      "name": "host names compare case-insensitively",
+      "me": {
+        "name": "DESKTOP-A",
+        "boot": 1000.0
+      },
+      "owner": {
+        "pid": 10,
+        "pid_start": 2000.0,
+        "host": {
+          "name": "desktop-a",
+          "boot": 1000.0
+        }
+      },
+      "heartbeat_at": 1.0,
+      "now": 5010.0,
+      "probe": {
+        "available": true,
+        "alive": true,
+        "start": 2000.0
+      },
+      "expect": "live"
+    },
+    {
+      "name": "same host, unknown owner start time cannot prove reuse",
+      "me": {
+        "name": "desktop-a",
+        "boot": 1000.0
+      },
+      "owner": {
+        "pid": 10,
+        "pid_start": null,
+        "host": {
+          "name": "desktop-a",
+          "boot": 1000.0
+        }
+      },
+      "heartbeat_at": 5000.0,
+      "now": 5010.0,
+      "probe": {
+        "available": true,
+        "alive": true,
+        "start": 2400.0
+      },
+      "expect": "live"
+    },
+    {
+      "name": "same host, live pid wins over an ancient heartbeat (resume from sleep)",
+      "me": {
+        "name": "desktop-a",
+        "boot": 1000.0
+      },
+      "owner": {
+        "pid": 10,
+        "pid_start": 2000.0,
+        "host": {
+          "name": "desktop-a",
+          "boot": 1000.0
+        }
+      },
+      "heartbeat_at": 3000.0,
+      "now": 90000.0,
+      "probe": {
+        "available": true,
+        "alive": true,
+        "start": 2000.0
+      },
+      "expect": "live"
+    },
+    {
+      "name": "same host, unknown owner start time, heartbeat past the 600 s horizon",
+      "me": {
+        "name": "desktop-a",
+        "boot": 1000.0
+      },
+      "owner": {
+        "pid": 10,
+        "pid_start": null,
+        "host": {
+          "name": "desktop-a",
+          "boot": 1000.0
+        }
+      },
+      "heartbeat_at": 5000.0,
+      "now": 5700.0,
+      "probe": {
+        "available": true,
+        "alive": true,
+        "start": 2400.0
+      },
+      "expect": "dead"
+    },
+    {
+      "name": "same host, unknown owner start time, past the horizon, observer just resumed",
+      "me": {
+        "name": "desktop-a",
+        "boot": 1000.0
+      },
+      "owner": {
+        "pid": 10,
+        "pid_start": null,
+        "host": {
+          "name": "desktop-a",
+          "boot": 1000.0
+        }
+      },
+      "heartbeat_at": 5000.0,
+      "now": 5700.0,
+      "observer_resumed_recently": true,
+      "probe": {
+        "available": true,
+        "alive": true,
+        "start": 2400.0
+      },
+      "expect": "live"
+    },
+    {
+      "name": "same host, observer cannot read the start time, heartbeat inside the horizon",
+      "me": {
+        "name": "desktop-a",
+        "boot": 1000.0
+      },
+      "owner": {
+        "pid": 10,
+        "pid_start": 2000.0,
+        "host": {
+          "name": "desktop-a",
+          "boot": 1000.0
+        }
+      },
+      "heartbeat_at": 5000.0,
+      "now": 5300.0,
+      "probe": {
+        "available": true,
+        "alive": true,
+        "start": null
+      },
+      "expect": "live"
+    },
+    {
+      "name": "same host, observer cannot read the start time, heartbeat past the horizon",
+      "me": {
+        "name": "desktop-a",
+        "boot": 1000.0
+      },
+      "owner": {
+        "pid": 10,
+        "pid_start": 2000.0,
+        "host": {
+          "name": "desktop-a",
+          "boot": 1000.0
+        }
+      },
+      "heartbeat_at": 5000.0,
+      "now": 5601.0,
+      "probe": {
+        "available": true,
+        "alive": true,
+        "start": null
+      },
+      "expect": "dead"
+    }
+  ]
+}

@@ -146,12 +146,16 @@ for (const [mode, killAt] of [['kill-before', 1], ['kill-before', 3], ['kill-aft
       assert.equal(orphans[0].slice(0, 64), snapshotHash(killAt).slice('sha256:'.length));
       assert.equal(fs.readFileSync(path.join(dir, orphans[0]), 'utf8'), normalizeDiffInputText(snapshotContentFor(killAt)));
 
-      // Recorded finding: prune() only counts *.snap and capture only cleans its own failed
-      // temp, so a killed capture's `.snap.tmp-*` file is never removed by later captures.
+      // O6: a killed capture's `.snap.tmp-*` (another pid) survives prune while it is
+      // young, and the first prune after it is a day old removes it.
       assert.equal((await store.capture({ content: snapshotContentFor(90) })).stored, true);
       assert.equal((await store.capture({ content: snapshotContentFor(killAt) })).stored, true);
       assert.deepEqual(await store.read(snapshotHash(killAt)), { found: true, content: snapshotContentFor(killAt) });
-      assert.ok(listDir(dir).includes(orphans[0]), 'the orphan survives later captures and their prune');
+      assert.ok(listDir(dir).includes(orphans[0]), 'a young orphan survives later captures and their prune');
+      const dayOld = (Date.now() - 25 * 60 * 60 * 1000) / 1000;
+      fs.utimesSync(path.join(dir, orphans[0]), dayOld, dayOld);
+      assert.equal((await store.capture({ content: snapshotContentFor(91) })).stored, true);
+      assert.equal(listDir(dir).includes(orphans[0]), false, 'a day-old orphan is removed by the next prune');
     } else {
       assert.deepEqual(orphans, [], 'the rename consumed the temp file');
       assert.deepEqual(await store.read(snapshotHash(killAt)), { found: true, content: snapshotContentFor(killAt) });

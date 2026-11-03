@@ -40,6 +40,13 @@ class ToolExecutor {
     homeAssistantService,
     projectNotesService,
     sessionDirectoryService,
+    primarySettingsService,
+    primaryChatManageService,
+    primaryChatPlacementService,
+    appViewService,
+    primaryChatExportService,
+    terminalToolsService,
+    primaryScheduleService,
     configService,
     refreshManagedConfig,
   }) {
@@ -70,6 +77,27 @@ class ToolExecutor {
     this._sessionDirectoryService = typeof sessionDirectoryService === 'function'
       ? sessionDirectoryService
       : () => sessionDirectoryService || null;
+    // Live getter: the settings-writes port reads the shell config and window services built later (row 88).
+    this._primarySettingsService = typeof primarySettingsService === 'function'
+      ? primarySettingsService
+      : () => primarySettingsService || null;
+    // Live getter: the chat-management port is attached with the primary-chat wiring (row 94 P1).
+    this._primaryChatManageService = typeof primaryChatManageService === 'function'
+      ? primaryChatManageService
+      : () => primaryChatManageService || null;
+    // Live getter: the project-placement port is attached with the primary-chat wiring (row 94 P2).
+    this._primaryChatPlacementService = typeof primaryChatPlacementService === 'function'
+      ? primaryChatPlacementService
+      : () => primaryChatPlacementService || null;
+    // Live getter: the app_view port is attached with the primary-chat wiring (row 94 P3).
+    this._appViewService = typeof appViewService === 'function' ? appViewService : () => appViewService || null;
+    // Live getters: the export and terminal ports are attached with the primary-chat wiring (row 94 P4).
+    this._primaryChatExportService = typeof primaryChatExportService === 'function' ? primaryChatExportService : () => primaryChatExportService || null;
+    this._terminalToolsService = typeof terminalToolsService === 'function' ? terminalToolsService : () => terminalToolsService || null;
+    // Live getter: the scheduled-check port is attached with the primary-chat wiring (row 85).
+    this._primaryScheduleService = typeof primaryScheduleService === 'function'
+      ? primaryScheduleService
+      : () => primaryScheduleService || null;
     this._configService = configService || null;
     this._refreshManagedConfig = typeof refreshManagedConfig === 'function'
       ? refreshManagedConfig

@@ -16,7 +16,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from sidecar.ai.error_codes import (
     CMP_TOOL_BACKGROUND_NOT_FOUND,
@@ -80,6 +80,8 @@ class _ManagedBackgroundProcess:
     stop_requested: threading.Event = field(default_factory=threading.Event)
     terminalized: threading.Event = field(default_factory=threading.Event)
     settled: threading.Event = field(default_factory=threading.Event)
+    # Row 96: optional shell_test_progress.BackgroundProgressTap (tracker + progress.json).
+    progress_tap: Any = None
 
     def observe_cleanup(
         self, verdict: _owned_process_settlement.OwnedProcessCleanupVerdict
@@ -492,11 +494,16 @@ def _wait_for_background_exit(
     job: _ManagedBackgroundProcess, timeout_seconds: float
 ) -> tuple[str, str]:
     if job.owned_process is not None:
-        result = _owned_process.get_owned_process_service().wait(
-            job.owned_process,
-            timeout_seconds=timeout_seconds,
-            abort_event=job.stop_requested,
-        )
+        try:
+            result = _owned_process.get_owned_process_service().wait(
+                job.owned_process,
+                timeout_seconds=timeout_seconds,
+                abort_event=job.stop_requested,
+                on_output_chunk=job.progress_tap.on_chunk if job.progress_tap else None,
+            )
+        finally:
+            if job.progress_tap is not None:
+                job.progress_tap.close()  # final partial line + last progress.json write
         job.owned_result = result
         job.observe_cleanup(result.cleanup_verdict)
         return result.stdout, result.stderr
@@ -821,6 +828,7 @@ def start_background_job(
     workspace_root: Path,
     timeout_seconds: float,
     on_cleanup: _owned_process_settlement.CleanupObserver | None = None,
+    progress_tap: Any = None,
 ) -> BackgroundJobStart:
     """Launch *argv* in the background; return the id + trusted spawned PID."""
     store = GuardedWorkspaceStore(workspace_root)
@@ -840,6 +848,9 @@ def start_background_job(
         )
         _promote_background_start(job_id, job, store_key=store.cache_key)
         reservation_held = False
+        if progress_tap is not None:
+            job.progress_tap = progress_tap
+            progress_tap.bind(job_id, store, job_ref)
         _publish_initial_status_or_refuse(
             store=store,
             job_ref=job_ref,
@@ -948,6 +959,14 @@ def read_background_job(workspace_root: Path, job_id: str) -> dict[str, object]:
     status.pop("ledger_entry", None)  # internal binding, never model-facing
     return status
 
+
+
+def job_progress(job_id: str) -> dict[str, object] | None:
+    """Live test-run progress of a job this process owns (None without a detected runner)."""
+    with _lock:
+        job = _active_jobs.get(job_id)
+    tap = job.progress_tap if job is not None else None
+    return tap.progress() if tap is not None else None
 
 
 def has_active_background_jobs() -> bool:

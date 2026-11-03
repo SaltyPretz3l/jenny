@@ -49,6 +49,7 @@ const REASON_CLASSES = Object.freeze({
   capacity: [CODES.CAPACITY, false],
   authority_changed: [CODES.AUTHORITY_CHANGED, false],
   authorization_required: [CODES.AUTHORIZATION_REQUIRED, false],
+  rule_denied: [CODES.AUTHORIZATION_REQUIRED, false], // row 87: a user's launch deny rule
   unsupported_capability: [CODES.UNSUPPORTED_CAPABILITY, false],
   preparation_failed: [CODES.PREPARATION_FAILED, true],
   dispatch_failed: [CODES.DISPATCH_FAILED, true],

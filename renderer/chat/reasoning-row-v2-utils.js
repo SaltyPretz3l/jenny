@@ -83,7 +83,7 @@
    * we fall back to the raw tail so the header never displays a lone `"`. */
   const MEANINGFUL_PREVIEW_RE = /\p{L}|\p{N}/u;
 
-  function buildReasoningPreview(entries, { charLimit = 140 } = {}) {
+  function buildReasoningPreview(entries, { charLimit = 500 } = {}) {
     const list = Array.isArray(entries) ? entries : [];
     if (!list.length) return '';
     const joined = list

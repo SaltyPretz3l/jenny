@@ -89,12 +89,35 @@ function publish(svc, {
   const chosenProject = typeof input.project_id === 'string' && input.project_id
     && svc._ports.allowsProjectChoice?.(sessionId) === true && svc._ports.projectExists?.(input.project_id) === true
     ? input.project_id : null;
+  // Row 94 P2: the primary's fork starts in its source chat's project with that chat's model and effort.
+  // A fork that cannot be made fails closed rather than starting an empty chat.
+  let fork = null;
+  if (typeof input.fork_of_session_id === 'string') {
+    try {
+      fork = typeof input.project_id !== 'string' && svc._ports.allowsProjectChoice?.(sessionId) === true
+        ? svc._ports.readForkSource?.(input.fork_of_session_id) ?? null : null;
+    } catch {
+      fork = null;
+    }
+    if (!fork) return fail('invalid_request');
+  }
   const options = S.defaultOptions({
-    sourceProjectId: chosenProject ?? binding.source_project_id,
-    model: binding.model,
-    effort: binding.effort,
+    sourceProjectId: fork ? fork.project_id : chosenProject ?? binding.source_project_id,
+    model: fork ? fork.preferred_model : binding.model,
+    effort: fork ? fork.reasoning_effort : binding.effort,
     planMode: binding.restrictions?.plan_mode === true,
+    forkOfSessionId: fork ? input.fork_of_session_id : null,
   });
+  // Row 87: the user's launch deny rule for this destination refuses before any card, offer or grant; nothing is recorded.
+  let denied;
+  try {
+    denied = svc._ports.launchDenied?.({
+      sessionId, turnId, destinationProjectId: options.destination_project_id, runMode: binding.session.source_run_mode,
+    }) === true;
+  } catch {
+    denied = false;
+  }
+  if (denied) return fail('rule_denied');
   const nowDate = svc._now();
   // The binding the tool captured carries only the source's run mode and lockdown; the initiation
   // fields are resolved here, from the grant the store holds at the moment of the mutation.
@@ -259,6 +282,17 @@ function cleanEfforts(list) {
   return out.slice(0, MAX_EFFORTS);
 }
 
+const MAX_FORK_TITLE_CHARS = S.SESSION_LIMITS.title_chars;
+
+// The forked chat's current title for the card's "Fork of" line, clipped like a proposal title; '' when gone.
+function forkSourceTitle(svc, record) {
+  const forkId = record.options?.fork_of_session_id;
+  if (typeof forkId !== 'string') return null;
+  let title;
+  try { title = svc._ports.forkSourceTitle(forkId); } catch { title = null; }
+  return [...sc.clipLabel(title)].slice(0, MAX_FORK_TITLE_CHARS).join('');
+}
+
 async function buildCapabilities(svc, record) {
   const run = svc._runState(record.source_session_id);
   const planOnly = run.runMode === 'plan';
@@ -273,6 +307,7 @@ async function buildCapabilities(svc, record) {
     run_modes: planOnly ? ['plan'] : ['agent', 'plan'],
     restrictions: { read_only: run.readOnly, plan_mode: planOnly, lockdown: run.lockdown },
     unavailable_reason: unavailable,
+    ...(record.options?.fork_of_session_id ? { fork_source: { title: forkSourceTitle(svc, record) } } : {}),
   };
 }
 

@@ -123,6 +123,14 @@
         jt('settings.sections.notifications.keywords.alerts', 'alerts'), jt('settings.sections.notifications.keywords.sound', 'sound'),
         jt('settings.sections.notifications.keywords.background', 'background')],
     },
+    // --- App: Jenny chat (row 86, owner pick S1): how the Jenny chat behaves while you are away.
+    {
+      id: 'jennyChat',
+      group: 'app',
+      label: jt('settings.sections.jennyChat.title', 'Jenny chat'),
+      keywords: [jt('settings.sections.jennyChat.keywords.digest', 'digest'), jt('settings.sections.jennyChat.keywords.away', 'away'),
+        jt('settings.sections.jennyChat.keywords.quietHours', 'quiet hours'), jt('settings.sections.jennyChat.keywords.summary', 'summary')],
+    },
     // --- App: Dictation (row 84): push-to-talk into the message box.
     {
       id: 'dictation',

@@ -62,8 +62,13 @@ const FEATURE_OVERRIDE_KEYS = Object.freeze([
   // is behaviourally coherent but NOT byte-identical markup.
   'text_spellcheck',
   'dictation', // row 84 mic + shortcut (Settings > Dictation); the env var below force-denies it
+  // row 86 "While you were away" digests in the Jenny chat: DEFAULT-OFF for everyone (owner, 2026-11-02), the
+  // user turns them on in Settings; the env var below force-denies them
+  'primary_digests',
 ]);
-const FORCE_DENY_ENV_KEYS = Object.freeze({ session_runtime: 'JENNY_ENABLE_SESSION_RUNTIME', dictation: 'JENNY_ENABLE_DICTATION' });
+const FORCE_DENY_ENV_KEYS = Object.freeze({
+  session_runtime: 'JENNY_ENABLE_SESSION_RUNTIME', dictation: 'JENNY_ENABLE_DICTATION', primary_digests: 'JENNY_ENABLE_PRIMARY_DIGESTS',
+});
 // Retired flags whose JENNY_ENABLE_* name is still ACCEPTED AND IGNORED until
 // the listed release, so a leftover operator setting stays harmless: no flag
 // key is emitted and nothing reads the env var. Drop each entry at removeIn.
@@ -121,6 +126,7 @@ const INTERNAL_FEATURE_FLAG_KEYS = Object.freeze([
   'canonical_bridge',
   'chat_stream_paint_v2',
   'chat_stream_token_fade',
+  'reasoning_live_box',
   'aggregate_checkpoints',
   'reasoning_wire_deltas',
   'canonical_renderer_projection',
@@ -137,14 +143,14 @@ const INTERNAL_FEATURE_FLAG_KEYS = Object.freeze([
   'tools_verify_enabled',
   // gates the default-on image_generate local image tool
   'tools_image_generate_enabled',
-  // gates the default-on consolidated `home` tool
-  'tools_home_enabled',
+  // gates the default-on consolidated `home` tool and the default-on suggest_next_step card tool
+  'tools_home_enabled', 'tools_next_step_enabled',
   // gates the default-on durable Open Loops task_board tool
   'tools_task_board_enabled',
   // gates the default-on per-project note tool (project_notes)
   'tools_project_notes_enabled',
   // row 69: the primary Jenny chat and its directory tools; row 70: wake on delivery; row 76: launch permission, activity log, Pause/Reset/Forget
-  'primary_chat', 'tools_session_directory_enabled', 'session_directory_tool_gate', 'session_message_wake', 'child_auto_resume', 'primary_launch_permission', 'primary_activity_log', 'primary_chat_controls', // all default-on kill switches
+  'primary_chat', 'tools_session_directory_enabled', 'session_directory_tool_gate', 'session_message_wake', 'background_job_wake', 'background_job_notices', 'child_auto_resume', 'primary_launch_permission', 'primary_activity_log', 'primary_chat_controls', 'primary_settings_writes', 'primary_chat_manage', 'primary_chat_placement', 'primary_app_view', 'primary_chat_export', 'terminal_tools', 'primary_scheduled_checks', 'primary_action_rules', 'absolute_path_links', 'data_usage_page', // all default-on kill switches (row 88: settings_get/settings_change; row 94: chat_organize/chat_configure, P2 project_create/projects_list and the propose_session fork, P3 app_view, P4 session_export and the terminal_read/terminal_run pair; row 85: schedule_list/schedule_change and fired checks; row 87: the Jenny chat's per-action rules)
   // kill switches only: agentic memory v2 (the sidecar `memory` tool); row 77, the File Map Components draft on each scan; row 78, API-key providers
   'memory_v2_enabled', 'file_map_components', 'api_providers', 'ide_hot_exit', 'model_catalog_guard',
   // row 60 harness fixes (sidecar-only, default-on kill switches)
@@ -237,6 +243,11 @@ const INTERNAL_FEATURE_FLAG_KEYS = Object.freeze([
   'llama_server_acceleration',
   // gates the default-on managed NInfer runtime for the RTX 5090 (row 54)
   'ninfer',
+  // home_usage_stats: the Home "Usage" widget (row 98). DEFAULT-ON; JENNY_ENABLE_HOME_USAGE_STATS=0 hides it.
+  'home_usage_stats',
+  // read_only_commands: allowlisted read-only shell commands run without an approval card, in Plan and
+  // Propose too (row 102). DEFAULT-ON; JENNY_ENABLE_READ_ONLY_COMMANDS=0 restores the ask-first behaviour.
+  'read_only_commands',
 ]);
 
 function normalizeBooleanOverride(value) {
@@ -324,6 +335,9 @@ function buildFeatureFlagDefaults(env = process.env) {
     // OFF restores today's plain per-frame innerHTML write; default ON.
     // Set JENNY_ENABLE_CHAT_STREAM_TOKEN_FADE=0 to roll back.
     chat_stream_token_fade: fe('CHAT_STREAM_TOKEN_FADE', true),
+    // reasoning_live_box (row 101 Phase 2): a streaming reasoning body caps at the chat viewport and scrolls
+    // inside itself. Default ON; JENNY_ENABLE_REASONING_LIVE_BOX=0 restores the growing panel.
+    reasoning_live_box: fe('REASONING_LIVE_BOX', true),
     // aggregate_checkpoints gates full cumulative `aggregate` values on live
     // delta frames. DEFAULT-ON; set JENNY_ENABLE_AGGREGATE_CHECKPOINTS=0 to
     // roll back. Checkpoints avoid frames x final_length serialization growth
@@ -424,7 +438,7 @@ function buildFeatureFlagDefaults(env = process.env) {
     tools_image_generate_enabled: fe('TOOLS_IMAGE_GENERATE', true),
     // tools_home_enabled gates the consolidated `home` tool (calendar, reminders, read-only
     // scratchpad). DEFAULT-ON; JENNY_ENABLE_TOOLS_HOME=0 rolls back (the tool is not registered).
-    tools_home_enabled: fe('TOOLS_HOME', true),
+    tools_home_enabled: fe('TOOLS_HOME', true), tools_next_step_enabled: fe('TOOLS_NEXT_STEP', true), // row 97 next-step card; JENNY_ENABLE_TOOLS_NEXT_STEP=0 unregisters it
     // tools_task_board_enabled gates durable model-authored Open Loops tasks. DEFAULT-ON;
     // JENNY_ENABLE_TOOLS_TASK_BOARD_ENABLED=0 removes the tool from both catalogs.
     tools_task_board_enabled: fe('TOOLS_TASK_BOARD_ENABLED', true),
@@ -435,8 +449,8 @@ function buildFeatureFlagDefaults(env = process.env) {
     // tools_session_directory_enabled gates sessions_list/session_status/session_transcript/session_stop. Row 76 (plan
     // PRIMARY_CHAT_CONTROLS_2026-10-25.md): the primary's standing launch permission, activity log and Pause/Reset/Forget controls.
     primary_chat: fe('PRIMARY_CHAT', true), session_directory_tool_gate: fe('SESSION_DIRECTORY_TOOL_GATE', true), // only primary + linked chats see them
-    tools_session_directory_enabled: fe('TOOLS_SESSION_DIRECTORY_ENABLED', true), session_message_wake: fe('SESSION_MESSAGE_WAKE', true), child_auto_resume: fe('CHILD_AUTO_RESUME', true), // row 70: wake on delivery; a linked child's budget stop resumes it before its parent wakes
-    primary_launch_permission: fe('PRIMARY_LAUNCH_PERMISSION', true), primary_activity_log: fe('PRIMARY_ACTIVITY_LOG', true), primary_chat_controls: fe('PRIMARY_CHAT_CONTROLS', true),
+    tools_session_directory_enabled: fe('TOOLS_SESSION_DIRECTORY_ENABLED', true), session_message_wake: fe('SESSION_MESSAGE_WAKE', true), child_auto_resume: fe('CHILD_AUTO_RESUME', true), background_job_wake: fe('BACKGROUND_JOB_WAKE', true), background_job_notices: fe('BACKGROUND_JOB_NOTICES', true), // row 70: wake on delivery; a linked child's budget stop resumes it before its parent wakes; a finished background job wakes its chat, and one that settles mid-turn is also pushed to the live turn (background_job_notices) (2026-11-01)
+    primary_launch_permission: fe('PRIMARY_LAUNCH_PERMISSION', true), primary_activity_log: fe('PRIMARY_ACTIVITY_LOG', true), primary_chat_controls: fe('PRIMARY_CHAT_CONTROLS', true), primary_settings_writes: fe('PRIMARY_SETTINGS_WRITES', true), primary_chat_manage: fe('PRIMARY_CHAT_MANAGE', true), primary_chat_placement: fe('PRIMARY_CHAT_PLACEMENT', true), primary_app_view: fe('PRIMARY_APP_VIEW', true), primary_chat_export: fe('PRIMARY_CHAT_EXPORT', true), terminal_tools: fe('TERMINAL_TOOLS', true), primary_scheduled_checks: fe('PRIMARY_SCHEDULED_CHECKS', true), primary_action_rules: fe('PRIMARY_ACTION_RULES', true), absolute_path_links: fe('ABSOLUTE_PATH_LINKS', true), data_usage_page: fe('DATA_USAGE_PAGE', true), // row 95: =0 stops chat path chips and prose paths from resolving absolute paths (copy-only/inert as before); =0 on data_usage_page hides the Settings "Your data" group and refuses its IPC
     file_map_components: fe('FILE_MAP_COMPONENTS', true), api_providers: fe('API_PROVIDERS', true), model_catalog_guard: fe('MODEL_CATALOG_GUARD', true), ide_hot_exit: fe('IDE_HOT_EXIT', true), // row 77: =0 skips the File Map components draft; row 78: =0 hides API-key providers and hands no key to the sidecar (keys stay stored); row 82: =0 stops every IDE hot-exit backup read/write
     // memory_v2_enabled gates agentic memory v2: the sidecar-owned `memory` tool (managed-sidecar
     // `tools_memory_enabled` derives from it), later reflection and episodic recall. DEFAULT-ON; set
@@ -533,7 +547,7 @@ function buildFeatureFlagDefaults(env = process.env) {
     // embedding GGUF in Settings. JENNY_ENABLE_SEMANTIC_CATALOG=0 stops the
     // scheduler and the embedder and withdraws the sidecar catalog config.
     semantic_catalog: fe('SEMANTIC_CATALOG', true),
-    prefill_progress: fe('PREFILL_PROGRESS', true),
+    prefill_progress: fe('PREFILL_PROGRESS', true), test_progress: fe('TEST_PROGRESS', true), work_leases: fe('WORK_LEASES', true), // rows 96-97: live test-run progress, cross-process work leases on run_command (2026-11-01)
     // ollama_tray_remediation gates the owner-triggered Ollama tray-conflict
     // remediation surface (ollamaTray.* IPC: quit the tray app, disable its
     // Startup shortcut, restart the engine). Explicit-click actions only —
@@ -544,6 +558,7 @@ function buildFeatureFlagDefaults(env = process.env) {
     ollama_tray_remediation: fe('OLLAMA_TRAY_REMEDIATION', true),
     text_spellcheck: fe('TEXT_SPELLCHECK', true),
     dictation: fe('DICTATION', true),
+    primary_digests: fe('PRIMARY_DIGESTS', false),
     session_runtime: fe('SESSION_RUNTIME', true),
     llama_server_acceleration: fe('LLAMA_SERVER_ACCELERATION', true),
     // ninfer gates the managed NInfer runtime for an eligible RTX 5090 (row 54).
@@ -571,6 +586,8 @@ function buildFeatureFlagDefaults(env = process.env) {
     // session_journal gates append-only chat-file journals. DEFAULT-ON; set
     // JENNY_ENABLE_SESSION_JOURNAL=0 to roll back to whole-file chat writes.
     session_journal: fe('SESSION_JOURNAL', true),
+    home_usage_stats: fe('HOME_USAGE_STATS', true),
+    read_only_commands: fe('READ_ONLY_COMMANDS', true),
   };
 }
 

@@ -32,6 +32,7 @@ from sidecar.ai.context.context_io import (
     read_bounded_context_text,
     truncate_utf8,
 )
+from sidecar.ai.context.skill_mentions import find_skill_mention
 from sidecar.ai.host_policy import host_policy_is_enforced
 
 _MAX_CACHED_SKILL_AUTHORITIES = 8
@@ -174,15 +175,12 @@ class _BuilderSkillsMixin:
         for entry in self._load_skills(skill_authority):
             if self._skill_id(entry) != skill_id:
                 continue
-            command = entry.command or self._skill_id(entry).removeprefix(f"{entry.scope}/")
-            message = _sanitize_bootstrap_content(
-                f"## Invoked Skill: {entry.name}\n"
+            command = self._skill_command(entry)
+            return self._render_invoked_skill(
+                entry,
                 f"The user invoked this skill with /{command} for their current message. "
-                "Apply it to this turn even if their message text is brief.\n"
-                f"{entry.body}",
-                source_name="invoked_skill",
+                "Apply it to this turn even if their message text is brief.",
             )
-            return truncate_utf8(message, MAX_SKILL_FILE_BYTES)[0]
         import sidecar.ai.context.builder as _builder_hub
 
         _builder_hub.log_event(
@@ -195,6 +193,50 @@ class _BuilderSkillsMixin:
             data={"id": skill_id},
         )
         return ""
+
+    def build_mentioned_skill_system_message(
+        self,
+        latest_user_content: str,
+        skill_authority: SkillAuthority | None = None,
+    ) -> str:
+        """The invoked-skill section for an enabled skill's command or id slug named
+        mid-message (``skill_mentions``), or ``""``; only without a skill_invocation."""
+        if "/" not in (latest_user_content or ""):
+            return ""
+        found = find_skill_mention(latest_user_content, [
+            (name, (entry, name))
+            for entry in self._load_skills(skill_authority)
+            for name in dict.fromkeys(
+                (self._skill_command(entry), self._skill_id(entry).split("/", 1)[1])
+            )
+        ])
+        if found is None:
+            return ""
+        entry, named = found
+        import sidecar.ai.context.builder as _builder_hub
+
+        _builder_hub.log_event(
+            LOGGER, logging.INFO, component="ai.context.builder",
+            event="ai.context.skill_mention_resolved", status="success",
+            message="A skill named in the user's message was applied to this turn.",
+            data={"id": self._skill_id(entry)},
+        )
+        return self._render_invoked_skill(
+            entry,
+            f"The user named this skill with /{named} in their message; apply it to this turn.",
+        )
+
+    @staticmethod
+    def _render_invoked_skill(entry: SkillEntry, lead: str) -> str:
+        message = _sanitize_bootstrap_content(
+            f"## Invoked Skill: {entry.name}\n{lead}\n{entry.body}",
+            source_name="invoked_skill",
+        )
+        return truncate_utf8(message, MAX_SKILL_FILE_BYTES)[0]
+
+    @classmethod
+    def _skill_command(cls, entry: SkillEntry) -> str:
+        return entry.command or cls._skill_id(entry).removeprefix(f"{entry.scope}/")
 
     @staticmethod
     def _skill_id(entry: SkillEntry) -> str:

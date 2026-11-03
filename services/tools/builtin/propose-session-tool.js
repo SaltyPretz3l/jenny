@@ -6,6 +6,10 @@ const {
   checkLiveCall, producerToolSupported, proposalFailure, publishProposal, resolveSessionProposalDeps,
 } = require('./propose-tool-support');
 const { manifestSchema } = require('./tool-result');
+const { inDirectoryScope } = require('./session-directory-tool-support');
+
+// Loaded only for a fork: it pulls in the branching module.
+const forkSource = () => require('../../backend/session-fork-source');
 
 const NAME = 'propose_session';
 const INITIATIONS = new Set(['offer', 'own_initiative', 'user_asked']);
@@ -22,13 +26,31 @@ const CONTENT = Object.freeze({
   settled: 'The user already responded to this offer. Continue your answer.',
   project_not_allowed: 'Only the Jenny chat can choose a project; omit project_id.',
   unknown_project: 'No project with that id. Use a project.id from sessions_list, or omit project_id.',
+  fork_not_allowed: 'Only the Jenny chat can fork a chat; omit fork_of_session_id.',
+  fork_with_project: 'A fork stays in the project of the chat it copies; omit project_id when you set fork_of_session_id.',
+  fork_disabled: 'Forking a chat is turned off; omit fork_of_session_id.',
+  unknown_fork: 'No chat with that id that you can fork. Use a session_id from sessions_list, or omit fork_of_session_id.',
+  fork_primary: 'The Jenny chat cannot be forked. Use another chat\'s session_id, or omit fork_of_session_id.',
+  fork_empty: 'That chat has no messages to fork yet. Omit fork_of_session_id to start an empty chat.',
 });
 
-// A refusal for the primary's project_id (row 76): the shared invalid_request result shape, with the
-// reason's own sentence. Never echoes the id the model sent.
-function projectRefusal(reason) {
+// A refusal for the primary's project_id (row 76) or fork_of_session_id (row 94 P2): the shared
+// invalid_request result shape, with the reason's own sentence. Never echoes the id the model sent.
+function placementRefusal(reason) {
   const failure = proposalFailure(NAME, 'invalid_request');
   return { ...failure, content: `${NAME} did not record a proposal. ${CONTENT[reason]}` };
+}
+
+// The refusal reason for the primary's fork_of_session_id (the caller is already known to be the
+// primary), or null when the chat can be forked.
+async function forkRefusalReason(value, context, live) {
+  if (!forkSource().forkingEnabled(context.backendService?.featureFlags)) return 'fork_disabled';
+  if (typeof value.project_id === 'string') return 'fork_with_project';
+  const forkId = value.fork_of_session_id;
+  if (forkId === live.sessionId) return 'fork_primary';
+  if (!(await inDirectoryScope(context, forkId))) return 'unknown_fork';
+  const source = forkSource().readForkSource(context.backendService?.sessionStore, forkId);
+  return source.ok ? null : source.reason;
 }
 
 const MAX_LISTED_MODELS = 10;
@@ -121,9 +143,14 @@ module.exports = {
     if (installed.refusal) return installed.refusal;
     const value = installed.resolved ? { ...validated.value, preferred_model: installed.model } : validated.value;
     const projectId = value.project_id;
-    if (typeof projectId === 'string') {
-      if (!isPrimarySession(context.backendService?.sessionStore, live.sessionId)) return projectRefusal('project_not_allowed');
-      if (!context.backendService?.projectService?.get?.(projectId)) return projectRefusal('unknown_project');
+    const forking = typeof value.fork_of_session_id === 'string';
+    if (typeof projectId === 'string' || forking) {
+      if (!isPrimarySession(context.backendService?.sessionStore, live.sessionId)) {
+        return placementRefusal(forking ? 'fork_not_allowed' : 'project_not_allowed');
+      }
+      const forkReason = forking ? await forkRefusalReason(value, context, live) : null;
+      if (forkReason) return placementRefusal(forkReason);
+      if (!forking && !context.backendService?.projectService?.get?.(projectId)) return placementRefusal('unknown_project');
     }
     let captured;
     try {

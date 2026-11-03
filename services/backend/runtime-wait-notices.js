@@ -27,8 +27,24 @@ const HEARTBEAT_MS = 2000;
 // the model after this long is reported as waiting for other work.
 const LANE_NOTICE_MS = 1500;
 const MAX_NOTICES = 256;
+const MAX_LABEL_CHARS = 120;
+// eslint-disable-next-line no-control-regex -- stripping control characters is the point.
+const LABEL_BREAKS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/gu;
+const MAX_JOB_IDS = 8;
+const JENNY_APPS = new Set(['jenny-desktop', 'jenny-sidecar', 'jenny-cli']);
+const TEST_RUN_APPS = new Set(['legacy-test-run', 'safe-runner']);
 
 const { normalizeText: normalizeId } = require('../shared/normalize');
+
+// Row 100 P2: who holds a work lease, in the words the waiting line and the directory use.
+function holderKind(holder) {
+  if (normalizeId(holder.session_id)) return 'chat';
+  const app = normalizeId(holder.app);
+  if (JENNY_APPS.has(app) && holder.ours !== true) return 'jenny_window';
+  if (app === 'claude-code-hook') return 'claude_code';
+  if (TEST_RUN_APPS.has(app)) return 'test_run';
+  return app === 'git' ? 'git' : 'other';
+}
 
 function createRuntimeWaitNotices({ emit, broker, isTracked, getWork, incarnation, log = () => {},
   now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, stuckGraceMs = STUCK_GRACE_MS,
@@ -53,16 +69,33 @@ function createRuntimeWaitNotices({ emit, broker, isTracked, getWork, incarnatio
   function send(workId, notice, waitState, details = {}) {
     const resourceClass = normalizeId(details.resourceClass);
     const blockingSessionId = normalizeId(details.blockingSessionId);
-    const key = [waitState, resourceClass, blockingSessionId].join('|');
+    const holder = details.holder || null;
+    notice.described = waitState === 'waiting' ? { resourceClass, blockingSessionId, holder } : null;
+    const key = JSON.stringify([waitState, resourceClass, blockingSessionId, holder]);
     if (notice.key === key) return false;
     notice.key = key;
+    notice.since ??= Number(now());
     emit({
       type: 'runtime_waiting',
       streamId: notice.streamId, sessionId: notice.sessionId, requestId: notice.streamId,
       turnId: notice.turnId, traceId: notice.streamId, trace_id: notice.streamId,
       workId, waitState, resourceClass, blockingSessionId,
+      ...(holder ? { holderKind: holder.kind, holderWhat: holder.what, holderLabel: holder.label,
+        holderPid: holder.pid, holderCount: holder.count, holderJobIds: holder.jobIds } : {}),
     });
     return true;
+  }
+
+  // A work lease: the first holder (chats first, then queue order) and how many there are.
+  function describeHolder(holders) {
+    const [first] = holders;
+    if (!first) return null;
+    // Another process wrote it: one line of plain text, never markup or a second line of instructions.
+    const label = typeof first.label === 'string'
+      ? first.label.replace(LABEL_BREAKS, ' ').trim().slice(0, MAX_LABEL_CHARS) : '';
+    return { kind: holderKind(first), sessionId: normalizeId(first.session_id), what: normalizeId(first.what), label,
+      pid: Number.isSafeInteger(first.pid) && first.pid > 0 ? first.pid : null, count: holders.length,
+      jobIds: [...new Set(holders.map(holder => normalizeId(holder.job_id)).filter(Boolean))].slice(0, MAX_JOB_IDS) };
   }
 
   function describe(notice, timestamp) {
@@ -80,11 +113,17 @@ function createRuntimeWaitNotices({ emit, broker, isTracked, getWork, incarnatio
     const sessions = [...new Set(wait.holders.map(holder => normalizeId(holder.session_id))
       .filter(id => id && id !== notice.sessionId))];
     const settling = ages.filter(age => age < stuckGraceMs);
+    const work = wait.resource_class === 'work';
+    const holders = work ? wait.holders.filter(holder => normalizeId(holder.session_id) !== notice.sessionId) : [];
+    const holder = !stuck && work ? describeHolder(holders) : null;
     return {
       waitState: stuck ? 'stuck' : 'waiting',
       resourceClass: wait.resource_class,
-      // Named only when exactly one other chat holds the folder.
-      blockingSessionId: !stuck && wait.resource_class === 'filesystem' && sessions.length === 1 ? sessions[0] : '',
+      // A folder is named only when exactly one other chat holds it; a work lease
+      // (row 100 P2) names its first holder when that is a chat.
+      blockingSessionId: stuck ? '' : work ? holder?.sessionId || ''
+        : wait.resource_class === 'filesystem' && sessions.length === 1 ? sessions[0] : '',
+      holder,
       recheckInMs: settling.length ? stuckGraceMs - Math.max(...settling) : null,
     };
   }
@@ -160,10 +199,28 @@ function createRuntimeWaitNotices({ emit, broker, isTracked, getWork, incarnatio
       || waitResources.some(resource => resource?.type === 'dependency')) return false;
     notices.delete(workId);
     notices.set(workId, { revision: getWork(workId)?.revision, resources: waitResources, sessionId, streamId,
-      turnId: normalizeId(work.turn_id), key: '', pendingSince: null });
+      turnId: normalizeId(work.turn_id), key: '', pendingSince: null, described: null, since: null });
     while (notices.size > MAX_NOTICES) notices.delete(notices.keys().next().value);
     refresh();
     return true;
+  }
+
+  // The session directory's view of an announced wait (row 100 P2): what it waits
+  // behind and since when, or null when it is not waiting on a lease right now.
+  function waitFor(workId) {
+    const notice = notices.get(normalizeId(workId));
+    const described = notice?.described;
+    if (!described || !['work', 'filesystem'].includes(described.resourceClass)) return null;
+    const holder = described.holder;
+    return {
+      what: holder ? holder.what || null : described.resourceClass === 'filesystem' ? 'folder' : null,
+      holder: holder ? holder.kind : described.blockingSessionId ? 'chat' : 'other',
+      session_id: described.blockingSessionId || null,
+      command: holder?.label || null,
+      pid: holder?.pid ?? null,
+      count: holder?.count ?? null,
+      since: new Date(notice.since).toISOString(),
+    };
   }
 
   function dispose() {
@@ -175,7 +232,7 @@ function createRuntimeWaitNotices({ emit, broker, isTracked, getWork, incarnatio
     recheck = null;
   }
 
-  return Object.freeze({ note, refresh, dispose, size: () => notices.size });
+  return Object.freeze({ note, refresh, waitFor, dispose, size: () => notices.size });
 }
 
 module.exports = { HEARTBEAT_MS, STUCK_GRACE_MS, createRuntimeWaitNotices };

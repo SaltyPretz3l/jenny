@@ -662,6 +662,13 @@
   // inert markers) and reasoning (`reasoning-stream-unit`, live soft-landing
   // reveal) can share it. revealCap > 0 animates only the trailing N newly
   // *appended* units; in-place-grown units are never re-revealed (no throb).
+  // `options.writeTailUnit(el, html, index)` (optional) writes the LAST unit
+  // when it changed or is new (reasoning tail fade); every other unit and the
+  // bulk fallbacks keep the plain innerHTML path. `options.quickRevealWithinMs`
+  // (optional): a unit revealed within that window of the container's previous
+  // reveal lands with the short `is-revealed-quick` animation and no stagger,
+  // so a fast stream does not cascade a blurred block per paragraph.
+  const lastRevealAt = new WeakMap();
   function reconcileStreamUnits(container, nextBody, doc, options = {}) {
     if (!container || !nextBody) return;
     noteRowSubtreeWrite(container);
@@ -669,6 +676,9 @@
     const unitClassName = options.unitClassName || 'chat-stream-unit';
     const revealCap = Number.isFinite(options.revealCap) ? options.revealCap : 0;
     const staggerMs = Number(options.staggerMs) || 0;
+    const writeTailUnit = typeof options.writeTailUnit === 'function' ? options.writeTailUnit : null;
+    const quickRevealWithinMs = Number(options.quickRevealWithinMs) || 0;
+    const nowFn = typeof options.nowFn === 'function' ? options.nowFn : () => Date.now();
     const nextUnits = queryAllSafe(nextBody, '[data-stream-unit-index]');
     // Settled / flat body (no units): bulk replace, no reveal.
     if (!nextUnits.length) {
@@ -685,6 +695,12 @@
       return;
     }
     const revealFrom = revealCap ? Math.max(existing.length, nextUnits.length - revealCap) : Infinity;
+    // Quick landing compares against the container's reveal BEFORE this call,
+    // so a burst appending two units keeps today's stagger on both.
+    const revealNow = quickRevealWithinMs ? Number(nowFn()) : 0;
+    const lastAt = quickRevealWithinMs ? lastRevealAt.get(container) : undefined;
+    const quick = lastAt !== undefined && revealNow - lastAt < quickRevealWithinMs;
+    let revealed = false;
     for (let i = 0; i < nextUnits.length; i += 1) {
       if (i < existing.length) {
         // Existing unit grew/changed: update text in place. NEVER touch the
@@ -703,7 +719,8 @@
         const html = hasFingerprints && nextFp === curFp ? null : nextUnits[i].innerHTML;
         const changed = hasFingerprints ? nextFp !== curFp : existing[i].innerHTML !== html;
         if (changed) {
-          setInnerHtmlPreservingCodeScroll(existing[i], html);
+          if (writeTailUnit && i === nextUnits.length - 1) writeTailUnit(existing[i], html, i);
+          else setInnerHtmlPreservingCodeScroll(existing[i], html);
           if (nextFp !== null) {
             existing[i].setAttribute('data-su-fp', nextFp);
           }
@@ -715,16 +732,21 @@
         el.className = unitClassName;
         el.setAttribute('data-stream-unit-index', String(i));
         el.setAttribute('data-su-fp', nextUnits[i].getAttribute('data-su-fp') || '');
-        el.innerHTML = html;
+        if (writeTailUnit && i === nextUnits.length - 1) writeTailUnit(el, html, i);
+        else el.innerHTML = html;
         if (i >= revealFrom) {
           el.classList.add('is-revealed');
-          if (staggerMs) {
+          revealed = true;
+          if (quick) {
+            el.classList.add('is-revealed-quick');
+          } else if (staggerMs) {
             el.style.animationDelay = `${(i - revealFrom) * staggerMs}ms`;
           }
         }
         container.appendChild(el);
       }
     }
+    if (revealed && quickRevealWithinMs) lastRevealAt.set(container, revealNow);
   }
 
   // In-place child morph for a small already-parsed subtree (the reasoning

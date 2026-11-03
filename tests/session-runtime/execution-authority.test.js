@@ -9,6 +9,7 @@ const test = require('node:test');
 const {
   SessionExecutionAuthority,
   getTrustedExecutionBinding,
+  validateRuntimeOperation,
 } = require('../../services/backend/session-execution-authority');
 const { executeElectronToolRequest } = require('../../services/backend/electron-tool-bridge');
 const { approveToolCall } = require('../../services/backend/backend-chat-stream');
@@ -44,10 +45,12 @@ function reaStatus({ sideEffecting = true, available = true, serverName = 'rea' 
 }
 
 function createHarness({ decision = 'auto', mode = 'assist', readOnly = false,
-  approvalMode = 'prompt', resolveExternalToolDescriptor = null } = {}) {
+  approvalMode = 'prompt', resolveExternalToolDescriptor = null, runMode = '' } = {}) {
   let currentAuthority = ROOT_A;
+  let readOnlyCommandsOn = true;
   let currentDecision = decision;
   let currentRules = [];
+  let legacyShell = null;
   const controller = new AbortController();
   const checkpointCalls = [];
   const scopedGit = { createCheckpoint: async (options) => {
@@ -57,6 +60,7 @@ function createHarness({ decision = 'auto', mode = 'assist', readOnly = false,
   } };
   const scopedArtifact = { identity: 'scoped-artifact' };
   const projectAuthority = {
+    _sessionStore: runMode ? { getSessionSummary: () => ({ run_mode: runMode }) } : undefined,
     captureSession(sessionId) {
       if (sessionId !== 'session-alpha') throw new Error('session not found');
       return currentAuthority;
@@ -74,7 +78,8 @@ function createHarness({ decision = 'auto', mode = 'assist', readOnly = false,
       assert.equal(authority.project_id, 'project_alpha');
       return { version: 3, legacy_policies: { read_file: currentDecision,
         write_file: currentDecision, jenny_status: currentDecision, create_artifact: currentDecision,
-        [PLUGIN_TOOL]: currentDecision }, rules: currentRules };
+        [PLUGIN_TOOL]: currentDecision, ...(legacyShell ? { run_command: legacyShell } : {}) },
+        rules: currentRules };
     },
   };
   const authorityService = new SessionExecutionAuthority({
@@ -101,6 +106,7 @@ function createHarness({ decision = 'auto', mode = 'assist', readOnly = false,
         configService: { getToolsWorkspaceRoot: () => authority.root_path } };
     },
     resolveExternalToolDescriptor,
+    isReadOnlyCommandsEnabled: () => readOnlyCommandsOn,
     randomUUID: () => '8f04ce56-3fd5-4f3f-907c-3a0a6ea83580',
   });
   const binding = authorityService.captureSession('session-alpha', {
@@ -115,6 +121,8 @@ function createHarness({ decision = 'auto', mode = 'assist', readOnly = false,
     scopedGit,
     setAuthority(value) { currentAuthority = value; },
     setDecision(value) { currentDecision = value; },
+    setReadOnlyCommands(value) { readOnlyCommandsOn = value; },
+    setLegacyShell(value) { legacyShell = value; },
     setRules(value) { currentRules = value; },
   };
 }
@@ -759,4 +767,131 @@ test('approval rejects a stale captured root before settlement or persistent gra
   assert.deepEqual(settlements, [[false, 'cancelled']]);
   assert.deepEqual(grants, []);
   assert.equal(service.pendingToolApprovals.size, 0);
+});
+
+// Row 102: a read-only shell command the sidecar classified ALLOWED carries
+// `grant: 'read_only_command'`; Electron admits the tool-default ask only.
+const RO_GRANT = 'read_only_command';
+const roCommand = (overrides = {}) => {
+  const op = operation({ operation_id: 'tool-call-ro', tool_name: 'run_command',
+    arguments: { command: 'git log -5' }, grant: RO_GRANT, ...overrides });
+  if (op.grant === undefined) delete op.grant; // the wire drops absent keys
+  return op;
+};
+
+test('a read-only command grant admits the tool-default ask in Ask mode', () => {
+  const h = createHarness();
+  const check = (op) => h.authorityService.checkRuntimeOperation(h.binding, op);
+  assert.deepEqual(check(roCommand()), { schema_version: 1, status: 'granted', operation_id: 'tool-call-ro' });
+  const bare = check(roCommand({ grant: undefined, operation_id: 'tool-call-bare' }));
+  assert.equal(bare.status, 'rejected');
+  assert.equal(bare.error.reason, 'policy_rejected');
+});
+
+test('a read-only command grant passes the read-only check in Plan, Propose and read-only captures', () => {
+  const captures = [{ mode: 'plan' }, { runMode: 'propose' }, { readOnly: true }, { mode: 'plan', readOnly: true }];
+  for (const options of captures) {
+    const h = createHarness(options);
+    const label = JSON.stringify(options);
+    assert.equal(h.authorityService.checkRuntimeOperation(h.binding, roCommand()).status, 'granted', label);
+    const bare = h.authorityService.checkRuntimeOperation(h.binding,
+      roCommand({ grant: undefined, operation_id: 'tool-call-bare' }));
+    assert.equal(bare.error.reason, 'read_only', label);
+  }
+});
+
+test('the read-only command grant is per request: a Plan handoff child and an Ask wake both admit', () => {
+  const h = createHarness({ mode: 'plan' });
+  const child = h.authorityService.captureSession('session-alpha', { requestId: 'request-child', mode: 'plan' });
+  const wake = h.authorityService.captureSession('session-alpha', { requestId: 'request-wake', mode: 'assist' });
+  for (const [binding, requestId] of [[child, 'request-child'], [wake, 'request-wake']]) {
+    assert.equal(h.authorityService.checkRuntimeOperation(binding, roCommand({ request_id: requestId })).status,
+      'granted', requestId);
+  }
+});
+
+test('a read-only command grant never widens another tool, a user rule, or a disabled flag', () => {
+  const h = createHarness({ decision: 'ask' });
+  const reason = (op) => h.authorityService.checkRuntimeOperation(h.binding, op).error?.reason;
+  assert.equal(reason(roCommand({ tool_name: 'write_file', arguments: { path: 'a.txt', content: 'x' } })),
+    'policy_rejected');
+  for (const decision of ['ask', 'deny']) {
+    h.setRules([{ id: 'user-shell', decision, match: { tool_id: 'run_command' } }]);
+    assert.equal(reason(roCommand()), 'policy_rejected', decision);
+  }
+  h.setRules([]);
+  h.setReadOnlyCommands(false);
+  assert.equal(reason(roCommand()), 'policy_rejected');
+  const plan = createHarness({ mode: 'plan' });
+  plan.setReadOnlyCommands(false);
+  assert.equal(plan.authorityService.checkRuntimeOperation(plan.binding, roCommand()).error.reason, 'read_only');
+  const planWrite = createHarness({ mode: 'plan', decision: 'ask' });
+  assert.equal(planWrite.authorityService.checkRuntimeOperation(planWrite.binding, roCommand({
+    tool_name: 'write_file', arguments: { path: 'a.txt', content: 'x' } })).error.reason, 'read_only');
+});
+
+test('a read-only command grant does not lift a disabled tool', () => {
+  const h = createHarness();
+  h.authorityService.disableToolsForSession('session-alpha', ['run_command']);
+  assert.equal(h.authorityService.checkRuntimeOperation(h.binding, roCommand()).error.reason, 'tool_disabled');
+});
+
+test('a malformed grant or an unknown extra key is an invalid runtime operation schema', () => {
+  const h = createHarness();
+  for (const patch of [{ grant: null }, { grant: 'yes' }, { grant: true }, { grant: 'READ_ONLY_COMMAND' },
+    { extra: 1 }, { grant: RO_GRANT, extra: 1 }]) {
+    const result = h.authorityService.checkRuntimeOperation(h.binding, roCommand(patch));
+    assert.equal(result.status, 'rejected', JSON.stringify(patch));
+    assert.equal(result.error.reason, 'invalid_schema', JSON.stringify(patch));
+  }
+  assert.equal(validateRuntimeOperation(operation({ schema_version: 2, grant: RO_GRANT })).reason, 'invalid_schema');
+  assert.equal(validateRuntimeOperation(roCommand()).grant, RO_GRANT);
+  assert.equal(validateRuntimeOperation(operation()).grant, null);
+});
+
+test('a recorded read-only grant admits the identical re-check without the key, until close', () => {
+  const h = createHarness({ mode: 'plan' });
+  const check = (op) => h.authorityService.checkRuntimeOperation(h.binding, op);
+  const recheck = (overrides) => check(roCommand({ grant: undefined, ...overrides }));
+  assert.equal(recheck().error.reason, 'read_only');
+  assert.equal(check(roCommand()).status, 'granted');
+  assert.equal(recheck().status, 'granted');
+  assert.equal(recheck({ arguments: { command: 'git log -50' } }).status, 'rejected');
+  assert.equal(recheck({ operation_id: 'tool-call-other' }).status, 'rejected');
+  h.setRules([{ id: 'user-shell', decision: 'ask', match: { tool_id: 'run_command' } }]);
+  assert.equal(recheck().error.reason, 'policy_rejected');
+  h.setRules([]);
+  h.setReadOnlyCommands(false);
+  assert.equal(recheck().status, 'rejected');
+  h.setReadOnlyCommands(true);
+  assert.equal(recheck().status, 'granted');
+  h.authorityService.close(h.binding);
+  assert.equal(recheck().status, 'rejected');
+});
+
+test('a read-only grant admitted under a saved auto rule is recorded for the lease re-check in Plan', () => {
+  const h = createHarness({ mode: 'plan' });
+  h.setRules([{ id: 'user-shell', decision: 'auto', match: { tool_id: 'run_command' } }]);
+  const check = (op) => h.authorityService.checkRuntimeOperation(h.binding, op);
+  assert.equal(check(roCommand()).status, 'granted');
+  assert.equal(check(roCommand({ grant: undefined })).status, 'granted');
+});
+
+test('a stored v1 run_command policy is not the untouched default for the grant', () => {
+  const h = createHarness();
+  h.setLegacyShell('ask');
+  const result = h.authorityService.checkRuntimeOperation(h.binding, roCommand());
+  assert.equal(result.error?.reason, 'policy_rejected');
+});
+
+test('a read-only command grant fails closed when the host passes no flag accessor', () => {
+  const bare = new SessionExecutionAuthority({
+    projectAuthority: { captureSession: () => ROOT_A, requireCurrent: () => ROOT_A },
+    permissionStore: { getSnapshot: () => ({ version: 3, legacy_policies: {}, rules: [] }) },
+    knowledgeService: { getSidecarConfig: () => ({ knowledge_roots: [] }) },
+    resolveProjectWorkspaceServices: () => ({}),
+    randomUUID: () => '8f04ce56-3fd5-4f3f-907c-3a0a6ea83580',
+  });
+  const binding = bare.captureSession('session-alpha', { requestId: 'request-alpha' });
+  assert.equal(bare.checkRuntimeOperation(binding, roCommand()).error.reason, 'policy_rejected');
 });

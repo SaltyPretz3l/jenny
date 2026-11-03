@@ -152,3 +152,12 @@ test('annotations sit under their new-side line; lines the hunks miss lead the b
   assert.equal(doc.querySelector('.diff-line-remove').hasAttribute('data-review-severity'), false);
   assert.equal(doc.body.textContent.includes('ignored'), false);
 });
+
+test('both diff renderers stamp each row with the line numbers of the sides it has', () => {
+  const lines = (doc) => [...doc.querySelectorAll('.diff-line')]
+    .map((row) => [row.getAttribute('data-old-line'), row.getAttribute('data-new-line')]);
+  const meta = [{ ...hunks[0], lines: [...hunks[0].lines, '\\ No newline at end of file'] }];
+  const expected = [['47', '47'], ['48', '48'], ['49', null], [null, '49'], [null, null]];
+  assert.deepEqual(lines(parse(buildFileDiffBodyMarkup({ hunks: meta, languageId: 'javascript' }))), expected);
+  assert.deepEqual(lines(parse(renderDiffHunks(meta))), expected);
+});

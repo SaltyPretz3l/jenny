@@ -14,6 +14,13 @@ const {
 } = require('./chat-stream-tool-payload-utils');
 const planDocuments = require('./plan-document-events');
 const { SESSION_STOP_SCOPE, TOOL_NAME: SESSION_STOP_TOOL, sessionStopApprovalFields } = require('./session-stop-approval');
+const { SETTINGS_CHANGE_SCOPE, TOOL_NAME: SETTINGS_CHANGE_TOOL, settingsChangeApprovalFields } = require('./settings-change-approval');
+const { SCHEDULE_CHANGE_SCOPE, TOOL_NAME: SCHEDULE_CHANGE_TOOL, scheduleChangeApprovalFields } = require('./schedule-change-approval');
+const { TOOL_NAME: PROJECT_CREATE_TOOL, projectCreateRefusal } = require('./project-create-approval');
+const { appControlCardStep, hasCardStep } = require('./app-control-card-refusals');
+const { deriveCommandScope } = require('../tools/command-prefix');
+const { actionRuleDenial } = require('./action-rule-gate');
+const { RULE_DENIED_MESSAGE } = require('../primary-action-rules');
 const APPROVAL_TIMEOUT_MS = 10 * 60 * 1000;
 const UNATTENDED_PAUSE_APPROVAL_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 const _setTimeout = setTimeout;
@@ -42,6 +49,12 @@ const EXACT_APPROVAL_FIELDS = Object.freeze({
   monitor: ['command', 'cwd'],
   write_file: ['path', 'file_path', 'content', 'file_content'],
   edit_file: ['file_path', 'old_string', 'new_string', 'replace_all', 'edits'],
+  // Row 94 P2: the folder a new project binds; the placement port proved it is the folder bound.
+  project_create: ['folder', 'name'],
+  // Row 94 P4: the chat a copy is made of (its title, which the export port proved is that chat's), and the exact
+  // command line typed into the user's terminal.
+  session_export: ['chat_title', 'session_id'],
+  terminal_run: ['command'],
 });
 const EXACT_APPROVAL_MAX_BYTES = 32 * 1024;
 
@@ -75,6 +88,32 @@ function buildExactApprovalPresentation(toolName, args) {
   return { schema_version: 1, fields, bytes, sha256 };
 }
 
+// Row 103: what "Always allow" on a command card covers, derived exactly as the permission store
+// will derive the grant: `{kind:'prefix', prefix}`, `{kind:'exact'}`, or `{kind:'none'}` (chained:
+// allowed once only). Null for every other tool.
+function commandAlwaysAllowScope(toolName, input) {
+  if (toolName !== 'run_command') return null;
+  const derived = deriveCommandScope(input.command);
+  return derived.scope === 'prefix' ? { kind: 'prefix', prefix: derived.prefix } : { kind: derived.scope };
+}
+
+// Row 87 D6 (Q2, owner pick C1): a primary-chat message card to one of its own linked chats offers the button
+// "Always allow for chats Jenny started" while rules are on. Only the user's answer can take the offer (`remember`); the model never sets it.
+function linkedChildrenOffer(service, sessionId, turnId, messageFields) {
+  try {
+    const controls = service?.primaryChatControls;
+    const destinationId = messageFields.session_message_approval?.destination?.session_id;
+    if (!destinationId || controls?.actionRulesEnabled?.() !== true || controls.isPrimary?.(sessionId) !== true) return '';
+    const parent = service.sessionStore?.getSessionSummary?.(destinationId)?.spawned_from?.parent_session_id;
+    if (parent !== sessionId) return '';
+    // A deny or ask rule already covering this chat outranks a new allow, so the button would change nothing.
+    const covering = service.primaryActionRules?.match?.({ action: 'message', sessionId, turnId, target: { session_id: destinationId } });
+    return covering && covering.effect !== 'allow' ? '' : 'linked_children';
+  } catch (_error) {
+    return '';
+  }
+}
+
 // The arguments Electron signs (the bridge's noteApproved input) must still hash to what was shown.
 function exactInputStillShown(toolName, params, displayedSha256) {
   try {
@@ -93,14 +132,21 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
   const policyDecisionId = String(
     params.policy_decision_id || params.policyDecisionId || ''
   ).trim();
-  const reason = controller.unattendedPauseRequested === true
+  const askedReason = controller.unattendedPauseRequested === true
     ? 'Auto paused after keyboard or mouse inactivity. ' + sanitizeApprovalReason(params.reason)
     : sanitizeApprovalReason(params.reason);
   const presentation = sanitizeApprovalPolicyPresentation(params);
-  const policyScope = toolName === SESSION_STOP_TOOL ? SESSION_STOP_SCOPE : presentation.policyScope;
+  const policyScope = toolName === SESSION_STOP_TOOL ? SESSION_STOP_SCOPE
+    : toolName === SETTINGS_CHANGE_TOOL ? SETTINGS_CHANGE_SCOPE
+      : toolName === SCHEDULE_CHANGE_TOOL ? SCHEDULE_CHANGE_SCOPE : presentation.policyScope;
   const { policyConsequence } = presentation;
-  const oneOffOnly = toolName === 'session_message' || params.one_off_only === true;
   const input = params.tool_input && typeof params.tool_input === 'object' ? params.tool_input : {};
+  const alwaysAllowScope = commandAlwaysAllowScope(toolName, input);
+  // A settings batch and a scheduled-check change are approved once, never always (rows 88 / 85; also NEVER_PERSIST_ALWAYS_ALLOW),
+  // and so is a chained command (row 103).
+  const oneOffOnly = toolName === 'session_message' || toolName === SETTINGS_CHANGE_TOOL || toolName === SCHEDULE_CHANGE_TOOL
+    || toolName === PROJECT_CREATE_TOOL || hasCardStep(toolName)
+    || params.one_off_only === true || alwaysAllowScope?.kind === 'none';
   const persistedInputSnapshot = buildPersistedToolInputSnapshot(input);
   const exactApproval = buildExactApprovalPresentation(toolName, input);
   const exactApprovalSha256 = exactApproval?.sha256 || '';
@@ -114,12 +160,38 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
   const toolUseMessageId = buildToolUseMessageId(streamId, callId);
   const noteTurnEvent = makeNoteTurnEvent(turnEventCollector, streamId);
   const planApproval = planDocuments.preparePlanApproval({ toolName, service, sessionId, streamId, callId, input, approvalId, turnEventCollector });
+  // Row 87: a user's deny rule refuses a Jenny-chat stop, settings change or scheduled-check change before any card.
+  if (actionRuleDenial(service, { toolName, sessionId, turnId: turnEventCollector?.turnId || streamId, input })) {
+    persistTerminalApprovalResult({
+      service, sessionId, streamId, callId, toolName, summary, model: service.currentModel, approvalState: 'denied',
+      inputSnapshot: persistedInputSnapshot, policyDecisionId, turnEventCollector, output: RULE_DENIED_MESSAGE,
+      metadata: { rule_denied: true },
+    });
+    return false;
+  }
+  // Row 94 P2 / P4: a project, export or terminal command its port refuses ends here with its reason, before any card.
+  const cardStep = hasCardStep(toolName) ? await appControlCardStep(service, toolName, sessionId, callId, input) : null;
+  const projectRefusal = toolName === PROJECT_CREATE_TOOL ? await projectCreateRefusal(service, sessionId, callId, input) : cardStep?.refusal || null;
+  // The export's file name or the terminal's folder joins the reason, so the card names where the result lands.
+  const reason = cardStep?.cardNote ? `${askedReason} ${sanitizeApprovalReason(cardStep.cardNote)}`.trim() : askedReason;
+  if (projectRefusal) {
+    persistTerminalApprovalResult({
+      service, sessionId, streamId, callId, toolName, summary, model: service.currentModel, approvalState: 'denied',
+      inputSnapshot: persistedInputSnapshot, policyDecisionId, turnEventCollector, output: projectRefusal,
+      metadata: { app_refused: true },
+    });
+    return false;
+  }
   const messageFields = sessionMessageApprovalFields(params);
-  // Only a stop awaits here (every other approval registers synchronously); read before the
-  // duplicate check below, which stays synchronous with the waiter's registration.
-  const stopFields = toolName === SESSION_STOP_TOOL ? await sessionStopApprovalFields(service, sessionId, input) : {};
+  // Only a stop, a settings change and a scheduled-check change await here (every other approval registers synchronously); read
+  // before the duplicate check below, which stays synchronous with the waiter's registration. The
+  // settings card's rows are the app's own reading (row 88 D3), remembered by the port under this call.
+  const stopFields = toolName === SESSION_STOP_TOOL ? await sessionStopApprovalFields(service, sessionId, input)
+    : toolName === SETTINGS_CHANGE_TOOL ? await settingsChangeApprovalFields(service, sessionId, callId, input)
+      : toolName === SCHEDULE_CHANGE_TOOL ? await scheduleChangeApprovalFields(service, sessionId, input) : {};
   // Missing exact-content presentation must fail closed; never ask over a clipped preview.
   if (toolName === 'session_message' && !messageFields.session_message_approval) return false;
+  const rememberOffer = toolName === 'session_message' ? linkedChildrenOffer(service, sessionId, turnEventCollector?.turnId || streamId, messageFields) : '';
 
   if (planDocuments.denyUnrenderablePlan(planApproval, persistTerminalApprovalResult, {
     service, sessionId, streamId, callId, toolName, summary, model: service.currentModel,
@@ -249,6 +321,8 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
     summary,
     policy: 'ask',
     ...exactApprovalFields,
+    ...(alwaysAllowScope ? { alwaysAllowScope } : {}),
+    ...(rememberOffer ? { rememberOffer } : {}),
     ...planApproval.messageFields,
     ...messageFields,
     ...stopFields,
@@ -262,7 +336,7 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
     let timeoutId;
     let detachDecision = null;
     const handleAbort = () => finish(false, approvalStateFromAbortSignal(controller));
-    const finish = (approved, approvalState = 'denied', feedback = '', plan = null, scope = '') => {
+    const finish = (approved, approvalState = 'denied', feedback = '', plan = null, scope = '', remember = '') => {
       if (settled) {
         return;
       }
@@ -287,6 +361,8 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
       if (exactInputDenied) resolvedState = 'denied';
       let normalizedApproved = Boolean(approved) && resolvedState !== 'denied';
       const approvalScope = normalizedApproved && (scope === 'always' || scope === 'once') ? scope : '';
+      // The receipt names the saved command prefix (row 103); an exact grant quotes the command.
+      const alwaysAllowPrefix = approvalScope === 'always' && alwaysAllowScope?.kind === 'prefix' ? alwaysAllowScope.prefix : '';
       let consentEventId = '';
       // Everything above is unconditional teardown, so the waiter can never
       // be re-entered. Everything below is fallible bookkeeping; a throw here
@@ -311,12 +387,14 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
           callId, approvalId, ...(policyDecisionId ? { policyDecisionId } : {}),
           toolName, input: persistedInputSnapshot.input, summary, status: resolvedState,
           ...(approvalScope ? { approvalScope } : {}),
+          ...(alwaysAllowPrefix ? { alwaysAllowPrefix } : {}),
         });
         const resolutionEvent = buildApprovalCanonicalEvent({
           streamId, sessionId, callId, type: 'tool_approval_resolved',
           payload: {
             approval_id: approvalId, approval_state: resolvedState, approved: normalizedApproved,
             ...(approvalScope ? { approval_scope: approvalScope } : {}),
+            ...(alwaysAllowPrefix ? { always_allow_prefix: alwaysAllowPrefix } : {}),
             ...(policyDecisionId ? { policy_decision_id: policyDecisionId } : {}), tool_name: toolName,
           },
         });
@@ -330,6 +408,15 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
             inputSnapshot: persistedInputSnapshot, policyDecisionId, turnEventCollector,
             output: approvalTerminalOutput(toolName, resolvedState, reason),
           });
+        }
+        // Row 87 D6: the user pressed "Always allow for chats Jenny started" on an offered card. Best
+        // effort: a failed rule write never changes this approval.
+        if (normalizedApproved && rememberOffer && remember === rememberOffer) {
+          try {
+            service.primaryChatControls?.addActionRule?.({ action: 'message', target: { kind: 'linked_children' }, effect: 'allow' });
+          } catch (_error) {
+            service?._emitServiceLog?.('WARN', 'primary_action_rules.remember_failed', { approvalId, sessionId, callId });
+          }
         }
       } catch (settlementError) {
         if (toolName === 'session_message') normalizedApproved = false;
@@ -353,7 +440,9 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
       callId,
       toolName,
       toolInput: input,
-      ...(exactApproval ? { exactApprovalSha256 } : {}),
+      // The presentation itself, not just its hash: a chat reopened mid-wait rebuilds its card from
+      // the active-turn snapshot (backend-active-turn-state.js), which reads it from here.
+      ...(exactApproval ? { exactApproval, exactApprovalSha256 } : {}),
       messageId: rowMessageId,
       resolve: finish,
       requireExactRef: Boolean(controller._runtimeDecisionControl && params.runtime_decision),
@@ -362,6 +451,10 @@ async function waitForApproval(service, streamId, sessionId, requestId, params, 
       policyScope,
       policyConsequence,
       ...(oneOffOnly ? { oneOffOnly: true } : {}),
+      // A chat reopened mid-wait rebuilds the card's Always allow label from here.
+      ...(alwaysAllowScope ? { alwaysAllowScope } : {}),
+      // Row 87: so a reopened chat can rebuild the card's "Always allow for chats Jenny started" button.
+      ...(rememberOffer ? { rememberOffer } : {}),
       executionAuthority,
     });
     if (controller.signal.aborted) {

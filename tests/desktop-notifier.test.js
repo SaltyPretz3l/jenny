@@ -38,8 +38,14 @@ function createHarness({
   factoryError = null,
   mainWindow = createWindow(),
   authorizeSender = () => true,
+  primarySessionId = null,
+  chatUi = {},
+  nowMs = new Date(2026, 10, 2, 12, 0).getTime(),
 } = {}) {
-  const state = { settings, flag, supported, factoryError, mainWindow, childSessions: new Set(), childLookupError: null };
+  const state = {
+    settings, flag, supported, factoryError, mainWindow, childSessions: new Set(), childLookupError: null,
+    primarySessionId, chatUi, nowMs,
+  };
   const notifications = [];
   const bridgeEvents = [];
   const logs = [];
@@ -56,7 +62,16 @@ function createHarness({
         if (state.settingsError) throw state.settingsError;
         return { appZoomPercent: 100, notifications: state.settings };
       },
+      getChatUiState() {
+        if (state.chatUiError) throw state.chatUiError;
+        return state.chatUi;
+      },
     }),
+    isPrimarySession: (sessionId) => {
+      state.primaryLookups = (state.primaryLookups || 0) + 1;
+      return sessionId === state.primarySessionId;
+    },
+    now: () => state.nowMs,
     isChildSession: (sessionId) => {
       if (state.childLookupError) throw state.childLookupError;
       return state.childSessions.has(sessionId);
@@ -499,4 +514,86 @@ test('start without an ipcMain and stop before start are inert', () => {
   assert.doesNotThrow(() => notifier.stop());
   assert.doesNotThrow(() => notifier.start());
   assert.equal(notifier.notify(candidate()), false, 'isEnabled defaults to off');
+});
+
+// Row 89: the turns Jenny starts herself.
+function jennyUpdate(n, overrides = {}) {
+  return candidate({ category: 'jenny', key: `turn:wake-${n}`, sessionId: 'primary', title: 'Jenny has an update', body: 'Jenny', group: 'updates', ...overrides });
+}
+
+test('the jenny category shows with its own switch and keeps its preview', () => {
+  const h = createHarness({ settings: { onlyWhenUnfocused: true, replyPreview: true } });
+  assert.equal(h.notifier.notify(candidate({ category: 'jenny', key: 'turn:check', title: 'Check done: Morning PR sweep', body: 'Jenny', preview: 'Two PRs need review.' })), true);
+  assert.deepEqual(h.notifications[0].options, { title: 'Check done: Morning PR sweep', body: 'Two PRs need review.', silent: false });
+  h.state.settings = { categories: { jenny: false } };
+  assert.equal(h.notifier.notify(candidate({ category: 'jenny', key: 'turn:check-2', title: 'Check done' })), false);
+  assert.equal(h.notifier.notify(candidate({ key: 'turn:own' })), true, 'replies keep their own switch');
+});
+
+test('normalization keeps group only for a jenny candidate with a session, and only "updates"', () => {
+  assert.equal(normalizeNotificationCandidate(jennyUpdate(1)).group, 'updates');
+  assert.equal(normalizeNotificationCandidate(jennyUpdate(1, { group: 'other' })).group, undefined);
+  assert.equal(normalizeNotificationCandidate(jennyUpdate(1, { sessionId: '' })).group, undefined);
+  assert.equal(normalizeNotificationCandidate(candidate({ group: 'updates' })).group, undefined);
+});
+
+test('wake updates share one counting toast per chat until the user clicks or focuses the window', () => {
+  const h = createHarness();
+  assert.equal(h.notifier.notify(jennyUpdate(1)), true);
+  assert.equal(h.notifications[0].options.title, 'Jenny has an update');
+  assert.equal(h.notifier.notify(jennyUpdate(2)), true);
+  assert.equal(h.notifications[0].closeCalls, 1, 'the earlier toast is replaced');
+  assert.equal(h.notifications[1].options.title, 'Jenny has 2 updates');
+  assert.equal(h.notifier.getLiveCount(), 1);
+  assert.equal(h.notifier.notify(jennyUpdate(2)), false, 'the same turn twice is a duplicate');
+  // Windows closes a toast into the notification center on its own; the count carries on.
+  h.notifications[1].emitClose();
+  assert.equal(h.notifier.notify(jennyUpdate(3)), true);
+  assert.equal(h.notifications[2].options.title, 'Jenny has 3 updates');
+  h.notifications[2].click();
+  assert.equal(h.notifier.notify(jennyUpdate(4)), true);
+  assert.equal(h.notifications[3].options.title, 'Jenny has an update', 'a click resets the count');
+  assert.equal(h.notifier.notify(jennyUpdate(5)), true);
+  h.state.mainWindow.emit('focus');
+  assert.equal(h.notifier.notify(jennyUpdate(6)), true);
+  assert.equal(h.notifications[5].options.title, 'Jenny has an update', 'focus resets the count');
+  assert.equal(h.notifier.notify(jennyUpdate(7, { sessionId: 'other-chat' })), true);
+  assert.equal(h.notifications[6].options.title, 'Jenny has an update', 'counts are per chat');
+});
+
+test('a factory failure neither closes the count off nor bumps it; a focused update starts a fresh count', () => {
+  const h = createHarness({ settings: { onlyWhenUnfocused: false } });
+  assert.equal(h.notifier.notify(jennyUpdate(1)), true);
+  h.state.factoryError = new Error('toast service down');
+  assert.equal(h.notifier.notify(jennyUpdate(2)), false);
+  h.state.factoryError = null;
+  assert.equal(h.notifier.notify(jennyUpdate(3)), true);
+  assert.equal(h.notifications.at(-1).options.title, 'Jenny has 2 updates', 'the failed one is not counted');
+  h.state.mainWindow.focused = true;
+  assert.equal(h.notifier.notify(jennyUpdate(4)), true);
+  assert.equal(h.notifications.at(-1).options.title, 'Jenny has an update', 'seen while focused: a fresh count');
+});
+
+test('inside quiet hours nothing from the Jenny chat toasts; other chats and outside hours are unaffected', () => {
+  const at = (h, m) => new Date(2026, 10, 2, h, m).getTime();
+  const h = createHarness({ primarySessionId: 'primary', chatUi: { digestQuietStart: '22:00', digestQuietEnd: '07:00' }, nowMs: at(23, 30) });
+  assert.equal(h.notifier.notify(candidate({ category: 'permissions', key: 'inbox:a', sessionId: 'primary', title: 'Needs your permission' })), false);
+  assert.equal(h.notifier.notify(jennyUpdate(1)), false);
+  assert.equal(h.logsFor('desktop_notifier.suppressed').some((entry) => entry.details.reason === 'quiet_hours'), true);
+  assert.equal(h.notifier.notify(candidate({ key: 'turn:other', sessionId: 'other-chat' })), true, 'another chat still toasts');
+  h.state.nowMs = at(7, 0);
+  const lookups = h.state.primaryLookups;
+  assert.equal(h.notifier.notify(jennyUpdate(2)), true, 'the end bound is outside');
+  assert.equal(h.state.primaryLookups, lookups, 'outside quiet hours the session is never looked up');
+  h.state.chatUi = { digestQuietStart: '09:00', digestQuietEnd: '09:00' };
+  h.state.nowMs = at(9, 0);
+  assert.equal(h.notifier.notify(candidate({ key: 'turn:eq', sessionId: 'primary' })), true, 'equal bounds mean no quiet hours');
+});
+
+test('a failing quiet-hours read logs once and lets the toast through', () => {
+  const h = createHarness({ primarySessionId: 'primary' });
+  h.state.chatUiError = new Error('config gone');
+  assert.equal(h.notifier.notify(candidate({ key: 'turn:a', sessionId: 'primary' })), true);
+  assert.equal(h.notifier.notify(candidate({ key: 'turn:b', sessionId: 'primary' })), true);
+  assert.equal(h.logsFor('desktop_notifier.quiet_hours_failed').length, 1);
 });

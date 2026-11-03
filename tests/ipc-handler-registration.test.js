@@ -123,8 +123,8 @@ describe('registerWorkspaceFsIpcHandlers', () => {
 
     const noWatcher = createFakeIpcMain();
     registerWorkspaceFsIpcHandlers(noWatcher, proxy, { watcher: null });
-    // 14 legacy service channels + 5 versioned channels + watchStart/Stop.
-    assert.equal(noWatcher.invoke.size, 21);
+    // 14 legacy service channels + 5 versioned channels + 2 project-preview channels + watchStart/Stop.
+    assert.equal(noWatcher.invoke.size, 23);
     assert.deepEqual(await noWatcher.invoke.get(invokeChannel('workspaceFs.watchStart'))(), {
       watching: false,
     });

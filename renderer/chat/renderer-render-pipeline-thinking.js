@@ -97,7 +97,7 @@
         );
       };
 
-    const SPRITE_NON_CONTENT_KINDS = new Set(['tool_use', 'tool_result']);
+    const { SPRITE_NON_CONTENT_KINDS, hasRenderableAssistantContent, resolveAssistantSpriteAnchor } = spriteActivityUtils;
     let disposed = false;
     spriteRuntime.sessionId = getPaneSessionId();
     let positionRequestVersion = 0;
@@ -235,60 +235,12 @@
       );
     }
 
-    function hasRenderableAssistantContent(message) {
-      const kind = String(message?.kind || '').trim();
-      if (String(message?.role || '').trim() !== 'assistant' || SPRITE_NON_CONTENT_KINDS.has(kind)) {
-        return false;
-      }
-      return Boolean(
-        String(message?.content || '').trim()
-        || (
-          Array.isArray(message?.reasoning?.entries)
-          && message.reasoning.entries.length
-        )
-      );
-    }
-
-    function resolveAssistantSpriteAnchor(messages, latestAssistantMessageId, idToIndex) {
-      const latestAssistantId = String(latestAssistantMessageId || '').trim();
-      if (!latestAssistantId) {
-        return { message: null, hasCurrentTurnAssistant: false };
-      }
-      const indexedAssistantPosition = idToIndex?.has?.(latestAssistantId)
-        ? Number(idToIndex.get(latestAssistantId))
-        : -1;
-      const latestAssistantPosition = Number.isInteger(indexedAssistantPosition)
-        && indexedAssistantPosition >= 0
-        ? indexedAssistantPosition
-        : messages.findIndex((message) => String(message?.id || '').trim() === latestAssistantId);
-      if (latestAssistantPosition < 0) {
-        return { message: null, hasCurrentTurnAssistant: false };
-      }
-
-      let latestUserPosition = -1;
-      for (let index = messages.length - 1; index >= 0; index -= 1) {
-        if (String(messages[index]?.role || '').trim() === 'user') {
-          latestUserPosition = index;
-          break;
-        }
-      }
-      const latestAssistantMessage = messages[latestAssistantPosition] || null;
-      const hasCurrentTurnAssistant = latestAssistantPosition > latestUserPosition;
-      if (!hasCurrentTurnAssistant) {
-        return { message: latestAssistantMessage, hasCurrentTurnAssistant: false };
-      }
-
-      // Tool-loop plumbing may become the newest assistant message even though
-      // its visual rows belong to the same active turn. Keep the rail sprite on
-      // the newest prose/reasoning anchor in that turn instead of bouncing to
-      // the prompt or between transient tool rows. A tool-only first phase still
-      // anchors to its assistant article until prose exists.
-      for (let index = latestAssistantPosition; index > latestUserPosition; index -= 1) {
-        if (hasRenderableAssistantContent(messages[index])) {
-          return { message: messages[index], hasCurrentTurnAssistant: true };
-        }
-      }
-      return { message: latestAssistantMessage, hasCurrentTurnAssistant: true };
+    function resolveAnchorDomTarget(message) {
+      return resolveVisibleMessageDomTarget(chatTimeline, String(message?.id || '').trim(), {
+        preferRow: true,
+        // A tool message's rows carry their own kind; prose anchors on its text row.
+        rowKind: SPRITE_NON_CONTENT_KINDS.has(String(message?.kind || '').trim()) ? '' : 'assistant_text',
+      });
     }
 
     function clearLiveReasoningShimmer() {
@@ -423,14 +375,29 @@
           ? candidateIndex
           : null;
         const assistantAnchor = resolveAssistantSpriteAnchor(messages, nextTargetId, idToIndex);
-        const assistantTargetMessage = assistantAnchor.message;
+        let assistantTargetMessage = assistantAnchor.message;
         const hasActiveSendAnchor = Boolean(
           thinkingState.thinkingText
           || thinkingState.activeStreamId
           || indicatorActive
           || sendPreflightActive
         );
-        const fallbackTargetId = sendPreflightActive && !assistantAnchor.hasCurrentTurnAssistant
+        const preflightWait = sendPreflightActive && !assistantAnchor.hasCurrentTurnAssistant;
+        let targetNode = null;
+        if (!preflightWait && assistantTargetMessage) {
+          for (const candidate of [assistantTargetMessage, ...assistantAnchor.fallbacks]) {
+            targetNode = resolveAnchorDomTarget(candidate);
+            if (targetNode) {
+              assistantTargetMessage = candidate;
+              break;
+            }
+          }
+        }
+        // A live turn whose assistant side has no node yet (a blank first segment,
+        // or one a stream reset emptied) waits below the prompt, as the preflight
+        // does, instead of hiding until the first token re-mounts it.
+        const awaitingFirstRow = !targetNode && hasActiveSendAnchor && assistantAnchor.hasCurrentTurnAssistant;
+        const fallbackTargetId = preflightWait || awaitingFirstRow
           ? getLatestUserMessageId(messages)
           : '';
         const usingThinkingFallback = Boolean(fallbackTargetId);
@@ -447,10 +414,7 @@
             ? messages[idToIndex.get(resolvedTargetId)]
             : messages.find((message) => message?.id === resolvedTargetId))
           : assistantTargetMessage;
-        const targetNode = resolveVisibleMessageDomTarget(chatTimeline, resolvedTargetId, {
-          preferRow: !usingThinkingFallback,
-          rowKind: !usingThinkingFallback ? 'assistant_text' : '',
-        });
+        if (usingThinkingFallback) targetNode = resolveVisibleMessageDomTarget(chatTimeline, resolvedTargetId);
         if (!baseTargetMessage || !targetNode) {
           hideAssistantSprite({ reason: 'missing_target' });
           return;

@@ -31,9 +31,11 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 // Single source of truth for the default model tag (also the managed default).
 const { DEFAULT_MANAGED_SHELL_MODEL } = require(path.join(REPO_ROOT, 'services', 'backend', 'backend-config'));
 
-function defaultRestartOllamaAfterUpgrade({ platform }) {
-  const { shutdownAnyLocalOllamaSync } = require('../../services/backend/ollama-shutdown');
-  return shutdownAnyLocalOllamaSync({ platform });
+// The CLI never force-stops Ollama: the owned-state gate in ollama-shutdown exists to
+// protect other tools' Ollama daemons, and setup has no owned state. So the default
+// honestly reports that it could not restart; the user quits the old server themselves.
+function defaultRestartOllamaAfterUpgrade() {
+  return { ok: false, skipped: 'cli_does_not_stop_ollama' };
 }
 
 // An attached `npm run dev` that exits non-zero within this window never launched (EVO-04).
@@ -251,6 +253,8 @@ async function runSetup(options = {}) {
   }
   const modelTag = opts.model || DEFAULT_MANAGED_SHELL_MODEL;
   let deferredCode = EXIT.OK;
+  // Set when --skip-model lets setup continue past a missing/old/not-serving Ollama.
+  let ollamaUnavailable = false;
 
   ui.heading('Jenny setup');
 
@@ -278,7 +282,7 @@ async function runSetup(options = {}) {
     } else if (platform === 'darwin') {
       hint = 'brew install python@3.11';
     } else {
-      hint = 'install Python 3.11 via your package manager (e.g. sudo apt install python3.11) — see https://www.python.org/downloads/';
+      hint = 'install Python 3.11 via your package manager (e.g. sudo apt install python3.11 python3.11-venv) — see https://www.python.org/downloads/';
     }
     ui.fail(`Python ${python.min}+ required (found ${python.found ? python.versionText : 'none'}). Try: ${hint}`);
     return EXIT.PREREQ;
@@ -388,11 +392,17 @@ async function runSetup(options = {}) {
               env.PATH = [...ollamaDirs, env.PATH || ''].filter(Boolean).join(path.delimiter);
             }
             if (upgrading) {
-              ui.step('Restarting Ollama to activate the upgraded runtime');
+              let restartResult;
               try {
-                await restartOllamaAfterUpgrade({ platform, env });
+                restartResult = await restartOllamaAfterUpgrade({ platform, env });
               } catch (error) {
                 ui.warn(`Could not stop the older Ollama server (${String(error?.message || error).slice(0, 240)}).`);
+                restartResult = { ok: false };
+              }
+              if (restartResult && restartResult.ok === false) {
+                ui.info('Setup does not stop a running Ollama for you; an older server may still be active.');
+              } else {
+                ui.step('Restarted Ollama to activate the upgraded runtime');
               }
             }
             ollama = await ollamaStep.detectOllama({ fetchImpl, run, fileExists, platform, env });
@@ -405,7 +415,7 @@ async function runSetup(options = {}) {
           // and re-detected; if it's still not found, the binary landed somewhere
           // unexpected (or the manager silently failed). Don't claim it failed outright.
           ui.warn(upgrading
-            ? `Ollama ${ollama.version || 'unknown'} is still active. Restart Ollama, then re-run setup; ${ollama.minimumVersion}+ is required.`
+            ? `Ollama ${ollama.version || 'unknown'} is still active. Quit the running Ollama (tray icon, or the \`ollama\` process), then re-run setup; ${ollama.minimumVersion}+ is required.`
             : 'Ollama was installed but could not be located automatically. Open a new terminal and re-run setup to finish.');
         } else {
           ui.warn(upgrading
@@ -415,6 +425,7 @@ async function runSetup(options = {}) {
         if (!opts.skipModel) {
           return EXIT.OLLAMA;
         }
+        ollamaUnavailable = true;
       }
     } else {
       ui.ok('Ollama detected.');
@@ -433,6 +444,7 @@ async function runSetup(options = {}) {
           if (!opts.skipModel) {
             return EXIT.OLLAMA;
           }
+          ollamaUnavailable = true;
         } else {
           ui.ok(ollama.version
             ? `Ollama server ${ollama.version} is running.`
@@ -443,6 +455,7 @@ async function runSetup(options = {}) {
         if (!opts.skipModel) {
           return EXIT.OLLAMA;
         }
+        ollamaUnavailable = true;
       }
     }
 
@@ -501,15 +514,26 @@ async function runSetup(options = {}) {
     : distribution
     ? 'Start Jenny anytime from the "Jenny" desktop shortcut, or run: npm run dev'
     : 'Start Jenny anytime with: npm run dev';
+  const reportFinished = () => {
+    if (deferredCode === EXIT.MODEL) {
+      ui.warn(`Setup incomplete: the default model is unavailable. ${startLater}`);
+    } else if (ollamaUnavailable) {
+      ui.warn(`Setup finished without a working Ollama. Install or upgrade Ollama from Jenny's in-app setup, or re-run setup once it is available. ${startLater}`);
+    } else {
+      ui.ok(`Setup complete. ${startLater}`);
+    }
+  };
   if (opts.noLaunch) {
-    if (deferredCode === EXIT.MODEL) ui.warn(`Setup incomplete: the default model is unavailable. ${startLater}`);
-    else ui.ok(`Setup complete. ${startLater}`);
+    reportFinished();
     return deferredCode;
   }
+  const reportLaunchedCaveat = () => {
+    if (deferredCode === EXIT.MODEL) ui.warn('Jenny launched, but setup is incomplete because the default model is unavailable.');
+    else if (ollamaUnavailable) ui.warn('Jenny launched without a working Ollama. Install or upgrade it from Jenny\'s in-app setup.');
+  };
   const launch = await promptYesNo('Launch Jenny now?', { yes: opts.yes });
   if (!launch) {
-    if (deferredCode === EXIT.MODEL) ui.warn(`Setup incomplete: the default model is unavailable. ${startLater}`);
-    else ui.ok(`Setup complete. ${startLater}`);
+    reportFinished();
     return deferredCode;
   }
   if (distribution) {
@@ -525,7 +549,7 @@ async function runSetup(options = {}) {
       return EXIT.UNKNOWN;
     }
     ui.ok('Jenny is starting in its own window — you can close this terminal.');
-    if (deferredCode === EXIT.MODEL) ui.warn('Jenny launched, but setup is incomplete because the default model is unavailable.');
+    reportLaunchedCaveat();
     return deferredCode;
   }
   ui.step(`npm ${launchArgs.join(' ')}`);
@@ -541,7 +565,7 @@ async function runSetup(options = {}) {
     ui.fail(`Could not launch Jenny (npm run dev exited unsuccessfully). ${startLater}`);
     return EXIT.UNKNOWN;
   }
-  if (deferredCode === EXIT.MODEL) ui.warn('Jenny launched, but setup is incomplete because the default model is unavailable.');
+  reportLaunchedCaveat();
   return deferredCode;
 }
 

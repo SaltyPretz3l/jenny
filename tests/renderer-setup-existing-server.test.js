@@ -55,5 +55,5 @@ test('choosing or skipping routes without a ready model never satisfies setup he
 test('PowerShell forwards ExistingServer and shell wrappers retain user arguments', () => {
   const root = path.resolve(__dirname, '..');
   assert.match(fs.readFileSync(path.join(root, 'setup.ps1'), 'utf8'), /if \(\$ExistingServer\) \{ \$userForward \+= '--existing-server' \}/);
-  assert.match(fs.readFileSync(path.join(root, 'setup.sh'), 'utf8'), /setup\.js --bootstrapped-npm "\$\{USER_ARGS\[@\]\}"/);
+  assert.match(fs.readFileSync(path.join(root, 'setup.sh'), 'utf8'), /setup\.js --bootstrapped-npm \$\{USER_ARGS\[@\]\+"\$\{USER_ARGS\[@\]\}"\}/);
 });

@@ -28,6 +28,7 @@ from sidecar.ai.tools.builtins.shell_security import (
     classify_command,
     shell_command_for_tool,
 )
+from sidecar.ai.tools.command_prefix import command_matches_exact, command_matches_prefix
 from sidecar.ai.tools.contracts import ToolExecutionFailure, canonicalize_tool_arguments
 from sidecar.ai.tools.models import ToolCallRequest
 from sidecar.ai.tools.plan_artifact_policy import (
@@ -109,12 +110,38 @@ _DEFAULT_TOOL_DEFAULTS = {
     "session_status": POLICY_DECISION_AUTO,
     "session_transcript": POLICY_DECISION_AUTO,
     "session_stop": POLICY_DECISION_ASK,
+    # Row 88: reading the allowlisted settings is free; every change asks.
+    "settings_get": POLICY_DECISION_AUTO,
+    "settings_change": POLICY_DECISION_ASK,
+    # Row 94 P1: Jenny organizes chats (ask; Auto skips) and reconfigures them (always a card).
+    "chat_organize": POLICY_DECISION_ASK,
+    "chat_configure": POLICY_DECISION_ASK,
+    # Row 94 P2: listing projects is free; creating one binds a folder (always a card).
+    "project_create": POLICY_DECISION_ASK,
+    "projects_list": POLICY_DECISION_AUTO,
+    # Row 94 P3: moving the view writes nothing; the renderer asks with a chip when the user
+    # is busy.
+    "app_view": POLICY_DECISION_AUTO,
+    # Row 94 P4: an export writes a file and terminal_run types into the user's terminal (both
+    # always a card); reading the terminal is free.
+    "session_export": POLICY_DECISION_ASK,
+    "terminal_read": POLICY_DECISION_AUTO,
+    "terminal_run": POLICY_DECISION_ASK,
+    # Row 85: listing scheduled checks is free; every change asks (always a card).
+    "schedule_list": POLICY_DECISION_AUTO,
+    "schedule_change": POLICY_DECISION_ASK,
+    # Row 86: reading the facts since the user was last present is free (read-only, no card).
+    "away_digest": POLICY_DECISION_AUTO,
     # Row 69 W4b: reads the bundled app guide only.
     "jenny_help": POLICY_DECISION_AUTO,
+    # Row 97: records a next-step card for the renderer; no I/O, never waits.
+    "suggest_next_step": POLICY_DECISION_AUTO,
     "conversation_open": POLICY_DECISION_AUTO,
     "conversations_search": POLICY_DECISION_AUTO,
 }
 _MAX_POLICY_REASON_CHARS = 240
+# A stored v1 per-tool policy reads as a tool default; row 102 must tell it apart.
+LEGACY_POLICY_REASON_PREFIX = "legacy per-tool policy:"
 _MAX_POLICY_ID_CHARS = 80
 _WINDOWS_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:($|[\\/])")
 _UNC_PATH_RE = re.compile(r"^[\\/]{2}[^\\/]+[\\/][^\\/]+")
@@ -437,8 +464,23 @@ def _rule_matches(
             not match.mode or str(mode or "") in match.mode,
             not match.path_prefix
             or _path_prefix_matches(_path_argument(arguments), match.path_prefix),
+            # Row 103: a command rule only ever matches run_command's own argument.
+            _command_rule_matches(match, descriptor=descriptor, arguments=arguments),
         )
     )
+
+
+def _command_rule_matches(match: Any, *, descriptor: Any, arguments: dict[str, Any]) -> bool:
+    # `is None`, never truthiness: an empty key must not read as "no command key" (whole tool).
+    if match.command_prefix is None and match.command_exact is None:
+        return True
+    if _descriptor_name(descriptor) != "run_command":
+        return False
+    command = arguments.get("command")
+    prefix = match.command_prefix
+    if prefix is not None and not command_matches_prefix(command, prefix):
+        return False
+    return match.command_exact is None or command_matches_exact(command, match.command_exact)
 
 
 def _first_rule_hit(
@@ -546,7 +588,7 @@ def evaluate_tool_policy(  # noqa: PLR0911 - explicit ordered policy precedence.
                 decision=legacy_decision,
                 stage="tool_default",
                 matched_rule_id=None,
-                reason=(f"legacy per-tool policy: {legacy_tool_name}={legacy_decision}"),
+                reason=f"{LEGACY_POLICY_REASON_PREFIX} {legacy_tool_name}={legacy_decision}",
                 mode=mode,
             ),
             action=action,
@@ -667,6 +709,35 @@ def tool_policy_call_key(call: ToolCallRequest) -> str:
     except (TypeError, ValueError):
         payload = f"{call.tool_id}|{type(call.arguments).__name__}"
     return "fallback_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+VERIFY_AFTER_WRITE_STAGE = "verify_after_write"
+VERIFY_AFTER_WRITE_REASON = (
+    "files changed in this turn; verify would run that code, so the first run asks"
+)
+
+
+def escalate_verify_after_write(decision: ToolPolicyDecision) -> ToolPolicyDecision:
+    """Ask for a ``verify`` run after a workspace write (security review item 7).
+
+    Only the untouched built-in AUTO default escalates. A user rule or a stored
+    per-tool policy keeps its precedence, as it does over the shell classifier's
+    NEEDS_APPROVAL escalation (H1); a one-send auto-run grant still covers the
+    resulting ASK in the approval gate, as for every ordinary ask.
+    """
+    if (
+        decision.decision != POLICY_DECISION_AUTO
+        or decision.stage != "tool_default"
+        or decision.matched_rule_id is not None
+        or decision.reason.startswith(LEGACY_POLICY_REASON_PREFIX)
+    ):
+        return decision
+    return replace(
+        decision,
+        decision=POLICY_DECISION_ASK,
+        stage=VERIFY_AFTER_WRITE_STAGE,
+        reason=VERIFY_AFTER_WRITE_REASON,
+    )
 
 
 def _assert_valid_tool_call(call: ToolCallRequest) -> None:

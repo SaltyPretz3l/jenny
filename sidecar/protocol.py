@@ -43,6 +43,12 @@ SESSION_RUN_MODE_UPDATED_METHOD = "session.run_mode_updated"
 # by the tool loop before its next generation. Gated by the negotiated
 # ``mid_turn_mail`` chat-workspace capability; never answered.
 SESSION_MAIL_ARRIVED_METHOD = "session.mail_arrived"
+# Inbound shell->sidecar NOTIFICATION (mid-turn background-job notices): finished
+# background jobs for the live chat.send of ``session_id``
+# (``{session_id, request_id, jobs: [{job_id, command, state, exit_code}]}``). Parked on
+# that turn's handle and announced by the tool loop before its next generation;
+# never answered. An unconsumed push leaves the job unread for the post-turn wake.
+SESSION_JOB_SETTLED_METHOD = "session.job_settled"
 # Manual context-compaction trigger. Request/response sibling of chat.send /
 # chat.cancel -- NOT a notification, so it is intentionally absent from
 # ALLOWED_NOTIFICATION_METHODS. Success re-emits the existing
@@ -146,7 +152,8 @@ WORKSPACE_TEST_CLOSE_METHOD = "workspace_test.close"
 
 # Shell -> sidecar request methods that participate in the lockstep API-version
 # contract. ``engine.activity``, ``session.run_mode_updated`` and
-# ``session.mail_arrived`` are unversioned inbound notifications;
+# ``session.mail_arrived`` and ``session.job_settled`` are unversioned inbound
+# notifications;
 # JSON-RPC responses (tool approval decisions) carry no method or params.
 INBOUND_VERSIONED_REQUEST_METHODS: frozenset[str] = frozenset(
     {
@@ -312,6 +319,9 @@ TOOL_EXECUTE_ELECTRON_METHOD = "tool.execute_electron"
 # Internal sidecar -> application request used for a live per-operation
 # authority check. It is never advertised as a model tool or notification.
 RUNTIME_OPERATION_METHOD = "runtime.operation"
+# Row 102: the only legal value of the tool check's optional ``grant`` key, sent for a
+# builtin run_command the shell classifier proved read-only inside the request root.
+RUNTIME_OPERATION_READ_ONLY_COMMAND_GRANT = "read_only_command"
 MONITOR_EVENT_METHOD = "monitor.event"
 # delegate child frames additionally carry reasoning_effort and child_activity:
 # cumulative sequence, <=40 sanitized steps, <=4000 visible-text characters,
@@ -343,6 +353,9 @@ RUNTIME_LOAD_FAILURE_METHOD = "runtime.load_failure"
 # and never journaled; Electron persists the consumed context rows at the turn's
 # terminal settle. Payload: standard chat ctx + ``message_ids``, ``iteration``.
 SESSION_MAIL_CONSUMED_METHOD = "session.mail_consumed"
+# Mid-turn background-job notice acknowledgement. EPHEMERAL like the mail ack; Electron
+# marks the jobs read. Payload: standard chat ctx + ``job_ids``, ``iteration``.
+SESSION_JOB_NOTICE_CONSUMED_METHOD = "session.job_notice_consumed"
 
 # Canonical set of notification method names the sidecar is permitted to emit.
 # Any new notification method MUST be added here so `rpc.notification()` can
@@ -377,5 +390,6 @@ ALLOWED_NOTIFICATION_METHODS: frozenset[str] = frozenset(
         RUNTIME_PROGRESS_METHOD,
         RUNTIME_LOAD_FAILURE_METHOD,
         SESSION_MAIL_CONSUMED_METHOD,
+        SESSION_JOB_NOTICE_CONSUMED_METHOD,
     }
 )

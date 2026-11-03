@@ -160,3 +160,19 @@ test('the service composes against a backend-shaped object and rides its chat-st
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('the composition reads the background-job tracker and its changes invalidate those sessions', () => {
+  let listener = null;
+  const tracker = { onChanged: (fn) => { listener = fn; return () => {}; }, getSessionJobs: () => [] };
+  const bridge = [];
+  const service = createChatWorkspaceService({
+    backendService: { backgroundJobTracker: tracker }, emit: (event) => bridge.push(event),
+  });
+  assert.equal(service._getBackgroundJobTracker(), tracker);
+  listener(['sess_a', 'sess_b']);
+  assert.deepEqual(bridge.map((event) => event.session_id), ['sess_a', 'sess_b']);
+  service.dispose();
+  const bare = createChatWorkspaceService({ backendService: {} });
+  assert.equal(bare._getBackgroundJobTracker(), null, 'no tracker composed: the source is unsupported');
+  bare.dispose();
+});

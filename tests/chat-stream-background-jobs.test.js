@@ -116,3 +116,23 @@ test('only canonical background run_command results register', () => {
   );
   assert.equal(service.events.length, 0);
 });
+
+test('a status read that reports the job settled emits background-job-read', () => {
+  for (const [toolName, output, expected] of [
+    ['check_background_job', '{"truncated":true,"exit_code":0,"state":"completed","stdout":"..."', true],
+    ['stop_background_job', '{\n  "job_id": "abc123def456",\n  "state": "failed"\n}', true],
+    ['check_background_job', '{\n  "job_id": "abc123def456",\n  "state": "running"\n}', false],
+    ['read_file', '{"state":"completed"}', false],
+  ]) {
+    const service = makeService();
+    noteBackgroundJobFromToolResult(service, CTX, {
+      tool_name: toolName, tool_input: { job_id: 'abc123def456' }, output,
+    });
+    assert.deepEqual(service.events, expected ? [{ name: 'background-job-read', payload: { jobId: 'abc123def456' } }] : [], toolName);
+  }
+  const service = makeService();
+  noteBackgroundJobFromToolResult(service, CTX, {
+    tool_name: 'check_background_job', tool_input: { job_id: '../../etc' }, output: '{"state":"completed"}',
+  });
+  assert.equal(service.events.length, 0, 'a non-canonical job id is ignored');
+});

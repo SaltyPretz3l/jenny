@@ -116,6 +116,13 @@ test('hosted/browser commands cannot reach the desktop primaryChat operations', 
     ['primaryChat.grantLaunch', { schema_version: 1, project_id: '*' }],
     ['primaryChat.reset', { schema_version: 1, forget: true }],
     ['primary-chat:reset', { schema_version: 1 }],
+    // Row 88: Undo of a Jenny-made settings batch and the renderer's appearance relay reply.
+    ['primaryChat.undoSettingChange', { schema_version: 1, change_id: `sc_${'a'.repeat(32)}` }],
+    ['primaryChat.undoChatChange', { schema_version: 1, change_id: `sc_${'a'.repeat(32)}` }],
+    // Row 87: per-action rules are desktop only.
+    ['primaryChat.addRule', { schema_version: 1, action: 'stop', target: { kind: 'any' }, effect: 'deny' }],
+    ['primaryChat.revokeRule', { schema_version: 1, rule_id: `ar_${'a'.repeat(32)}` }],
+    ['appearance.respondRelay', { request_id: 'ar_1', ok: true }],
   ];
   for (const [operation, params] of operations) {
     const raw = command(f.a, operation, params, { session_id: sessionId });

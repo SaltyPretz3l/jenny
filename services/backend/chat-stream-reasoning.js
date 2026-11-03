@@ -9,6 +9,7 @@ const {
   sanitizePersistedReasoningText,
 } = require('./chat-stream-reasoning-sanitize');
 const { projectUserSkillInvocation, withSkillCommand } = require('./chat-skill-command-projection');
+const { projectUserImagePromptPin, withImagePromptPin } = require('./image-prompt-pin');
 const { validateEnvelope } = require('./session-message-envelope');
 const { validateHandoffRow } = require('./session-handoff-context');
 const { isContextRow, selectContextHistoryMessages, selectRecentTurnGroups } = require('./chat-history-scope');
@@ -454,7 +455,8 @@ function buildPreparedContextHistory(messages, contextPreferences, options = {})
       }
       return {
         role: message.role,
-        content: projectUserSkillInvocation(message, serializeMessageContent(message.content)),
+        content: projectUserImagePromptPin(message,
+          projectUserSkillInvocation(message, serializeMessageContent(message.content))),
       };
     })
     .filter((message) => {
@@ -496,7 +498,8 @@ function buildPreparedMessages(messages, prompt, options = {}) {
   folded.push({
     role: 'user',
     content: buildPromptWithAttachments(
-      withSkillCommand(serializeMessageContent(prompt), options.skillInvocation),
+      withImagePromptPin(withSkillCommand(serializeMessageContent(prompt), options.skillInvocation),
+        options.imagePromptPin),
       options.attachments,
     ),
   });

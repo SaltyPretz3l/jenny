@@ -77,6 +77,8 @@ function populatedLiveState() {
     safetyMode: 'strict',
     autoApproveStreakCap: 12,
     unattendedGuardMinutes: 30,
+    digestQuietStart: '23:30',
+    digestQuietEnd: '06:30',
     companion: { mode: 'listener' },
     home: {
       links: [{ name: 'Mine', tiles: [{ name: 'x', href: 'https://user:FAKE-SECRET-LINK@example.com/' }] }],
@@ -200,7 +202,7 @@ describe('portable shell-config classification', () => {
     const defaults = normalizeState({});
     assert.equal(loaded.chatUi.zoomPercent, 110);
     for (const key of ['tools', 'memory', 'subagentRouting', 'webSearch', 'featureOverrides',
-      'safetyMode', 'defaultRunMode', 'uiLanguage', 'use24HourTime', 'unattendedGuardMinutes']) {
+      'safetyMode', 'defaultRunMode', 'uiLanguage', 'use24HourTime', 'unattendedGuardMinutes', 'digestQuietStart', 'digestQuietEnd']) {
       assert.deepEqual(loaded[key], defaults[key], key);
     }
     assert.deepEqual(loaded.windowUi.notifications, defaults.windowUi.notifications);

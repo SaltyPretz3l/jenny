@@ -224,6 +224,30 @@ test('CHK-07: hosted and other mapped targets survive admission in a mixed chang
   assert.equal(sel.isAffectedSource('server/unmapped-new.js'), true);
 });
 
+test('python lane: root venv is used without probing the fallback interpreter', () => {
+  let probed = false;
+  const lane = sel.resolvePythonLane('/tree', { exists: () => true, probe: () => { probed = true; return false; } });
+  assert.equal(lane.ok, true);
+  assert.match(lane.python, /\.venv/);
+  assert.equal(probed, false);
+});
+
+test('python lane: no venv but fallback has pytest -> lane runs with the fallback', () => {
+  const probes = [];
+  const lane = sel.resolvePythonLane('/tree', { exists: () => false, probe: (py) => { probes.push(py); return true; } });
+  assert.equal(lane.ok, true);
+  assert.equal(probes.length, 1);
+  assert.equal(lane.python, probes[0]);
+});
+
+test('python lane: no venv and no pytest -> one clear message, lane fails, main venv never borrowed', () => {
+  const lane = sel.resolvePythonLane('/tree', { exists: () => false, probe: () => false });
+  assert.equal(lane.ok, false);
+  assert.match(lane.message, /^\[affected\] python lane: no \.venv in .*tree and \S+ has no pytest; /);
+  assert.match(lane.message, /scripts\/worktree-agent\.ps1 -WithVenv \(or run from the main checkout\)$/);
+  assert.doesNotMatch(lane.python, /\.venv/);
+});
+
 // --- subprocess-level smoke (real repo git state; loose assertions) ---------
 
 test('CLI --dry-run exits 0 and prints the [affected] banner against the real repo', () => {

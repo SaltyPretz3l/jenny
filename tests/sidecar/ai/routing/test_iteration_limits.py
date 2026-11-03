@@ -291,6 +291,17 @@ def test_background_start_timeout_does_not_inherit_job_lifetime(requested):
     assert tool_timeout_for_runtime(config, None, call) == 30
 
 
+@pytest.mark.parametrize("wait_ms,expected", [
+    (None, 10), (0, 10), (True, 10), (120_000, 125.0), (900_000, 605.0),
+])
+def test_background_job_wait_extends_the_transport_deadline(wait_ms, expected):
+    config = SimpleNamespace(engine_type="ollama", feature_flags={},
+                             tools_execution_timeout_seconds=10, host_mode="desktop")
+    arguments = {"job_id": "0123456789ab"} if wait_ms is None else {"job_id": "0123456789ab", "wait_ms": wait_ms}
+    call = SimpleNamespace(tool_id="check_background_job", arguments=arguments)
+    assert tool_timeout_for_runtime(config, None, call) == expected
+
+
 def _mcp_timeout_config(tools_timeout: float = 120) -> SimpleNamespace:
     return SimpleNamespace(
         engine_type="ollama", feature_flags={}, tools_execution_timeout_seconds=tools_timeout,

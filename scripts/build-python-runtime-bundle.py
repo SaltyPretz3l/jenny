@@ -462,7 +462,8 @@ def _generated_files(directory: Path, *, manifest_name: str) -> dict[str, str]:
 
 def _copy_keep_file(destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
-    (destination / _KEEP_FILE).write_text("*\n!.gitignore\n", encoding="utf-8")
+    # LF on every platform: a CRLF copy on Windows reads clean to git but dirties a byte-exact snapshot.
+    (destination / _KEEP_FILE).write_text("*\n!.gitignore\n", encoding="utf-8", newline="\n")
 
 
 def _staging_directory(destination: Path) -> Path:

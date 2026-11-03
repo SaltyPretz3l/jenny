@@ -68,6 +68,7 @@
       heading: 'Orientation',
       entries: [
         { keys: ['Ctrl', 'Shift', 'U'], description: jt('help.chat.firstUnreadMessage', 'Jump to the first unread message') },
+        { keys: ['Ctrl', 'Alt', 'W'], description: jt('help.chat.toggleWideTranscript', 'Turn the wide transcript on or off') },
       ],
     },
     {

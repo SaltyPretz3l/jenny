@@ -7,6 +7,7 @@ import logging
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 from sidecar.ai.error_codes import (
@@ -26,6 +27,7 @@ from sidecar.ai.tools.builtins.python_runtime.interpreter import (
 from sidecar.ai.tools.builtins.python_runtime.output import format_python_output
 from sidecar.ai.tools.builtins.python_runtime.sandbox import (
     SandboxExecutionCancelled,
+    create_scratch_dir,
     execute_sandboxed,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
@@ -39,6 +41,20 @@ logger = logging.getLogger(__name__)
 def configure_python_runtime(config: Any) -> None:
     global _PYTHON_RUNTIME_CONFIG
     _PYTHON_RUNTIME_CONFIG = config or {}
+
+
+def _bound_roots(workspace: WorkspaceGuard) -> tuple[Path, Path | None]:
+    """``(authority_root, scratch_root)`` for one run.
+
+    The authority root is the bound workspace; with no usable workspace it is the
+    run's own scratch directory, bound explicitly (security review item 11) and
+    returned as ``scratch_root`` too, so the runner is never handed a null root.
+    """
+    workspace_root = workspace.root
+    if workspace_root is not None and workspace_root.is_dir():
+        return workspace_root, None
+    scratch_root = create_scratch_dir()
+    return scratch_root, scratch_root
 
 
 def python_execute_tool(
@@ -99,12 +115,8 @@ def python_execute_tool(
                     "phase_timings_json": getattr(error, "phase_timings_json", "") or "{}",
                 },
             ) from error
-        workspace_root = workspace.root
-        if workspace_root is not None and not workspace_root.is_dir():
-            workspace_root = None
-        working_directory_kind = (
-            "workspace_root" if workspace_root is not None else "scratch_fallback"
-        )
+        bound_workspace = workspace.root is not None and workspace.root.is_dir()
+        working_directory_kind = "workspace_root" if bound_workspace else "scratch_fallback"
         log_event(
             logger,
             logging.INFO,
@@ -114,18 +126,23 @@ def python_execute_tool(
             status="ok",
             data={"working_directory_kind": working_directory_kind},
         )
+        abort_event = cancellation.current_abort_event()
+        # Created last, so nothing can raise between the scratch directory's creation
+        # and execute_sandboxed taking ownership of it.
+        authority_root, scratch_root = _bound_roots(workspace)
         sandbox_result = execute_sandboxed(
             code=code,
             venv_python=venv_python,
             timeout_seconds=configured_timeout_seconds(config),
             memory_limit_mb=configured_memory_limit_mb(config),
-            working_directory=workspace_root,
-            abort_event=cancellation.current_abort_event(),
+            working_directory=authority_root,
+            work_dir=scratch_root,
+            abort_event=abort_event,
         )
         payload, trusted_attachments = format_python_output(
             sandbox_result.payload,
             sandbox_result.work_dir,
-            workspace_root=workspace_root,
+            workspace_root=None if scratch_root is not None else authority_root,
             arguments=arguments,
         )
         success = payload.get("error") is None and sandbox_result.returncode == 0

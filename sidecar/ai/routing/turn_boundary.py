@@ -7,6 +7,9 @@ canonical ``proposal_id`` ends the turn: the unstarted rest of the batch is
 settled as not executed, no further model generation runs, and ``chat.done``
 carries ``completion_reason`` + ``proposal_id``. The first boundary wins.
 
+A batch that closes on a successful ``suggest_next_step`` also ends the turn
+without another generation, but raises no boundary and adds nothing to ``chat.done``.
+
 This module is pure (no router or runtime imports at module load); the batch
 executor detects, the four batch callers finish.
 """
@@ -25,6 +28,8 @@ BOUNDARY_BY_TOOL: dict[str, str] = {
     "complete_session_handoff": SESSION_HANDOFF_COMPLETED,
 }
 COMPLETION_REASONS = frozenset(BOUNDARY_BY_TOOL.values())
+# Ends the turn without a wire boundary (see ends_turn_at_next_step).
+NEXT_STEP_TOOL = "suggest_next_step"
 PROPOSAL_ID_RE = re.compile(r"proposal_[0-9a-f]{64}")
 # Model-facing text for a call that never ran because the turn already ended.
 NOT_EXECUTED_OUTPUT = (
@@ -64,6 +69,55 @@ def detect_turn_boundary(outcome: Any) -> TurnBoundary | None:
     if not isinstance(proposal_id, str) or PROPOSAL_ID_RE.fullmatch(proposal_id) is None:
         return None
     return TurnBoundary(completion_reason=expected, proposal_id=proposal_id)
+
+
+def ends_turn_at_next_step(outcomes: Any, calls: Any = None) -> bool:
+    """True when the batch closed on a successful ``suggest_next_step``.
+
+    The next-step card is drawn as the reply's last element, so another generation only
+    adds a reasoning row and filler after it (owner live check 2026-11-01). Unlike the
+    proposal boundaries it carries nothing on the wire: ``chat.done`` is an ordinary end.
+    With *calls* (the model's batch, in model order) the card must be the last call: a
+    refused call is recorded before the batch runs, so outcome order is not model order.
+    """
+    if not isinstance(outcomes, (list, tuple)) or not outcomes:
+        return False
+    last = outcomes[-1]
+    if calls is not None:
+        ordered = list(calls)
+        if not ordered or str(getattr(ordered[-1], "tool_id", "") or "") != NEXT_STEP_TOOL:
+            return False
+        call_id = str(getattr(ordered[-1], "call_id", "") or "")
+        last = next(
+            (o for o in reversed(outcomes) if str(getattr(o, "call_id", "") or "") == call_id),
+            None,
+        )
+    return (
+        last is not None
+        and str(getattr(last, "tool_name", "") or "") == NEXT_STEP_TOOL
+        and getattr(last, "success", False) is True
+    )
+
+
+def finish_loop_at_next_step(loop: Any, *, raw_content: str = "") -> Any:
+    """Finish a live loop after its next-step card; the text written with the call is kept.
+
+    Streamed text already reached Electron, which stored it as a segment when the card's
+    tool ran; repeating it in ``chat.done`` showed it twice (live check 2026-11-01).
+    """
+    import sidecar.ai.routing.tool_loop as _tl_hub
+
+    streamed = bool(getattr(loop.runtime, "streaming", False)) and (
+        "chat.token" in loop.streamed_event_types
+    )
+    response_text = _tl_hub.finalize_visible_reply(
+        raw_content, request_id=loop.request_id, session_id=loop.session_id
+    ) if raw_content.strip() and not streamed else ""
+    loop.runtime.audit(
+        _tl_hub.KIND_TURN_COMPLETED,
+        summary=f"turn_completed next_step_card outcomes={len(loop.outcomes)}",
+    )
+    return loop._finish_text(response_text, reason="next_step_card")
 
 
 def boundary_loop_result(  # noqa: PLR0913 -- the ToolLoopResult fields it carries.
@@ -123,10 +177,13 @@ __all__ = [
     "AWAITING_PROPOSAL",
     "BOUNDARY_BY_TOOL",
     "COMPLETION_REASONS",
+    "NEXT_STEP_TOOL",
     "PROPOSAL_ID_RE",
     "SESSION_HANDOFF_COMPLETED",
     "TurnBoundary",
     "boundary_loop_result",
     "detect_turn_boundary",
+    "ends_turn_at_next_step",
     "finish_loop_at_boundary",
+    "finish_loop_at_next_step",
 ]

@@ -16,6 +16,15 @@ from dataclasses import dataclass
 from email.message import Message
 from typing import Any
 
+from sidecar.ai.tools.builtins.web_url_policy import (
+    LOOPBACK_HOSTNAMES,
+    HopRequest,
+    _is_public_ip,  # noqa: F401 - re-exported; web_ddg and tests import it from here
+    address_allowed,
+    next_hop_request,
+    url_origin,
+)
+
 _MAX_URL_LENGTH = 8192
 _MAX_FETCH_BYTES_HARD = 1024 * 1024
 _MAX_REDIRECTS = 5
@@ -30,20 +39,6 @@ _BROWSER_USER_AGENT = (
 _BROWSER_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
 _BROWSER_ACCEPT_LANGUAGE = "en-US,en;q=0.9"
 _REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
-_NAT64_WELL_KNOWN_NETWORK = ipaddress.ip_network("64:ff9b::/96")
-_SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
-# Ranges older Python 3.11.x classify as public: deprecated site-local, the full
-# IETF protocol-assignments /24 (stdlib only knows a /29 of it) and local-use NAT64.
-_EXTRA_BLOCKED = (
-    ipaddress.ip_network("fec0::/10"),
-    ipaddress.ip_network("192.0.0.0/24"),
-    ipaddress.ip_network("64:ff9b:1::/48"),
-)
-# RFC 5214 §6.1: the top 32 bits of an ISATAP interface identifier. `0200:5efe`
-# sets the universal/local bit and is reserved for a globally-unique embedded
-# IPv4; `0000:5efe` is the form used otherwise. Both are matched — see
-# `_is_public_ip`.
-_ISATAP_INTERFACE_MARKERS = frozenset({0x00005EFE, 0x02005EFE})
 _MAX_CONCURRENT_DNS_LOOKUPS = 8
 _DNS_LOOKUP_SLOTS = threading.BoundedSemaphore(_MAX_CONCURRENT_DNS_LOOKUPS)
 _DNS_LOOKUP_THREAD_NAME = "web-dns-lookup"
@@ -119,68 +114,21 @@ class WebRateLimiter:
             self._timestamps.append(now)
 
 
-def _is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    # IPv4-mapped IPv6 (::ffff:a.b.c.d) is a classic SSRF-filter bypass shape and
-    # its stdlib classification changed across Python 3.11.x — fail closed.
-    if getattr(ip, "ipv4_mapped", None) is not None:
-        return False
-    # 6to4 and Teredo embed an IPv4 target inside an IPv6 wrapper. Veto on that
-    # embedded IPv4 — an extra rejection, not a replacement: the wrapper's own
-    # range checks below still run. 6to4 is the live gap, since up to Python
-    # 3.11.9 those checks score 2002::/16 as public and an embedded private
-    # target rides straight through. Teredo is drift-proofing — every 3.11.x
-    # already rejects 2001::/32 incidentally via `is_private` — but that is
-    # stdlib classification we do not control (it moved for 6to4 in 3.11.10 /
-    # gh-113171), so decide it here rather than inherit it.
-    embedded = getattr(ip, "sixtofour", None)
-    teredo = getattr(ip, "teredo", None)
-    if teredo is not None:
-        embedded = teredo[1]
-    if embedded is not None and not _is_public_ip(embedded):
-        return False
-    # ISATAP (RFC 5214) embeds its IPv4 target in the interface identifier, under
-    # *any* /64 — there is no prefix that confirms the form, so the stdlib exposes
-    # no attribute for it and this arm is a pattern match rather than a decode.
-    # That imprecision is bounded by gating the veto on the embedded value: the
-    # only address it can wrongly reject is a public IPv6 host whose identifier
-    # both matches a 32-bit marker and trails a non-public IPv4 — ~2/2**32 x 0.14
-    # of random identifiers, and structurally impossible for EUI-64 ones, whose
-    # `ff` byte sits where the marker requires `fe`. A wrong reject costs one
-    # blocked fetch; a wrong accept is the SSRF this function exists to stop.
-    # Both markers are matched even though RFC 5214 reserves `0200:5efe` for a
-    # globally-unique (hence public) IPv4: decapsulation ignores that bit, so an
-    # attacker-published literal must not evade the veto by setting it.
-    if isinstance(ip, ipaddress.IPv6Address):
-        isatap_marker = (int(ip) >> 32) & 0xFFFFFFFF
-        isatap_target = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
-        if isatap_marker in _ISATAP_INTERFACE_MARKERS and not _is_public_ip(isatap_target):
-            return False
-    # NAT64's well-known prefix and CGNAT shared address space both reach hosts we
-    # must not treat as public. The NAT64 arm is defense-in-depth for the same
-    # reason as Teredo — 64:ff9b::/96 currently lands in `is_reserved`. The CGNAT
-    # arm is a live gap: upstream deliberately leaves 100.64.0.0/10 out of
-    # `is_private`.
-    if ip in _NAT64_WELL_KNOWN_NETWORK or ip in _SHARED_ADDRESS_SPACE:
-        return False
-    if any(ip in net for net in _EXTRA_BLOCKED):
-        return False
-    return not (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_multicast
-        or ip.is_reserved
-        or ip.is_unspecified
-    )
-
-
 def validate_public_url(
     raw_url: str,
     *,
     allow_private: bool = False,
+    allow_loopback: bool = False,
     deadline: float | None = None,
 ) -> ValidatedUrl:
-    """Validate a URL for safe fetching with SSRF protection."""
+    """Validate a URL for safe fetching with SSRF protection.
+
+    ``allow_loopback`` opens 127.0.0.0/8, ``::1`` and ``localhost`` only.
+    ``allow_private`` opens every non-public range including loopback (it
+    implies ``allow_loopback``). Cloud metadata addresses are refused under
+    both. Under ``allow_private`` a hostname is resolved to screen out metadata
+    targets but is returned unpinned, as before the loopback split.
+    """
     if deadline is not None:
         _remaining_seconds(deadline)
     url_str = str(raw_url or "").strip()
@@ -199,23 +147,44 @@ def validate_public_url(
         raise ValueError("URL must include a hostname.")
 
     host_lower = host.lower()
-    if not allow_private and host_lower in {"localhost", "localhost.localdomain"}:
-        raise PermissionError("Localhost addresses are blocked.")
+    if host_lower in LOOPBACK_HOSTNAMES:
+        if not (allow_private or allow_loopback):
+            raise PermissionError("Localhost addresses are blocked.")
+        # The resolver answers `localhost` locally with loopback only (RFC 6761).
+        # Left unpinned so the OS can fall back between ::1 and 127.0.0.1.
+        return ValidatedUrl(url=parsed.geturl(), pinned_ip="")
     if not allow_private and host_lower.endswith(".local"):
         raise PermissionError("Local network hostnames are blocked.")
 
     try:
-        ip = ipaddress.ip_address(host)
-        if not allow_private and not _is_public_ip(ip):
-            raise PermissionError("Private or local IP addresses are blocked.")
-        return ValidatedUrl(url=parsed.geturl(), pinned_ip="")
+        literal = ipaddress.ip_address(host)
     except ValueError:
-        pass
-
-    if allow_private:
+        literal = None
+    if literal is not None:
+        if not address_allowed(
+            literal, allow_private=allow_private, allow_loopback=allow_loopback
+        ):
+            raise PermissionError("Private or local IP addresses are blocked.")
         return ValidatedUrl(url=parsed.geturl(), pinned_ip="")
 
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    pinned_ip = _resolve_allowed_address(
+        host, port, allow_private=allow_private, allow_loopback=allow_loopback, deadline=deadline
+    )
+    # Pinned under every flag, the private opt-in included: an unpinned connect
+    # would resolve again, and a rebinding name could then reach cloud metadata.
+    return ValidatedUrl(url=parsed.geturl(), pinned_ip=pinned_ip)
+
+
+def _resolve_allowed_address(
+    host: str,
+    port: int,
+    *,
+    allow_private: bool,
+    allow_loopback: bool,
+    deadline: float | None,
+) -> str:
+    """Resolve ``host``; every address must pass the policy. Returns the first."""
     try:
         infos = _getaddrinfo(host, port, deadline=deadline)
     except socket.gaierror as exc:
@@ -233,13 +202,13 @@ def validate_public_url(
             ip = ipaddress.ip_address(addr_text)
         except ValueError:
             continue
-        if not _is_public_ip(ip):
+        if not address_allowed(ip, allow_private=allow_private, allow_loopback=allow_loopback):
             raise PermissionError("Private or local IP addresses are blocked.")
         if not pinned_ip:
             pinned_ip = addr_text
     if not pinned_ip:
         raise ValueError(f"Hostname resolution returned no usable addresses: {host}")
-    return ValidatedUrl(url=parsed.geturl(), pinned_ip=pinned_ip)
+    return pinned_ip
 
 
 def _remaining_seconds(deadline: float) -> float:
@@ -524,6 +493,7 @@ def read_url_response(
     timeout_s: float = 10,
     max_bytes: int = _MAX_FETCH_BYTES_HARD,
     allow_private: bool = False,
+    allow_loopback: bool = False,
     max_redirects: int = _MAX_REDIRECTS,
     method: str = "GET",
     data: bytes | None = None,
@@ -538,17 +508,18 @@ def read_url_response(
     current = validated
     redirect_chain: list[str] = []
     seen_urls = {requested_url}
+    request = HopRequest(method=method, data=data, headers=dict(headers or {}))
 
-    for _ in range(max_redirects + 1):
+    for hop in range(max_redirects + 1):
         remaining = _remaining_seconds(deadline)
         single = _open_url_once(
             current,
             timeout_s=remaining,
             max_bytes=limit,
             deadline=deadline,
-            method=method,
-            data=data,
-            headers=headers,
+            method=request.method,
+            data=request.data,
+            headers=request.headers,
         )
         _remaining_seconds(deadline)
         if single.status_code not in _REDIRECT_STATUS_CODES:
@@ -564,7 +535,21 @@ def read_url_response(
 
         if not single.location:
             raise RedirectBlockedError("Redirect response did not include a Location header.")
+        # The hop limit comes before the Location host is parsed or resolved, so a
+        # caller that follows no redirects never DNS-pings the target.
+        if hop >= max_redirects:
+            break
         target_url = urllib.parse.urljoin(current.url, single.location)
+        # Decided from the URL alone, so a refused cross-origin resend costs no DNS.
+        next_request = next_hop_request(
+            single.status_code,
+            request,
+            same_origin=url_origin(current.url) == url_origin(target_url),
+        )
+        if next_request is None:
+            raise RedirectBlockedError(
+                "Redirect would resend a request body or unsafe method to another origin."
+            )
         # Re-raise a rejected hop as a redirect-shaped failure so callers give it
         # the same non-retryable classification the first hop gets. The messages
         # stay host-free on purpose: unlike the first hop, this target comes from
@@ -573,6 +558,7 @@ def read_url_response(
             next_validated = validate_public_url(
                 target_url,
                 allow_private=allow_private,
+                allow_loopback=allow_loopback,
                 deadline=deadline,
             )
         except PermissionError as exc:
@@ -588,5 +574,6 @@ def read_url_response(
         seen_urls.add(next_validated.url)
         redirect_chain.append(next_validated.url)
         current = next_validated
+        request = next_request
 
     raise RedirectBlockedError(f"Too many redirects (maximum {max_redirects}).")

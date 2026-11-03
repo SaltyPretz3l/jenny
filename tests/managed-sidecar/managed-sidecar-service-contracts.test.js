@@ -93,6 +93,7 @@ test('managed deleteSession structurally cancels an active turn and settles pend
     deleted: true,
     cleanup_status: 'complete',
     cleanup_errors: [],
+    freed: { bytes: 0, files: 0 }, // row 93: what the delete freed (nothing seeded here)
   });
   assert.equal(controller.signal.aborted, true);
   assert.equal(controller.signal.reason.cancel_reason, 'session_delete');

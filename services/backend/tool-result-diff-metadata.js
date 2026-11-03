@@ -12,6 +12,7 @@ const { normalizeSubagentMetadata } = require('./subagent-report-metadata');
 const { normalizeHomeResultMetadata } = require('./home-calendar-result-metadata');
 const { normalizeMemoryResultMetadata } = require('./memory-result-metadata');
 const { normalizeProposalResultMetadata } = require('./proposal-result-metadata');
+const { normalizeNextStepResultMetadata } = require('./next-step-result-metadata');
 const { normalizeSandboxResultMetadata } = require('./sandbox-result-metadata');
 const { boundedUntypedStorageMetadata } = require('./tool-result-metadata-bounds');
 const {
@@ -552,7 +553,7 @@ function normalizePersistedToolResultMetadata(metadata, options = {}) {
   if (files.length) result.files = files;
   for (const normalize of [normalizeSubagentMetadata, normalizeUserQuestionsResultMetadata, normalizeHomeResultMetadata,
     normalizeMemoryResultMetadata, normalizeProposalResultMetadata, normalizeSessionMessageResultMetadata,
-    normalizeSandboxResultMetadata]) Object.assign(result, normalize(source));
+    normalizeSandboxResultMetadata, normalizeNextStepResultMetadata]) Object.assign(result, normalize(source));
   if (workspaceChangeSet) result.workspace_change_set = workspaceChangeSet;
   if (scriptedChangeReview) result.scripted_change_review = scriptedChangeReview;
   // The shell tool stopped the command at its time limit: the tool row reads

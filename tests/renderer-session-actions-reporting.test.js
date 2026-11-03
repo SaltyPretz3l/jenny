@@ -138,3 +138,66 @@ test('store.setReporting sends the closed request, answers the bridge envelope a
   await flush();
   store.dispose(); bare.dispose(); noMethod.dispose(); throwing.dispose();
 });
+
+// The hard delete commits after the 6-second undo window; its main-process
+// result says what was freed and whether some files stayed behind.
+function deleteHarness(t, hardResult, { formatBytes, openYourData } = {}) {
+  const dom = new JSDOM('<body></body>');
+  const toasts = [];
+  let scheduled = null;
+  const state = { sessions: [{ id: 's1', title: 'Doomed', updated_at: 'u', message_count: 1 }], ui: {} };
+  const controller = createSessionActionsController({
+    state,
+    windowRef: { document: dom.window.document, CSS: dom.window.CSS, dataLifecycleUtils: formatBytes ? { formatBytes } : undefined },
+    constants: { TOAST_SOURCE: { sessionAction: 'session-action' }, SESSION_DELETE_UNDO_MS: 6000 },
+    inventory: { contextMenu: { show() {}, hide() {} } },
+    modules: { destructiveUndoUtils: { createDestructiveUndoScheduler: () => ({ list: () => [], schedule: (_ids, options) => { scheduled = options; return true; } }) } },
+    callbacks: {
+      renderAll() {}, renderSessions() {}, appendClientLog() {}, registerCleanup() {},
+      showToastMessage: (message, options) => toasts.push({ message, options }),
+      showSessionActionError() {}, hardDeleteSession: async () => hardResult, openYourData,
+    },
+  });
+  t.after(() => dom.window.close());
+  return { toasts, commit: async () => { controller.requestDeleteSession('s1'); await scheduled.commit(); }, getScheduled: () => scheduled };
+}
+
+test('a committed delete that freed space says how much', async (t) => {
+  const h = deleteHarness(t, { id: 's1', deleted: true, cleanup_status: 'complete', freed: { files: 3, bytes: 4404019 } }, { formatBytes: () => '4.2 MB' });
+  await h.commit();
+  assert.deepEqual(h.toasts.map((toast) => toast.message), ['Chat deleted. Freed 4.2 MB.']);
+  assert.equal(h.toasts[0].options.source, 'session-action');
+  assert.equal(h.getScheduled().windowMs, 6000, 'the undo window is unchanged');
+});
+
+test('a degraded delete says some files stayed, even when space was freed', async (t) => {
+  const h = deleteHarness(t, { id: 's1', deleted: true, cleanup_status: 'degraded', cleanup_errors: [{ step: 'artifacts', code: 'cleanup_failed' }], freed: { files: 1, bytes: 10 } });
+  await h.commit();
+  assert.deepEqual(h.toasts.map((toast) => toast.message), ['Chat deleted. Some of its files could not be removed.']);
+  assert.equal(h.toasts[0].options.tone, 'warning');
+  assert.equal(h.toasts[0].options.actions, undefined, 'no link where Your data cannot be opened');
+});
+
+test('a degraded delete links to Your data when Settings can open it', async (t) => {
+  const opened = [];
+  const h = deleteHarness(t, { id: 's1', deleted: true, cleanup_status: 'degraded', freed: { files: 0, bytes: 0 } }, { openYourData: () => opened.push('account') });
+  await h.commit();
+  const [action] = h.toasts[0].options.actions;
+  assert.equal(action.label, 'Your data');
+  action.onClick();
+  assert.deepEqual(opened, ['account']);
+});
+
+test('a delete with nothing freed, or a result without the new fields, adds no toast', async (t) => {
+  for (const result of [{ id: 's1', deleted: true, cleanup_status: 'complete', freed: { files: 0, bytes: 0 } }, { id: 's1', deleted: true }, undefined]) {
+    const h = deleteHarness(t, result);
+    await h.commit();
+    assert.deepEqual(h.toasts, []);
+  }
+});
+
+test('without the data-lifecycle formatter the size falls back to bytes', async (t) => {
+  const h = deleteHarness(t, { id: 's1', deleted: true, cleanup_status: 'complete', freed: { files: 1, bytes: 512 } });
+  await h.commit();
+  assert.deepEqual(h.toasts.map((toast) => toast.message), ['Chat deleted. Freed 512 B.']);
+});

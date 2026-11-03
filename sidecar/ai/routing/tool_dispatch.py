@@ -25,6 +25,10 @@ _ELECTRON_RESOURCE_START_TOOLS = frozenset({
     "propose_git_action", "propose_command", "propose_session",
     "session_message", "conversations_recent", "conversation_open", "conversations_search",
     "sessions_list", "session_status", "session_transcript", "session_stop", "jenny_help",
+    "settings_get", "settings_change", "chat_organize", "chat_configure",
+    "project_create", "projects_list", "app_view",
+    "session_export", "terminal_read", "terminal_run",
+    "schedule_list", "schedule_change", "away_digest",
 })
 _CLEANUP_FIELDS = frozenset({
     "cleanup", "output_readers_terminated", "process_tree_terminated", "reason",
@@ -175,6 +179,7 @@ def dispatch_tool_call(  # noqa: PLR0913
     electron_executor: Callable[[Any], Any], logger: Any,
     on_dispatch_ready: Callable[[], None] | None = None,
     decision_snapshot: Any = None,
+    read_only_grant: Callable[[], str | None] | None = None,
 ) -> Any:
     if (
         call.tool_id == "run_command"
@@ -206,6 +211,8 @@ def dispatch_tool_call(  # noqa: PLR0913
             runtime=runtime, call=call, descriptor=descriptor,
             tool_arguments=tool_arguments, visible_arguments=admission_arguments,
             builtin_server_name=builtin_server_name, timeout_seconds=timeout_seconds,
+            # Classified only when an authority check actually runs (row 102).
+            grant=read_only_grant() if read_only_grant is not None else None,
         )
 
     # Completion is authorized by Electron's exact preparation/attempt binding,

@@ -34,6 +34,7 @@
     Object.freeze(['renderer/features/renderer-suggestion-bar-controller.js', 'rendererSuggestionBarController']),
     Object.freeze(['renderer/features/renderer-changes-history-model.js', 'rendererChangesHistoryModel']),
     Object.freeze(['renderer/features/renderer-changes-view-render.js', 'rendererChangesViewRender']),
+    Object.freeze(['renderer/features/renderer-changes-view-actions.js', 'rendererChangesViewActions']),
     Object.freeze(['renderer/features/renderer-changes-suggested-actions.js', 'rendererChangesSuggestedActions']),
     Object.freeze(['renderer/features/renderer-changes-view.js', 'rendererChangesView']),
     Object.freeze(['renderer/features/renderer-changes-undo-plan.js', 'rendererChangesUndoPlan']),
@@ -100,6 +101,8 @@
       getWorkingTreeModule = function defaultWorkingTreeModule() { return globalThis.rendererChangesWorkingTree || null; },
       openWorkingTreeFile = function defaultOpenFile(path) { return globalThis.rendererChatWorkspaceDetail?.openInWorkspace?.(path); },
       openInGit = function defaultOpenInGit() { return globalThis.rendererChatWorkspaceDetail?.openInGit?.(); },
+      // Text actions and find on the page (row 99): code copy, Ask Jenny, body menu, `[` / `]`.
+      getPageActionsModule = function defaultPageActionsModule() { return globalThis.rendererChangesViewActions || null; },
     } = deps || {};
 
     if (!state) {
@@ -119,6 +122,7 @@
     let workingTree = null;
     let pageEl = null;
     let workingTreeEl = null;
+    let pageActions = null;
     let pendingFocus = false;
     // A chat findings list's Show in diff (row 64): handed to the Working tree page on the next render.
     let pendingFindings = null;
@@ -286,13 +290,17 @@
       restorePreviousFocus();
     }
 
+    // The page sits beside the artifact body, never in place of it: the shared surface holds the preview,
+    // editor and detail nodes by reference, so clearing the panel left the file preview and artifact
+    // renders writing into detached nodes. `.code-review-mode` on the panel picks which one shows.
     function ensureHost(surface) {
       const panel = surface && surface.detailPanel;
       if (!panel) return null;
       if (!hostEl || !panel.contains(hostEl)) {
         const doc = panel.ownerDocument;
         if (workingTree) workingTree.unmount();
-        panel.innerHTML = '';
+        pageActions?.dispose();
+        pageEl?.remove();
         pageEl = doc.createElement('div');
         pageEl.className = 'changes-detail-page';
         workingTreeEl = doc.createElement('div');
@@ -300,6 +308,14 @@
         hostEl.className = 'changes-view-host';
         pageEl.append(workingTreeEl, hostEl);
         panel.appendChild(pageEl);
+        pageActions = getPageActionsModule()?.createChangesPageActions({
+          getLedgerDetail: () => view?.getDetail() || null,
+          getWorkingTreeHunks: (path) => workingTree?.getFileHunks(path) || null,
+          openWorkingTreeFile: (path) => openWorkingTreeFile(path),
+          openLedgerChange: (changeId) => openInWorkspace?.(changeId),
+          log: appendClientLog,
+        }) || null;
+        pageActions?.attach(pageEl);
       }
       panel.classList.remove('hidden');
       if (surface.detailEmpty) surface.detailEmpty.classList.add('hidden');
@@ -390,6 +406,8 @@
       view = null;
       if (workingTree) workingTree.dispose();
       workingTree = null;
+      pageActions?.dispose();
+      pageActions = null;
       hostEl = null;
       pageEl = null;
       workingTreeEl = null;

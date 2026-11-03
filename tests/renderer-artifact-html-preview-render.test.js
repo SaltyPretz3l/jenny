@@ -465,6 +465,30 @@ test('a post-load render with changed content rebuilds the held frame once', (t)
   assert.deepEqual(disposedSources, ['<p>one</p>'], 'the stale frame must be disposed exactly once');
 });
 
+// Live check 2026-11-01: the panel's loading note hid the preview during a turn-settle re-read,
+// and the identical-content render kept the frame without showing it again ("Loading artifact…"
+// until the user switched views).
+test('reusing a held frame shows the preview again and restores its note', (t) => {
+  const { surface, ctx } = makeCtx(t);
+  globalThis.rendererHtmlArtifactFrameUtils = {
+    createHtmlArtifactFrame: () => ({ dispose: () => {}, requestId: 'spy-held-visible' }),
+  };
+  t.after(() => { delete globalThis.rendererHtmlArtifactFrameUtils; });
+  const { hasLiveFrameForArtifact } = require('../renderer/features/renderer-artifact-html-preview-render.js');
+
+  renderHtmlPreviewKind(ctx, 'html');
+  assert.equal(hasLiveFrameForArtifact(ctx, 'html'), true);
+  assert.equal(hasLiveFrameForArtifact({ ...ctx, artifact: { id: 'other' } }, 'html'), false);
+  surface.previewContent.classList.add('hidden');
+  surface.editorShell.classList.remove('hidden');
+  surface.detailNote.textContent = 'Loading artifact…';
+
+  renderHtmlPreviewKind(ctx, 'html');
+  assert.equal(surface.previewContent.classList.contains('hidden'), false, 'the kept frame is visible again');
+  assert.equal(surface.editorShell.classList.contains('hidden'), true);
+  assert.match(surface.detailNote.textContent, /Sandboxed live preview/);
+});
+
 test('a loading interstitial with an error still falls back to the inline path', (t) => {
   const { ctx } = makeCtx(t);
   globalThis.rendererHtmlArtifactFrameUtils = {

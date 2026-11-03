@@ -11,6 +11,11 @@ const { buildFeatureFlagDefaults, INTERNAL_FEATURE_FLAG_KEYS } = require('../ser
 const { ALWAYS_ON_TOOL_NAMES, surfaceFamilyForTool } = require('../services/tools/tool-surface-families');
 
 const DIRECTORY = ['session_status', 'session_stop', 'session_transcript', 'sessions_list'];
+const SETTINGS = ['settings_change', 'settings_get']; // row 88: only the primary chat gets these (primary-settings-tool-gate.js)
+const CHAT = ['chat_configure', 'chat_organize']; // row 94: so does the chat management pair (same gate)
+const PLACEMENT = ['project_create', 'projects_list']; // row 94 P2: and the project pair (same gate)
+const VIEW = ['app_view']; // row 94 P3: and app_view (same gate)
+const SCHEDULE = ['schedule_change', 'schedule_list']; // row 85: and the scheduled-check pair (same gate)
 
 function serviceWith(sessions = [], featureFlags = undefined) {
   const service = { calls: 0, sessionStore: { listSessions: () => { service.calls += 1; return sessions; } } };
@@ -81,8 +86,8 @@ test('managedToolPreferenceInput applies the gate to ordinary turns but never to
   const service = serviceWith([]);
   const options = { service, sessionId: 's1', session: { id: 's1' } };
   assert.deepEqual(managedToolPreferenceInput({ disabled_tools: ['read_file'] }, options),
-    { disabled_tools: ['read_file', ...DIRECTORY] });
-  assert.deepEqual(managedToolPreferenceInput(undefined, options), { disabled_tools: DIRECTORY });
+    { disabled_tools: [...VIEW, ...CHAT, ...PLACEMENT, 'read_file', ...SCHEDULE, 'session_export', ...DIRECTORY, ...SETTINGS, 'terminal_run'] });
+  assert.deepEqual(managedToolPreferenceInput(undefined, options), { disabled_tools: [...VIEW, ...CHAT, ...PLACEMENT, ...SCHEDULE, 'session_export', ...DIRECTORY, ...SETTINGS, 'terminal_run'] });
   assert.deepEqual(managedToolPreferenceInput(undefined, { ...options, handoffPreparation: { proposal_id: 'p' } }),
     { enabled_tools: ['complete_session_handoff'], disabled_tools: [], disabled_tool_families: [] });
   assert.equal(managedToolPreferenceInput(undefined), undefined, 'no service, no gate');
@@ -101,11 +106,11 @@ test('the context preview mirrors the gate so the context ring does not count hi
     },
   };
   await previewContext(service, 's1');
-  assert.deepEqual(calls.at(-1).tool_preferences.disabled_tools, DIRECTORY);
+  assert.deepEqual(calls.at(-1).tool_preferences.disabled_tools, [...VIEW, ...CHAT, ...PLACEMENT, ...SCHEDULE, 'session_export', ...DIRECTORY, ...SETTINGS, 'terminal_run']);
   sessions.push({ id: 'c', spawned_from: { parent_session_id: 's1' } });
   session.updated_at = 'linked';
   await previewContext(service, 's1');
-  assert.deepEqual(calls.at(-1).tool_preferences.disabled_tools, []);
+  assert.deepEqual(calls.at(-1).tool_preferences.disabled_tools, [...VIEW, ...CHAT, ...PLACEMENT, ...SCHEDULE, 'session_export', ...SETTINGS, 'terminal_run']);
 });
 
 test('the child check reads the raw index without listSessions, and a parent keeps the tools once offered', () => {

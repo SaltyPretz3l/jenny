@@ -360,12 +360,32 @@ function runCapturedChild(runnerArgs, {
   terminationGraceMs = PER_FILE_TERMINATION_GRACE_MS,
 }) {
   return new Promise((resolve) => {
-    const child = spawnImpl(process.execPath, [...testProcessNodeArgs, ...runnerArgs], {
-      cwd: process.cwd(),
-      env: buildChildEnv(),
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-    });
+    let child;
+    try {
+      child = spawnImpl(process.execPath, [...testProcessNodeArgs, ...runnerArgs], {
+        cwd: process.cwd(),
+        env: buildChildEnv(),
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      });
+    } catch (error) {
+      // A synchronous spawn failure (for example `spawn UNKNOWN` when an outer
+      // Windows job object has hit its active-process cap) must not crash the
+      // runner or leave its lock behind. Code -1 with no test events is the
+      // infrastructure-failure signature, so the file is retried once after the
+      // pool drains and otherwise reported as an infrastructure failure.
+      const detail = error && error.code
+        ? `${error.code}${Number.isInteger(error.errno) ? ` (${error.errno})` : ''}`
+        : String((error && error.message) || error);
+      resolve({
+        code: -1,
+        timedOut: false,
+        terminationFailed: false,
+        collateralKilled: false,
+        output: `[run-node-tests-safe] spawn failed: ${detail}\n`,
+      });
+      return;
+    }
     activeChildren.add(child);
     const captured = { chunks: [], bytes: 0, truncated: false };
     child.stdout.on('data', (chunk) => appendCapturedChunk(captured, chunk));
@@ -529,6 +549,8 @@ async function runManagedFile(file, parsed, state) {
   };
   state.results.push(record);
   reportFileResult(record, parsed.verbose);
+  // An infrastructure failure settles after its serial retry (reporting module).
+  if (!record.infrastructureFailure) state.progress?.settle(record);
   if (record.code === 0 && !record.timedOut) {
     record.output = null;
   }

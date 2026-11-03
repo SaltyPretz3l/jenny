@@ -711,6 +711,34 @@ def _optional_str(source: dict[str, Any], key: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _command_match_keys(
+    raw_match: dict[str, Any],
+    tool_id: str | None,
+    action: str | None,
+    path_prefix: str | None,
+) -> tuple[str | None, str | None] | None:
+    """Row 103 command keys, or ``None`` when they must drop the rule.
+
+    Ignoring a malformed key would widen a scoped run_command grant to the
+    whole tool, so a non-string value, both keys, or a rule not scoped to
+    run_command alone drops the rule. The value's canonical form is checked
+    by the matcher (``sidecar/ai/tools/command_prefix.py``), which never
+    matches a non-canonical one.
+    """
+    prefix = raw_match.get("command_prefix")
+    exact = raw_match.get("command_exact")
+    if prefix is None and exact is None:
+        return (None, None)
+    if prefix is not None and exact is not None:
+        return None
+    value = prefix if prefix is not None else exact
+    if not isinstance(value, str) or not value.strip():
+        return None
+    if tool_id != "run_command" or action or path_prefix:
+        return None
+    return (prefix, exact)
+
+
 def _normalize_tool_policy_rule(entry: Any) -> ToolPolicyRule | None:
     if not isinstance(entry, dict):
         return None
@@ -743,14 +771,21 @@ def _normalize_tool_policy_rule(entry: Any) -> ToolPolicyRule | None:
             return None
         action = raw_action.strip()
 
+    tool_id = _optional_str(raw_match, "tool_id")
+    path_prefix = _optional_str(raw_match, "path_prefix")
+    command_keys = _command_match_keys(raw_match, tool_id, action, path_prefix)
+    if command_keys is None:
+        return None
     match = ToolPolicyRuleMatch(
-        tool_id=_optional_str(raw_match, "tool_id"),
+        tool_id=tool_id,
         action=action,
         tool_family=_optional_str(raw_match, "tool_family"),
         source_kind=_optional_str(raw_match, "source_kind"),
         mode=modes,
-        path_prefix=_optional_str(raw_match, "path_prefix"),
+        path_prefix=path_prefix,
         mcp_server=_optional_str(raw_match, "mcp_server"),
+        command_prefix=command_keys[0],
+        command_exact=command_keys[1],
     )
     return ToolPolicyRule(
         id=rule_id.strip(),

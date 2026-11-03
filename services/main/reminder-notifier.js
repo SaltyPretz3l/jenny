@@ -17,6 +17,13 @@ function createReminderNotifier({
   isEnabled = () => true,
   sendBridgeEvent,
   log,
+  // Row 85 (D4): a due `action: "jenny_turn"` reminder goes to this port
+  // instead of the toast, after lastFiredAt/lastDueAt are persisted. The port
+  // returns { handled: false } (flag off, no Jenny chat) to fall back to the
+  // plain toast, so a check degrades to a notification, never to an action.
+  onJennyTurnDue = null,
+  holdJennyTurn = () => false, // a paused Jenny chat keeps a due one-off check unpersisted until Resume (Q5)
+  powerMonitor = null,
   now = Date.now,
   setIntervalFn = setInterval,
   clearIntervalFn = clearInterval,
@@ -138,6 +145,29 @@ function createReminderNotifier({
     });
   }
 
+  function isHeld(reminder) {
+    try { return holdJennyTurn(reminder) === true; } catch (_error) { return false; }
+  }
+
+  function fireJennyTurn(service, reminder, nowMs, firedAt) {
+    const dueAtMs = reminderDueAt(reminder, nowMs) ?? nowMs;
+    const stored = { ...reminder, lastFiredAt: firedAt, lastDueAt: new Date(dueAtMs).toISOString() };
+    // Persist first: a crash after this line loses at most one occurrence and
+    // never runs it twice (the port's idempotency key covers a re-entry too).
+    service.upsertReminder(stored);
+    let result = null;
+    try {
+      result = typeof onJennyTurnDue === 'function'
+        ? onJennyTurnDue(stored, dueAtMs)
+        : null;
+    } catch (error) {
+      logFailure('reminder_notifier.jenny_turn_failed', error);
+    }
+    if (result?.handled === true) return;
+    showNotification(String(reminder.label || ''), String(reminder.prompt || ''), String(reminder.id || ''));
+    fireReminder(service, stored, firedAt, {}, false);
+  }
+
   function clearRendererReadinessObservation() {
     if (loadFinishedListener) {
       observedWebContents?.removeListener?.('did-finish-load', loadFinishedListener);
@@ -214,8 +244,13 @@ function createReminderNotifier({
           reminder.scheduleType === 'interval_minutes'
         );
       }
+      const checks = due.filter((reminder) => reminder.action === 'jenny_turn' && !isHeld(reminder));
+      for (const reminder of checks) {
+        try { fireJennyTurn(service, reminder, nowMs, firedAt); } catch (error) { logFailure('reminder_notifier.jenny_turn_failed', error); }
+      }
+      const plain = due.filter((reminder) => reminder.action !== 'jenny_turn');
       const missed = isFirstTick
-        ? due.filter((reminder) => reminder.scheduleType === 'once_at'
+        ? plain.filter((reminder) => reminder.scheduleType === 'once_at'
           && reminderDueAt(reminder, nowMs) < nowMs)
         : [];
       const missedIds = new Set(missed.map((reminder) => reminder.id));
@@ -237,7 +272,7 @@ function createReminderNotifier({
           fireReminder(service, reminder, firedAt, { missed: true });
         }
       }
-      for (const reminder of due) {
+      for (const reminder of plain) {
         if (missedIds.has(reminder.id)) continue;
         showNotification(
           String(reminder.label || ''),
@@ -262,6 +297,10 @@ function createReminderNotifier({
     observedConfigService = getShellConfigService?.() || null;
     observedConfigService?.on?.('changed', onConfigChanged);
     firstTickAfterStart = true;
+    // A check due during sleep or a locked screen fires on wake, not up to a
+    // poll later (D4); the catch-up bound still applies in the port.
+    powerMonitor?.on?.('resume', tick);
+    powerMonitor?.on?.('unlock-screen', tick);
     tick();
     timer = setIntervalFn(tick, intervalMs);
     timer?.unref?.();
@@ -274,6 +313,8 @@ function createReminderNotifier({
     }
     observedConfigService?.removeListener?.('changed', onConfigChanged);
     observedConfigService = null;
+    powerMonitor?.removeListener?.('resume', tick);
+    powerMonitor?.removeListener?.('unlock-screen', tick);
     clearRendererReadinessObservation();
     snoozedUntilById.clear();
   }

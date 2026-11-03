@@ -67,11 +67,23 @@
     const ANSWERS_VIEW_PREDICTION_OPTIONS = Object.freeze({
       excludeSelector: `${COLLAPSED_BODY_EXCLUDE_SELECTOR}, .turn-row-list:not([data-turn-live="true"]) .chat-row[data-row-kind="reasoning"], .chat-row[data-run-member]:not([data-run-expanded="true"])`,
     });
+    // Row 101 live box: an open reasoning body in the live turn is capped by
+    // CSS at about a viewport, so the prediction leaves it out. Counting its
+    // full text overshot the min-height reservation by the whole phase and
+    // grew the timeline between phases (found live); an undershoot only
+    // shrinks the reservation. Answers view never caps (branch above).
+    const LIVE_BOX_PREDICTION_OPTIONS = Object.freeze({
+      excludeSelector: `${COLLAPSED_BODY_EXCLUDE_SELECTOR}, .turn-row-list[data-turn-live="true"] .reasoning-row-panel.expanded > .reasoning-row-panel-body`,
+    });
     function resolveHtmlPredictionOptions(htmlString, transcriptView) {
       const markup = String(htmlString || '');
       if (transcriptView === 'answers'
         && (markup.includes('data-row-kind="reasoning"') || markup.includes('data-run-member'))) {
         return ANSWERS_VIEW_PREDICTION_OPTIONS;
+      }
+      if (state?.features?.featureFlags?.reasoning_live_box === true
+        && markup.includes('data-turn-live="true"') && markup.includes('reasoning-row-panel-body')) {
+        return LIVE_BOX_PREDICTION_OPTIONS;
       }
       return markup.includes('tool-call-row-body') || markup.includes('reasoning-row-panel-body')
         ? COLLAPSED_BODY_PREDICTION_OPTIONS

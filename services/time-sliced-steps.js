@@ -45,4 +45,6 @@ function scheduleSlicedStartupReconcile(service, options = {}) {
   return timer;
 }
 
-module.exports = { SLICE_BUDGET_MS, runStepsInSlices, scheduleSlicedStartupReconcile };
+module.exports = {
+  SLICE_BUDGET_MS, runStepsInSlices, scheduleSlicedStartupReconcile, yieldToEventLoop,
+};

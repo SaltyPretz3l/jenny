@@ -767,8 +767,8 @@ test('chat width persists as a root data attribute and survives a theme-bundle s
   assert.ok(widthGroup.closest('[data-setting-mount="appearanceChatWidthSelect"]'), 'inside its mount host');
   assert.deepEqual(
     segmentedOptions(doc, 'appearanceChatWidthSelect').map((option) => option.value),
-    ['narrow', 'standard'],
-    'exactly two modes are offered'
+    ['narrow', 'standard', 'full'],
+    'Narrow, Standard and Wide (row 92, stored as full) are offered'
   );
   assert.equal(root.dataset.chatWidth, 'standard', 'Standard is the boot state (owner, 2026-10-02)');
 

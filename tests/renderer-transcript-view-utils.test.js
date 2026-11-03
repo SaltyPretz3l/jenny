@@ -140,3 +140,99 @@ test('the view control refreshes its visible tooltip when the rendered view chan
   assert.equal(tooltip.textContent, 'Transcript view: Answers');
   assert.equal(tooltip.getAttribute('aria-hidden'), 'false');
 });
+
+/* Row 92: the Wide transcript toggle (Chat width `full`). */
+
+test('nextChatWidth turns Wide on from any width and returns to the remembered one', () => {
+  const { nextChatWidth } = require('../renderer/chat/renderer-transcript-view-utils.js');
+  assert.deepEqual(nextChatWidth('narrow', ''), { next: 'full', previous: 'narrow' });
+  assert.deepEqual(nextChatWidth('standard', 'narrow'), { next: 'full', previous: 'standard' });
+  assert.deepEqual(nextChatWidth('full', 'narrow'), { next: 'narrow', previous: 'narrow' });
+  assert.deepEqual(nextChatWidth('full', ''), { next: 'standard', previous: 'standard' }, 'Wide at startup falls back to Standard');
+  assert.deepEqual(nextChatWidth('full', 'full'), { next: 'standard', previous: 'standard' });
+});
+
+/* Two panes' clusters, one global width; applyAppearance mimics applyAppearancePreferences
+   (writes <html data-chat-width> and returns the preferences now in effect). refuse: the store
+   refuses the write, so the old preferences come back. */
+function mountWideToggle(t, { initial = 'narrow', refuse = false } = {}) {
+  const dom = new JSDOM('<!doctype html><html><body><div class="cluster"><button data-transcript-view-toggle="true"></button></div><div class="cluster"></div></body></html>');
+  const { window } = dom;
+  const doc = window.document;
+  doc.documentElement.dataset.chatWidth = initial;
+  const saved = globalThis.inventoryActionButton;
+  globalThis.inventoryActionButton = require('../renderer/inventory/action-button.js');
+  const utils = require('../renderer/chat/renderer-transcript-view-utils.js');
+  let appearance = { paletteId: 'slate', chatWidthId: initial };
+  const applied = [];
+  const toggle = utils.createChatWidthToggle({
+    documentRef: doc,
+    getAppearance: () => appearance,
+    applyAppearance: (next) => {
+      applied.push(next.chatWidthId);
+      if (refuse) return appearance;
+      appearance = { ...next };
+      doc.documentElement.dataset.chatWidth = next.chatWidthId;
+      return appearance;
+    },
+    onApplied: () => applied.push('repaint'),
+  });
+  const register = (target, name, handler, options) => target.addEventListener(name, handler, options);
+  const buttons = [...doc.querySelectorAll('.cluster')].map((cluster) => utils.mountChatWidthToggle({ cluster, registerListener: register }).button);
+  t.after(() => { toggle.dispose(); globalThis.inventoryActionButton = saved; window.close(); });
+  // What a Settings or relay change does: the preferences and the root attribute together.
+  const setWidth = (id) => { appearance = { ...appearance, chatWidthId: id }; doc.documentElement.dataset.chatWidth = id; };
+  return { window, doc, toggle, buttons, applied, getAppearance: () => appearance, setWidth };
+}
+
+test('the Wide button sits after the view control, names its shortcut and toggles through the shell controller', (t) => {
+  const { doc, buttons, applied, getAppearance } = mountWideToggle(t);
+  const [first, second] = buttons;
+  assert.equal(first.previousElementSibling.hasAttribute('data-transcript-view-toggle'), true);
+  assert.equal(first.getAttribute('aria-label'), 'Wide transcript');
+  assert.equal(first.title, 'Wide transcript (Ctrl+Alt+W)');
+  assert.equal(first.getAttribute('aria-pressed'), 'false');
+
+  first.click();
+  assert.equal(getAppearance().chatWidthId, 'full');
+  assert.equal(getAppearance().paletteId, 'slate', 'the other appearance axes ride along unchanged');
+  assert.deepEqual(applied, ['full', 'repaint']);
+  assert.equal(first.getAttribute('aria-pressed'), 'true');
+  assert.equal(second.getAttribute('aria-pressed'), 'true', 'every pane shows the one global state');
+
+  second.click();
+  assert.equal(getAppearance().chatWidthId, 'narrow', 'off returns to the width chosen before');
+  assert.equal(doc.querySelectorAll('[data-chat-width-toggle]').length, 2);
+});
+
+test('a width change from Settings or the relay repaints every Wide button, and dispose detaches', async (t) => {
+  const { window, doc, toggle, buttons, applied } = mountWideToggle(t, { initial: 'standard' });
+  doc.documentElement.dataset.chatWidth = 'full';
+  await new Promise((resolve) => window.setTimeout(resolve, 0));
+  assert.deepEqual(buttons.map((button) => button.getAttribute('aria-pressed')), ['true', 'true']);
+
+  toggle.dispose();
+  buttons[0].click();
+  assert.deepEqual(applied, [], 'a disposed controller ignores the button');
+});
+
+test('off returns to the last non-Wide width chosen anywhere, not a stale one', async (t) => {
+  const { window, toggle, getAppearance, setWidth } = mountWideToggle(t, { initial: 'narrow' });
+  toggle.toggle('shortcut');
+  assert.equal(getAppearance().chatWidthId, 'full');
+  toggle.toggle('shortcut');
+  assert.equal(getAppearance().chatWidthId, 'narrow');
+  // Settings picks Standard, then Wide; the toggle then returns to Standard.
+  setWidth('standard');
+  await new Promise((resolve) => window.setTimeout(resolve, 0));
+  setWidth('full');
+  await new Promise((resolve) => window.setTimeout(resolve, 0));
+  assert.equal(toggle.toggle('shortcut'), 'standard');
+});
+
+test('a refused save reports the width in effect and keeps the button unpressed', (t) => {
+  const { toggle, buttons, getAppearance } = mountWideToggle(t, { refuse: true });
+  assert.equal(toggle.toggle('shortcut'), 'narrow');
+  assert.equal(getAppearance().chatWidthId, 'narrow');
+  assert.equal(buttons[0].getAttribute('aria-pressed'), 'false');
+});

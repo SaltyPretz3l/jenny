@@ -406,8 +406,8 @@ function createRuntimeServicesWithDeps({
     notificationFactory: (options) => new (require('electron').Notification)(options),
     isSupported: () => require('electron').Notification.isSupported(),
     isEnabled: () => buildEffectiveFeatureFlags().desktop_notifications === true,
-    sendBridgeEvent,
-    log,
+    sendBridgeEvent, powerMonitor, // row 85: a due Jenny check goes to the Jenny chat (primary-scheduled-check.js), a paused one-off waits
+    log, onJennyTurnDue: (...args) => getBackendService()?.primaryScheduledChecks?.onDue?.(...args) ?? { handled: false }, holdJennyTurn: (reminder) => getBackendService()?.primaryScheduledChecks?.holds?.(reminder) === true,
   });
   reminderNotifier.start();
   systemStats.reminderNotifier = reminderNotifier;
@@ -422,7 +422,7 @@ function createRuntimeServicesWithDeps({
     isSupported: () => require('electron').Notification.isSupported(),
     ipcMainLike: require('electron').ipcMain,
     sendBridgeEvent,
-    log,
+    log, isPrimarySession: (sessionId) => getBackendService()?.primaryChatControls?.isPrimary?.(sessionId) === true, // row 89 quiet hours
     isEnabled: () => buildEffectiveFeatureFlags().desktop_notifications === true,
     isChildSession: (sessionId) => isRuntimeChildSession(getBackendService()?.sessionRuntime, sessionId),
   });
@@ -471,12 +471,12 @@ function createRuntimeServicesWithDeps({
     toolsPreviewTestEnabled = buildEffectiveFeatureFlags().tools_preview_test_enabled === true,
     toolsVerifyEnabled = buildEffectiveFeatureFlags().tools_verify_enabled === true,
     toolsImageGenerateEnabled = buildEffectiveFeatureFlags().tools_image_generate_enabled === true,
-    toolsHomeEnabled = buildEffectiveFeatureFlags().tools_home_enabled === true,
+    toolsHomeEnabled = buildEffectiveFeatureFlags().tools_home_enabled === true, toolsNextStepEnabled = buildEffectiveFeatureFlags().tools_next_step_enabled === true,
     toolsTaskBoardEnabled = buildEffectiveFeatureFlags().tools_task_board_enabled === true,
     toolsProjectNotesEnabled = buildEffectiveFeatureFlags().tools_project_notes_enabled === true,
     toolsConversationsEnabled = buildEffectiveFeatureFlags().memory_v2_enabled === true,
-    // Row 69: declared in feature-flags.js, default on; JENNY_ENABLE_TOOLS_SESSION_DIRECTORY_ENABLED=0 turns it off.
-    toolsSessionDirectoryEnabled = buildEffectiveFeatureFlags().tools_session_directory_enabled !== false,
+    // Rows 69 / 88 / 94 / 85: declared in feature-flags.js, default on; JENNY_ENABLE_TOOLS_SESSION_DIRECTORY_ENABLED=0 / JENNY_ENABLE_PRIMARY_SETTINGS_WRITES=0 / JENNY_ENABLE_PRIMARY_CHAT_MANAGE=0 / JENNY_ENABLE_PRIMARY_CHAT_PLACEMENT=0 / JENNY_ENABLE_PRIMARY_SCHEDULED_CHECKS=0 turn them off.
+    toolsSessionDirectoryEnabled = buildEffectiveFeatureFlags().tools_session_directory_enabled !== false, toolsPrimarySettingsEnabled = buildEffectiveFeatureFlags().primary_settings_writes !== false, toolsPrimaryChatManageEnabled = buildEffectiveFeatureFlags().primary_chat_manage !== false, toolsPrimaryChatPlacementEnabled = buildEffectiveFeatureFlags().primary_chat_placement !== false && buildEffectiveFeatureFlags().primary_chat !== false, toolsPrimaryAppViewEnabled = buildEffectiveFeatureFlags().primary_app_view !== false && buildEffectiveFeatureFlags().primary_chat !== false, toolsPrimaryChatExportEnabled = buildEffectiveFeatureFlags().primary_chat_export !== false && buildEffectiveFeatureFlags().primary_chat !== false, toolsTerminalEnabled = buildEffectiveFeatureFlags().terminal_tools !== false, toolsTerminalRunEnabled = toolsTerminalEnabled && buildEffectiveFeatureFlags().primary_chat !== false,toolsPrimarySchedulesEnabled = buildEffectiveFeatureFlags().primary_scheduled_checks !== false && buildEffectiveFeatureFlags().primary_chat !== false, toolsPrimaryDigestsEnabled = buildEffectiveFeatureFlags().primary_digests === true && buildEffectiveFeatureFlags().primary_chat !== false, // row 86: default off
   } = {}) {
     return createDefaultRegistry({
       toolsWorktreeEnabled,
@@ -485,11 +485,11 @@ function createRuntimeServicesWithDeps({
       toolsPreviewTestEnabled,
       toolsVerifyEnabled,
       toolsImageGenerateEnabled,
-      toolsHomeEnabled,
+      toolsHomeEnabled, toolsNextStepEnabled,
       toolsTaskBoardEnabled,
       toolsProjectNotesEnabled,
       toolsConversationsEnabled,
-      toolsSessionDirectoryEnabled,
+      toolsSessionDirectoryEnabled, toolsPrimarySettingsEnabled, toolsPrimaryChatManageEnabled, toolsPrimaryChatPlacementEnabled, toolsPrimaryAppViewEnabled, toolsPrimaryChatExportEnabled, toolsTerminalEnabled, toolsTerminalRunEnabled, toolsPrimarySchedulesEnabled, toolsPrimaryDigestsEnabled,
     });
   }
 
@@ -511,7 +511,7 @@ function createRuntimeServicesWithDeps({
     visibleChat: () => require('../backend/memory-reflection-eligibility').visibleChatPredicate(getBackendService()),
     cancelChatStream: (streamId, reason) => getBackendService()?.cancelChatStream?.(streamId, reason) === true,
     primaryChatEnabled: () => require('../backend/primary-session').primaryChatEnabled(buildEffectiveFeatureFlags()),
-    log,
+    waitNotices: () => getBackendService()?.sessionRuntime?.waitNotices, log, // row 100 P2 waiting_for
   });
   const toolRegistry = createToolRegistryForCurrentConfig();
   toolExecutor = new ToolExecutor({
@@ -529,7 +529,7 @@ function createRuntimeServicesWithDeps({
     // live getter, the same reason refreshManagedConfig below uses one.
     homeAssistantService: () => getBackendService()?.homeAssistantService || null,
     projectNotesService: () => getBackendService()?.projectNotesService || null,
-    sessionDirectoryService: () => (sessionDirectory ||= createSessionDirectory()),
+    sessionDirectoryService: () => (sessionDirectory ||= createSessionDirectory()), primarySettingsService: () => getBackendService()?.primarySettings || null, primaryChatManageService: () => getBackendService()?.primaryChatManage || null, primaryChatPlacementService: () => getBackendService()?.primaryChatPlacement || null, appViewService: () => getBackendService()?.appView || null, primaryChatExportService: () => getBackendService()?.primaryChatExport || null, terminalToolsService: () => getBackendService()?.terminalTools || null, primaryScheduleService: () => getBackendService()?.primarySchedules || null, // rows 88 / 94 / 94 P2 / 85
     configService: shellConfigService,
     refreshManagedConfig: async (reason) => {
       const backendService = getBackendService();

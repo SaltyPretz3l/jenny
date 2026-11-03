@@ -56,6 +56,19 @@ test('workspaceBackup descriptors pin the hot exit invoke channels', () => {
   assert.ok(listBridgeMethodPaths().includes('workspaceBackup.write'));
 });
 
+test('dataLifecycle storage descriptors pin the Your data invoke channels', () => {
+  const expected = {
+    'dataLifecycle.getStorageUsage': 'data-lifecycle:get-storage-usage',
+    'dataLifecycle.previewClear': 'data-lifecycle:preview-clear',
+    'dataLifecycle.clearCategory': 'data-lifecycle:clear-category',
+    'dataLifecycle.revealCategory': 'data-lifecycle:reveal-category',
+  };
+  for (const [methodPath, channel] of Object.entries(expected)) {
+    assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS[methodPath], { kind: 'invoke', channel });
+    assert.equal(getBridgeChannel(methodPath, 'invoke'), channel);
+  }
+});
+
 test('projectNotes descriptors pin the invoke channels and the changed subscription', () => {
   const expected = {
     'projectNotes.get': ['invoke', 'project-notes:get'],
@@ -254,6 +267,7 @@ test('ipc contract exposes a stable sorted method inventory', () => {
   assert.ok(invokePaths.includes('memory.status'));
   assert.ok(invokePaths.includes('usage.clearHistory'));
   assert.ok(invokePaths.includes('usage.getSnapshot'));
+  assert.ok(invokePaths.includes('usage.getStats'));
   assert.ok(invokePaths.includes('system.refreshStats'));
   assert.ok(invokePaths.includes('system.setStatsWatch'));
   for (const methodPath of [
@@ -496,7 +510,7 @@ test('Settings memory page descriptors pin the W4 invoke channels', () => {
   }
 });
 
-test('primaryChat descriptors pin the nine invoke channels and the changed subscription', () => {
+test('primaryChat descriptors pin the thirteen invoke channels and the changed subscription', () => {
   const invoke = {
     getState: 'primary-chat:get-state',
     activity: 'primary-chat:activity',
@@ -505,15 +519,38 @@ test('primaryChat descriptors pin the nine invoke channels and the changed subsc
     resume: 'primary-chat:resume',
     grantLaunch: 'primary-chat:grant-launch',
     revokeLaunch: 'primary-chat:revoke-launch',
+    addRule: 'primary-chat:add-rule',
+    revokeRule: 'primary-chat:revoke-rule',
     reset: 'primary-chat:reset',
     forgetPreview: 'primary-chat:forget-preview',
+    undoSettingChange: 'primary-chat:undo-setting-change',
+    undoChatChange: 'primary-chat:undo-chat-change',
   };
   for (const [method, channel] of Object.entries(invoke)) {
     assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS[`primaryChat.${method}`], { kind: 'invoke', channel }, method);
   }
   assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS['primaryChat.onChanged'], { kind: 'subscribe', channel: 'primary-chat:changed' });
   const keys = Object.keys(JENNY_SHELL_BRIDGE_DESCRIPTORS).filter((key) => key.startsWith('primaryChat.'));
-  assert.equal(keys.length, 10);
+  assert.equal(keys.length, 14);
+});
+
+test('row 94 descriptor pins the sessions changed subscription', () => {
+  assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS['sessions.onChanged'], { kind: 'subscribe', channel: 'sessions:changed' });
+});
+
+test('row 88 descriptors pin the settings change broadcasts and the appearance relay', () => {
+  const expected = {
+    'chatUi.onChanged': { kind: 'subscribe', channel: 'chat-ui:changed' },
+    'windowUi.onChanged': { kind: 'subscribe', channel: 'window-ui:changed' },
+    'workspaceIde.onPreferencesChanged': { kind: 'subscribe', channel: 'workspace-ide:preferences-changed' },
+    'appearance.onRelayRequest': { kind: 'subscribe', channel: 'appearance:relay-request' },
+    'appearance.respondRelay': { kind: 'invoke', channel: 'appearance:relay-respond' },
+  };
+  for (const [method, descriptor] of Object.entries(expected)) {
+    assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS[method], descriptor, method);
+  }
+  assert.deepEqual(Object.keys(JENNY_SHELL_BRIDGE_DESCRIPTORS).filter((key) => key.startsWith('appearance.')).sort(),
+    ['appearance.onRelayRequest', 'appearance.respondRelay']);
 });
 
 test('apiProviders descriptors pin the ten invoke channels and the changed subscription (row 78)', () => {
@@ -536,4 +573,18 @@ test('apiProviders descriptors pin the ten invoke channels and the changed subsc
   const keys = Object.keys(JENNY_SHELL_BRIDGE_DESCRIPTORS).filter((key) => key.startsWith('apiProviders.'));
   assert.equal(keys.length, 11);
   assert.equal(keys.some((key) => /get-?key|readKey/i.test(key)), false);
+});
+
+test('backgroundJobs descriptors pin the snapshot, kill, output-tail and changed channels', () => {
+  const expected = {
+    'backgroundJobs.getState': { kind: 'invoke', channel: 'background-jobs:get-state' },
+    'backgroundJobs.kill': { kind: 'invoke', channel: 'background-jobs:kill' },
+    'backgroundJobs.readOutput': { kind: 'invoke', channel: 'background-jobs:read-output' },
+    'backgroundJobs.onChanged': { kind: 'subscribe', channel: 'background-jobs:changed' },
+  };
+  for (const [method, descriptor] of Object.entries(expected)) {
+    assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS[method], descriptor, method);
+  }
+  assert.deepEqual(Object.keys(JENNY_SHELL_BRIDGE_DESCRIPTORS).filter((key) => key.startsWith('backgroundJobs.')).sort(),
+    Object.keys(expected).sort());
 });

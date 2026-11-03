@@ -173,6 +173,20 @@ test('a question row answers with the answer modifier, and a plan row opens with
   h.window.close();
 });
 
+test('a settings change offers only Deny here: it is approved on its card, where the rows are (row 88)', () => {
+  const h = harness({ sessions: [session('s1')], pendingToolApprovals: map([approval({
+    toolName: 'settings_change', input: { changes: [{ key: 'palette', value: 'paper' }] }, oneOffOnly: true,
+    settingsChangeApproval: { schema_version: 1, state: 'refused', reason: 'unavailable', rows: [] },
+  })]) });
+  h.controller.render();
+  const actions = [...h.rowFor('approval:call-1').querySelectorAll('[data-attention-action]')].map((node) => node.getAttribute('data-attention-action'));
+  assert.equal(actions.includes('allow'), false);
+  assert.equal(actions.includes('always'), false);
+  assert.equal(actions.includes('deny'), true);
+  h.controller.dispose();
+  h.window.close();
+});
+
 test('a decision keeps keyboard focus in its row while the bridge answers, and across a rebuild', () => {
   const h = harness({ sessions: [session('s1')], pendingToolApprovals: map([approval()]) });
   h.window.jennyShell.tools.approve = () => new Promise(() => {}); // never settles: the in-flight state is under test

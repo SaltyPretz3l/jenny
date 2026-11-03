@@ -95,9 +95,22 @@
 
   // What a rule or grant matches, in words: a path, an action, or every call.
   function approvalMatchDetail(match) {
+    if (match.command_prefix) return jt('settings.shell.approvalRuleAnyArguments', 'any arguments');
+    if (match.command_exact) return jt('settings.shell.approvalRuleExactCommand', 'this exact command');
     if (match.path_prefix) return jt('settings.shell.approvalRuleForPath', 'for {path}', { path: match.path_prefix });
     if (match.action) return jt('settings.shell.approvalRuleForAction', 'action {action}', { action: match.action });
     return jt('settings.shell.approvalRulesEveryCall', 'every call');
+  }
+
+  // A command rule is named by the command it covers, not the bare tool (row 103).
+  const APPROVAL_COMMAND_LABEL_MAX_CHARS = 120;
+  function approvalRuleSubject(toolName, match) {
+    if (typeof match.command_prefix === 'string' && match.command_prefix) return `${match.command_prefix} …`;
+    if (typeof match.command_exact === 'string' && match.command_exact) {
+      const exact = match.command_exact;
+      return exact.length > APPROVAL_COMMAND_LABEL_MAX_CHARS ? `${exact.slice(0, APPROVAL_COMMAND_LABEL_MAX_CHARS)}…` : exact;
+    }
+    return toolName;
   }
 
   function buildApprovalRuleRows(saved, projects) {
@@ -117,7 +130,7 @@
         kind: 'rule',
         key: String(rule.id),
         decision: rule.decision,
-        label: `${APPROVAL_DECISION_LABELS[rule.decision] || rule.decision}: ${match.tool_id || jt('settings.tools.approvalRules.anyTool', 'any tool')}`,
+        label: `${APPROVAL_DECISION_LABELS[rule.decision] || rule.decision}: ${approvalRuleSubject(match.tool_id || jt('settings.tools.approvalRules.anyTool', 'any tool'), match)}`,
         detail: approvalMatchDetail(match),
       });
     }
@@ -127,7 +140,7 @@
       const project = (Array.isArray(projects) ? projects : []).find((entry) => entry?.id === grant.authority.project_id);
       const match = { path_prefix: grant.path_prefix, ...(grant.match && typeof grant.match === 'object' ? grant.match : {}) };
       rows.push({ kind: 'rule', key: String(grant.id), decision: 'auto',
-        label: `${APPROVAL_DECISION_LABELS.auto}: ${grant.tool_name}`,
+        label: `${APPROVAL_DECISION_LABELS.auto}: ${approvalRuleSubject(grant.tool_name, match)}`,
         detail: [project?.name || grant.authority.project_id, grant.authority.root_path,
           approvalMatchDetail(match)].filter(Boolean).join(' · ') });
     }

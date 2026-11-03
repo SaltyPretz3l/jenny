@@ -25,6 +25,7 @@ def admit_scoped_tool_call(  # noqa: PLR0913
     visible_arguments: dict[str, Any], builtin_server_name: str,
     timeout_seconds: float | None,
     inject_trusted_envelope: bool = True,
+    grant: str | None = None,
 ) -> None:
     request_context = getattr(runtime, "request_context", None)
     if getattr(request_context, "execution_context", None) is None:
@@ -37,11 +38,13 @@ def admit_scoped_tool_call(  # noqa: PLR0913
             retryable=False,
         )
     operation_id = str(call.call_id or "").strip()
+    # Only a read-only command carries a grant; other admissions keep their exact call shape.
     trusted_envelope = admission(
         operation_id=operation_id,
         tool_name=call.tool_id,
         arguments=dict(visible_arguments),
         timeout_seconds=timeout_seconds,
+        **({"grant": grant} if grant is not None else {}),
     )
     if not isinstance(trusted_envelope, dict) or trusted_envelope.get("schema_version") != 1:
         raise ToolExecutionFailure(

@@ -142,8 +142,8 @@
   --sidebar-resizer-width: 10px;
   /* Chat reading measure. The user-selectable width (Appearance > Chat layout
      > Chat width) is a line length: --chat-measure-cap-ch characters of the
-     prose font (68 Narrow, 92 Standard; the Standard override is further
-     down). --chat-measure-cap is that length resolved ONCE at the root, as
+     prose font (68 Narrow, 92 Standard, uncapped Wide; the overrides are
+     further down). --chat-measure-cap is that length resolved ONCE at the root, as
      px, so the timeline column and the composer, which sit on different
      font sizes, read the same value; it grows with --font-scale and keeps the
      characters per line. The per-pane measure (--content-column-width for the
@@ -656,6 +656,18 @@
      bubble keeps roughly the same proportion of the measure. */
   --chat-user-bubble-max-width: clamp(410px, 49vw, 810px);
   --chat-card-max-width: 1100px;
+}
+
+/* Chat width = Wide (stored as `full`, row 92): no line-length cap. The
+   pane-relative formula in chat-panes.css then resolves to the pane minus its
+   gutter (3%, 16-40px, or the utility clearance), so split panes, the docked
+   session rail and the measure lock keep working unchanged, and the composer
+   keeps the column's edges. Cards fill the column; user bubbles stay a share of
+   it. At (0,2,0) this outranks the ultra-wide card cap in chat-media-queries.css. */
+:root[data-chat-width="full"] {
+  --chat-measure-cap-ch: 100000;
+  --chat-user-bubble-max-width: min(72%, 1200px);
+  --chat-card-max-width: 100%;
 }
 
 :root[data-motion="calm"] {

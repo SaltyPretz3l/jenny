@@ -210,11 +210,13 @@ def prepare_resume_restore_point(  # noqa: PLR0913 - the resumed run's identity,
     runtime: Any, remaining: list[tuple[Any, int]], *, kernel: Any, request_id: str,
     session_id: str | None, outcomes: list[Any],
 ) -> None:
-    """Checkpoint before an approved batch runs and bind its restore point.
+    """Bind a restore point for an approved batch before it runs.
 
     The approval pause comes before the paused run's checkpoint, so the
-    resumed batch (dispatched with ``runtime`` as the bound run) takes its own
-    restore point here; an earlier one in the turn's outcomes still wins.
+    resumed batch (dispatched with ``runtime`` as the bound run) is decided
+    here. A ``git_checkpoint``/``head`` already in the turn's outcomes is
+    bound as-is and no new checkpoint is requested; only a turn without one
+    takes its first checkpoint here.
     """
     resumed = SimpleNamespace(
         runtime=runtime, kernel=kernel, request_id=request_id, session_id=session_id,
@@ -235,15 +237,14 @@ def maybe_create_auto_checkpoint(loop_run: Any, remaining: list[tuple[Any, int]]
     The outcome becomes ``loop_run.restore_point``; a policy that disables
     the hook records ``disabled`` without marking a checkpoint as created.
 
-    Note on approval-pause/resume: ``checkpoint_created`` lives on
-    ``_ToolLoopRun``, which is reconstructed fresh on every approval-resume,
-    so a resumed run MAY fire a second checkpoint. That is harmless -- it is
-    just a distinct, later git-derived restore point on the Electron side --
-    not a duplicate. The run's restore point keeps an earlier
-    ``git_checkpoint``/``head`` of the turn when the resumed run's outcomes
-    still show one. Strict once-per-turn-across-resume would require
-    threading this flag through ``ApprovalPlan``; left as a follow-up since
-    it is not required for correctness here.
+    Approval-pause/resume: ``checkpoint_created`` lives on ``_ToolLoopRun``,
+    which is reconstructed fresh on every approval-resume. A resumed run whose
+    seeded outcomes already show a ``git_checkpoint``/``head`` of this turn
+    (a scripted call's review records the restore point it ran under) binds
+    that point and requests nothing, so approving N calls no longer piles up
+    N checkpoint refs. Only scripted outcomes carry the point: a turn whose
+    approved calls were all typed file edits still checkpoints once per
+    resume until the flag is threaded through ``ApprovalPlan``.
     """
     # Cheapest gate first: once this run has checkpointed, every later
     # tool-call iteration must do nothing. Return before walking config or the
@@ -267,6 +268,12 @@ def maybe_create_auto_checkpoint(loop_run: Any, remaining: list[tuple[Any, int]]
     if not loop_run.session_id:
         # Headless / no session to attribute the checkpoint to -- skip silently.
         _record_restore_point(loop_run, _none("unavailable"))
+        return
+    earlier = _earlier_anchored_point(loop_run)
+    if earlier is not None:
+        # This turn already checkpointed (an approval resume): reuse it.
+        loop_run.checkpoint_created = True
+        loop_run.restore_point = earlier
         return
 
     # Set BEFORE attempting so a failure never retries on every subsequent

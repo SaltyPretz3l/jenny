@@ -110,6 +110,7 @@
       || windowRef.rendererDashboardCalendar
       || null;
     const awayDigestModule = deps.modules?.dashboardAwayDigest || windowRef.rendererDashboardWidgetAwayDigest || null;
+    const usageStatsModule = deps.modules?.dashboardUsageStats || windowRef.rendererDashboardWidgetUsageStats || null;
     const remindersModule = deps.modules?.dashboardCalendarReminders || windowRef.rendererDashboardCalendarReminders || null;
     const scratchpadModule = deps.modules?.dashboardWidgetsScratchpad
       || windowRef.rendererDashboardWidgetsScratchpad
@@ -211,6 +212,7 @@
     let visibilityFlushHandler = null;
     let awayDigestRepaintScheduled = false;
     let awayDigestWidget = null;
+    let usageStatsWidget = null;
     const unsubscribes = [];
 
     function scheduleAwayDigestRepaint() {
@@ -336,6 +338,11 @@
             // Same route as continue-session: activate, then leave Home for the chat.
             openSession: async (sessionId) => { clearPendingOrigin(); await activateWorkspaceSession?.(sessionId); setActiveView('chat'); renderAll(); } },
         }) || null),
+        // Row 98 Usage section (home_usage_stats kill switch, default on): after the digest, before open loops.
+        (usageStatsWidget = usageStatsModule?.createUsageStatsWidget?.({
+          shell, documentRef, appendClientLog,
+          onHomeConfig: (config) => { applyHomeConfigPayload(config); repaintIfHomeActive(); },
+        }) || null),
         loopsModule?.createOpenLoopsWidget?.(),
       ].filter(Boolean);
       for (const widget of defaultWidgets) {
@@ -458,6 +465,8 @@
         calendar: source.calendar,
         focusMode: source.focusMode,
         showContextualTips: source.showContextualTips,
+        // Usage widget range (row 98); absent on a payload from an older service.
+        ...(asObject(source.usageStats) ? { usageStats: source.usageStats } : {}),
       };
       return state.homeConfig;
     }
@@ -607,13 +616,23 @@
       });
     }
 
+    // Kill switches apply at paint time: feature flags hydrate asynchronously,
+    // so a registration-time check could miss JENNY_ENABLE_HOME_USAGE_STATS=0
+    // when Home is the restored view. Render-only: the edit-mode hidden strip
+    // reads homeConfig, so a killed card never offers itself for restore.
+    function withKilledWidgets(widgets) {
+      if (state.features?.featureFlags?.home_usage_stats !== false) return widgets || null;
+      const hidden = Array.isArray(widgets?.hidden) ? widgets.hidden : [];
+      return { ...(widgets || {}), hidden: [...hidden, 'usage-stats'] };
+    }
+
     function paintContext() {
       return {
         state,
         documentRef,
         slotHosts: { main: homeDashboardGrid, rail: homeDashboardRail || homeDashboardGrid },
         infoStripEl: homeInfoStrip,
-        widgetsConfig: asObject(state.homeConfig?.widgets) || null,
+        widgetsConfig: withKilledWidgets(asObject(state.homeConfig?.widgets)),
         editMode: isEditMode(),
         buildEditToolbar,
       };
@@ -917,6 +936,7 @@
     async function dispose() {
       if (!fence.dispose()) return;
       awayDigestWidget?.dispose?.();
+      usageStatsWidget?.dispose?.();
       if (ownsAwayDigestReader) {
         awayDigestReader?.dispose?.();
         if (state.awayDigestReader === awayDigestReader) state.awayDigestReader = null;

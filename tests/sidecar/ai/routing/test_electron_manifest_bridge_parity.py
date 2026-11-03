@@ -58,6 +58,38 @@ EXPECTED_ELECTRON_BRIDGE_TOOLS = frozenset(
         "propose_git_action",
         "propose_session",
         "session_message",
+        # Added deliberately (row 88 S2): the Jenny chat's settings tools. `settings_get` is
+        # read-only and reaches the plan-mode schema; `settings_change` is side-effecting
+        # (policy ask), so plan mode withholds it.
+        "settings_get",
+        "settings_change",
+        # Added deliberately (row 94 P1): the Jenny chat's chat-management tools. Both are
+        # side-effecting (policy ask), so plan mode withholds them; `chat_configure` is carded
+        # even in Auto.
+        "chat_organize",
+        "chat_configure",
+        # Added deliberately (row 94 P2): the Jenny chat's project tools. `projects_list` is
+        # read-only and reaches the plan-mode schema; `project_create` is side-effecting (policy
+        # ask) and carded even in Auto, so plan mode withholds it.
+        "project_create",
+        "projects_list",
+        # Added deliberately (row 94 P3): the Jenny chat moves the user's view. Read-only (it writes
+        # nothing), so it reaches the plan-mode schema; the renderer asks with a chip while the user is busy.
+        "app_view",
+        # Added deliberately (row 94 P4): the Jenny chat's export (side-effecting, carded even in Auto,
+        # withheld from plan mode), the terminal read (read-only; it also reaches project chats on the IDE's
+        # project, so plan mode keeps it) and terminal_run (side-effecting, carded even in Auto).
+        "session_export",
+        "terminal_read",
+        "terminal_run",
+        # Added deliberately (row 85 S4): the Jenny chat's scheduled checks. `schedule_list` is
+        # read-only and reaches the plan-mode schema (Electron refuses it there); `schedule_change`
+        # is side-effecting (policy ask) and carded even in Auto, so plan mode withholds it.
+        "schedule_list",
+        "schedule_change",
+        # Added deliberately (row 86 S3): the Jenny chat's "While you were away" facts. Read-only
+        # (policy auto, no card), so it reaches the plan-mode schema; default off.
+        "away_digest",
         # Added deliberately (row 69 W2): the session directory. `sessions_list` and
         # `session_status` are read-only and reach the plan-mode schema;
         # `session_stop` is side-effecting (policy ask), so plan mode withholds it.
@@ -67,6 +99,9 @@ EXPECTED_ELECTRON_BRIDGE_TOOLS = frozenset(
         "session_stop",
         # Added deliberately (row 69 W4b): flag-less read-only app guide search/read.
         "jenny_help",
+        # Added deliberately (row 97): flag-gated, read-only, non-blocking next-step card
+        # producer; it claims no resource and Plan mode keeps it.
+        "suggest_next_step",
         # Added deliberately (WO-10): `task_board` writes durable agent_task
         # follow-ups into the Open Loops store through Electron; side-effecting,
         # so it is withheld from the plan-mode schema like `verify`.
@@ -130,6 +165,15 @@ def _kernel(workspace_root: str, **overrides: bool) -> SimpleNamespace:
         "tools_project_notes_enabled": True,
         "tools_conversations_enabled": True,
         "tools_session_directory_enabled": True,
+        "tools_primary_settings_enabled": True,
+        "tools_primary_chat_manage_enabled": True,
+        "tools_primary_chat_placement_enabled": True,
+        "tools_primary_app_view_enabled": True,
+        "tools_primary_chat_export_enabled": True,
+        "tools_terminal_enabled": True,
+        "tools_primary_schedules_enabled": True,
+        "tools_primary_digests_enabled": True,
+        "tools_next_step_enabled": True,
         "tools_workspace_root": workspace_root,
         "mode": "assist",
     }
@@ -223,6 +267,15 @@ def test_electron_owned_read_only_tools_reach_the_plan_mode_schema(tmp_path) -> 
         ("tools_project_notes_enabled", {"project_notes"}),
         ("tools_conversations_enabled", {"conversations_recent", "conversation_open", "conversations_search"}),
         ("tools_session_directory_enabled", {"sessions_list", "session_status", "session_transcript", "session_stop"}),
+        ("tools_primary_settings_enabled", {"settings_get", "settings_change"}),
+        ("tools_primary_chat_manage_enabled", {"chat_organize", "chat_configure"}),
+        ("tools_primary_chat_placement_enabled", {"project_create", "projects_list"}),
+        ("tools_primary_app_view_enabled", {"app_view"}),
+        ("tools_primary_chat_export_enabled", {"session_export"}),
+        ("tools_terminal_enabled", {"terminal_read", "terminal_run"}),
+        ("tools_primary_schedules_enabled", {"schedule_list", "schedule_change"}),
+        ("tools_primary_digests_enabled", {"away_digest"}),
+        ("tools_next_step_enabled", {"suggest_next_step"}),
     ],
 )
 def test_manifest_config_flags_still_gate_their_bridge_groups(

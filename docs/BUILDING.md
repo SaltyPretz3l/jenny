@@ -631,6 +631,15 @@ The packaged sidecar trust model is:
 4. `scripts/packaging/smoke_packaged_flow.py` repeats the manifest/hash/source
    checks, probes packaged `initialize`, launches the unpacked packaged app, and
    requires `launchSource == "packaged-binary"`.
+5. On a Windows machine where Smart App Control is enforcing, a freshly built
+   unsigned `sidecar.exe` can be blocked (`WinError 4551`), so step 4 cannot
+   pass there reliably. `scripts/packaging/smoke_packaged_linux_docker.py` runs
+   the `ci-linux-package.yml` steps instead, through the packaged-app smoke, in
+   a local Ubuntu 22.04 container. It needs Docker Desktop with Linux
+   containers. The toolchain image lives in `scripts/packaging/linux-smoke/`.
+   The checkout as on disk streams in on stdin, and named volumes cache npm,
+   pip and Electron downloads. `run_ci.py` switches to it automatically on
+   such a machine. It covers the packaging pipeline, not Windows-only packaging.
 
 Packaged builds must fail closed when the packaged artifact is missing,
 untrusted, stale, or not runnable. They must not silently fall back to

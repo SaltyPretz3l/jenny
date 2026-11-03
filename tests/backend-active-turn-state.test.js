@@ -117,6 +117,35 @@ test('managed active-turn state enriches the matching live Electron approval', (
   });
 });
 
+test('managed active-turn state carries the live exact presentation and one-off flag of a pending approval', () => {
+  const exactApproval = { schema_version: 1, fields: [{ name: 'command', text: 'npm test' }], bytes: 15, sha256: 'a'.repeat(64) };
+  const { service } = serviceFixture();
+  service.activeStreams.set('stream-live', new AbortController());
+  service.pendingToolApprovals.set('approval-live', {
+    approvalId: 'approval-live', sessionId: 'session-live', streamId: 'stream-live',
+    callId: 'call-live', toolName: 'run_command', summary: 'npm test', oneOffOnly: true, exactApproval,
+  });
+
+  const pending = getManagedActiveTurnState(service, 'session-live').pending_approval;
+
+  assert.deepEqual(pending.exact_approval, exactApproval);
+  assert.equal(pending.one_off_only, true);
+  service.pendingToolApprovals.get('approval-live').exactApproval = ['not', 'a', 'presentation'];
+  assert.equal(Object.hasOwn(getManagedActiveTurnState(service, 'session-live').pending_approval, 'exact_approval'), false);
+});
+
+test('managed active-turn state carries the linked-chats offer of a message card, and only that token (row 87 C1)', () => {
+  const { service } = serviceFixture();
+  service.activeStreams.set('stream-live', new AbortController());
+  service.pendingToolApprovals.set('approval-live', {
+    approvalId: 'approval-live', sessionId: 'session-live', streamId: 'stream-live',
+    callId: 'call-live', toolName: 'session_message', summary: 'Send', rememberOffer: 'linked_children',
+  });
+  assert.equal(getManagedActiveTurnState(service, 'session-live').pending_approval.remember_offer, 'linked_children');
+  service.pendingToolApprovals.get('approval-live').rememberOffer = 'everything';
+  assert.equal(Object.hasOwn(getManagedActiveTurnState(service, 'session-live').pending_approval, 'remember_offer'), false);
+});
+
 test('managed active-turn state carries the waiting ask_user questions of its live stream', () => {
   const questions = [{ id: 'season', prompt: 'Which season?', options: ['summer', 'winter'] }];
   const { service } = serviceFixture();

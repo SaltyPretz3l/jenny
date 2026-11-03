@@ -91,8 +91,18 @@ def test_probe_returns_bounded_surface_and_closes_owned_resources(monkeypatch: A
     )} == {"prompts": [], "prompt_count": 0, "malformed_prompt_count": 0, "prompts_digest": ""}
     assert _Client.last is not None
     assert _Client.last._allow_private_addresses is True
+    assert getattr(_Client.last, "_allow_loopback", None) is False
     assert _Client.last.transport.closed is True
     assert _Client.last.closed is True
+
+
+def test_probe_threads_the_loopback_flag_into_the_client(monkeypatch: Any) -> None:
+    monkeypatch.setattr(inspection, "MCPClient", _Client)
+    result = inspection.inspect_server(_stdio_params(), allow_loopback=True)
+    assert result["ok"] is True
+    assert _Client.last is not None
+    assert _Client.last._allow_loopback is True
+    assert _Client.last._allow_private_addresses is False
 
 
 def test_probe_failure_redacts_exception_text_and_still_closes(monkeypatch: Any) -> None:
@@ -168,10 +178,11 @@ def test_dispatch_is_versioned_and_returns_no_notification(monkeypatch: Any) -> 
     monkeypatch.setattr(dispatch, "inspect_server", lambda params, **kwargs: {
         "ok": True,
         "private": kwargs["allow_private_addresses"],
+        "loopback": kwargs["allow_loopback"],
         "name": params["server"]["name"],
     })
     brain = SimpleNamespace(stack=SimpleNamespace(config=SimpleNamespace(
-        tools_web_allow_private_addresses=True
+        tools_web_allow_private_addresses=True, tools_web_allow_loopback=False
     )))
     outcome = dispatch.process_mcp_method(
         MCP_INSPECT_METHOD,
@@ -186,8 +197,8 @@ def test_dispatch_is_versioned_and_returns_no_notification(monkeypatch: Any) -> 
     assert outcome.response["jsonrpc"] == "2.0"
     assert outcome.response["id"] == REQUEST_ID
     assert outcome.response["api_version"] == API_VERSION
-    assert outcome.response["result"] == {"ok": True, "private": True, "name": "weather",
-                                           "api_version": API_VERSION}
+    assert outcome.response["result"] == {"ok": True, "private": True, "loopback": False,
+                                           "name": "weather", "api_version": API_VERSION}
     assert outcome.notifications == []
     assert outcome.shutdown_requested is False
 

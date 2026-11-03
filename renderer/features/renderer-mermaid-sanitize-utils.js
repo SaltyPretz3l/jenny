@@ -175,6 +175,21 @@
       .join('\n');
   }
 
+  // An SVG <image>/<feImage> href is fetched as soon as the SVG renders, and from
+  // the app's file:// page a remote, protocol-relative or UNC one reaches the
+  // network or an SMB share. Only inline raster images keep their href. (<use>
+  // never survives the svg profile, so it cannot pull in a document either.)
+  var INLINE_RASTER_HREF_RE = /^data:image\/(?:png|jpeg|gif|webp);base64,[a-z0-9+/=\s]*$/i;
+
+  function dropNonInlineImageHref(node, data) {
+    var tagName = String((node && node.nodeName) || '').toLowerCase();
+    if ((tagName === 'image' || tagName === 'feimage')
+      && (data.attrName === 'href' || data.attrName === 'xlink:href')
+      && !INLINE_RASTER_HREF_RE.test(String(data.attrValue || '').trim())) {
+      data.keepAttr = false;
+    }
+  }
+
   function sanitizeMermaidSvgMarkup(svgMarkup, windowRef) {
     var raw = String(svgMarkup || '');
     if (!raw) return '';
@@ -183,6 +198,11 @@
     if (!purify || typeof purify.sanitize !== 'function') {
       return '';
     }
+    // The page shares one DOMPurify instance with Markdown, so the image rule is
+    // installed for this synchronous call only (every real DOMPurify has hooks;
+    // a hook-less stand-in sanitizer is used as-is).
+    var scopedHook = typeof purify.addHook === 'function' && typeof purify.removeHook === 'function';
+    if (scopedHook) purify.addHook('uponSanitizeAttribute', dropNonInlineImageHref);
     try {
       // The svg/svgFilters profiles already strip every HTML element
       // inside foreignObject (only text survives — mermaid label text is
@@ -197,6 +217,8 @@
       });
     } catch (_err) {
       return '';
+    } finally {
+      if (scopedHook) purify.removeHook('uponSanitizeAttribute', dropNonInlineImageHref);
     }
   }
 

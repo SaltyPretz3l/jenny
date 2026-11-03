@@ -169,6 +169,10 @@ class ToolPolicyRuleMatch:
     mode: tuple[str, ...] = ()
     path_prefix: str | None = None
     mcp_server: str | None = None
+    # Row 103: a run_command rule for one program + subcommand (any arguments)
+    # or one exact command; see sidecar/ai/tools/command_prefix.py.
+    command_prefix: str | None = None
+    command_exact: str | None = None
 
 
 @dataclass(frozen=True)
@@ -343,6 +347,15 @@ class RuntimeConfig:
     tools_task_board_enabled: bool = False
     tools_project_notes_enabled: bool = False
     tools_session_directory_enabled: bool = False
+    tools_primary_settings_enabled: bool = False
+    tools_primary_chat_manage_enabled: bool = False
+    tools_primary_chat_placement_enabled: bool = False
+    tools_primary_app_view_enabled: bool = False
+    tools_primary_chat_export_enabled: bool = False
+    tools_terminal_enabled: bool = False
+    tools_primary_schedules_enabled: bool = False
+    tools_primary_digests_enabled: bool = False
+    tools_next_step_enabled: bool = False
     tools_memory_enabled: bool = True
     tools_conversations_enabled: bool = True
     tools_rich_files_enabled: bool = True
@@ -385,6 +398,9 @@ class RuntimeConfig:
     tools_web_rate_limit_per_min: int = 30
     tools_web_max_fetch_bytes: int = 1_048_576
     tools_web_allow_private_addresses: bool = False
+    # Loopback only (127.0.0.0/8, ::1, localhost) for search providers and MCP
+    # sse/token URLs; fetch_url ignores it. The private flag implies it.
+    tools_web_allow_loopback: bool = False
     tools_max_search_file_bytes: int = 2_097_152
     tools_max_edit_file_bytes: int = 2_097_152
     max_tools_per_turn: int = 20

@@ -72,6 +72,8 @@ const SHELL_CONFIG_PORTABILITY = deepFreeze({
     safetyMode: 'Safety mode.',
     autoApproveStreakCap: 'Auto-approve streak cap, never restored above the default.',
     unattendedGuardMinutes: 'Unattended guard minutes.',
+    digestQuietStart: 'Start of the Jenny chat digest quiet hours (HH:MM, local time).',
+    digestQuietEnd: 'End of the Jenny chat digest quiet hours (HH:MM, local time).',
     companion: 'Companion mode.',
     home: 'Home scratchpad (64 KB bound), widgets, calendar view, focus and tips switches.',
     skills: 'Bundled skills switch, disabled skill ids and auto-index mode.',

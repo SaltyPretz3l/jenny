@@ -155,7 +155,7 @@
     },
     {
       "target_prefixes": ["renderer/shell/renderer-away-digest-model.js"],
-      "required_tests": ["tests/renderer-away-digest-model.test.js", "tests/renderer-away-digest.test.js", "tests/renderer-attention-inbox.test.js", "tests/renderer-controller-dispose.test.js"]
+      "required_tests": ["tests/renderer-away-digest-model.test.js", "tests/renderer-away-digest.test.js", "tests/renderer-attention-inbox.test.js", "tests/renderer-controller-dispose.test.js", "tests/primary-away-facts.test.js"]
     },
     {
       "target_prefixes": ["renderer/chat/renderer-durable-send.js", "renderer/chat/renderer-send-utils.js", "renderer/chat/renderer-send-receipts.js", "renderer/chat/renderer-stream-handler-lifecycle.js", "services/backend/session-runtime-chat-adapter.js", "services/chat-stream-bridge.js", "services/backend/backend-sessions.js", "services/backend/backend-service.js"],
@@ -1923,6 +1923,9 @@
     {"target_prefixes": ["sidecar/ai/tools/handoff_preparation.py"], "required_tests": ["tests/sidecar/ai/tools/test_handoff_preparation.py"]},
     {"target_prefixes": ["services/tools/builtin/session-message-tool.js", "services/backend/chat-stream-tool-approval.js", "services/backend/chat-stream-tool-payload-utils.js", "services/backend/electron-tool-bridge.js", "services/tools/tool-executor.js", "services/backend/tool-result-diff-metadata.js"], "required_tests": ["tests/session-message-tool.test.js"]},
     {"target_prefixes": ["services/session-directory-service.js", "services/session-directory-scope.js", "services/session-directory-digest.js", "services/backend/session-todo-projection.js"], "required_tests": ["tests/session-directory-service.test.js", "tests/session-directory-transcript.test.js", "tests/session-todo-projection.test.js"]},
+    {"target_prefixes": ["services/tools/builtin/settings-get-tool.js"], "required_tests": ["tests/settings-get-tool.test.js"]},
+    {"target_prefixes": ["services/tools/builtin/settings-change-tool.js"], "required_tests": ["tests/settings-change-tool.test.js"]},
+    {"target_prefixes": ["services/backend/primary-settings-tool-gate.js"], "required_tests": ["tests/primary-settings-tool-gate.test.js"]},
     {"target_prefixes": ["services/tools/builtin/sessions-list-tool.js", "services/tools/builtin/session-status-tool.js", "services/tools/builtin/session-transcript-tool.js", "services/tools/builtin/session-stop-tool.js", "services/tools/builtin/session-directory-tool-support.js"], "required_tests": ["tests/sessions-list-tool.test.js", "tests/session-status-tool.test.js", "tests/session-transcript-tool.test.js", "tests/session-stop-tool.test.js", "tests/jenny-help-tool.test.js"]},
     {"target_prefixes": ["services/session-runtime/summary-order.js", "services/backend/memory-reflection-eligibility.js", "services/session-runtime/lineage-store.js"], "required_tests": ["tests/session-runtime/summary-order.test.js", "tests/memory-reflection-eligibility-cache.test.js"]},
     {"target_prefixes": ["services/app-guide-service.js", "config/app-guide/"], "required_tests": ["tests/app-guide-service.test.js", "tests/app-guide-index.test.js"]},
@@ -1934,7 +1937,10 @@
     {"target_prefixes": ["renderer/chat/renderer-primary-chat-store.js"], "required_tests": ["tests/renderer-primary-chat-store.test.js", "tests/renderer-primary-session-menu.test.js", "tests/renderer-primary-paused-notice.test.js"]},
     {"target_prefixes": ["renderer/shell/renderer-primary-session-menu.js"], "required_tests": ["tests/renderer-primary-session-menu.test.js", "tests/renderer-chats-panel-primary.test.js"]},
     {"target_prefixes": ["renderer/chat/renderer-primary-paused-notice.js"], "required_tests": ["tests/renderer-primary-paused-notice.test.js"]},
-    {"target_prefixes": ["renderer/chat/renderer-primary-activity.js"], "required_tests": ["tests/renderer-primary-activity.test.js"]},
+    {"target_prefixes": ["renderer/chat/renderer-primary-activity.js"], "required_tests": ["tests/renderer-primary-activity.test.js", "tests/renderer-primary-rules.test.js"]},
+    {"target_prefixes": ["renderer/chat/renderer-primary-rules.js"], "required_tests": ["tests/renderer-primary-rules.test.js", "tests/renderer-primary-activity.test.js"]},
+    {"target_prefixes": ["services/primary-action-rules.js"], "required_tests": ["tests/primary-action-rules.test.js", "tests/primary-action-rules-hooks.test.js", "tests/primary-action-rules-message.test.js"]},
+    {"target_prefixes": ["services/backend/action-rule-gate.js"], "required_tests": ["tests/primary-action-rules-hooks.test.js"]},
     {"target_prefixes": ["renderer/chat/renderer-slash-activity-command.js"], "required_tests": ["tests/renderer-slash-activity-command.test.js", "tests/renderer-slash-command-registry.test.js"]},
     {"target_prefixes": ["renderer/chat/renderer-primary-reset-dialog.js"], "required_tests": ["tests/renderer-primary-reset-dialog.test.js"]},
     {"target_prefixes": ["renderer/chat/renderer-slash-handoff-command.js"], "required_tests": ["tests/renderer-slash-handoff-command.test.js"]},
@@ -1949,7 +1955,7 @@
     {"target_prefixes": ["services/backend/primary-handoff-scope.js"], "required_tests": ["tests/primary-handoff-scope.test.js", "tests/backend-handoff.test.js"]},
     {"target_prefixes": ["services/backend/session-stop-approval.js"], "required_tests": ["tests/session-stop-approval.test.js", "tests/renderer-session-stop-approval.test.js"]},
     {"target_prefixes": ["services/backend/session-directory-tool-gate.js"], "required_tests": ["tests/session-directory-tool-gate.test.js"]},
-    {"target_prefixes": ["services/backend/chat-send-optional-fields.js", "services/backend/profile-overview-block.js", "services/tools/builtin/conversations-scope.js"], "required_tests": ["tests/chat-send-optional-fields.test.js", "tests/profile-overview-block.test.js", "tests/conversations-scope.test.js", "tests/conversations-tool.test.js"]},
+    {"target_prefixes": ["services/backend/chat-send-optional-fields.js", "services/backend/profile-overview-block.js", "services/tools/builtin/conversations-scope.js"], "required_tests": ["tests/chat-send-optional-fields.test.js", "tests/profile-overview-block.test.js", "tests/conversations-scope.test.js", "tests/conversations-tool.test.js", "tests/primary-away-facts.test.js"]},
     {"target_prefixes": ["sidecar/ai/context/primary_chat_overlay.py"], "required_tests": ["tests/sidecar/ai/routing/test_primary_chat_overlay.py"]},
     {"target_prefixes": ["sidecar/ai/conversations/search.py", "sidecar/ai/conversations/store.py"], "required_tests": ["tests/sidecar/ai/conversations/test_search.py", "tests/sidecar/ai/conversations/test_store.py", "tests/sidecar/runtime/test_request_dispatch_conversations.py"]},
     {"target_prefixes": ["renderer/shared/bytes-base64.js"], "required_tests": ["tests/renderer-shared-bytes-base64.test.js", "tests/renderer-ide-pdf-runtime.test.js", "tests/renderer-ide-docx-host.test.js"]},
@@ -1961,6 +1967,19 @@
     {"target_prefixes": ["sidecar/ai/memory/store.py", "sidecar/ai/memory/store_preflight.py", "sidecar/ai/memory/store_migrations.py", "sidecar/ai/memory/store_bootstrap.py"], "required_tests": ["tests/sidecar/ai/memory/test_store_faults.py"]},
     {"target_prefixes": ["services/workspace-git-service-extras.js", "services/workspace-git-service.js"], "required_tests": ["tests/workspace-git-service-extras.test.js", "tests/workspace-git-service.test.js", "tests/workspace-git-hardening.test.js", "tests/workspace-git-literal-pathspec.test.js", "tests/ipc-contract.test.js"]},
     {"target_prefixes": ["renderer/features/renderer-ide-scm-row-actions.js", "renderer/features/renderer-ide-git-actions.js", "renderer/features/renderer-ide-git-quickpicks.js"], "required_tests": ["tests/renderer-ide-scm-row-actions.test.js", "tests/renderer-ide-git-actions.test.js", "tests/renderer-ide-git-quickpicks.test.js", "tests/renderer-ide-source-control-panel.test.js", "tests/renderer-ide-commit-history.test.js"]},
-    {"target_prefixes": ["renderer/features/renderer-ide-hunk-peek.js", "renderer/features/renderer-ide-inline-blame.js", "renderer/features/renderer-ide-gutter-decorations.js"], "required_tests": ["tests/renderer-ide-hunk-peek.test.js", "tests/renderer-ide-inline-blame.test.js", "tests/renderer-ide-gutter-hunks.test.js", "tests/renderer-ide-gutter-decorations.test.js", "tests/renderer-ide-gutter-decorations-head-cache.test.js"]}
+    {"target_prefixes": ["renderer/features/renderer-ide-hunk-peek.js", "renderer/features/renderer-ide-inline-blame.js", "renderer/features/renderer-ide-gutter-decorations.js"], "required_tests": ["tests/renderer-ide-hunk-peek.test.js", "tests/renderer-ide-inline-blame.test.js", "tests/renderer-ide-gutter-hunks.test.js", "tests/renderer-ide-gutter-decorations.test.js", "tests/renderer-ide-gutter-decorations-head-cache.test.js"]},
+    {"target_prefixes": ["services/main/settings-change-broadcast.js"], "required_tests": ["tests/settings-change-broadcast.test.js"]},
+    {"target_prefixes": ["renderer/shell/renderer-settings-support.js", "renderer/shell/renderer-settings-editor-section.js", "renderer/app/renderer-app-lifecycle-preferences.js"], "required_tests": ["tests/renderer-settings-external-sync.test.js", "tests/renderer-transcript-view-controller.test.js"]},
+    {"target_prefixes": ["services/main/appearance-relay.js"], "required_tests": ["tests/appearance-relay.test.js"]},
+    {"target_prefixes": ["renderer/shell/renderer-lifecycle-appearance-utils.js"], "required_tests": ["tests/renderer-lifecycle-appearance-utils.test.js", "tests/renderer-appearance-relay.test.js"]},
+    {"target_prefixes": ["services/primary-settings-contract.js", "services/primary-settings-allowlist.js"], "required_tests": ["tests/primary-settings-allowlist.test.js", "tests/primary-settings-never-list.test.js", "tests/primary-settings-service.test.js"]},
+    {"target_prefixes": ["services/primary-settings-service.js"], "required_tests": ["tests/primary-settings-service.test.js", "tests/primary-chat-wiring.test.js"]},
+    {"target_prefixes": ["services/backend/settings-change-approval.js"], "required_tests": ["tests/settings-change-approval.test.js"]},
+    {"target_prefixes": ["renderer/chat/renderer-approval-block.js", "renderer/shell/renderer-attention-inbox-model.js", "renderer/shell/renderer-attention-inbox.js", "renderer/chat/renderer-turn-row-tool-render-utils.js"], "required_tests": ["tests/renderer-settings-change-approval.test.js"]},
+    {"target_prefixes": ["renderer/chat/renderer-primary-activity.js"], "required_tests": ["tests/renderer-primary-activity.test.js"]},
+    {"target_prefixes": ["services/project-file-preview-service.js"], "required_tests": ["tests/project-file-preview-service.test.js", "tests/ipc-handler-registration.test.js", "tests/ipc-contract.test.js"]},
+    {"target_prefixes": ["services/workspace-git-neutralize.js"], "required_tests": ["tests/workspace-git-neutralize.test.js", "tests/workspace-git-service.test.js", "tests/workspace-git-checkpoint.test.js"]},
+    {"target_prefixes": ["services/main/presence-tracker.js"], "required_tests": ["tests/presence-tracker.test.js"]},
+    {"target_prefixes": ["services/primary-away-facts.js"], "required_tests": ["tests/primary-away-facts.test.js"]}
   ]
 }

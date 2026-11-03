@@ -34,16 +34,17 @@
     return ''
       + '<div class="setup-scene-body setup-reset-body">'
       + '<section class="setup-reset-section">'
-      + '<h3>' + escapeHtml('Cleared') + '</h3>'
+      + '<h3>' + escapeHtml(jt('setup.factoryReset.clearedHeading', 'Cleared')) + '</h3>'
       + bulletList([
         jt('setup.factoryReset.clearedSetupProgress', 'Setup progress and first-launch completion state.'),
-        jt('setup.factoryReset.clearedPersonality', 'Assistant name, profile, and custom personality text.'),
+        jt('setup.factoryReset.clearedAssistantName', 'Assistant name (reset to Jenny).'),
       ])
       + '</section>'
       + '<section class="setup-reset-section">'
-      + '<h3>' + escapeHtml('Preserved') + '</h3>'
+      + '<h3>' + escapeHtml(jt('setup.factoryReset.preservedHeading', 'Preserved')) + '</h3>'
       + bulletList([
         jt('setup.factoryReset.preservedChats', 'Chat sessions and sidebar history.'),
+        jt('setup.factoryReset.preservedPersonality', 'Your personality note (PERSONALITY.md).'),
         jt('setup.factoryReset.preservedPrivateData', 'Memories, attachments, credentials, and auth state.'),
         jt('setup.factoryReset.preservedSettings', 'Feature settings, workspace root, and local runtime preferences.'),
       ])

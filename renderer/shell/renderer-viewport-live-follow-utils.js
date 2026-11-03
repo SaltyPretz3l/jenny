@@ -8,8 +8,29 @@
   const LIVE_FOLLOW_SETTLE_PX = 1;
   const LIVE_FOLLOW_RESPONSE_MS = 120;
   const LIVE_FOLLOW_MIN_STEP_PX = 2;
+  // Damped profile while the growing tail is a live reasoning panel: at 100+ tok/s
+  // a new line lands several times a second, so a slower glide replaces the
+  // per-line staircase. A reader lagging past the cap gets the default profile.
+  const LIVE_FOLLOW_REASONING_RESPONSE_MS = 320;
+  const LIVE_FOLLOW_REASONING_MAX_LAG_PX = 96;
   const LIVE_FOLLOW_USER_OVERRIDE_PX = 24;
   const LIVE_FOLLOW_USER_INTENT_WINDOW_MS = 300;
+
+  // True while the live turn's last row is an expanded, still-growing
+  // reasoning panel (Thinking view); follow then uses the damped glide.
+  function isLiveReasoningTailIn(root) {
+    if (!root || typeof root.querySelectorAll !== 'function') {
+      return false;
+    }
+    const rows = root.querySelectorAll('.turn-row-list[data-turn-live="true"] .chat-row');
+    const lastRow = rows && rows[rows.length - 1];
+    if (!lastRow || lastRow.getAttribute('data-row-kind') !== 'reasoning') {
+      return false;
+    }
+    return Boolean(lastRow.querySelector(
+      '.reasoning-row-panel.expanded:not([hidden]):not(.reasoning-row-panel--settled)'
+    ));
+  }
 
   function createViewportLiveFollowUtils(deps) {
     const settings = deps || {};
@@ -26,6 +47,8 @@
     const noteProgrammaticWrite = typeof settings.noteProgrammaticWrite === 'function'
       ? settings.noteProgrammaticWrite : null;
     const onFollowWrite = typeof settings.onFollowWrite === 'function' ? settings.onFollowWrite : null;
+    const isLiveReasoningTail = typeof settings.isLiveReasoningTail === 'function'
+      ? settings.isLiveReasoningTail : null;
     const requestViewportFrame = typeof settings.requestViewportFrame === 'function'
       ? settings.requestViewportFrame
       : function fallbackRequestViewportFrame(callback) {
@@ -46,6 +69,8 @@
       targetScrollTop: 0,
       lastTimestamp: 0,
       active: false,
+      // Row 101: the growing tail is a live reasoning panel (damped glide).
+      reasoningTail: false,
       lastProgrammaticScrollTop: 0,
       lastUserIntentAt: 0,
       // Reader input seen since the animator last wrote. Sticky until that
@@ -230,7 +255,11 @@
         ? Math.max(nextTimestamp - lastTimestamp, 0)
         : 16;
       liveFollowRuntime.lastTimestamp = nextTimestamp || (lastTimestamp + elapsedMs);
-      const alpha = Math.min(Math.max(elapsedMs / LIVE_FOLLOW_RESPONSE_MS, 0.12), 0.45);
+      const dampedReasoning = liveFollowRuntime.reasoningTail
+        && Math.abs(remaining) <= LIVE_FOLLOW_REASONING_MAX_LAG_PX;
+      const alpha = dampedReasoning
+        ? Math.min(Math.max(elapsedMs / LIVE_FOLLOW_REASONING_RESPONSE_MS, 0.04), 0.25)
+        : Math.min(Math.max(elapsedMs / LIVE_FOLLOW_RESPONSE_MS, 0.12), 0.45);
       const stepPx = Math.max(Math.abs(remaining) * alpha, LIVE_FOLLOW_MIN_STEP_PX);
       writeFollowScrollTop(remaining > 0
         ? Math.min(currentScrollTop + stepPx, targetScrollTop)
@@ -273,6 +302,9 @@
       liveFollowRuntime.active = true;
       liveFollowRuntime.baselineRetained = false;
       liveFollowRuntime.targetScrollTop = targetScrollTop;
+      // The tail probe is a DOM query: run it once per streamed commit (each
+      // start), not on every animator frame; the frames reuse the answer.
+      liveFollowRuntime.reasoningTail = Boolean(isLiveReasoningTail && isLiveReasoningTail());
       stepLiveStreamingFollow();
     }
 
@@ -318,5 +350,6 @@
   return {
     LIVE_FOLLOW_USER_OVERRIDE_PX,
     createViewportLiveFollowUtils,
+    isLiveReasoningTailIn,
   };
 });

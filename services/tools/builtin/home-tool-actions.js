@@ -353,6 +353,15 @@ function eventUpsert(service, input, meta) {
 
 function reminderUpsert(service, input, meta) {
   const requestedId = normalizeString(input?.id);
+  // Row 85: a scheduled Jenny check runs a turn with the user's approved instruction, so only the carded
+  // schedule_change edits one (deleteAction refuses it too). The patch below never carries a reminder `action`.
+  if (requestedId && readReminder(service, requestedId)?.action) {
+    return failure({
+      reason: 'scheduled_check_use_schedule_change',
+      message: `Reminder "${requestedId}" is a scheduled Jenny check; change it with schedule_change, which asks the user.`,
+      summary: 'Scheduled check not edited',
+    });
+  }
   const remindAt = normalizeString(input?.remind_at);
   const schedule = remindAt ? reminderScheduleFromRemindAt(remindAt) : null;
   if (remindAt && !schedule) {
@@ -488,6 +497,15 @@ function deleteAction(service, input, meta, kind) {
       reason: 'not_found',
       message: `No ${noun} with id "${entityId}" exists.`,
       summary: `${isEvent ? 'Event' : 'Reminder'} not found`,
+    });
+  }
+  // Row 85 (owner, 2026-11-02): any chat may call home, and a self-gated delete is only as honest as the
+  // model, so a scheduled check is removed only through the carded schedule_change cancel or by the user.
+  if (!isEvent && existing.action) {
+    return failure({
+      reason: 'scheduled_check_use_schedule_change',
+      message: `Reminder "${entityId}" is a scheduled Jenny check; cancel it with schedule_change, which asks the user, or delete it on Home.`,
+      summary: 'Scheduled check not deleted',
     });
   }
   if (input?.confirm !== true) {

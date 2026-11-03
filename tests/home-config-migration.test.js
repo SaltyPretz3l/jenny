@@ -28,6 +28,7 @@ test('v23 migration seeds the home key with defaults on older payloads', () => {
     },
     calendar: { feeds: [], viewMode: 'agenda' },
     layout: { railWidth: 360 },
+    usageStats: { range: '7d' },
     focusMode: false,
     showContextualTips: false,
   });

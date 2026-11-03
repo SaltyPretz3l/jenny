@@ -547,3 +547,18 @@ test('the apiProviders block defaults empty, normalizes, and round trips without
   assert.deepEqual(normalizeState(serializeState(state)).apiProviders, state.apiProviders);
   assert.deepEqual(normalizeState({ apiProviders: 'junk' }).apiProviders, { instances: [], lastSelected: null });
 });
+
+test('digest quiet hours default to 22:00-07:00, keep half-hour times and round trip without a version bump (row 86)', () => {
+  const fresh = normalizeState({});
+  assert.equal(fresh.digestQuietStart, '22:00');
+  assert.equal(fresh.digestQuietEnd, '07:00');
+  const state = normalizeState({ version: CONFIG_VERSION, digestQuietStart: '23:30', digestQuietEnd: '06:00' });
+  assert.equal(state.version, CONFIG_VERSION);
+  assert.equal(state.digestQuietStart, '23:30');
+  assert.equal(state.digestQuietEnd, '06:00');
+  const saved = serializeState(state);
+  assert.deepEqual([saved.digestQuietStart, saved.digestQuietEnd], ['23:30', '06:00']);
+  assert.deepEqual([normalizeState(saved).digestQuietStart, normalizeState(saved).digestQuietEnd], ['23:30', '06:00']);
+  const junk = normalizeState({ digestQuietStart: '22:15', digestQuietEnd: 7 });
+  assert.deepEqual([junk.digestQuietStart, junk.digestQuietEnd], ['22:00', '07:00']);
+});

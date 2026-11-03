@@ -13,20 +13,23 @@ const { JSDOM } = require('jsdom');
 const { createScene, FIELDS } = require('../renderer/features/setup-scenes/scene-capabilities');
 const { initToggleHandlers } = require('../renderer/inventory/toggle-switch');
 
+const DEFAULT_SETTINGS = { tools: Object.fromEntries(FIELDS.map((f) => [f.key, f.defaultChecked === true])) };
+
 function mountScene(deps) {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
   const rootEl = dom.window.document.getElementById('root');
   initToggleHandlers(dom.window.document);
-  const scene = createScene(deps || {});
+  const scene = createScene(Object.assign({ getFeatureSettings: async () => DEFAULT_SETTINGS }, deps || {}));
   scene.mount(rootEl);
   return { dom, rootEl, scene };
 }
 
-test('capabilities scene defaults only local non-mutating tools on', (t) => {
+test('capabilities scene defaults only local non-mutating tools on', async (t) => {
   const { rootEl, scene } = mountScene();
   t.after(() => scene.dispose());
+  await new Promise((resolve) => setImmediate(resolve));
 
-  assert.equal(FIELDS.length, 5, 'expected the supported tool capability field set');
+  assert.equal(FIELDS.length, 3, 'expected the supported tool capability field set');
   FIELDS.forEach((f) => {
     const el = rootEl.querySelector('[data-inv-toggle="' + f.id + '"]');
     assert.ok(el, 'toggle rendered for ' + f.id);
@@ -40,6 +43,16 @@ test('capabilities scene defaults only local non-mutating tools on', (t) => {
   assert.deepEqual(groupTitles, ['Local computation', 'Network access']);
 });
 
+test('every capabilities toggle is a configurable tool, so Save read-back can match', () => {
+  // A field the schema no longer exposes is missing from features.getState and
+  // from the updateSettings echo, which fails the scene's load and Save checks.
+  const { getToolConfigFields } = require('../services/tool-config-schema');
+  const toggles = new Set(getToolConfigFields().filter((f) => f.fieldType === 'toggle').map((f) => f.key));
+  FIELDS.filter((f) => f.target === 'tools').forEach((f) => {
+    assert.ok(toggles.has(f.key), f.key + ' is a configurable tool toggle');
+  });
+});
+
 test('capabilities scene Save persists a batched patch, marks the step done, and closes', async (t) => {
   const calls = { patch: null, marks: [], closed: 0 };
   const { rootEl, scene } = mountScene({
@@ -51,6 +64,7 @@ test('capabilities scene Save persists a batched patch, marks the step done, and
     appendClientLog: () => {},
   });
   t.after(() => scene.dispose());
+  await new Promise((resolve) => setImmediate(resolve));
 
   // Explicitly opt into web search; other consequence-bearing choices stay off.
   rootEl.querySelector('[data-inv-toggle="capWebToggle"]').click();
@@ -61,10 +75,8 @@ test('capabilities scene Save persists a batched patch, marks the step done, and
   assert.ok(calls.patch, 'persistFeatureSettings received a patch');
   // tools bucket
   assert.equal(calls.patch.tools.web, true, 'explicit opt-in is reflected');
-  assert.equal(calls.patch.tools.browser, false);
   assert.equal(calls.patch.tools.pythonRuntime, true);
   assert.equal(calls.patch.tools.imageRead, true);
-  assert.equal(calls.patch.tools.todo, true);
   // featureOverrides bucket
   assert.deepEqual(calls.patch.featureOverrides, {});
   // step + close
@@ -87,6 +99,7 @@ test('capabilities scene claims Save synchronously and ignores rapid duplicate c
     appendClientLog: () => {},
   });
   t.after(() => scene.dispose());
+  await new Promise((resolve) => setImmediate(resolve));
 
   rootEl.querySelector('[data-step-modal-action="save"]').click();
 
@@ -111,6 +124,7 @@ test('capabilities scene Skip marks skipped and closes without persisting', asyn
     closeModal: () => { calls.closed += 1; },
   });
   t.after(() => scene.dispose());
+  await new Promise((resolve) => setImmediate(resolve));
 
   const skipBtn = rootEl.querySelector('[data-step-modal-action="skip"]');
   assert.ok(skipBtn, 'skip action present');

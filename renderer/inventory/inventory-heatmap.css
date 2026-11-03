@@ -1,0 +1,59 @@
+/* ══ Heatmap calendar (heatmap-calendar.js) ══
+ * One SVG: week columns x 7 day rows, quantized intensity levels 0-4 on the
+ * accent token. Swatches (legend spans) share the cell palette through
+ * --heat-fill so a legend always matches the cells. */
+
+.inv-heatmap {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.inv-heatmap-label {
+  fill: var(--text-muted);
+}
+
+.inv-heatmap-cell,
+.inv-heatmap-swatch {
+  --heat-fill: color-mix(in srgb, var(--border-default) 55%, transparent);
+  fill: var(--heat-fill);
+  transition: opacity var(--motion-duration-fast) ease;
+}
+
+.inv-heatmap-swatch {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--heat-fill);
+}
+
+[data-level="1"]:is(.inv-heatmap-cell, .inv-heatmap-swatch) { --heat-fill: color-mix(in srgb, var(--accent-primary) 28%, transparent); }
+[data-level="2"]:is(.inv-heatmap-cell, .inv-heatmap-swatch) { --heat-fill: color-mix(in srgb, var(--accent-primary) 48%, transparent); }
+[data-level="3"]:is(.inv-heatmap-cell, .inv-heatmap-swatch) { --heat-fill: color-mix(in srgb, var(--accent-primary) 72%, transparent); }
+[data-level="4"]:is(.inv-heatmap-cell, .inv-heatmap-swatch) { --heat-fill: var(--accent-primary); }
+
+/* Cells outside a caller's highlighted span recede. */
+.inv-heatmap-cell[data-out-of-range="true"] {
+  opacity: 0.42;
+}
+
+.inv-heatmap-cell[data-today="true"] {
+  stroke: var(--text-secondary);
+  stroke-width: 1;
+}
+
+.inv-heatmap-cell:hover,
+.inv-heatmap-cell:focus-visible {
+  outline: none;
+  stroke: var(--text-primary);
+  stroke-width: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inv-heatmap-cell,
+  .inv-heatmap-swatch {
+    transition: none;
+  }
+}

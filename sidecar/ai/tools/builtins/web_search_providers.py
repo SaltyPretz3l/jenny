@@ -414,9 +414,12 @@ class _JsonApiProvider:
         self,
         *,
         allow_private_addresses: bool = False,
+        allow_loopback: bool = False,
         result_url_is_safe: Callable[[str], bool] | None = None,
     ) -> None:
         self._allow_private_addresses = bool(allow_private_addresses)
+        # Loopback only (a SearXNG on this machine); the private flag implies it.
+        self._allow_loopback = bool(allow_loopback)
         self._result_url_is_safe = result_url_is_safe or (lambda _url: True)
 
     def is_configured(self) -> bool:
@@ -461,6 +464,7 @@ class _JsonApiProvider:
                 timeout_s=timeout_s,
                 max_bytes=_MAX_PROVIDER_RESPONSE_BYTES,
                 allow_private=self._allow_private_addresses,
+                allow_loopback=self._allow_loopback,
                 method=request.method,
                 data=request.body,
                 headers=dict(request.headers or {}),
@@ -515,6 +519,7 @@ class _JsonApiProvider:
             validated = validate_public_url(
                 self._validation_url(request.url),
                 allow_private=self._allow_private_addresses,
+                allow_loopback=self._allow_loopback,
                 deadline=deadline,
             )
         except TimeoutError:
@@ -834,12 +839,13 @@ def normalize_provider_keys(raw_keys: Any) -> dict[str, str]:
     return normalized
 
 
-def build_provider_dispatch(
+def build_provider_dispatch(  # noqa: PLR0913 - keyword-only provider inputs.
     *,
     ddg_search: Callable[..., dict[str, object]],
     searxng_url: str | None,
     provider_keys: Mapping[str, str] | None,
     allow_private_addresses: bool = False,
+    allow_loopback: bool = False,
     result_url_is_safe: Callable[[str], bool] | None = None,
 ) -> dict[str, WebSearchProvider]:
     """Build the provider dispatch table `web.py` looks providers up in.
@@ -851,6 +857,7 @@ def build_provider_dispatch(
     keys = normalize_provider_keys(provider_keys)
     shared: dict[str, Any] = {
         "allow_private_addresses": allow_private_addresses,
+        "allow_loopback": allow_loopback,
         "result_url_is_safe": result_url_is_safe,
     }
     return {

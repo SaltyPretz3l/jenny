@@ -10,12 +10,16 @@
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   // Reserved even before the registry has them; builtInNames() adds whatever the app registered.
-  const BUILT_INS = new Set(['help', 'context', 'compact', 'note', 'remember', 'forget', 'memory']);
+  const BUILT_INS = new Set(['help', 'context', 'compact', 'note', 'remember', 'forget', 'memory', 'image']);
   const CHIP_TOKEN = 'skill_pending';
   const SPARKLE_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5l1.6 4.2L14 7.5l-4.4 1.8L8 13.5 6.4 9.3 2 7.5l4.4-1.8z"/></svg>';
 
   function stateUtilsRef() {
     return composerState || globalThis.rendererComposerV2State || null;
+  }
+
+  function imagePromptRef() {
+    return globalThis.rendererImagePrompt || (typeof require === 'function' ? require('./renderer-image-prompt') : null);
   }
 
   function chipMarkup(skill) {
@@ -212,6 +216,7 @@
     const syncComposerInputHeight = options.syncComposerInputHeight || function noop() {};
     const syncComposerVisualState = options.syncComposerVisualState || function noop() {};
     const renderComposerState = options.renderComposerState || function noop() {};
+    const renderAttachmentTray = options.renderAttachmentTray || function noop() {};
     const sessionContext = options.sessionContext || null;
     // The chat this composer sends to and the project its summary names; main
     // resolves the canonical binding (project_id only counts for a draft).
@@ -246,6 +251,23 @@
       chatInput.addEventListener('focus', syncSkillsScope);
       chatInput.addEventListener('input', syncSkillsScope);
     }
+    // Row 91: "/image " typed or picked from the menu becomes the image chip at once.
+    function composerSessionId() {
+      return String(sessionContext?.getSessionId?.() ?? state?.currentSessionId ?? '').trim();
+    }
+    function armTypedImageCommand() {
+      const imagePrompt = imagePromptRef();
+      const value = String(chatInput?.value || '');
+      if (!imagePrompt || !imagePrompt.TYPED_COMMAND.test(value.trimStart()) || !imageCommandAvailable()) return;
+      const sessionId = composerSessionId();
+      if (!sessionId || !imagePrompt.arm(state, sessionId, imagePrompt.peek(state, sessionId) || {})) return;
+      repaintInput(imagePrompt.splitCommand(value) || '', true);
+      renderAttachmentTray();
+    }
+    function imageCommandAvailable() {
+      return state?.features?.featureFlags?.tools_image_generate_enabled !== false;
+    }
+    chatInput?.addEventListener?.('input', armTypedImageCommand);
 
     function getPending() {
       return stateUtilsRef()?.getPendingSkillInvocation?.(state) || null;
@@ -265,8 +287,26 @@
     }
 
     function dispatch(prompt, rawSettings) {
-      const settings = rawSettings || {};
+      let settings = rawSettings || {};
       if (settings.editedMessageId) return { handled: false, prompt, settings };
+      // Row 91: "/image words" arms the chat and sends the words; the armed chat's
+      // typed sends carry its pin (a queued replay keeps the one captured at queue time).
+      const imagePrompt = imagePromptRef();
+      // Without a chat to arm, the text is sent as typed rather than drawn from the model's prompt.
+      const imageWords = imagePrompt && imageCommandAvailable() && !settings.outboxDispatch && composerSessionId()
+        ? imagePrompt.splitCommand(prompt) : null;
+      if (imageWords !== null) {
+        const sessionId = composerSessionId();
+        imagePrompt.arm(state, sessionId, imagePrompt.peek(state, sessionId) || {});
+        repaintInput(imageWords, !imageWords);
+        renderAttachmentTray();
+        if (!imageWords) return { handled: true, prompt: '', settings };
+        prompt = imageWords;
+      }
+      // attachImageEditDraft marks a send typed in the composer (the only sends an armed chat applies to).
+      const armedImage = imagePrompt && !settings.outboxDispatch && settings.attachImageEditDraft === true
+        ? imagePrompt.peek(state, composerSessionId()) : null;
+      if (armedImage && !settings.imagePromptPin) settings = { ...settings, imagePromptPin: armedImage };
       const pending = getPending();
       // A queued (outbox) replay already carries the skill captured at queue
       // time in its meta; the skill pending *now* must not override it.
@@ -274,6 +314,7 @@
         ? { ...settings, skillInvocation: pending }
         : settings;
       const trimmed = String(prompt || '').trim();
+      if (settings.imagePromptPin) return { handled: false, prompt, settings: nextSettings };
       if (!trimmed.startsWith('/') || !registry) {
         return { handled: false, prompt, settings: nextSettings };
       }
@@ -354,10 +395,22 @@
       autocomplete?.dispose?.();
       chatInput?.removeEventListener?.('focus', syncSkillsScope);
       chatInput?.removeEventListener?.('input', syncSkillsScope);
+      chatInput?.removeEventListener?.('input', armTypedImageCommand);
       skillCommands.dispose();
     }
 
-    return { dispatch, clearAccepted, dispose, refreshSkills: skillCommands.refresh };
+    // Row 91: an accepted /image send disarms its chat. A queued send carries its pin in the
+    // outbox entry, so queueing disarms too; the replay itself and an edit leave the chat as it is.
+    function clearAcceptedImagePrompt(result, pin, sessionId, settings) {
+      const accepted = Boolean(result?.streamId) || result?.queued === true
+        || (result?.durable === true && result?.ok === true && Boolean(result?.work_id));
+      if (!accepted || !pin || settings?.editedMessageId || settings?.outboxDispatch) return false;
+      const cleared = imagePromptRef()?.clear?.(state, sessionId) === true;
+      if (cleared) renderAttachmentTray();
+      return cleared;
+    }
+
+    return { dispatch, clearAccepted, clearAcceptedImagePrompt, dispose, refreshSkills: skillCommands.refresh };
   }
 
   return { attachSkillInvocation, createSendSlashDispatch, createSkillSlashCommands, renderSkillChip };

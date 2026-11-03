@@ -34,6 +34,9 @@ const {
   USAGE_HISTORY_SCHEMA_VERSION,
 } = require('../usage-history-service');
 const {
+  USAGE_ROLLUP_SCHEMA_VERSION,
+} = require('../usage-rollup');
+const {
   MCP_CONFIG_SCHEMA_VERSION: MCP_SERVERS_SCHEMA_VERSION,
 } = require('../mcp-config-store');
 
@@ -208,6 +211,15 @@ function getElectronSchemaVersions() {
       version: USAGE_HISTORY_SCHEMA_VERSION,
       forward_policy: 'preserve_future_block_write',
       source: 'services/usage-history-service.js',
+    }),
+    makeEntry({
+      id: 'electron.usage_rollup',
+      surface: 'Electron durable daily usage rollup',
+      owner: 'electron',
+      kind: 'json_schema',
+      version: USAGE_ROLLUP_SCHEMA_VERSION,
+      forward_policy: 'preserve_future_block_write',
+      source: 'services/usage-rollup.js',
     }),
     makeEntry({
       id: 'electron.jenny_status',

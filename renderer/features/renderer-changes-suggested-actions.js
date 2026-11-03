@@ -2,17 +2,17 @@
  * Menus and actions of the Changes view's suggested state (row 35 Plan Plus
  * W3; UI spec §3.3-3.4): a row's context menu (Review later, Back to review,
  * Ungroup), the panel's overflow menu ("Hide explanations", persisted per
- * user) and Send for the queued comments. The view
+ * user), the path menu of a changed-file row, and Send for the queued comments. The view
  * (renderer-changes-view.js) forwards its events here; menus use the shared
  * inventory context menu.
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./renderer-suggestion-bar-controller'));
+    module.exports = factory(require('./renderer-suggestion-bar-controller'), require('./renderer-changes-view-actions'));
     return;
   }
-  root.rendererChangesSuggestedActions = factory(root.rendererSuggestionBarController);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (barController) {
+  root.rendererChangesSuggestedActions = factory(root.rendererSuggestionBarController, root.rendererChangesViewActions);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (barController, viewActions) {
   'use strict';
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
@@ -26,6 +26,10 @@
    * @param {{show: Function, hide?: Function}} [deps.contextMenu] defaults to inventoryContextMenu
    * @param {Storage} [deps.storage] for the explanations preference
    * @param {(message: string) => void} [deps.showError] a failed action, in plain words
+   * @param {(key: string) => string} [deps.getFilePath] a history row key to its workspace-relative path ('' = none)
+   * @param {(key: string) => object|null} [deps.getFileChange] a history row key to its change (panel host only: adds Copy diff and Ask Jenny)
+   * @param {{showPathMenu: Function}} [deps.pathMenu] defaults to rendererIdePathMenu
+   * @param {Function} [deps.appendClientLog]
    */
   function createSuggestedActions(deps = {}) {
     const getClient = typeof deps.getClient === 'function' ? deps.getClient : () => null;
@@ -88,15 +92,34 @@
       return row ? { el, row } : null;
     }
 
-    /** Right click on a suggested row. */
+    /** A changed-file row of the history list: the shared path menu (Reveal / Copy) on its workspace-relative path. */
+    function showFileMenu(event) {
+      const row = event.target?.closest?.('.changes-history-file[data-changes-item]');
+      const path = row && typeof deps.getFilePath === 'function' ? deps.getFilePath(row.getAttribute('data-changes-item')) : '';
+      const win = row?.ownerDocument?.defaultView;
+      const pathMenu = deps.pathMenu || win?.rendererIdePathMenu;
+      const base = deps.contextMenu || win?.inventoryContextMenu;
+      const change = path && deps.getFileChange?.(row.getAttribute('data-changes-item'));
+      // The path menu has no extra-items option, so the file items ride on its menu's show().
+      const contextMenu = change && base
+        ? { show: (options) => base.show({ ...options, items: options.items.concat(viewActions.buildFileMenuItems({ path, hunks: change.hunks, windowRef: win })) }) }
+        : deps.contextMenu;
+      return Boolean(path && pathMenu?.showPathMenu?.({
+        path, windowRef: win, contextMenu, appendClientLog: deps.appendClientLog,
+        anchorX: event.clientX, anchorY: event.clientY, anchorEl: row, restoreFocusTo: row,
+      }));
+    }
+
+    /** Right click on a suggested row (its own menu) or a changed-file row (the path menu). */
     function handleContextMenu(event) {
       const hit = rowOf(event && event.target);
-      if (!hit) return false;
-      const shown = showMenu(rowMenuItems(hit.row), {
-        anchorX: event.clientX, anchorY: event.clientY, anchorEl: hit.el, restoreFocusTo: hit.el,
-      });
-      if (shown) event.preventDefault();
-      return shown;
+      const shown = hit
+        ? showMenu(rowMenuItems(hit.row), { anchorX: event.clientX, anchorY: event.clientY, anchorEl: hit.el, restoreFocusTo: hit.el })
+        : false;
+      if (shown) { event.preventDefault(); return true; }
+      const fileShown = Boolean(event && event.target) && showFileMenu(event);
+      if (fileShown) event.preventDefault();
+      return fileShown;
     }
 
     /** The ContextMenu key or Shift+F10 on a focused row. */

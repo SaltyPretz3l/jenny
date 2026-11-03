@@ -18,6 +18,7 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 
 const { WorkspaceGitService, parseBlamePorcelain } = require('../services/workspace-git-service');
+const { plainGitReads } = require('./helpers/workspace-git-plain-exec');
 const {
   cleanupTrackedResources,
   createTrackedTempDir,
@@ -49,7 +50,7 @@ function createService(root, { flag = true, exec, rootContextProvider = null } =
   return new WorkspaceGitService({
     configService: { getToolsWorkspaceRoot: () => root },
     featureFlagProvider: () => ({ workspace_git: flag }),
-    ...(exec ? { exec } : {}),
+    ...(exec ? { exec: plainGitReads(exec) } : {}),
     rootContextProvider,
     logger() {},
   });

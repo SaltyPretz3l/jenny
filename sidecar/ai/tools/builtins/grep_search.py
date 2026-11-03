@@ -46,6 +46,11 @@ from sidecar.ai.tools.builtins.grep_search_settings import (
     configure_grep_search,  # noqa: F401 - re-export
 )
 from sidecar.ai.tools.builtins.regex_safety import compile_safe_pattern
+from sidecar.ai.tools.builtins.search_ignore import (
+    SearchIgnoreFilter,
+    ignored_directories_note,
+    load_search_ignore_filter,
+)
 from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
 from sidecar.ai.tools.hosted_file_io import configure_hosted_file_io, hosted_file_io_enabled
 from sidecar.ai.tools.workspace import WorkspaceGuard
@@ -88,6 +93,7 @@ def grep_search_tool(arguments: dict[str, object], workspace: WorkspaceGuard) ->
         searched_root=search_root.relative_to(workspace.require_root()).as_posix(),
     )
     started_at = _monotonic_seconds()
+    ignore_filter = load_search_ignore_filter(search_root)
     worker = _RegexSearchWorker()
 
     def walk_budget_exhausted() -> bool:
@@ -97,7 +103,11 @@ def grep_search_tool(arguments: dict[str, object], workspace: WorkspaceGuard) ->
 
     try:
         for candidate in _iter_candidate_files(
-            search_root, workspace, include_patterns, budget_exhausted=walk_budget_exhausted
+            search_root,
+            workspace,
+            include_patterns,
+            budget_exhausted=walk_budget_exhausted,
+            ignore_filter=ignore_filter,
         ):
             if _runtime_budget_exhausted(started_at):
                 search_state.aborted_by_runtime_budget = True
@@ -121,6 +131,8 @@ def grep_search_tool(arguments: dict[str, object], workspace: WorkspaceGuard) ->
                 break
     finally:
         worker.close()
+    if ignore_filter is not None:
+        search_state.ignored_directories_skipped = ignore_filter.skipped_directories
 
     return _build_result(
         pattern=compiled.pattern,
@@ -219,6 +231,7 @@ class _SearchState:
         self.output_bytes_used = 0
         self.large_file_message: str | None = None
         self.searched_root = searched_root
+        self.ignored_directories_skipped = 0
 
     @property
     def remaining_output_matches(self) -> int:
@@ -390,10 +403,15 @@ def _iter_candidate_files(
     include_patterns: Sequence[str] | None,
     *,
     budget_exhausted: Callable[[], bool] | None = None,
+    ignore_filter: SearchIgnoreFilter | None = None,
 ) -> Iterator[Path]:
     """The candidate walk (``grep_search_file``); knowledge search shares it."""
     return iter_candidate_files(
-        search_root, workspace, include_patterns, budget_exhausted=budget_exhausted
+        search_root,
+        workspace,
+        include_patterns,
+        budget_exhausted=budget_exhausted,
+        ignore_filter=ignore_filter,
     )
 
 
@@ -847,6 +865,7 @@ def _build_result(*, pattern: str, state: _SearchState) -> ToolHandlerResult:
         "remaining_count_known": scan_complete,
         "searched_root": state.searched_root,
         "narrowing_hint": narrowing_hint,
+        "ignored_directories_skipped": state.ignored_directories_skipped,
     }
     if state.candidate_files == 0 and state.skipped_large_files > 0:
         output = state.large_file_message or (
@@ -948,6 +967,8 @@ def _result_notes(state: _SearchState) -> str:
         )
     if state.skipped_unreadable_files:
         notes.append(f"Skipped {state.skipped_unreadable_files} file(s) that could not be read.")
+    if state.ignored_directories_skipped and (not state.total_match_count or state.truncated):
+        notes.append(ignored_directories_note(state.ignored_directories_skipped))
     if state.skipped_pdf_pages:
         notes.append(
             f"Skipped {state.skipped_pdf_pages} PDF page(s) (uncached scanned pages, or the "

@@ -464,3 +464,52 @@ test('Ctrl+Shift+Backslash toggles the split from the page and from a chat compo
   pressCtrl(window, '|', { ...chord, altKey: true });
   assert.deepEqual(calls, ['toggle', 'toggle'], 'Ctrl+Backslash without Shift, or with Alt, is not the chord');
 });
+
+/* Row 92: Ctrl+Alt+W turns the Wide transcript on and off. */
+
+test('Ctrl+Alt+W toggles Wide from the page and a chat composer, not from other editors, AltGr or behind an overlay (unit)', (t) => {
+  const dom = new JSDOM('<!DOCTYPE html><html><body>'
+    + '<textarea class="composer-input" id="composer"></textarea>'
+    + '<textarea class="inputarea" id="editor"></textarea></body></html>');
+  const { window } = dom;
+  const doc = window.document;
+  const calls = [];
+  let overlayOpen = false;
+  const controller = createGlobalShortcutsController({
+    windowRef: window,
+    isOverlayOpen: () => overlayOpen,
+    callbacks: { toggleChatWidth: () => { calls.push('wide'); return 'full'; } },
+  });
+  controller.bind();
+  t.after(() => { controller.dispose(); window.close(); });
+  const chord = { altKey: true, code: 'KeyW' };
+
+  const fromPage = pressCtrl(window, 'w', chord);
+  assert.deepEqual(calls, ['wide'], 'the chord toggles from the page');
+  assert.equal(fromPage.defaultPrevented, true);
+
+  pressCtrl(window, 'w', { ...chord, repeat: true });
+  assert.deepEqual(calls, ['wide'], 'a held chord acts once');
+
+  doc.getElementById('composer').focus();
+  pressCtrl(window, 'w', chord);
+  assert.deepEqual(calls, ['wide', 'wide'], 'a chat composer does not own the chord');
+
+  doc.getElementById('editor').focus();
+  const fromEditor = pressCtrl(window, 'w', chord);
+  assert.deepEqual(calls, ['wide', 'wide'], 'any other text-editing surface keeps its own Ctrl+Alt+W');
+  assert.equal(fromEditor.defaultPrevented, false);
+
+  doc.getElementById('editor').blur();
+  overlayOpen = true;
+  pressCtrl(window, 'w', chord);
+  assert.deepEqual(calls, ['wide', 'wide'], 'a managed overlay stands the chord down');
+
+  overlayOpen = false;
+  const altGr = new window.KeyboardEvent('keydown', { key: 'w', code: 'KeyW', ctrlKey: true, altKey: true, bubbles: true, cancelable: true });
+  Object.defineProperty(altGr, 'getModifierState', { value: (name) => name === 'AltGraph' });
+  window.dispatchEvent(altGr);
+  pressCtrl(window, 'w', { code: 'KeyW' });
+  pressCtrl(window, 'W', { ...chord, shiftKey: true });
+  assert.deepEqual(calls, ['wide', 'wide'], 'AltGr, Ctrl+W and Ctrl+Alt+Shift+W are not the chord');
+});

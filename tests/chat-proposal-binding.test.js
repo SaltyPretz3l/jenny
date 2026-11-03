@@ -166,7 +166,9 @@ describe('git binding capture', () => {
     const { backend, state } = createBackend(root);
     state.calls.length = 0;
     assert.equal((await captureGit(backend, ['a.txt'])).ok, true);
-    const verbs = state.calls.map((call) => call.args[0]);
+    // Reads run behind the row 103 `-c` overrides (workspace-git-neutralize).
+    const verbOf = (args) => { let index = 0; while (args[index] === '-c') index += 2; return args[index]; };
+    const verbs = state.calls.map((call) => verbOf(call.args));
     assert.ok(verbs.includes('hash-object') && verbs.includes('cat-file') && verbs.includes('status'));
     assert.ok(state.calls.some((call) => call.args.includes('--stdin-paths')));
     assert.equal(state.calls.some((call) => String(call.input || '').includes('SECRET-BODY-TEXT')), false);

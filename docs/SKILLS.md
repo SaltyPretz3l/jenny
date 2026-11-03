@@ -198,6 +198,16 @@ The model sees the message, then and in later turns, as `/<command> <text>`.
 This direct route is independent of whether the automatic skill index is
 visible for the current engine.
 
+A command named mid-message ("please /po-review the composer") applies the
+same way when the request carries no explicit invocation (2026-11-01). The
+sidecar matches an enabled skill's command or id slug after whitespace, an
+opening bracket or a quote, ending at whitespace, punctuation or the end of
+the text (a period or colon only before whitespace, so `/build.gradle` is a
+path), case-insensitively; inline code and fenced blocks never count, and
+only the first 20,000 characters are scanned. The section reads "The user
+named this skill with /<command>" and logs `ai.context.skill_mention_resolved`
+(`sidecar/ai/context/skill_mentions.py`).
+
 ### 2. Attach from the command palette
 
 Open the command palette with Ctrl+K or Command+K. Enabled skill slash entries

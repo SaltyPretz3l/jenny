@@ -349,14 +349,14 @@ function registerMainIpcHandlers({
     authorization: workspaceAuthorization, userDataPath: app.getPath('userData'), // row 82 E3 hot exit backups
     getRootContext: () => backendService.workspaceRootCoordinator?.captureContext?.() || null, isWorkspaceBackupEnabled: () => backendService.featureFlags?.ide_hot_exit !== false,
   });
-  // W2-2 background-job chips: snapshot + kill. Kill dispatches an OS
-  // pid-tree kill, so both handlers sit behind the trusted-sender
-  // authorizer like the rest of the workspace-mutating surface.
+  // W2-2 background jobs: snapshot, kill (an OS pid-tree kill) and the finished-job output tail
+  // (reads workspace files), all behind the trusted-sender authorizer like the workspace-mutating surface.
   registerIpcInvokeHandlers(ipcMain, {
     'backgroundJobs.getState': () =>
       backendService.backgroundJobTracker?.getState?.() || { jobs: [], generatedAt: '' },
-    'backgroundJobs.kill': (_, jobId) =>
-      backendService.backgroundJobTracker?.killJob?.(jobId)
+    'backgroundJobs.kill': (_, jobId) => backendService.backgroundJobTracker?.killJob?.(jobId)
+      || { ok: false, reason: 'unavailable' },
+    'backgroundJobs.readOutput': (_, jobId) => backendService.backgroundJobTracker?.readOutput?.(jobId)
       || { ok: false, reason: 'unavailable' },
   }, workspaceAuthorization);
   registerIpcInvokeHandlers(ipcMain, {
@@ -540,9 +540,9 @@ function registerMainIpcHandlers({
   void versionedTempRecoveryStarter({ rootContext: workspaceRootCoordinator, logger: log });
   backendService.versionedWorkspaceFileService = versionedWorkspaceFileService;
   registerWorkspaceFsIpcHandlers(ipcMain, workspaceIdeService, {
-    watcher: workspaceIdeWatcher,
+    watcher: workspaceIdeWatcher, logger: log,
     versionedFileService: versionedWorkspaceFileService,
-    importService: workspaceImportService,
+    importService: workspaceImportService, projectService: { get: (id) => backendService.projectService?.get?.(id) || null },
     authorization: workspaceAuthorization,
   });
   registerWorkspaceRootIpcHandlers(ipcMain, {
@@ -931,14 +931,14 @@ function registerMainIpcHandlers({
   // exists) so its resolvePreflight/authorizeNextClose seams are available to
   // the aux handlers below; attached to the BrowserWindow at creation via the
   // returned `windowExitGuard` (main-window-composition).
-  const windowExitGuard = createWindowExitGuard({
-    getMainLifecycle,
-    log,
-  });
+  const windowExitGuard = createWindowExitGuard({ getMainLifecycle, log });
+  // Row 88: the appearance relay (D8) and the Jenny chat's settings port it feeds.
+  const { appearanceRelay } = require('./primary-chat-wiring').attachPrimarySettings(backendService, { configService: () => shellConfigService, applyFeatureSettingsPatch, getMainWindow, log });
 
   registerAuxiliaryIpcHandlers({
     ipcMainLike: ipcMain,
     windowExitGuard,
+    appearanceRelay,
     getProtectedRoots: () => [app.getPath('userData')],
     personalityWorkspace,
     artifactService,

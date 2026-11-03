@@ -86,7 +86,7 @@ describe('prefs schema: per-session close, one wrap state per kind (shell-chrome
     const store = { [KEY]: JSON.stringify({ enabled: true, collapsed: false, width: 505, userDismissed: true, widthBySession: { 'session-a': 500 } }) };
     const loaded = prefsUtils.loadArtifactReviewPreferences(shim(store), KEY);
     assert.deepEqual(loaded, {
-      enabled: true, width: 505, mode: 'artifact', textWrap: { output: true, code: true }, widthBySession: { 'session-a': 500 },
+      enabled: true, width: 505, mode: 'artifact', textWrap: { output: true, code: true, diff: true }, widthBySession: { 'session-a': 500 },
     });
     assert.equal('userDismissed' in loaded, false);
   });
@@ -103,20 +103,20 @@ describe('prefs schema: per-session close, one wrap state per kind (shell-chrome
     const store = {};
     prefsUtils.saveArtifactReviewPreferences(shim(store), KEY, {
       enabled: true, collapsed: false, width: 480, userDismissed: true, mode: 'tasks',
-      textWrap: { output: false, code: true },
+      textWrap: { output: false, code: true, diff: true },
       maximizedBySession: { 'session-a': true },
       dismissedForSession: { 'session-b': true },
     });
     const written = JSON.parse(store[KEY]);
     assert.deepEqual(written, {
-      enabled: true, width: 480, textWrap: { output: false, code: true }, dismissedForSession: { 'session-b': true },
+      enabled: true, width: 480, textWrap: { output: false, code: true, diff: true }, dismissedForSession: { 'session-b': true },
     });
   });
 
   test('the storage migration rewrites a v1 blob once, so no reader sees the old flag', () => {
     const store = { [KEY]: JSON.stringify({ enabled: false, collapsed: false, width: 420, userDismissed: true, maximizedBySession: { a: true } }) };
     assert.equal(prefsUtils.migrateArtifactReviewPreferencesStorage(shim(store), KEY), true);
-    assert.deepEqual(JSON.parse(store[KEY]), { enabled: false, width: 420, textWrap: { output: true, code: true } });
+    assert.deepEqual(JSON.parse(store[KEY]), { enabled: false, width: 420, textWrap: { output: true, code: true, diff: true } });
     assert.equal(prefsUtils.migrateArtifactReviewPreferencesStorage(shim(store), KEY), false, 'a migrated blob is left alone');
     assert.equal(prefsUtils.migrateArtifactReviewPreferencesStorage(shim({}), KEY), false, 'no blob, no write');
   });
@@ -142,15 +142,18 @@ describe('prefs schema: per-session close, one wrap state per kind (shell-chrome
 
   test('textWrap is one persisted state per kind, wrapped by default', () => {
     const prefs = prefsUtils.normalizeArtifactReviewPreferences({});
-    assert.deepEqual(prefs.textWrap, { output: true, code: true });
+    assert.deepEqual(prefs.textWrap, { output: true, code: true, diff: true });
     assert.equal(prefsUtils.setArtifactReviewTextWrap(prefs, 'output', false), false);
     assert.equal(prefsUtils.resolveArtifactReviewTextWrap(prefs, 'output'), false);
     assert.equal(prefsUtils.resolveArtifactReviewTextWrap(prefs, 'code'), true, 'kinds are independent');
+    assert.equal(prefsUtils.setArtifactReviewTextWrap(prefs, 'diff', false), false);
+    assert.equal(prefsUtils.resolveArtifactReviewTextWrap(prefs, 'code'), true, 'Changes diffs keep their own state');
+    prefsUtils.setArtifactReviewTextWrap(prefs, 'diff', true);
     const store = {};
     prefsUtils.saveArtifactReviewPreferences(shim(store), KEY, prefs);
     const reloaded = prefsUtils.loadArtifactReviewPreferences(shim(store), KEY);
-    assert.deepEqual(reloaded.textWrap, { output: false, code: true });
-    assert.deepEqual(prefsUtils.normalizeArtifactReviewPreferences({ textWrap: false }).textWrap, { output: false, code: false }, 'the old renderer-local boolean maps to both kinds');
+    assert.deepEqual(reloaded.textWrap, { output: false, code: true, diff: true });
+    assert.deepEqual(prefsUtils.normalizeArtifactReviewPreferences({ textWrap: false }).textWrap, { output: false, code: false, diff: true }, 'the old renderer-local boolean maps to the kinds it covered');
   });
 
   test('a width drag also updates the global seed so new chats open at the last width', () => {

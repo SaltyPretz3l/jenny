@@ -313,3 +313,45 @@ test('a content-bearing message missing from the event log still legacy-renders 
   assert.equal(legacySignalsFor(harness, 'assistant_damaged_seg0').length, 1);
   assert.match(doc.getElementById('timeline').textContent, /recovered answer text/);
 });
+
+// --- Shape 4: a turn parked and resumed on a new stream (2026-11-01) ---------
+// sess_..._806683: the parked stream's partial events persisted at park time;
+// the resumed stream (same turn_id) writes its events only when it ends. Its
+// rows must stay in the turn instead of legacy-rendering outside the card.
+
+test('a resumed stream of a parked turn stays in its turn and does not fire the legacy canary', () => {
+  const TURN = 'turn_parked';
+  const tool = (stream, call, name, turn = TURN) => ([
+    {
+      id: `tool_use_${stream}_${call}`, role: 'assistant', kind: 'tool_use', status: 'complete', content: '', turn_id: turn,
+      tool_call: { call_id: call, tool_name: name, parent_stream_id: stream, status: 'completed', input: '{}' },
+    },
+    {
+      id: `tool_result_${stream}_${call}`, role: 'tool', kind: 'tool_result', status: 'complete', content: '', turn_id: turn,
+      tool_result: { call_id: call, parent_stream_id: stream, output_text: `${name} output`, is_error: false },
+    },
+  ]);
+  const messages = [
+    { id: 'user_stream_parked', role: 'user', content: 'Run npm test', status: 'complete', turn_id: TURN },
+    { id: 'assistant_stream_parked_seg0', role: 'assistant', content: 'Running the test suite now.', status: 'complete', turn_id: TURN },
+    ...tool('stream_parked', 'call_npm', 'run_command'),
+    ...tool('stream_resumed', 'call_read', 'read_file'),
+    { id: 'assistant_stream_resumed_seg0', role: 'assistant', content: 'npm test failed because of the script path.', status: 'streaming', turn_id: TURN },
+  ];
+  const turnEvents = [
+    {
+      event_id: 'stream_parked:assistant_text_segment:live:0', event_seq: 0, turn_id: TURN, kind: 'assistant_text_segment',
+      status: 'completed', primary_message_id: 'assistant_stream_parked_seg0', source_message_ids: ['assistant_stream_parked_seg0'],
+      payload: { text: 'Running the test suite now.', segment_index: 0, segment_group_index: 0 },
+    },
+  ];
+  const harness = renderHarness(messages, turnEvents);
+  const text = harness.dom.window.document.getElementById('timeline').textContent;
+
+  for (const id of ['tool_use_stream_resumed_call_read', 'assistant_stream_resumed_seg0', 'tool_use_stream_parked_call_npm']) {
+    assert.deepEqual(legacySignalsFor(harness, id), [], `${id} renders inside its turn`);
+  }
+  assert.match(text, /Running the test suite now\./);
+  assert.match(text, /npm test failed because of the script path\./);
+  assert.ok(text.indexOf('Running the test suite now.') < text.indexOf('npm test failed'), 'parked text before resumed text');
+});

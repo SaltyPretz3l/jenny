@@ -76,6 +76,9 @@ test('chat UI settings fields carry searchable copy in their owning sections', (
     safetyModeSelect: 'tools',
     unattendedGuardMinutesInput: 'tools',
     autoApproveStreakCapInput: 'tools',
+    digestQuietStartSelect: 'jennyChat',
+    digestQuietEndSelect: 'jennyChat',
+    primaryDigestsToggle: 'jennyChat',
   };
   for (const [id, sectionId] of Object.entries(expectedSections)) {
     const entry = fieldCopy.getSettingsFieldCopy(id);

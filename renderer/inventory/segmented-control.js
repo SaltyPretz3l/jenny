@@ -21,6 +21,9 @@
   // list that would hide missing/extra options upstream.
   var MIN_OPTIONS = 2;
   var MAX_OPTIONS = 4;
+  // A caller with a longer fixed enum (the Home usage range: 1d..All) opts in
+  // with opts.maxOptions, capped here so the control never becomes a menu.
+  var MAX_OPTIONS_CEILING = 6;
 
   const escapeHtml = ((typeof globalThis !== 'undefined' && globalThis.stringUtils)
     || (typeof require === 'function' ? require('../shared/string-utils') : null)).escapeHtml;
@@ -47,16 +50,18 @@
    * @param {string} [opts.ariaLabel] - Accessible radiogroup label
    * @param {string} [opts.describedBy] - Id of the help text, written as aria-describedby on the group
    * @param {string} [opts.value] - Currently selected option value
-   * @param {Array<{value:string,label:string,disabled?:boolean,tooltip?:string}>} opts.options - 2..4 options
+   * @param {Array<{value:string,label:string,disabled?:boolean,tooltip?:string}>} opts.options - 2..4 options (up to opts.maxOptions)
+   * @param {number} [opts.maxOptions] - raise the option ceiling above 4 (capped at 6)
    * @param {boolean} [opts.disabled] - Disables the whole group
    * @param {string} [opts.className] - Extra class names
    * @param {Object<string,string>} [opts.dataset] - Extra data-* attrs (key must match /^[a-z][a-z0-9-]*$/)
-   * @returns {string} HTML string (empty string when options.length is out of [2,4])
+   * @returns {string} HTML string (empty string when options.length is out of [2,4], or [2,maxOptions])
    */
   function segmentedControl(opts) {
     var o = opts || {};
     var options = Array.isArray(o.options) ? o.options : [];
-    if (options.length < MIN_OPTIONS || options.length > MAX_OPTIONS) return '';
+    var maxOptions = Math.min(MAX_OPTIONS_CEILING, Math.max(MAX_OPTIONS, Math.trunc(Number(o.maxOptions)) || 0));
+    if (options.length < MIN_OPTIONS || options.length > maxOptions) return '';
 
     var id = sanitizeToken(o.id, '');
     var disabled = Boolean(o.disabled);

@@ -495,3 +495,37 @@ test('tool results without file metadata project a null diff and empty path', ()
   assert.equal(artifacts[0].diff, null);
   assert.equal(artifacts[0].filePath, '');
 });
+
+/* ── 2026-10-31 session review: a revised artifact keeps one card ── */
+
+test('a create_artifact revision (same display_path, fresh id) projects one card, the latest', () => {
+  const pair = (callId, artifactId, displayPath, title) => ({
+    id: `tool-result-${callId}`,
+    role: 'tool',
+    kind: 'tool_result',
+    timestamp: '2026-10-31T10:00:01.000Z',
+    tool_result: {
+      call_id: callId,
+      tool_name: 'create_artifact',
+      summary: 'Generated a file',
+      output_text: 'ok',
+      is_error: false,
+      generated_artifacts: [{
+        artifact_id: artifactId,
+        artifact_kind: 'document',
+        title,
+        file_name: displayPath.split('/').pop(),
+        display_path: displayPath,
+        editable: true,
+        status: 'available',
+      }],
+    },
+  });
+  const artifacts = buildArtifactsWs2([
+    pair('call-1', 'artifact_one', '.jenny/artifacts/s1/page.html', 'First'),
+    pair('call-2', 'artifact_other', '.jenny/artifacts/s1/notes.md', 'Notes'),
+    pair('call-3', 'artifact_two', '.jenny/artifacts/s1/page.html', 'Revised'),
+  ], { sessionId: 's1' });
+  const generated = artifacts.filter((artifact) => artifact.artifactType === 'generated_file');
+  assert.deepEqual(generated.map((artifact) => artifact.id).sort(), ['artifact_other', 'artifact_two']);
+});

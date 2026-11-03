@@ -128,13 +128,13 @@
 
   const normalizeArtifactReviewMaximizedBySession = normalizeArtifactReviewSessionFlags;
 
-  // One wrap state per body kind: `output` (tool output) and `code` (editor,
-  // source view, file preview). Wrapped by default. The pre-schema
-  // renderer-local boolean (`textWrap: false`) maps onto both kinds.
+  // One wrap state per body kind: `output` (tool output), `code` (editor,
+  // source view, file preview) and `diff` (Changes). Wrapped by default. The
+  // pre-schema renderer-local boolean (`textWrap: false`) maps onto output and code.
   function normalizeArtifactReviewTextWrap(value) {
-    if (value === false) return { output: false, code: false };
+    if (value === false) return { output: false, code: false, diff: true };
     const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-    return { output: source.output !== false, code: source.code !== false };
+    return { output: source.output !== false, code: source.code !== false, diff: source.diff !== false };
   }
 
   function normalizeArtifactReviewPreferences(value) {
@@ -299,7 +299,7 @@
     return recordSessionFlag(prefs, 'dismissedForSession', sessionId, dismissed);
   }
 
-  function normalizeTextWrapKind(kind) { return kind === 'output' ? 'output' : 'code'; }
+  function normalizeTextWrapKind(kind) { return kind === 'output' || kind === 'diff' ? kind : 'code'; }
 
   function resolveArtifactReviewTextWrap(prefs, kind) {
     return normalizeArtifactReviewTextWrap(prefs?.textWrap)[normalizeTextWrapKind(kind)];

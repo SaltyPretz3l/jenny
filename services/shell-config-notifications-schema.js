@@ -12,6 +12,7 @@ const NOTIFICATION_CATEGORIES = Object.freeze([
   'permissions',
   'questions',
   'reminders',
+  'jenny', // row 89: checks, wake updates and digests Jenny starts herself
 ]);
 
 const DEFAULT_NOTIFICATION_SETTINGS = Object.freeze({
@@ -25,6 +26,7 @@ const DEFAULT_NOTIFICATION_SETTINGS = Object.freeze({
     permissions: true,
     questions: true,
     reminders: true,
+    jenny: true,
   }),
 });
 

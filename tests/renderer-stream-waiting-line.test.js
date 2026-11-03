@@ -187,3 +187,52 @@ test('other streams filling the cap do not evict a waiting reply', (t) => {
   assert.equal(row.isWaitingStream('stream-1'), true);
   assert.equal(row.isWaitingWork('work-1'), true);
 });
+
+// Row 100 P2 (owner pick B): a work-lease wait says who holds it in plain words, the command and the
+// process on hover, and counts the chats waiting behind one of this app's background jobs.
+function noteHolder(row, holder, extra = {}) {
+  noteWaiting(row, { resourceClass: 'work', blockingSessionId: '', holderWhat: 'tests', holderCount: 1,
+    holderJobIds: [], ...holder, ...extra });
+}
+const label = (timeline) => findRow(timeline).querySelector('.turn-activity-label');
+
+test('row 100 P2: each holder kind reads in plain words, with the command and process on hover', (t) => {
+  const { timeline, row, calls } = makeWaitHarness(t);
+  noteHolder(row, { holderKind: 'chat', blockingSessionId: 'session-a', holderLabel: 'npm test', holderPid: 4242 });
+  assert.equal(rowText(timeline), 'Waiting for "G5 fix attempt 4" to finish its tests. Continues on its own.');
+  assert.equal(label(timeline).title, 'npm test · process 4242');
+  findRow(timeline).querySelector('.turn-activity-wait-link').click();
+  assert.deepEqual(calls.opened, ['session-a']);
+
+  const cases = [
+    [{ holderKind: 'chat', blockingSessionId: 'session-unknown', holderWhat: 'git_change' }, 'Waiting for another chat to finish a git change.'],
+    [{ holderKind: 'jenny_window', holderWhat: 'install' }, 'Waiting for another Jenny window to finish an install.'],
+    [{ holderKind: 'claude_code' }, 'Waiting for a Claude Code session to finish its tests.'],
+    [{ holderKind: 'test_run', holderPid: 18244 }, 'Waiting for a test run outside Jenny to finish.'],
+    [{ holderKind: 'git', holderWhat: 'git_change' }, 'Waiting for another git command in this repository to finish.'],
+    [{ holderKind: 'chat', blockingSessionId: 'session-a', holderCount: 2 }, 'Waiting for "G5 fix attempt 4" and 1 more to finish.'],
+    [{ holderKind: 'test_run', holderCount: 3 }, 'Waiting for 3 runs to finish.'],
+    [{ holderKind: 'other' }, 'Waiting for other work to finish.'],
+    [{ holderKind: 'jenny_window', holderWhat: '' }, 'Waiting for other work to finish.'],
+  ];
+  for (const [holder, sentence] of cases) {
+    noteHolder(row, holder);
+    assert.equal(rowText(timeline), `${sentence} Continues on its own.`, JSON.stringify(holder));
+  }
+  noteHolder(row, { holderKind: 'test_run', holderPid: 18244 });
+  assert.equal(label(timeline).title, 'process 18244');
+  noteWaiting(row);
+  assert.equal(label(timeline).hasAttribute('title'), false, 'a folder wait carries no holder hover');
+});
+
+test('row 100 P2: waitersForJob lists the chats waiting behind a job, and only while they wait', (t) => {
+  const { row } = makeWaitHarness(t);
+  noteHolder(row, { holderKind: 'chat', blockingSessionId: 'session-a', holderJobIds: ['job-1'] });
+  row.noteStreamEvent({ type: 'runtime_waiting', streamId: 'stream-2', sessionId: 'session-2', workId: 'work-2',
+    waitState: 'waiting', resourceClass: 'work', holderKind: 'chat', holderJobIds: ['job-1', 'job-2'] });
+  assert.deepEqual(row.waitersForJob('job-1'), ['session-1', 'session-2']);
+  assert.deepEqual(row.waitersForJob('job-2'), ['session-2']);
+  assert.deepEqual(row.waitersForJob(''), []);
+  noteEvent(row, 'runtime_waiting', { workId: 'work-1', waitState: 'ended' });
+  assert.deepEqual(row.waitersForJob('job-1'), ['session-2']);
+});

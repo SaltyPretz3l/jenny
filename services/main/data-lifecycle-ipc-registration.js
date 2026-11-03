@@ -7,6 +7,8 @@ const { DATA_ERROR_CODES } = require('../backend/error-codes');
 const { DataLifecycleService, REMOVAL_CHOICES } = require('../data-lifecycle/data-lifecycle-service');
 const { describeRestoreCandidate } = require('../data-lifecycle/restore-service');
 const { cleanupJennyData } = require('../data-lifecycle/cleanup-service');
+const { StorageUsageService } = require('../data-lifecycle/storage-usage');
+const { CATEGORY_IDS, isCategoryId } = require('../data-lifecycle/storage-usage-registry');
 const { appImagePath, resolveLinuxPackageKind } = require('../linux-package-kind');
 const {
   dataLifecycleFailure,
@@ -62,6 +64,47 @@ function normalizeWorkspaceRestoreOptions(payload, { requireReview = false } = {
   return { ...options, reviewId };
 }
 
+const STORAGE_REQUEST_KEYS = Object.freeze({
+  preview: ['categoryId'],
+  clear: ['categoryId', 'previewToken', 'confirmCount'],
+  reveal: ['categoryId'],
+});
+const MAX_PREVIEW_TOKEN_LENGTH = 128;
+const MAX_CONFIRM_COUNT = 1_000_000;
+
+// "Your data" requests carry a category id (closed set) and, for a clear, the
+// preview token and the typed chat count. Anything else, including any extra
+// key, is refused: the renderer never names a path.
+function normalizeStorageRequest(payload, kind) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+  const allowed = STORAGE_REQUEST_KEYS[kind];
+  if (Object.keys(payload).some((key) => !allowed.includes(key))) return null;
+  if (!isCategoryId(payload.categoryId)) return null;
+  const request = { categoryId: payload.categoryId };
+  if (kind !== 'clear') return request;
+  if (typeof payload.previewToken !== 'string' || !payload.previewToken
+    || payload.previewToken.length > MAX_PREVIEW_TOKEN_LENGTH) return null;
+  request.previewToken = payload.previewToken;
+  if (payload.confirmCount !== undefined) {
+    if (!Number.isSafeInteger(payload.confirmCount) || payload.confirmCount < 0
+      || payload.confirmCount > MAX_CONFIRM_COUNT) return null;
+    request.confirmCount = payload.confirmCount;
+  }
+  return request;
+}
+
+// getStorageUsage takes nothing (measure every category) or { categoryIds } with
+// 1..7 closed category ids (measure just those). Any other shape or key is refused.
+function normalizeUsageRequest(payload) {
+  if (payload === undefined || payload === null) return {};
+  if (typeof payload !== 'object' || Array.isArray(payload)) return null;
+  if (Object.keys(payload).some((key) => key !== 'categoryIds')) return null;
+  const ids = payload.categoryIds;
+  if (ids === undefined) return {};
+  if (!Array.isArray(ids) || !ids.length || ids.length > CATEGORY_IDS.length || !ids.every(isCategoryId)) return null;
+  return { categoryIds: [...new Set(ids)] };
+}
+
 async function noThrow(task) {
   try {
     return await task();
@@ -76,7 +119,7 @@ function createRemovalPreparation({
   cleanupData = cleanupJennyData,
   cleanupOptions = {},
 } = {}) {
-  return async ({ choice, removeWorkspaceData, workspaceRemovalScope, workspaceRoot }) => {
+  return async ({ choice, removeWorkspaceData, workspaceRemovalScope, workspaceRoot, removeSkills = false }) => {
     await flush();
     await stop();
     if (choice === REMOVAL_CHOICES.APP_ONLY) return { ok: true, status: 'data_preserved' };
@@ -85,6 +128,7 @@ function createRemovalPreparation({
       workspaceRoot,
       removeWorkspaceData,
       workspaceRemovalScope,
+      removeSkills: removeSkills === true,
       includeUserData: false,
     });
   };
@@ -134,13 +178,31 @@ function registerDataLifecycleIpcHandlers(ipcMainLike, {
   }),
   sendBridgeEvent = () => {},
   log = () => {},
+  storageUsage = null,
+  storageUsageEnabled = () => true,
 } = {}) {
   if (!service) throw new TypeError('registerDataLifecycleIpcHandlers requires service.');
   const authorization = {
     authorize: createTrustedSenderAuthorizer({ getMainWindow, log }),
     unauthorizedResult: unauthorizedDataLifecycleResult,
   };
+  const withStorageUsage = (task) => noThrow(() => {
+    if (!storageUsage) return invalid('storage_usage_unavailable');
+    if (!storageUsageEnabled()) return invalid('feature_disabled');
+    return task(storageUsage);
+  });
+  const storageRequest = (kind, run) => (_event, payload) => withStorageUsage((usage) => {
+    const request = normalizeStorageRequest(payload, kind);
+    return request ? run(usage, request) : invalid();
+  });
   const channels = registerIpcInvokeHandlers(ipcMainLike, {
+    'dataLifecycle.getStorageUsage': (_event, payload) => withStorageUsage((usage) => {
+      const request = normalizeUsageRequest(payload);
+      return request ? usage.getStorageUsage(request) : invalid();
+    }),
+    'dataLifecycle.previewClear': storageRequest('preview', (usage, request) => usage.previewClear(request)),
+    'dataLifecycle.clearCategory': storageRequest('clear', (usage, request) => usage.clearCategory(request)),
+    'dataLifecycle.revealCategory': storageRequest('reveal', (usage, request) => usage.revealCategory(request)),
     'dataLifecycle.getOverview': () => noThrow(() => service.getOverview()),
     'dataLifecycle.chooseArchiveDestination': () => noThrow(async () => {
       const result = await dialog.showOpenDialog(getMainWindow(), {
@@ -213,7 +275,7 @@ function registerDataLifecycleRuntime(ipcMainLike, {
   // Tests pass a temp home: a removal run here deletes the runtime children.
   homeDir = os.homedir(),
 } = {}) {
-  const { shell } = require('electron');
+  const { session, shell } = require('electron');
   const userDataPath = app.getPath('userData');
   const runtimePath = path.join(homeDir, '.companion');
   const service = new DataLifecycleService({
@@ -236,8 +298,32 @@ function registerDataLifecycleRuntime(ipcMainLike, {
       },
     }),
   });
+  const storageUsage = new StorageUsageService({
+    userDataPath,
+    runtimePath,
+    getWorkspaceRoot: () => service.getWorkspaceRoot(),
+    sessionStore: backendService.sessionStore,
+    deleteChat: typeof backendService.deleteSession === 'function'
+      ? (sessionId) => backendService.deleteSession(sessionId)
+      : null,
+    // Chromium owns its cache directories: clear them through the session, never by removal.
+    clearBrowserCaches: session ? async () => {
+      await session.defaultSession.clearCache();
+      await session.defaultSession.clearStorageData({ storages: ['shadercache', 'cachestorage'] });
+    } : null,
+    openPath: shell?.openPath ? (target) => shell.openPath(target) : null,
+    getTrackedJobIds: () => {
+      const state = backendService.backgroundJobTracker?.getState?.();
+      return Array.isArray(state?.jobs) ? state.jobs.map((job) => job.jobId) : null;
+    },
+    acquireWorkspaceLease: () => workspaceRootCoordinator?.acquireOperation?.({ kind: 'mutation', cancellable: false })
+      || { acquired: true },
+    logger: log,
+  });
   const registration = registerDataLifecycleIpcHandlers(ipcMainLike, {
     service,
+    storageUsage,
+    storageUsageEnabled: () => backendService.featureFlags?.data_usage_page !== false,
     dialog,
     getMainWindow,
     sendBridgeEvent,
@@ -259,6 +345,8 @@ module.exports = {
   launchOfficialRemovalEntry,
   normalizeArchiveOptions,
   normalizeRestoreOptions,
+  normalizeStorageRequest,
+  normalizeUsageRequest,
   normalizeWorkspaceRestoreOptions,
   noThrow,
   registerDataLifecycleIpcHandlers,

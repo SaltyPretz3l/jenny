@@ -33,6 +33,7 @@ DESKTOP_SANDBOX_TYPED_FILE_TOOL_NAMES: frozenset[str] = frozenset(
 DESKTOP_SANDBOX_ELECTRON_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "ask_user",
+        "suggest_next_step",
         "exit_plan_mode",
         "propose_command",
         "propose_session",
@@ -218,6 +219,7 @@ def desktop_tool_uses_electron_bridge(tool_name: str, config: Any = None) -> boo
     return desktop_policy_is_enforced(config) and str(tool_name or "").strip() in {
         "run_command",
         "ask_user",
+        "suggest_next_step",
         "exit_plan_mode",
         "propose_command",
         "propose_session",

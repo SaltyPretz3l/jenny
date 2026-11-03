@@ -56,6 +56,28 @@ test('the turn prediction measures the handed row list with the collapsed-body e
   assert.equal(prediction.maybePredictTurnHeight(turn, [{ kind: 'user_bubble' }], [], {}), null);
 });
 
+test('with the live box on, open reasoning bodies in the live turn leave the prediction', (t) => {
+  // Row 101 (found live): the capped box counted at full length reserved ~10k px of min-height between phases.
+  const calls = [];
+  installPretext(t, calls);
+  const flags = { reasoning_live_box: true };
+  const prediction = createArticlePrediction({ state: { features: { featureFlags: flags } } });
+  const live = '<div class="turn-row-list" data-turn-row-list="true" data-turn-live="true"><div class="chat-row">'
+    + '<div class="reasoning-row-panel expanded"><div class="reasoning-row-panel-body">long</div></div></div></div>';
+  const settled = live.replace(' data-turn-live="true"', '');
+
+  prediction.maybePredictTurnHeight({ turn_id: 't1' }, [{ kind: 'reasoning' }], [], { transcriptView: 'thinking' }, live);
+  assert.match(calls[0].options.excludeSelector, /\.turn-row-list\[data-turn-live="true"\] \.reasoning-row-panel\.expanded > \.reasoning-row-panel-body/);
+  assert.match(calls[0].options.excludeSelector, /reasoning-row-panel:not\(\.expanded\)/, 'collapsed bodies stay excluded');
+
+  prediction.maybePredictTurnHeight({ turn_id: 't1' }, [{ kind: 'reasoning' }], [], { transcriptView: 'thinking' }, settled);
+  assert.doesNotMatch(calls[1].options.excludeSelector, /data-turn-live/, 'a finished turn counts its open panels');
+
+  flags.reasoning_live_box = false;
+  prediction.maybePredictTurnHeight({ turn_id: 't1' }, [{ kind: 'reasoning' }], [], { transcriptView: 'thinking' }, live);
+  assert.doesNotMatch(calls[2].options.excludeSelector, /data-turn-live/, 'the kill switch restores the full count');
+});
+
 test('the patch sync and the cleanup own the article min-height', (t) => {
   const dom = new JSDOM('<!doctype html><div id="timeline"><article id="a"></article><article id="v" data-predicted-height="90" data-virtualized="true" style="min-height: 90px"></article></div>');
   t.after(() => dom.window.close());

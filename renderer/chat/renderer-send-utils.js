@@ -313,6 +313,7 @@
     const sendSlashDispatch = _skillSlashCommands.createSendSlashDispatch({
       state, sessionContext, registry: slashCommandRegistry, chatInput, renderComposerState,
       syncComposerInputHeight, syncComposerVisualState,
+      renderAttachmentTray: deps.callbacks.renderAttachmentTray || renderAll,
       selectSlashCommand: handleSlashCommandSelection,
       submitPrompt: (nextPrompt) => startPromptSend(nextPrompt, { attachImageEditDraft: true }),
       // Scoped to this pane's chat: its bound project's skills, not the Workspace's.
@@ -347,6 +348,17 @@
       const requestedSessionId = String(settings.sessionIdOverride || getCurrentSessionId() || '').trim(); // W2-2b: its queue is sent
       if (requestedSessionId !== composerTargetSessionId) return reject('session_changed', composerTargetSessionId);
       const imageEditDraft = settings.imageEditSnapshot;
+      // Row 91: a /image send carries its pin; an attached edit selection rides inside it.
+      const imagePromptUtils = globalThis.rendererImagePrompt || require('./renderer-image-prompt');
+      const imagePromptPin = settings.imagePromptPin
+        ? imagePromptUtils.sendPin(settings.imagePromptPin, imageEditDraft?.sessionId === requestedSessionId ? imageEditDraft : null)
+        : null;
+      if (imagePromptPin && normalizedPrompt.length > imagePromptUtils.MAX_PROMPT_CHARS) {
+        setComposerStatusNotice(jt('composer.imagePrompt.tooLong', 'An image prompt can be up to {count} characters.',
+          { count: imagePromptUtils.MAX_PROMPT_CHARS }), { owner: 'image-prompt:length', tone: 'warning' });
+        renderComposerState();
+        return reject('image_prompt_too_long', requestedSessionId);
+      }
       const sessionQueue = globalThis.rendererComposerSessionState || require('./renderer-composer-session-state');
       const queuedForSend = sessionQueue.getQueuedAttachments(state, requestedSessionId); // pane 0's live array or a pane's record
       const attachmentBudget = buildAttachmentBudget(usesReplayImageAttachments ? settings.replayImageAttachments : queuedForSend);
@@ -471,6 +483,7 @@
             meta: {
               mentionContentsSnapshot: [],
               activeFileContextSnapshot: queuedActiveFileContext, skillInvocation, imageEditSnapshot: imageEditDraft, promptBlock,
+              ...(imagePromptPin ? { imagePromptPin } : {}),
             },
           });
           if (!queuedEntry) {
@@ -511,10 +524,9 @@
               : queuedActiveFileContext;
             return { mentionContentsSnapshot: capturedContents, activeFileContextSnapshot };
           }));
-          return {
-            queued: true,
-            sessionId: requestedSessionId,
-          };
+          const queuedResult = { queued: true, sessionId: requestedSessionId };
+          sendSlashDispatch.clearAcceptedImagePrompt(queuedResult, imagePromptPin, requestedSessionId, settings);
+          return queuedResult;
         }
         return null;
       }
@@ -538,7 +550,7 @@
             normalizedPrompt.includes(INTERACTIVE_GUARDRAIL_PROMPT) ? '' : INTERACTIVE_GUARDRAIL_PROMPT,
           ].filter(Boolean).join('\n\n')
         : String(prompt || '');
-      if (!settings.imageEditContextIncluded && imageEditDraft?.sessionId === requestedSessionId) effectivePrompt += window.rendererImageEditDraft?.promptContext(imageEditDraft) || '';
+      if (!imagePromptPin && !settings.imageEditContextIncluded && imageEditDraft?.sessionId === requestedSessionId) effectivePrompt += window.rendererImageEditDraft?.promptContext(imageEditDraft) || '';
       if (promptBlock) effectivePrompt = _promptSlashCommands.composePromptBlock(promptBlock, effectivePrompt); // model-facing only: the visible text and a restored draft stay the user's own
       const hasExplicitVisiblePrompt = Object.prototype.hasOwnProperty.call(settings, 'visiblePrompt');
       const visiblePrompt = String(hasExplicitVisiblePrompt ? settings.visiblePrompt : prompt).trim();
@@ -569,6 +581,7 @@
         prompt: effectivePrompt,
         imageEditSnapshot: imageEditDraft,
         visiblePrompt,
+        ...(imagePromptPin ? { imagePromptPin } : {}),
         attachments: acceptedAttachments,
         runtimePreferences,
         toolPreferences,
@@ -588,9 +601,10 @@
       if (durableEligible) {
         const result = await durableSend.send({ settings, optimisticSessionId, createdOptimisticSession, requestedSession,
           effectivePrompt, visiblePrompt, acceptedAttachments, attachedPaths, attachedNames, runtimePreferences,
-          runModeProjection, toolPreferences, approvalMode, skillInvocation,
+          runModeProjection, toolPreferences, approvalMode, skillInvocation, imagePromptPin,
           sendReceipt, mentionContentsPromise, preserveComposerDraft });
         sendSlashDispatch.clearAccepted(result, skillInvocation, settings);
+        sendSlashDispatch.clearAcceptedImagePrompt(result, imagePromptPin, requestedSessionId, settings);
         return result;
       }
       // The draft is consumed from here on: any throw must settle the receipt
@@ -669,6 +683,7 @@
               id: operationState.optimisticUserMessageId,
               attachments: buildOptimisticAttachmentMetadata(acceptedAttachments),
               ...(skillInvocation ? { skill_invocation: skillInvocation } : {}),
+              ...(imagePromptPin ? { image_prompt_pin: imagePromptPin } : {}),
             });
           }
           onUserSendStarted({
@@ -746,6 +761,7 @@
             local_render_latency_ms: localRenderLatencyMs,
           },
           ...(skillInvocation?.id ? { skillInvocation: { id: skillInvocation.id } } : {}),
+          ...(imagePromptPin ? { imagePromptPin } : {}),
         };
         const chatBridge = window.jennyShell?.chat;
         const startOperation = isEditRegenerate
@@ -778,6 +794,7 @@
           settings,
         });
         sendSlashDispatch.clearAccepted(completed, skillInvocation, settings);
+        sendSlashDispatch.clearAcceptedImagePrompt(completed, imagePromptPin, requestedSessionId, settings);
         return completed;
       } catch (error) {
         return await sendCompletion.completeFailedSend(error, {
@@ -846,6 +863,7 @@
         activeFileContextSnapshot: payload.activeFileContext || null,
         interactiveResponse: payload.interactiveResponse || null,
         skillInvocation: payload.skillInvocation || null,
+        imagePromptPin: payload.imagePromptPin || null,
         failedPayloadId: payload.id,
       });
       const retryDidNotStart = !result || result.rejected === true

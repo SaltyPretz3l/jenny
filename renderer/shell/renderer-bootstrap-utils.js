@@ -33,6 +33,7 @@
   const normalizeSafetyMode = settingsSupport.normalizeSafetyMode;
   const normalizeUnattendedGuardMinutes = settingsSupport.normalizeUnattendedGuardMinutes;
   const normalizeAutoApproveStreakCap = settingsSupport.normalizeAutoApproveStreakCap;
+  const { normalizeDigestQuietStart, normalizeDigestQuietEnd } = settingsSupport;
 
   function renderDiagnosticsControls(documentRef) {
     const put = (id, markup) => { const host = documentRef.getElementById(id); if (host && !host.firstElementChild) host.innerHTML = markup; };
@@ -100,6 +101,8 @@
       safetyMode: 'normal',
       unattendedGuardMinutes: 0,
       autoApproveStreakCap: 50,
+      digestQuietStart: '22:00',
+      digestQuietEnd: '07:00',
       backend: { phase: 'starting', detail: jt('shell.bootstrap.connectingToBackend', 'Connecting to backend...') },
       sessions: [],
       // Split view W0-2: one blank pane, and the current session DERIVED from
@@ -455,6 +458,8 @@
       state.safetyMode = normalizeSafetyMode(config?.safetyMode);
       state.unattendedGuardMinutes = normalizeUnattendedGuardMinutes(config?.unattendedGuardMinutes);
       state.autoApproveStreakCap = normalizeAutoApproveStreakCap(config?.autoApproveStreakCap);
+      state.digestQuietStart = normalizeDigestQuietStart(config?.digestQuietStart);
+      state.digestQuietEnd = normalizeDigestQuietEnd(config?.digestQuietEnd);
       if (!state.currentSessionId) state.runtimeDraft.runMode = defaultRunMode;
     }).catch(() => {});
 

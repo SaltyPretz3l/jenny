@@ -25,6 +25,9 @@ function buildPreparationRequest(record, sourceSummary) {
       'Prepare a handoff for the new chat the user accepted. Do not start the work.',
       `Title: ${JSON.stringify(record.normalized_input.title)}`,
       ...(record.normalized_input.description ? [`Description: ${JSON.stringify(record.normalized_input.description)}`] : []),
+      // Row 94 P2: a fork already holds the other chat's history, so the task reads as its next message.
+      ...(typeof record.normalized_input.fork_of_session_id === 'string'
+        ? ['The new chat is a fork of another chat and already has its history. Write the task as the next message in that chat.'] : []),
       'Call complete_session_handoff exactly once with the proposal_id and attempt_id below, a task for the new chat, and background context.',
       `proposal_id: ${record.proposal_id}`,
       `attempt_id: ${record.attempt_id}`,
@@ -137,6 +140,8 @@ function childSpec(record, sourceSummary) {
       run_mode: authority.runMode,
     },
     lockdown: authority.lockdown,
+    // Row 94 P2: an accepted fork is created as a fork of this chat (linked-fork-session.js).
+    ...(typeof options.fork_of_session_id === 'string' ? { forkOfSessionId: options.fork_of_session_id } : {}),
   };
 }
 

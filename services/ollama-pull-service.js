@@ -23,6 +23,13 @@ function normalizeModelName(value) {
   return model && !/[\r\n\0]/.test(model) && MODEL_PATTERN.test(model) ? model : '';
 }
 
+// Dedupe key only: `llama3` and `llama3:latest` are the same pull. The spawned
+// command keeps the caller's string. Only the last path segment carries a tag.
+function pullKey(model) {
+  if (!model) return '';
+  return model.slice(model.lastIndexOf('/') + 1).includes(':') ? model : `${model}:latest`;
+}
+
 function boundedError(value) {
   return stripAnsi(String(value || ''))
     .replace(/(?:[A-Za-z]:\\|\/)(?:[^\s:"']+[\\/])+[^\s:"']*/g, '[path]')
@@ -100,7 +107,7 @@ class OllamaPullService extends EventEmitter {
   _retire(entry) {
     if (entry.retired) return;
     entry.retired = true;
-    if (this.activeByModel.get(entry.model) === entry) this.activeByModel.delete(entry.model);
+    if (this.activeByModel.get(entry.key) === entry) this.activeByModel.delete(entry.key);
     if (this.activeByRequestId.get(entry.requestId) === entry) this.activeByRequestId.delete(entry.requestId);
   }
 
@@ -134,8 +141,9 @@ class OllamaPullService extends EventEmitter {
 
   start(payload = {}) {
     const model = normalizeModelName(payload.model);
-    if (!model) throw new Error('A valid Ollama model name is required.');
-    const active = this.activeByModel.get(model);
+    if (!model) throw Object.assign(new Error('A valid Ollama model name is required.'), { code: 'invalid_tag' });
+    const key = pullKey(model);
+    const active = this.activeByModel.get(key);
     if (active) return active;
     let requestId = normalizeRequestId(payload.requestId || payload.request_id)
       || normalizeRequestId(this.requestIdProvider()) || createRequestId();
@@ -145,7 +153,7 @@ class OllamaPullService extends EventEmitter {
     }
     const startedAt = this._nowIso();
     const entry = {
-      requestId, model, status: 'running', summary: 'Starting Ollama model pull.',
+      requestId, model, key, status: 'running', summary: 'Starting Ollama model pull.',
       startedAt, updatedAt: startedAt, exitCode: null, error: '', finished: false,
       child: null, percent: 0, bytes: 0, totalBytes: 0, label: '', layers: new Map(),
       lastOutputLine: '', lastErrorLine: '', terminationConfirmed: false, lastEmitAt: 0, code: '',
@@ -153,7 +161,7 @@ class OllamaPullService extends EventEmitter {
       childExited: false, retired: false,
     };
     entry.promise = new Promise((resolve) => { entry.resolve = resolve; });
-    this.activeByModel.set(model, entry);
+    this.activeByModel.set(key, entry);
     this.activeByRequestId.set(requestId, entry);
     this._emit(entry);
     try {
@@ -233,7 +241,7 @@ class OllamaPullService extends EventEmitter {
   async delete(payload = {}) {
     const model = normalizeModelName(payload.model);
     if (!model) return { status: 'failed', code: 'invalid_tag', message: t('main.ollamaPull.validTagRequired', 'A valid Ollama model tag is required.') };
-    if (this.activeByModel.has(model)) {
+    if (this.activeByModel.has(pullKey(model))) {
       return { status: 'failed', code: 'pull_in_progress', message: t('main.ollamaPull.downloadInProgress', 'This model is still downloading.') };
     }
     let child;
@@ -354,7 +362,7 @@ class OllamaPullService extends EventEmitter {
   async cancel(payload = {}) {
     const requestId = normalizeString(payload.requestId || payload.request_id);
     const model = normalizeModelName(payload.model);
-    const entry = requestId ? this.activeByRequestId.get(requestId) : this.activeByModel.get(model);
+    const entry = requestId ? this.activeByRequestId.get(requestId) : this.activeByModel.get(pullKey(model));
     if (!entry) {
       return { cancelled: false, termination_confirmed: false, request_id: requestId, status: 'not_found', code: 'not_found', error_code: '' };
     }

@@ -79,6 +79,9 @@ class RuntimeEligibilityCoordinator {
       resource.type === 'dependency' ? { type: 'dependency', work_id: resource.work_id }
         : resource.type === 'capacity'
         ? { type: 'capacity', key: resource.key, units: resource.units ?? 1 }
+        : resource.type === 'work'
+        ? { type: 'work', leaseRoot: resource.leaseRoot, key: resource.key, units: resource.units,
+          capacity: resource.capacity ?? null, label: resource.label || '', sessionId: resource.sessionId || null }
         : { type: 'filesystem', identity: resource.identity }
     )));
     this.waits.set(workId, { revision: work.revision,

@@ -10,11 +10,30 @@
 // background-job tracker. Kept out of chat-stream-tool-handling.js, which
 // sits at the file-size cap.
 
-// Mirrors shell_background.py's canonical job-id format (uuid4().hex[:12]).
+// Mirrors shell_background.py's canonical job-id format (uuid4().hex[:12]); the
+// one definition the tracker, the delete purges and the data-usage plans share.
 const BACKGROUND_JOB_ID_PATTERN = /^[0-9a-f]{12}$/;
+const JOB_READ_TOOLS = new Set(['check_background_job', 'stop_background_job']);
+// The status JSON leads with its state; a router-truncated result keeps the head.
+const SETTLED_STATE_PATTERN = /"state"\s*:\s*"(?:completed|failed)"/;
+
+// A status read that reported the job settled: its result reached the model, so the
+// background-job wake (services/background-job-wake.js) has nothing to bring it.
+function noteBackgroundJobRead(service, params) {
+  if (!JOB_READ_TOOLS.has(String(params?.tool_name || ''))) return false;
+  const jobId = String(params.tool_input?.job_id || '').trim();
+  if (!BACKGROUND_JOB_ID_PATTERN.test(jobId) || !SETTLED_STATE_PATTERN.test(String(params.output || '').slice(0, 4096))) {
+    return false;
+  }
+  service.emit('background-job-read', { jobId });
+  return true;
+}
 
 function noteBackgroundJobFromToolResult(service, ctx, params, workspaceRoot = '') {
   if (!service || typeof service.emit !== 'function') {
+    return false;
+  }
+  if (noteBackgroundJobRead(service, params)) {
     return false;
   }
   // Only the canonical shape registers: a background
@@ -61,5 +80,6 @@ function noteBackgroundJobFromToolResult(service, ctx, params, workspaceRoot = '
 
 module.exports = {
   BACKGROUND_JOB_ID_PATTERN,
+  noteBackgroundJobRead,
   noteBackgroundJobFromToolResult,
 };

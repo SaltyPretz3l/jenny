@@ -1,7 +1,8 @@
 /* renderer/shell/renderer-global-shortcuts.js – app-level keyboard shortcuts (UMD)
    Ctrl+1..5 (view tabs, order = VIEW_TAB_ORDER), Ctrl+N (new chat), Ctrl+B
    (toggle the active view's panel), Ctrl+Shift+\ (split view W1-4c: open the
-   most recent other tab beside, or close the non-focused pane).
+   most recent other tab beside, or close the non-focused pane), Ctrl+Alt+W
+   (row 92: Wide transcript on/off).
 
    Inside the Workspace view (row 82, picks O1/O2) Ctrl+1..5 and Ctrl+N belong to
    the IDE keymap (editor groups, new file); Ctrl+Alt+1..5 switch views from
@@ -12,6 +13,7 @@
    is exempt by design and may fire from anywhere, including editors. The
    split chord also fires from a chat composer (.composer-input) and stands
    down in every other editor (Monaco binds Ctrl+Shift+\ to jump-to-bracket).
+   Ctrl+Alt+W follows the split chord's editor rule, and stands down for AltGr.
    Every chord here stands down while the shared overlay manager reports an
    open overlay, with one exception: over a launcher-style overlay listed in
    deps.captureYieldingOverlayIds (the command palette) the capture chord
@@ -63,6 +65,13 @@
       && (event.code === 'Backslash' || event.key === '\\' || event.key === '|'));
   }
 
+  function isChatWidthChord(event) {
+    return Boolean(event.ctrlKey && event.altKey && !event.metaKey && !event.shiftKey
+      && !event.defaultPrevented && !event.isComposing
+      && !(typeof event.getModifierState === 'function' && event.getModifierState('AltGraph'))
+      && (event.code === 'KeyW' || String(event.key || '').toLowerCase() === 'w'));
+  }
+
   function createGlobalShortcutsController(deps) {
     const windowRef = deps.windowRef || (typeof window !== 'undefined' ? window : null);
     const documentRef = deps.documentRef || (windowRef && windowRef.document)
@@ -73,6 +82,7 @@
       togglePanel,
       openCapture,
       togglePaneSplit,
+      toggleChatWidth,
       appendClientLog,
     } = deps.callbacks || {};
     const isOverlayOpen = typeof deps.isOverlayOpen === 'function'
@@ -128,6 +138,14 @@
           openCapture();
           appendClientLog?.('INFO', 'shortcuts.scratchpad_capture', { key: 'Ctrl+Shift+Space' });
         }
+        return;
+      }
+      if (isChatWidthChord(event)) {
+        if (typeof toggleChatWidth !== 'function' || isForeignTextEditingSurfaceFocused(documentRef)) return;
+        event.preventDefault();
+        if (event.repeat) return;
+        // The toggle logs chat.chat_width_toggle with source 'shortcut'.
+        toggleChatWidth();
         return;
       }
       if (isPaneSplitChord(event)) {

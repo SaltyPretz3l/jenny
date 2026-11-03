@@ -348,6 +348,12 @@ def tool_timeout_for_runtime(config: Any, runtime: Any | None, call: Any | None)
                 configured_timeout,
                 min(requested_limit, float(requested)) + settle_margin,
             )
+    if call is not None and call.tool_id == "check_background_job":
+        wait_ms = call.arguments.get("wait_ms")
+        if isinstance(wait_ms, (int, float)) and not isinstance(wait_ms, bool) and wait_ms > 0:
+            # The handler returns at wait_ms; the transport must not cut it off first.
+            wait_seconds = min(float(wait_ms), 600_000.0) / 1000
+            configured_timeout = max(configured_timeout, wait_seconds + 5.0)
     if call is not None and call.tool_id == "image_generate":
         configured_timeout = max(configured_timeout, IMAGE_GENERATE_TIMEOUT_SECONDS)
     if call is not None and str(call.tool_id).startswith("mcp__"):

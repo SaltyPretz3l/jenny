@@ -46,6 +46,9 @@
         // anything else falls back to the main column. Whitelisted (not passed
         // through) so a typo can never invent a host the renderer cannot find.
         slot: widget.slot === 'rail' ? 'rail' : 'main',
+        // headerless: the widget draws its own header row inside its body (so
+        // controls can sit on the section hairline); the title stays for list().
+        headerless: widget.headerless === true,
         render: widget.render,
       });
       return true;
@@ -131,7 +134,7 @@
       const card = documentRef.createElement('section');
       card.className = 'dashboard-card';
       card.dataset.widgetId = widget.id;
-      if (widget.title) {
+      if (widget.title && !widget.headerless) {
         const header = documentRef.createElement('div');
         header.className = 'dashboard-card__header';
         const title = documentRef.createElement('h3');

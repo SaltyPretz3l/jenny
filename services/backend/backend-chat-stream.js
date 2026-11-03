@@ -272,6 +272,14 @@ function alwaysAllowApplies(pending, options = {}) {
   return Boolean(toolName) && !NEVER_PERSIST_ALWAYS_ALLOW.has(toolName);
 }
 
+function scopedGrantLogFields(grant) {
+  if (grant?.scope === 'path') return { pathPrefix: grant.pathPrefix };
+  if (grant?.scope === 'command_prefix') return { commandPrefix: grant.commandPrefix };
+  // The exact text is the user's command; the log records only its length.
+  if (grant?.scope === 'command_exact') return { commandExactChars: String(grant.commandExact || '').length };
+  return null;
+}
+
 // Returns true only when the always-allow grant reached the permission store.
 function maybeApplyAlwaysAllowPolicy(service, pending, options = {}) {
   if (!alwaysAllowApplies(pending, options)) {
@@ -288,14 +296,16 @@ function maybeApplyAlwaysAllowPolicy(service, pending, options = {}) {
       const authority = pending?.executionAuthority
         ? service.sessionExecutionAuthority.requireCurrent(pending.executionAuthority)
         : undefined;
-      // Path-bearing calls persist an exact path-prefix grant for this tool.
-      // Calls without a declared path target retain the whole-tool policy.
+      // Path-bearing calls persist an exact path-prefix grant for this tool, and a command its
+      // program + subcommand or exact text (row 103; a chained command throws and resolves once).
+      // Other calls without a declared path target retain the whole-tool policy.
       if (typeof permissionStore.grantAlwaysAllow === 'function') {
         const grant = permissionStore.grantAlwaysAllow(toolName, pending?.toolInput, authority);
-        if (grant?.scope === 'path' && typeof service?._emitServiceLog === 'function') {
+        const scopeFields = scopedGrantLogFields(grant);
+        if (scopeFields && typeof service?._emitServiceLog === 'function') {
           service._emitServiceLog('INFO', 'tool_permission.always_allow_scoped', {
             toolName,
-            pathPrefix: grant.pathPrefix,
+            ...scopeFields,
             ruleId: grant.ruleId,
           });
         }
@@ -432,7 +442,9 @@ function approveToolCall(service, approvalRef, options = {}) {
       });
     }
   }
-  entry.pending.resolve(true, decision, feedback, options?.plan, granted ? 'always' : 'once');
+  // Row 87 D6: the card's "Always allow for chats Jenny started" answer, exactly; the waiter honours it only on its own offer.
+  const remember = options?.remember === 'linked_children' ? ['linked_children'] : [];
+  entry.pending.resolve(true, decision, feedback, options?.plan, granted ? 'always' : 'once', ...remember);
   service.pendingToolApprovals.delete(entry.key);
   return true;
 }

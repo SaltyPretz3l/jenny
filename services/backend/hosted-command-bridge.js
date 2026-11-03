@@ -7,7 +7,7 @@ const { removeTree } = require('../fs-remove-no-follow');
 const { TOOL_ERROR_CODES } = require('./error-codes');
 const { getTrustedExecutionBinding } = require('./session-execution-authority');
 const { createWorkspaceSnapshot, removeSnapshot, inside } = require('../execution/desktop-workspace-snapshot');
-const { sandboxError } = require('../execution/sandbox-errors');
+const { digest, sandboxError } = require('../execution/sandbox-errors');
 const { createToolResourceClaim, projectToolResourceWait } = require('../tools/tool-resource-execution');
 
 function hostedExecutionBrokerFor(service) {
@@ -53,6 +53,40 @@ function normalizeHostedRunCommandArguments(input) {
       expectedExitCodes: [...expectedExitCodes],
     },
   };
+}
+
+// Defense in depth for the sidecar's one-off approval (security review item 6): main
+// dispatches a hosted command only on the record of the user's explicit approval of
+// this exact call id and these exact arguments, made by the approval waiter in this
+// request. A persisted rule, Auto or an auto-run grant never writes a record, and the
+// one call it approved spends it.
+const MAX_RECORDED_APPROVALS = 32;
+const approvedHostedCalls = new WeakMap();
+
+function hostedApprovalDigest(input) {
+  const normalized = input && typeof input === 'object' && !Array.isArray(input)
+    ? normalizeHostedRunCommandArguments(input) : { error: 'invalid' };
+  return normalized.error ? '' : digest(normalized.value);
+}
+
+// Called by the approval waiter only after the user approved this call.
+function noteHostedRunCommandApproval(binding, params) {
+  const callId = String(params?.tool_call_id || '').trim();
+  const signed = hostedApprovalDigest(params?.tool_input || params?.arguments);
+  if (params?.tool_name !== 'run_command' || !callId || !signed || !getTrustedExecutionBinding(binding)) return false;
+  const calls = approvedHostedCalls.get(binding) || new Map();
+  calls.delete(callId);
+  calls.set(callId, signed);
+  while (calls.size > MAX_RECORDED_APPROVALS) calls.delete(calls.keys().next().value);
+  approvedHostedCalls.set(binding, calls);
+  return true;
+}
+
+function consumeHostedRunCommandApproval(binding, callId, input) {
+  const calls = approvedHostedCalls.get(binding);
+  const signed = calls?.get(callId);
+  calls?.delete(callId);
+  return Boolean(signed) && signed === hostedApprovalDigest(input);
 }
 
 // The worker copies only the project the command was approved for. The project
@@ -174,6 +208,9 @@ async function executeHostedRunCommand(service, {
   if (stagingRoot === null) {
     return bridgeFailure('run_command', 'Hosted execution failed: execution_staging_unavailable.', TOOL_ERROR_CODES.DISABLED);
   }
+  if (!trusted || !consumeHostedRunCommandApproval(executionAuthority, String(callId || '').trim(), input)) {
+    return bridgeFailure('run_command', 'Hosted execution requires a one-off approval of this exact command; no command was run.', TOOL_ERROR_CODES.APPROVAL_DENIED);
+  }
   let releaseStaging = null;
   let staged = null;
   try {
@@ -249,4 +286,4 @@ async function executeHostedRunCommand(service, {
   }
 }
 
-module.exports = { executeHostedRunCommand };
+module.exports = { executeHostedRunCommand, noteHostedRunCommandApproval };

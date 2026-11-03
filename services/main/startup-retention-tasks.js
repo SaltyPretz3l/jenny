@@ -1,8 +1,10 @@
+const path = require('path');
 const { readSessionMessagesForReferenceScan, readSessionRecordForReferenceScan } = require('../backend/session-reference-scan');
 const { collectAssetPaths } = require('../attachment-service');
 const { createArtifactRetentionService } = require('../artifact-retention-service');
 const { payloadPathsFromMessages } = require('../backend/ipc-payload-retention');
 const { pruneLegacySessionFiles } = require('../backend/session-legacy-file-prune');
+const { pruneOrphanedProfileTemps } = require('../data-lifecycle/orphaned-profile-temps');
 
 // Message attachments only change through message mutations, and every message
 // mutation bumps updated_at (append/update/replace/truncate). Tool-result event
@@ -340,6 +342,11 @@ function scheduleStartupRetentionTasks({
     const pruneLegacyFiles = () => {
       pruneLegacySessionFiles({ legacyFilePath: legacySessionFilePath, log }).catch((err) => {
         log('WARN', 'session_store.legacy_file_prune_failed', { error: String(err?.message || err) });
+      });
+      // The other profile stores' crash-orphaned temps; the legacy session file
+      // sits directly in the profile root.
+      pruneOrphanedProfileTemps({ profileRoot: path.dirname(legacySessionFilePath), log }).catch((err) => {
+        log('WARN', 'profile_store.orphaned_temp_prune_failed', { error: String(err?.message || err) });
       });
     };
     runInitialRetentionTaskWhenReady(backendService, pruneLegacyFiles, { setTimeoutRef, staggerMs: 12000 });

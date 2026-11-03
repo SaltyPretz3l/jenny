@@ -85,6 +85,26 @@ test('post-exit pipes draining within grace preserve the real exit code', async 
   assert.equal(result.output, 'final output\n');
 });
 
+test('a synchronous spawn failure resolves as a retryable infrastructure failure', async () => {
+  const activeChildren = new Set();
+  const spawnError = Object.assign(new Error('spawn UNKNOWN'), { code: 'UNKNOWN', errno: -4094 });
+  const result = await safeRunner.runCapturedChild(['--test', 'tests/a.test.js'], {
+    activeChildren,
+    timeoutMs: 10_000,
+    spawnImpl: () => { throw spawnError; },
+  });
+  assert.equal(activeChildren.size, 0, 'a child that never spawned is not tracked for tree kills');
+  assert.notEqual(result.code, 0);
+  assert.equal(result.timedOut, false);
+  assert.equal(result.terminationFailed, false);
+  assert.match(result.output, /\[run-node-tests-safe\] spawn failed: UNKNOWN \(-4094\)/);
+  assert.equal(
+    safeRunner.isInfrastructureFailure('tests/a.test.js', result),
+    true,
+    'the existing serial-retry path must pick this file up'
+  );
+});
+
 test('real-store durability replay keeps contention headroom in the heavy wave', () => {
   const overrides = safeRunner.loadTimeoutOverrides(ROOT);
 

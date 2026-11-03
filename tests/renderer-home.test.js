@@ -164,6 +164,7 @@ test('renderer home tab renders local companion information and today cards with
     assert.deepEqual(cardIds, [
       'calendar',
       'away-digest',
+      'usage-stats', // row 98: after the digest, before open loops
       'open-loops',
     ]);
     const rail = window.document.getElementById('homeDashboardRail');

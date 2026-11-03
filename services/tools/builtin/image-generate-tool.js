@@ -85,6 +85,20 @@ function validateParameters(input, family, randomUUID) {
   return { prompt, title, negative, width, height, steps, seed, cfgScale };
 }
 
+// Row 91: a /image turn's request. The user's text and options replace the model's
+// arguments; only a valid model title is kept (an invalid one falls back to the prompt).
+function pinnedInput(input, pin) {
+  const title = typeof input.title === 'string' ? cleanText(input.title) : '';
+  return {
+    prompt: pin.prompt,
+    ...(title && Array.from(title).length <= 100 ? { title } : {}),
+    ...(pin.width !== undefined ? { width: pin.width, height: pin.height } : {}),
+    ...(pin.seed !== undefined ? { seed: pin.seed } : {}),
+    ...(pin.source_artifact_id !== undefined ? { source_artifact_id: pin.source_artifact_id } : {}),
+    ...(pin.region ? { region: pin.region } : {}),
+  };
+}
+
 function renderArguments(family, paths, params, outputPath, previewPattern = '') {
   const { prompt, negative, width, height, steps, cfgScale, seed } = params;
   return [family.diffusion_flag, paths.diffusion, family.encoder_flag, paths.text_encoder,
@@ -216,7 +230,8 @@ function createImageGenerateTool({
           seed: params.seed, width: params.width, height: params.height, steps: params.steps, cfg_scale: params.cfgScale,
           // F29: not `prompt`; the canonical normalizer redacts engine/system prompt keys by that name.
           ...(params.reference ? { source_artifact_id: params.reference.artifactId, image_edit_region: params.reference.region } : {}),
-          image_prompt: params.prompt, ...(params.negative ? { image_negative_prompt: params.negative } : {}),
+          image_prompt: params.prompt, prompt_source: params.promptSource,
+          ...(params.negative ? { image_negative_prompt: params.negative } : {}),
         },
       },
       // The bridge hands this to a vision chat model as the picture it drew.
@@ -234,6 +249,9 @@ function createImageGenerateTool({
     },
     async execute(input = {}, context = {}) {
       input = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+      const pin = context.imagePromptPin && typeof context.imagePromptPin === 'object'
+        && typeof context.imagePromptPin.prompt === 'string' ? context.imagePromptPin : null;
+      if (pin) input = pinnedInput(input, pin);
       const executeStartedAt = now();
       const backend = context.backendService;
       const handoff = backend?.chatGpuHandoff;
@@ -299,6 +317,7 @@ function createImageGenerateTool({
       const params = validateParameters(reference ? { width: reference.width, height: reference.height, ...input } : input || {}, family, randomUUID);
       if (params.error) return params.error;
       if (reference) params.reference = reference;
+      params.promptSource = pin ? 'user' : 'model';
       // The render must finish inside the sidecar's wait with the restore
       // reserve intact, counted from when this call actually began.
       const budgetMs = Number.isFinite(context.timeoutMs) && context.timeoutMs > 0

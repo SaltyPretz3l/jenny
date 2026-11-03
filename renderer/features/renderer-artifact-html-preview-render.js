@@ -57,6 +57,16 @@
       && Boolean(node.querySelector?.('[data-html-preview-host]'));
   }
 
+  // A kept frame must still be what the panel shows: another render (the Code view, or a loading
+  // note) may have hidden the preview or replaced the note since the frame was built.
+  function showHeldFrame(surface, setDetailNote) {
+    surface.editorShell?.classList.add('hidden');
+    surface.previewContent.classList.remove('hidden');
+    if (typeof setDetailNote === 'function') {
+      setDetailNote(surface, jt('artifacts.htmlPreview.sandboxedNote', 'Sandboxed live preview. Scripts run in an isolated frame with no network access.'));
+    }
+  }
+
   /**
    * Routing predicate for renderer-artifacts-render-web.js. False routes the
    * kind to the WS2 inline path unchanged, which is what keeps every
@@ -123,6 +133,7 @@
     // reconciles against the real content — identical content is a signature
     // match (frame survives, zero blink), changed content rebuilds.
     if (state?.artifacts?.loading && hasLiveFrameForArtifact(ctx, kind)) {
+      showHeldFrame(surface, setDetailNote);
       return;
     }
 
@@ -137,6 +148,7 @@
     const signature = `${kind}::${String(artifact?.id || '')}::${editable ? '1' : '0'}::${source}`;
     if (surface.previewContent[PREVIEW_SIGNATURE_KEY] === signature
       && surface.previewContent.querySelector('[data-html-preview-host]')) {
+      showHeldFrame(surface, setDetailNote);
       return;
     }
     surface.previewContent[PREVIEW_HANDLE_KEY]?.dispose?.();
@@ -198,6 +210,7 @@
   }
 
   return {
+    hasLiveFrameForArtifact,
     shouldRenderHtmlPreview,
     renderHtmlPreviewKind,
   };

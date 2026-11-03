@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -98,9 +99,12 @@ def test_explicit_handler_cleanup_verdict_is_preserved(tmp_path: Path) -> None:
     assert response["result"]["metadata"]["resource_cleanup"] == explicit
 
 
-def test_soft_ttl_manifest_refresh_is_pending_before_thread_runs(
+def test_soft_ttl_manifest_refresh_does_not_hold_the_call_cleanup(
     monkeypatch, tmp_path: Path
 ) -> None:
+    # A pending child at return quarantines the call's workspace lease until a
+    # backend restart, refusing every later file tool in the turn (2026-10-31).
+    # The background refresh belongs to the cache, so the call proves no child.
     now = 1_000.0
     calls = 0
     refresh_started = threading.Event()
@@ -137,13 +141,15 @@ def test_soft_ttl_manifest_refresh_is_pending_before_thread_runs(
     try:
         response = _call(tool, tmp_path)
         assert refresh_started.wait(timeout=1.0)
-        assert observer_seen == [True]
+        assert observer_seen == [False]
         assert response["result"]["metadata"]["resource_cleanup"] == {
-            "cleanup": "uncertain",
-            "process_tree_terminated": False,
-            "output_readers_terminated": False,
-            "reason": "child_cleanup_pending",
+            "cleanup": "confirmed",
+            "process_tree_terminated": True,
+            "output_readers_terminated": True,
+            "reason": "no_native_process_started",
         }
+        # The stale payload is still served while the refresh runs.
+        assert json.loads(response["result"]["content"][0]["text"])["count"] == 1
     finally:
         release_refresh.set()
         assert refresh_finished.wait(timeout=1.0)

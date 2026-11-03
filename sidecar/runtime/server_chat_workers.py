@@ -25,6 +25,7 @@ from sidecar.runtime.multiplexer import (
 )
 from sidecar.runtime.outcomes import ProcessOutcome
 from sidecar.runtime.rpc import error_response
+from sidecar.runtime.turn_job_notices import PendingJobNoticeQueue, bind_pending_job_notices
 from sidecar.runtime.turn_state import (
     LiveRunModeState,
     PendingMailQueue,
@@ -174,7 +175,15 @@ def make_chat_send_worker(  # noqa: PLR0913
             pending_mail = getattr(cancel_handle, "pending_mail", None)
             if not isinstance(pending_mail, PendingMailQueue):
                 pending_mail = PendingMailQueue()
-            with bind_live_run_mode_state(live_run_mode), bind_pending_mail(pending_mail):
+            # Mid-turn job notices: session.job_settled fills it, the tool loop drains it.
+            job_notices = getattr(cancel_handle, "pending_job_notices", None)
+            if not isinstance(job_notices, PendingJobNoticeQueue):
+                job_notices = PendingJobNoticeQueue()
+            with (
+                bind_live_run_mode_state(live_run_mode),
+                bind_pending_mail(pending_mail),
+                bind_pending_job_notices(job_notices),
+            ):
                 outcome = chat_send_runner(message, **runner_options)
             if getattr(outcome, "deliver_after_worker_cleanup", False):
                 paused_outcome = outcome

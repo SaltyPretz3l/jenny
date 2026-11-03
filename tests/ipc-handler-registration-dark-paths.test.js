@@ -308,6 +308,23 @@ describe('registerMainIpcHandlers return contract + full registration', () => {
 // Calls exportSession(backendService.sessionStore, sessionId, backendService.attachmentAssetStore)
 // ---------------------------------------------------------------------------
 
+describe('backgroundJobs.readOutput handler', () => {
+  test('forwards the job id to the tracker and degrades without one', async () => {
+    const reads = [];
+    const tracker = { readOutput: (jobId) => { reads.push(jobId); return { ok: true, state: 'completed', text: 'done' }; } };
+    const { deps, ipcMain } = buildDeps({ backendService: { backgroundJobTracker: tracker } });
+    registerMainIpcHandlers(deps);
+    const handler = ipcMain.invoke.get(invokeChannel('backgroundJobs.readOutput'));
+    assert.deepEqual(await handler({}, 'abc123def456'), { ok: true, state: 'completed', text: 'done' });
+    assert.deepEqual(reads, ['abc123def456']);
+
+    const bare = buildDeps({ backendService: {} });
+    registerMainIpcHandlers(bare.deps);
+    const missing = bare.ipcMain.invoke.get(invokeChannel('backgroundJobs.readOutput'));
+    assert.deepEqual(await missing({}, 'abc123def456'), { ok: false, reason: 'unavailable' });
+  });
+});
+
 describe('sessions.exportSession handler (lines 228-233)', () => {
   test('exportSession returns null when session is not found in the store', async () => {
     const { deps, ipcMain } = buildDeps({

@@ -18,7 +18,7 @@ const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 
-const { resolveGitMetaLayout } = require('../services/workspace-ide-gitdir');
+const { readGitOperation, resolveGitMetaLayout } = require('../services/workspace-ide-gitdir');
 const { createWorkspaceIdeWatcher } = require('../services/workspace-ide-watcher');
 const {
   cleanupTrackedResources,
@@ -163,6 +163,65 @@ test('wide-028: a real `git worktree add` resolves to the external layout', asyn
     'commonDir is the shared main .git'
   );
   assert.ok(fs.existsSync(path.join(wtLayout.gitDir, 'HEAD')), 'the external gitDir holds the worktree HEAD');
+});
+
+// ── readGitOperation: REAL repositories ──────────────────────────────────────
+
+// Diverge README.md on `other` and `main`, so a merge, rebase or cherry-pick
+// between them stops on a conflict.
+async function divergeReadme(repo) {
+  await git(repo, ['checkout', '-q', '-b', 'other']);
+  await fsPromises.writeFile(path.join(repo, 'README.md'), 'theirs\n', 'utf8');
+  await git(repo, ['commit', '-qam', 'theirs']);
+  await git(repo, ['checkout', '-q', 'main']);
+  await fsPromises.writeFile(path.join(repo, 'README.md'), 'ours\n', 'utf8');
+  await git(repo, ['commit', '-qam', 'ours']);
+}
+
+async function gitExpectingConflict(cwd, args) {
+  await assert.rejects(() => git(cwd, args), 'the command stops on a conflict');
+}
+
+test('readGitOperation: none for a clean repo or a non-repo folder', async () => {
+  const repo = await createGitRepo();
+  assert.equal(await readGitOperation(repo), '');
+  assert.equal(await readGitOperation(createTrackedTempDir('jenny-ide-norepo-')), '');
+});
+
+test('readGitOperation: a merge stays "merge" after every resolution matches HEAD, until the commit', async () => {
+  const repo = await createGitRepo();
+  await divergeReadme(repo);
+  await gitExpectingConflict(repo, ['merge', 'other']);
+  assert.equal(await readGitOperation(repo), 'merge');
+  await git(repo, ['checkout', '--ours', 'README.md']);
+  await git(repo, ['add', 'README.md']);
+  assert.equal((await git(repo, ['status', '--porcelain'])).stdout, '', 'nothing staged or changed');
+  assert.equal(await readGitOperation(repo), 'merge', 'MERGE_HEAD still marks the merge');
+  await git(repo, ['commit', '-qm', 'merge other']);
+  assert.equal(await readGitOperation(repo), '');
+});
+
+test('readGitOperation: a stopped rebase reads "rebase", a cherry-pick "cherry-pick"', async () => {
+  const repo = await createGitRepo();
+  await divergeReadme(repo);
+  await git(repo, ['checkout', '-q', 'other']);
+  await gitExpectingConflict(repo, ['rebase', 'main']);
+  assert.equal(await readGitOperation(repo), 'rebase');
+  await git(repo, ['rebase', '--abort']);
+  assert.equal(await readGitOperation(repo), '');
+  await git(repo, ['checkout', '-q', 'main']);
+  await gitExpectingConflict(repo, ['cherry-pick', 'other']);
+  assert.equal(await readGitOperation(repo), 'cherry-pick');
+});
+
+test('readGitOperation: a merge inside a linked worktree reads from its own gitdir', async () => {
+  const repo = await createGitRepo();
+  await divergeReadme(repo);
+  const wtRoot = path.join(createTrackedTempDir('jenny-ide-wt-op-'), 'wt');
+  await git(repo, ['worktree', 'add', '-q', wtRoot, '-b', 'wt-branch', 'main']);
+  await gitExpectingConflict(wtRoot, ['merge', 'other']);
+  assert.equal(await readGitOperation(wtRoot), 'merge');
+  assert.equal(await readGitOperation(repo), '', 'the main checkout is not merging');
 });
 
 function startRealWatcher(root) {

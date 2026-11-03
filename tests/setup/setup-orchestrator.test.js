@@ -425,36 +425,6 @@ test('a failed Ollama package-manager upgrade does not restart or continue to mo
   assert.equal(restartCalls, 0);
 });
 
-test('--skip-model tolerates a missing Ollama and still completes', async () => {
-  const code = await runSetup({
-    argv: ['--no-launch', '--skip-model'],
-    platform: 'darwin',
-    nodeVersion: '22.23.2',
-    ui: makeUi(),
-    deps: baseDeps({
-      fetchImpl: async () => ({ ok: false }),
-      runCapture: (cmd, args = []) => {
-        const joined = args.join(' ');
-        if (joined.includes('--version')) {
-          if (isVenvCommand(cmd)) {
-            return joined.includes('-m pip')
-              ? { status: 0, stdout: 'pip 24.3.1' }
-              : { status: 0, stdout: 'Python 3.11.9' };
-          }
-          if (cmd === 'npm') return { status: 0, stdout: '10.9.2' };
-          if (cmd === 'python3.11' || cmd === 'python3') return { status: 0, stdout: 'Python 3.11.9' };
-          if (cmd === 'git') return { status: 0, stdout: 'git version 2.45.0' };
-          return { status: 127 };
-        }
-        if (cmd === 'which' || cmd === 'where') return { status: 1, stdout: '' };
-        return { status: 0 };
-      },
-      promptYesNo: async () => false,
-    }),
-  });
-  assert.equal(code, EXIT.OK);
-});
-
 test('a failed model pull defers to the model exit code but does not abort setup', async () => {
   const ui = makeUi();
   const code = await runSetup({

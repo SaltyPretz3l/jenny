@@ -173,6 +173,7 @@
     openInWorkspace: shared.openInWorkspace,
     openInGit: shared.openInGit,
     configure: shared.configure,
+    getCurrent: shared.getCurrent,
     createChatWorkspaceDetail,
     SURFACES,
   };

@@ -68,6 +68,7 @@ class ChatWorkspaceService {
     getWorktreeEntries = () => [],
     getExecutionEnvironment = () => 'local',
     getWorkspaceTestSource = () => null,
+    getBackgroundJobTracker = () => null,
     getRuntimeStore = () => null,
     isActivityEnabled = () => false,
     changeSummary = createWorkspaceGitChangeSummary(),
@@ -91,6 +92,7 @@ class ChatWorkspaceService {
     this._getWorktreeEntries = getWorktreeEntries;
     this._getExecutionEnvironment = getExecutionEnvironment;
     this._getWorkspaceTestSource = getWorkspaceTestSource;
+    this._getBackgroundJobTracker = getBackgroundJobTracker;
     this._getRuntimeStore = getRuntimeStore;
     this._isActivityEnabled = isActivityEnabled;
     this._changeSummary = changeSummary;
@@ -386,6 +388,7 @@ class ChatWorkspaceService {
       rows: rows || [],
       workspaceTestSupported: rows !== null,
       linkedRows: this._linkedWorkRows(sessionId, failedSources),
+      jobRows: this._getBackgroundJobTracker()?.getSessionJobs?.(sessionId) ?? null,
       failedSources,
     });
   }

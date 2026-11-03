@@ -15,6 +15,11 @@
  *                       the Daybook does not offer the cadence for new
  *                       reminders.
  * Disabled reminders are excluded everywhere.
+ * Jenny checks (row 85: `action: "jenny_turn"`, a reminder that runs a turn in
+ * the Jenny chat) never land on the timeline: listJennyChecks feeds the
+ * agenda's "Jenny checks" list, off ones included, so they can be turned back on.
+ * A daily reminder with `weekdays` (0 = Sunday; [] = every day) lands only on
+ * those days.
  *
  * It also owns the pure half of the assistant undo journal
  * (services/home-assistant-service.js): which journal entry is still undoable
@@ -50,6 +55,16 @@
 
   function scheduleTypeOf(reminder) {
     return String(reminder?.scheduleType || '');
+  }
+
+  function isJennyCheck(reminder) {
+    return String(reminder?.action || '') === 'jenny_turn';
+  }
+
+  function weekdaysOf(reminder) {
+    return Array.isArray(reminder?.weekdays)
+      ? reminder.weekdays.filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+      : [];
   }
 
   function normalizeTimeOfDay(value, fallback) {
@@ -101,12 +116,14 @@
    * @param {Date} day local day being rendered
    */
   function reminderInstanceForDay(reminder, day) {
-    if (!isEnabled(reminder) || !(day instanceof Date) || Number.isNaN(day.getTime())) {
+    if (!isEnabled(reminder) || isJennyCheck(reminder) || !(day instanceof Date) || Number.isNaN(day.getTime())) {
       return null;
     }
     const dayKey = formatLocalDate(startOfLocalDay(day));
     const scheduleType = scheduleTypeOf(reminder);
     if (scheduleType === 'daily_at') {
+      const weekdays = weekdaysOf(reminder);
+      if (weekdays.length && !weekdays.includes(day.getDay())) return null;
       return buildPseudoInstance(reminder, `${dayKey}T${normalizeTimeOfDay(reminder.dailyAt, DEFAULT_DAILY_AT)}`);
     }
     if (scheduleType === 'once_at') {
@@ -135,7 +152,7 @@
    */
   function listStandingReminders(reminders) {
     return (Array.isArray(reminders) ? reminders : [])
-      .filter((reminder) => isEnabled(reminder) && scheduleTypeOf(reminder) === 'interval_minutes')
+      .filter((reminder) => isEnabled(reminder) && !isJennyCheck(reminder) && scheduleTypeOf(reminder) === 'interval_minutes')
       .map((reminder) => ({
         id: String(reminder.id),
         label: String(reminder.label || 'Reminder'),
@@ -143,6 +160,61 @@
         sourceKind: String(reminder.sourceKind || ''),
         sourceId: String(reminder.sourceId || ''),
       }));
+  }
+
+  // The next local run of an enabled check after `now`, or null (off, a fired
+  // one-off, a malformed time). Mirrors the main-process due math
+  // (services/shell-config-followups-schema.js nextReminderOccurrences).
+  function nextCheckRun(reminder, now) {
+    if (!isEnabled(reminder) || !(now instanceof Date)) return null;
+    const scheduleType = scheduleTypeOf(reminder);
+    const firedAt = reminder.lastFiredAt ? new Date(reminder.lastFiredAt) : null;
+    const lastFired = firedAt && !Number.isNaN(firedAt.getTime()) ? firedAt : null;
+    if (scheduleType === 'once_at') {
+      const at = parseLocalDateTime(String(reminder.onceAt || ''));
+      return at && !reminder.lastFiredAt && at > now ? at : null;
+    }
+    if (scheduleType === 'interval_minutes') {
+      const base = lastFired || new Date(reminder.createdAt || '');
+      const minutes = Number(reminder.intervalMinutes) || 0;
+      if (Number.isNaN(base.getTime()) || minutes <= 0) return null;
+      return new Date(Math.max(base.getTime() + minutes * 60000, now.getTime()));
+    }
+    const time = normalizeTimeOfDay(reminder.dailyAt, DEFAULT_DAILY_AT);
+    const weekdays = weekdaysOf(reminder);
+    for (let offset = 0; offset < 8; offset += 1) {
+      const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset);
+      if (weekdays.length && !weekdays.includes(day.getDay())) continue;
+      const at = parseLocalDateTime(`${formatLocalDate(day)}T${time}`);
+      if (!at || at <= now) continue;
+      if (lastFired && formatLocalDate(lastFired) === formatLocalDate(at)) continue;
+      return at;
+    }
+    return null;
+  }
+
+  /**
+   * Every Jenny check, off ones included, for the agenda's "Jenny checks" list:
+   * enabled first, then by next run, then by title.
+   */
+  function listJennyChecks(reminders, now) {
+    return (Array.isArray(reminders) ? reminders : [])
+      .filter((reminder) => isJennyCheck(reminder) && String(reminder.id || '') !== '')
+      .map((reminder) => ({
+        id: String(reminder.id),
+        label: String(reminder.label || ''),
+        prompt: String(reminder.prompt || ''),
+        enabled: reminder.enabled !== false,
+        scheduleType: scheduleTypeOf(reminder),
+        dailyAt: normalizeTimeOfDay(reminder.dailyAt, DEFAULT_DAILY_AT),
+        weekdays: weekdaysOf(reminder),
+        onceAt: String(reminder.onceAt || ''),
+        intervalMinutes: Number(reminder.intervalMinutes) || 0,
+        nextAt: nextCheckRun(reminder, now),
+      }))
+      .sort((left, right) => (Number(right.enabled) - Number(left.enabled))
+        || ((left.nextAt?.getTime() ?? Infinity) - (right.nextAt?.getTime() ?? Infinity))
+        || left.label.localeCompare(right.label));
   }
 
   /**
@@ -160,6 +232,12 @@
       Number(reminder?.intervalMinutes) || 0,
       reminder?.enabled !== false,
       String(reminder?.sourceKind || ''),
+      String(reminder?.action || ''),
+      weekdaysOf(reminder).join(','),
+      // A check's next run reads lastFiredAt and its hover title the instruction; a plain
+      // reminder's fire repaints nothing.
+      isJennyCheck(reminder) ? String(reminder?.lastFiredAt || '') : '',
+      isJennyCheck(reminder) ? String(reminder?.prompt || '') : '',
     ]);
   }
 
@@ -241,6 +319,7 @@
     computeJournalDigest,
     computeRemindersDigest,
     foldHomeAiPayload,
+    listJennyChecks,
     listStandingReminders,
     reminderInstanceForDay,
     remindersForDay,

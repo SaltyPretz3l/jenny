@@ -52,6 +52,7 @@ const {
   normalizeToolsSettings,
   normalizeUiLanguage,
   normalizeUnattendedGuardMinutes,
+  normalizeDigestQuietStart, normalizeDigestQuietEnd,
   normalizeValidWorkspaceSessionIds,
   normalizeWebSearchSettings,
   normalizeWatcherGlobs,
@@ -91,6 +92,9 @@ const CHAT_UI_TOP_LEVEL_FIELDS = [
   ['safetyMode', normalizeSafetyMode, 'safety_mode_updated'],
   ['unattendedGuardMinutes', normalizeUnattendedGuardMinutes, 'unattended_guard_minutes_updated'],
   ['autoApproveStreakCap', normalizeAutoApproveStreakCap, 'auto_approve_streak_cap_updated'],
+  // Row 86 digest quiet hours: read by main (primary-digest-wiring.js); no reason of their own.
+  ['digestQuietStart', normalizeDigestQuietStart, 'chat_ui_settings_updated'],
+  ['digestQuietEnd', normalizeDigestQuietEnd, 'chat_ui_settings_updated'],
 ];
 
 function cloneSetupState(setup) {
@@ -365,14 +369,8 @@ class ShellConfigService extends EventEmitter {
   }
 
   getChatUiState() {
-    return {
-      ...this.state.chatUi,
-      defaultRunMode: normalizeRunMode(this.state.defaultRunMode),
-      uiLanguage: normalizeUiLanguage(this.state.uiLanguage),
-      use24HourTime: this.state.use24HourTime === true,
-      safetyMode: normalizeSafetyMode(this.state.safetyMode),
-      autoApproveStreakCap: normalizeAutoApproveStreakCap(this.state.autoApproveStreakCap), unattendedGuardMinutes: normalizeUnattendedGuardMinutes(this.state.unattendedGuardMinutes),
-    };
+    // The chatUi block plus every top-level scalar updateChatUiSettings owns, normalized.
+    return { ...this.state.chatUi, ...Object.fromEntries(CHAT_UI_TOP_LEVEL_FIELDS.map(([key, normalize]) => [key, normalize(this.state[key])])) };
   }
   getUiLanguage() {
     return normalizeUiLanguage(this.state.uiLanguage);
@@ -403,7 +401,7 @@ class ShellConfigService extends EventEmitter {
     const nextHome = normalizeHomeConfig({
       ...current,
       ...source,
-      ...Object.fromEntries(['widgets', 'scratchpad', 'calendar', 'layout'].map(mergeHomeSection)),
+      ...Object.fromEntries(['widgets', 'scratchpad', 'calendar', 'layout', 'usageStats'].map(mergeHomeSection)),
     });
     if (JSON.stringify(nextHome) === JSON.stringify(current)) {
       return this.getHomeConfig();

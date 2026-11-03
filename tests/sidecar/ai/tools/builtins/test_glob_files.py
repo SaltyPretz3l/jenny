@@ -9,7 +9,7 @@ import sidecar.ai.tools.builtins.glob_files as glob_module
 from sidecar.ai.error_codes import CMP_TOOL_INVALID_PATH
 from sidecar.ai.tools.builtins.glob_files import (
     MAX_GLOB_RESULTS,
-    _resolve_search_plan,
+    _resolve_search_plans,
     glob_files_tool,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure
@@ -36,6 +36,7 @@ def test_glob_files_finds_basic_matches(tmp_path: Path) -> None:
         "matched_count_scanned": 1,
         "scan_complete": True,
         "truncation_reason": None,
+        "ignored_directories_skipped": 0,
     }
     assert "src/app.py" in result.output
     assert "notes.txt" not in result.output
@@ -192,10 +193,9 @@ def test_glob_files_orders_results_by_newest_mtime_then_filename(tmp_path: Path)
 def test_glob_files_narrows_walk_root_from_static_pattern_prefix(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
 
-    search_root, match_pattern = _resolve_search_plan("src/**/*.py", tmp_path, _guard(tmp_path))
+    plans = _resolve_search_plans("src/**/*.py", tmp_path, _guard(tmp_path))
 
-    assert search_root == tmp_path / "src"
-    assert match_pattern == "**/*.py"
+    assert [(plan.root, plan.patterns) for plan in plans] == [(tmp_path / "src", ("**/*.py",))]
 
 
 def test_glob_files_skips_symlink_escape(tmp_path: Path) -> None:

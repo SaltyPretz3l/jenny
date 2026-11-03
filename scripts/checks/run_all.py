@@ -12,6 +12,11 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from scripts.checks.repo_venv import ensure_repo_venv  # noqa: E402
+
+if __name__ == "__main__":
+    ensure_repo_venv()  # a bare `python` may be a system interpreter without psutil
+
 from scripts.checks.bounded_process import run_bounded  # noqa: E402
 
 # The pre-commit hook runs this driver, and the driver had no wall clock: any

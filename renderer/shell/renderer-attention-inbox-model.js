@@ -110,6 +110,16 @@
     return characters.length > PREVIEW_MAX_CHARS ? characters.slice(0, PREVIEW_MAX_CHARS - 1).join('') + '\u2026' : title;
   }
 
+  /* A pending settings or scheduled-check change's row title, read by the transcript card's own
+   * normalizer: how many settings it changes, or "Change a check: <title>" (rows 88 / 85). */
+  function approvalBlockSubject(method, value) {
+    var block = globalThis.rendererApprovalBlock;
+    if (!block && typeof require === 'function') {
+      try { block = require('../chat/renderer-approval-block'); } catch (_error) { block = null; }
+    }
+    return block && typeof block[method] === 'function' ? block[method](value) : '';
+  }
+
   function buildApprovalRows(options) {
     var rows = [];
     var seenCallIds = new Set();
@@ -136,11 +146,16 @@
       if (!isPlanReview) {
         // A stop names the app's own target (row 69 Q11); its raw id is never the preview.
         var stopTitle = toolName === 'session_stop' ? sessionStopTitle(entry.sessionStopApproval) : '';
+        var settingsTitle = toolName === 'settings_change' ? approvalBlockSubject('settingsChangeSubject', entry.settingsChangeApproval) : '';
+        // A check change never previews the model's input, only the app's reading of it (row 85).
+        var changesSchedule = toolName === 'schedule_change';
+        var scheduleTitle = changesSchedule ? approvalBlockSubject('scheduleChangeSubject', entry.scheduleChangeApproval) : '';
         row.preview = toolName === 'session_stop'
           ? (stopTitle ? jt('approval.block.sessionStopSubject', 'Stop {title}', { title: stopTitle })
             : jt('chat.attentionInbox.stopAnotherChat', 'Stop another chat'))
-          : previewFor(options.facts, toolName, entry.input);
-        row.facts = Object.freeze(factsFor(options.facts, toolName, entry.input));
+          : changesSchedule ? (scheduleTitle || jt('chat.attentionInbox.scheduledCheck', 'Change a scheduled check'))
+            : (settingsTitle || previewFor(options.facts, toolName, entry.input));
+        row.facts = Object.freeze(changesSchedule ? [] : factsFor(options.facts, toolName, entry.input));
         // The backend's own scope and consequence for this call, as raw
         // backend strings; the view translates them exactly as the transcript
         // card does. A stated reason outranks the generic consequence.
@@ -148,6 +163,8 @@
         row.consequence = text(entry.reason) || text(entry.policyConsequence || entry.policy_consequence);
         // Mirror renderer-approval-block.js: either spelling withholds the scope.
         row.canAlwaysAllow = !(entry.oneOffOnly === true || entry.one_off_only === true);
+        // A settings or check change is approved only on its card, where the app's reading is (rows 88 / 85).
+        row.canAllow = toolName !== 'settings_change' && !changesSchedule;
       }
       rows.push(row);
     });

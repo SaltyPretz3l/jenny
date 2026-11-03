@@ -281,8 +281,10 @@
           // above them is emptied under their eyes while the block streams.
           // The DOM is bounded from the tail instead (resolveDetachedTailEnd);
           // held-back units appear once follow re-latches (HB-024).
-          const readerAway = typeof controller?.isReaderAway === 'function'
-            && controller.isReaderAway() === true;
+          // Row 101: a reader scrolled up inside the live box is detached too.
+          const readerAway = (typeof controller?.isReaderAway === 'function'
+            && controller.isReaderAway() === true)
+            || globalThis.rendererReasoningLiveBoxFollow?.isAnyReaderAway?.() === true;
           const liveWindowStart = typeof resolveLiveWindowStart === 'function'
             ? resolveLiveWindowStart(streamModel.units, cached ? cached.liveWindowStart : 0, {
               previousElidedChars: cached ? cached.liveWindowElidedChars : 0,

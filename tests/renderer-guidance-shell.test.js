@@ -543,9 +543,10 @@ test('profile and setup card wraps the local profile editor in a labelled group'
   assert.ok(card);
 
   const groups = card.querySelectorAll(':scope > .settings-group');
-  assert.deepEqual([...groups].map(group => group.getAttribute('data-settings-merged-section')), [null, null, 'dataPrivacy', 'aboutUpdates', null]);
-  // The settings live review (2026-10-03) gave uninstall its own closing group.
-  assert.ok(groups[4].querySelector('#dataLifecycleRemoveMount'));
+  assert.deepEqual([...groups].map(group => group.getAttribute('data-settings-merged-section')), [null, null, null, 'dataPrivacy', 'aboutUpdates', null]);
+  // Row 93 added the Your data group; the settings live review (2026-10-03) gave uninstall its own closing group.
+  assert.ok(groups[2].querySelector('#dataStorageMount'));
+  assert.ok(groups[5].querySelector('#dataLifecycleRemoveMount'));
   for (const id of ['dataPrivacy', 'aboutUpdates']) {
     assert.equal(doc.querySelector(`.settings-card[data-settings-section="${id}"]`), null, 'a folded-in section has no card of its own');
   }

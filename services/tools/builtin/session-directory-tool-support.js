@@ -30,6 +30,11 @@ async function callDirectory(context, method, args) {
   }
 }
 
+// Whether the session directory shows the chat to this live caller: the scope `session_transcript` uses.
+async function inDirectoryScope(context, sessionId) {
+  return (await callDirectory(context, 'transcript', { sessionId, rows: 1 }))?.ok === true;
+}
+
 function withDataNote(value) {
   return value?.ok === true ? { ...value, note: DIRECTORY_DATA_NOTE } : value;
 }
@@ -39,4 +44,4 @@ function plainInput(input, keys) {
     && Object.keys(input).every(key => keys.includes(key));
 }
 
-module.exports = { DIRECTORY_DATA_NOTE, callDirectory, jsonToolResult, plainInput, withDataNote };
+module.exports = { DIRECTORY_DATA_NOTE, callDirectory, inDirectoryScope, jsonToolResult, plainInput, withDataNote };

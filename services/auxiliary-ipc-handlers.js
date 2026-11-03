@@ -19,6 +19,7 @@ const { normalizeToolName } = require('./tools/tool-permission-store');
 const { surfaceFamilyForTool, connectionIdForTool } = require('./tools/tool-surface-families');
 const { DEFAULT_TOOL_DEFAULTS } = require('./tools/tool-policy-evaluator');
 const { isToolAvailableDuringSessionLockdown } = require('./backend/session-lockdown-gate');
+const { prepareReminderUpsert, reminderDeleteEvent } = require('./main/proactive-reminder-upsert');
 const { isPlainObject } = require('./value-utils');
 
 const { getWindowStateSnapshot } = require('./window-state-service');
@@ -36,6 +37,7 @@ const { CONTEXT_LENGTH_STEPS } = require('./shell-config-compaction-tuning');
 const { buildNextTurnContextSummary } = require('./backend/next-turn-context-summary');
 const { previewContext } = require('./backend/context-preview');
 const { markAcceptedPlanApproved } = require('./backend/plan-document-events');
+const { registerUsageStatsIpc } = require('./main/usage-stats-ipc');
 const {
   createChatGptAuthServiceDefault,
   ensureChatgptAuthService,
@@ -301,6 +303,7 @@ function registerAuxiliaryIpcHandlers({
   projectNotesService = null,
   getWindowState,
   windowExitGuard = null,
+  appearanceRelay = null,
   createAuthService = createChatGptAuthServiceDefault,
   workspaceGitService = null,
   workspaceIdeService = null,
@@ -786,12 +789,18 @@ function registerAuxiliaryIpcHandlers({
       return { ...getProactiveStatePayload(), ...prepared };
     },
     'proactive.upsertReminder': (_, reminder) => {
-      assertProactiveReminderIpcPayload(shellConfigService, reminder);
-      shellConfigService.upsertReminder(reminder);
+      const { reminder: merged, event } = prepareReminderUpsert(shellConfigService, reminder);
+      assertProactiveReminderIpcPayload(shellConfigService, merged);
+      shellConfigService.upsertReminder(merged);
+      if (event) {
+        try { backendService?.primaryChatControls?.recordScheduleEvent?.(event); } catch (_error) { /* the log never blocks the write */ }
+      }
       return getProactiveStatePayload();
     },
     'proactive.deleteReminder': (_, reminderId) => {
+      const event = reminderDeleteEvent(shellConfigService, reminderId);
       shellConfigService.deleteReminder(reminderId);
+      try { if (event) backendService?.primaryChatControls?.recordScheduleEvent?.(event); } catch (_error) { /* never blocks the delete */ }
       return getProactiveStatePayload();
     },
     'chat.startStream': (_, payload) => backendService.startChatStream(
@@ -824,6 +833,8 @@ function registerAuxiliaryIpcHandlers({
     // Renderer→main reply to a native-close dirty preflight. Resolves
     // the exit guard's pending entry (proceed:true closes; proceed:false keeps
     // the window). Fail-soft when no guard is wired.
+    // Row 88 D8: the renderer's reply to an appearance relay request (sender re-checked inside).
+    'appearance.respondRelay': (event, payload) => (appearanceRelay ? appearanceRelay.handleResponse(event, payload) : { ok: false }),
     'window.respondExitPreflight': (_, payload) => {
       if (windowExitGuard && typeof windowExitGuard.resolvePreflight === 'function') {
         return windowExitGuard.resolvePreflight(payload);
@@ -973,6 +984,8 @@ function registerAuxiliaryIpcHandlers({
   registerWorkspaceRecoveryIpcHandlers({
     ipcMainLike, backendService, ipcAuthorization, gitService: workspaceGitService, ideService: workspaceIdeService,
   });
+  // Home "Usage" widget read (row 98), beside usage.getSnapshot: every range from the durable rollup.
+  registerUsageStatsIpc(ipcMainLike, { usageHistory, logger: log, authorization: ipcAuthorization });
 }
 
 module.exports = {

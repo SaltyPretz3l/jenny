@@ -172,13 +172,24 @@ class FakeKernel:
         return te_results.tool_result_message(call, outcome, config=self._config)
 
 
-def build_kernel(config_raw: dict[str, Any] | None = None, mcp_exec: Any = None) -> FakeKernel:
+def build_kernel(
+    config_raw: dict[str, Any] | None = None,
+    mcp_exec: Any = None,
+    *,
+    read_only_commands: bool = False,
+) -> FakeKernel:
+    # COMMAND (`echo hello`) is a read-only command (row 102); the approval-parity tests
+    # exercise the ordinary card, so the grant is off unless a test opts in.
     config = parse_runtime_config(
         {
             "engine_type": "mock",
             "tools_shell_enabled": True,
             **(config_raw or {}),
-            "feature_flags": {"auto_checkpoint": False, "shell_security": True},
+            "feature_flags": {
+                "auto_checkpoint": False,
+                "shell_security": True,
+                "read_only_commands": read_only_commands,
+            },
         }
     )
     runtime_descriptors = (
@@ -358,6 +369,18 @@ def test_policy_ask_sends_the_ordinary_blocking_approval_and_runs_on_approve(roo
     assert asks[0]["params"]["tool_name"] == "run_command"
     assert asks[0]["params"]["tool_call_id"] == CALL_ID
     assert asks[0]["params"]["request_id"] == "req_cmd_1"
+    assert command_outcome(outcome)["status"] == "succeeded"
+    assert len(calls) == 1
+
+
+def test_read_only_proposed_command_runs_on_run_without_a_second_card(root: Path) -> None:
+    calls: list[Any] = []
+    kernel = build_kernel(
+        mcp_exec=lambda *a, **k: calls.append(a) or native_result(0), read_only_commands=True
+    )
+    electron = ScriptedElectron(approve=True)
+    outcome = run(make_params(root), kernel, electron)
+    assert electron.tool_events(TOOL_REQUEST_APPROVAL_METHOD) == []
     assert command_outcome(outcome)["status"] == "succeeded"
     assert len(calls) == 1
 

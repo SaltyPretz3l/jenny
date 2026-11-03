@@ -481,3 +481,39 @@ def test_run_ci_timeout_reaping_has_a_bounded_kill_fallback() -> None:
     module._reap_stage_process(process)
     assert process.killed is True
     assert process.waits == 2
+
+
+def test_run_ci_routes_the_packaged_smoke_to_docker_only_under_smart_app_control(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_script_module("run_ci.py")
+    monkeypatch.delenv("JENNY_CI_PACKAGED_SMOKE", raising=False)
+
+    def packaged(stages: list) -> list[str]:
+        return next(stage for stage in stages if stage.name == "smoke_packaged_flow").command
+
+    native = packaged(module.STAGES)
+    assert packaged(module._route_packaged_smoke(module.STAGES, sac_enforced=False)) == native
+    routed = module._route_packaged_smoke(module.STAGES, sac_enforced=True)
+    assert packaged(routed)[1:] == [
+        "scripts/packaging/smoke_packaged_linux_docker.py", "--timeout-seconds", "1200",
+    ]
+    assert [stage.name for stage in routed] == [stage.name for stage in module.STAGES]
+    assert next(stage for stage in routed if stage.name == "smoke_packaged_flow").wave == 4
+    assert packaged(module.STAGES) == native, "the stage list itself is never mutated"
+
+    monkeypatch.setenv("JENNY_CI_PACKAGED_SMOKE", "native")
+    assert packaged(module._route_packaged_smoke(module.STAGES, sac_enforced=True)) == native
+    monkeypatch.setenv("JENNY_CI_PACKAGED_SMOKE", "docker")
+    assert "scripts/packaging/smoke_packaged_linux_docker.py" in packaged(
+        module._route_packaged_smoke(module.STAGES, sac_enforced=False)
+    )
+    monkeypatch.setenv("JENNY_CI_PACKAGED_SMOKE", "linux")
+    with pytest.raises(SystemExit):
+        module._route_packaged_smoke(module.STAGES, sac_enforced=False)
+
+
+def test_run_ci_smart_app_control_probe_is_false_off_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_script_module("run_ci.py")
+    monkeypatch.setattr(module.sys, "platform", "linux")
+    assert module._smart_app_control_enforced() is False

@@ -578,6 +578,7 @@ function createWorkspaceGitCheckpointApi({
 }
 
 module.exports = {
+  CHECKPOINT_WRITE_VERBS,
   checkpointRefIsSafe,
   createCheckpointTransactionRunner,
   createWorkspaceGitCheckpointApi,

@@ -245,14 +245,19 @@
       const isImage = hasArtifact && capabilities.kind === 'image';
       // An available generated image: View full screen shows and Copy copies the image.
       const imageTarget = artifactMode ? actionsModule?.imageActionTarget?.(artifact, panelEl) || null : null;
-      // Tasks, code review, file preview and subagents share this header for
-      // its Close only: the artifact actions hide there.
+      // Tasks, code review and subagents share this header for its Close only:
+      // the artifact actions hide there. The file preview keeps Copy for its
+      // text; its controller handles the click (renderer-artifact-file-preview.js).
       const copyBtn = panelEl.querySelector('[data-artifact-panel-v2-copy]');
       const overflowBtn = panelEl.querySelector('[data-artifact-panel-overflow]');
+      const fileCopy = mode === 'file_preview';
       setHidden(panelEl.querySelector('[data-artifact-panel-fullscreen]'), !imageTarget);
-      setHidden(copyBtn, !artifactMode);
-      setDisabled(copyBtn, !imageTarget && (!sourceReady || isImage));
-      const copyLabel = imageTarget ? jt('artifacts.actions.copyImage', 'Copy image') : jt('common.copy', 'Copy');
+      setHidden(copyBtn, !artifactMode && !fileCopy);
+      setDisabled(copyBtn, fileCopy
+        ? !panelEl.querySelector('.artifact-file-preview-code, .artifact-file-preview-doc')
+        : !imageTarget && (!sourceReady || isImage));
+      const copyLabel = fileCopy ? jt('artifacts.filePreview.copyFile', 'Copy file contents')
+        : imageTarget ? jt('artifacts.actions.copyImage', 'Copy image') : jt('common.copy', 'Copy');
       copyBtn?.setAttribute('aria-label', copyLabel);
       copyBtn?.setAttribute('title', copyLabel);
       setHidden(overflowBtn, !artifactMode);
@@ -280,8 +285,10 @@
     }
 
     // The text body the Wrap control governs, or null: a tool output ('output'),
-    // or the code editor, a read-only source pre, the file-preview list ('code').
+    // the code editor, a read-only source pre, the file-preview list ('code'),
+    // or the Changes diffs ('diff').
     function activeWrapKind(mode = state.ui?.artifactReview?.mode || 'artifact') {
+      if (mode === 'code_review') return 'diff';
       if (mode !== 'artifact' && mode !== 'file_preview') return null;
       if (panelEl.querySelector('.artifact-preview-content:not(.hidden) .artifact-output-viewer')) return 'output';
       const codeBody = panelEl.querySelector(
@@ -356,6 +363,7 @@
         return;
       }
       if (event.target.closest?.('[data-artifact-panel-v2-copy]')) {
+        if ((state.ui?.artifactReview?.mode || 'artifact') === 'file_preview') return;
         const imageTarget = actionsModule?.imageActionTarget?.(currentArtifact, panelEl);
         if (imageTarget) globalThis.rendererImageViewerController?.run?.('copy', imageTarget);
         else managerHooks.copySelectedArtifact?.();

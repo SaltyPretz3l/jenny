@@ -83,7 +83,7 @@ def allow_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         mcp_http_auth,
         "validate_public_url",
-        lambda url, *, allow_private=False, deadline=None: ValidatedUrl(url=url, pinned_ip="127.0.0.1"),
+        lambda url, **_kwargs: ValidatedUrl(url=url, pinned_ip="127.0.0.1"),
     )
 
 
@@ -221,7 +221,7 @@ def test_mint_failure_raises_structured_error_without_secret(make_token_server: 
 
 
 def test_token_url_ssrf_validated(monkeypatch: pytest.MonkeyPatch) -> None:
-    def reject(url: str, *, allow_private: bool = False, deadline: float | None = None) -> None:
+    def reject(url: str, *, allow_private: bool = False, **_kwargs: Any) -> None:
         raise PermissionError("Private or local IP addresses are blocked.")
 
     monkeypatch.setattr(mcp_http_auth, "validate_public_url", reject)
@@ -266,6 +266,27 @@ def test_token_url_private_allowed_when_owner_opts_in(make_token_server: Any) ->
             allow_private_addresses=True,
         )
         assert source.token() == "minted-private"
+
+
+def test_token_url_loopback_allowed_with_the_loopback_flag(make_token_server: Any) -> None:
+    # Row 103: a self-hosted issuer on this machine mints under the loopback-only
+    # flag (real validator); the flag alone never opens a private address.
+    def responder(handler: _TokenHandler, form: dict[str, str]) -> None:
+        _write_token(handler, {"access_token": "minted-loopback", "expires_in": 3600})
+
+    server = make_token_server(responder)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(mcp_http_auth, "validate_public_url", _REAL_VALIDATE_PUBLIC_URL)
+        source = ClientCredentialsTokenSource(
+            _auth(server.url), server_name="remote", allow_loopback=True
+        )
+        assert source.token() == "minted-loopback"
+        lan = ClientCredentialsTokenSource(
+            _auth("http://192.168.1.5:9/token"), server_name="remote", allow_loopback=True
+        )
+        with pytest.raises(MCPError) as excinfo:
+            lan.token()
+    assert excinfo.value.code == CMP_MCP_CONFIG_INVALID
 
 
 def test_token_url_opt_in_still_refuses_redirects(make_token_server: Any) -> None:
@@ -401,7 +422,7 @@ def test_cancelled_dns_keeps_mint_ownership_until_cleanup(monkeypatch: pytest.Mo
     entered = threading.Event()
     release = threading.Event()
     deadlines = []
-    def validate(url: str, *, allow_private: bool, deadline: float) -> Any:
+    def validate(url: str, *, allow_private: bool, deadline: float, **_kwargs: Any) -> Any:
         deadlines.append(deadline)
         entered.set()
         release.wait(1)

@@ -92,3 +92,25 @@ test('an unchanged chat UI patch writes nothing and emits nothing', (t) => {
   assert.equal(events.length, 0);
   assert.deepEqual(result, current);
 });
+
+test('digest quiet hours are chatUi scalars: normalized, persisted and read back (row 86)', (t) => {
+  const { service, userDataPath, writes, events } = createService(t);
+  const initial = service.getChatUiState();
+  assert.equal(initial.digestQuietStart, '22:00');
+  assert.equal(initial.digestQuietEnd, '07:00');
+
+  const next = service.updateChatUiSettings({ digestQuietStart: '23:30', digestQuietEnd: '06:00' });
+  assert.equal(writes.length, 1);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].reason, 'chat_ui_settings_updated');
+  assert.equal(next.digestQuietStart, '23:30');
+  assert.equal(next.digestQuietEnd, '06:00');
+  assert.equal(Object.hasOwn(service.getState().chatUi, 'digestQuietStart'), false, 'top-level scalars, not the chatUi block');
+  const reloaded = new ShellConfigService({ userDataPath, env: {} }).getChatUiState();
+  assert.equal(reloaded.digestQuietStart, '23:30');
+  assert.equal(reloaded.digestQuietEnd, '06:00');
+
+  assert.equal(service.updateChatUiSettings({ digestQuietStart: '23:45' }).digestQuietStart, '22:00', 'off the half hour -> default');
+  service.updateChatUiSettings({ digestQuietStart: '22:00', digestQuietEnd: '06:00' });
+  assert.equal(service.getChatUiState().digestQuietStart, '22:00');
+});

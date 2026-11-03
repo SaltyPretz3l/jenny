@@ -81,3 +81,16 @@ test('isPrimarySession and isPrimarySessionId match only the primary role', () =
   assert.equal(isPrimarySessionId(sessions, ''), false);
   assert.equal(isPrimarySessionId(null, 'b'), false);
 });
+
+test('digest quiet hours normalize to "HH:MM" on the half hour, else the default (row 86)', () => {
+  const { normalizeDigestQuietStart, normalizeDigestQuietEnd, DIGEST_QUIET_DEFAULTS } = require('../renderer/shared/string-utils');
+  assert.deepEqual({ ...DIGEST_QUIET_DEFAULTS }, { digestQuietStart: '22:00', digestQuietEnd: '07:00' });
+  for (const value of ['00:00', '00:30', '07:00', '12:30', '23:30']) {
+    assert.equal(normalizeDigestQuietStart(value), value);
+    assert.equal(normalizeDigestQuietEnd(value), value);
+  }
+  for (const value of ['24:00', '23:45', '7:00', '07:15', ' 07:00', '07:00 ', '0700', '', null, undefined, 700, {}, ['07:00']]) {
+    assert.equal(normalizeDigestQuietStart(value), '22:00', String(value));
+    assert.equal(normalizeDigestQuietEnd(value), '07:00', String(value));
+  }
+});

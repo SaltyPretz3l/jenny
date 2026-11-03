@@ -231,6 +231,14 @@
     const field = (key, label, list, value) => select({
       id: `${idBase}-${key}`, label, value, options: list, disabled: locked, dataset: { 'proposal-option': key },
     });
+    // Row 94 P2: a fork stays in its source chat's project, so the project is a fixed value, not a picker.
+    const forked = typeof options.fork_of_session_id === 'string';
+    const projectLabel = (lists.destinations.find((entry) => entry.value === (options.destination_project_id || '')) || {}).label || '';
+    const projectRow = forked
+      ? `<div class="proposal-options-row"><span class="proposal-options-label">${escapeHtml(jt('chat.proposal.session.project', 'Project'))}</span>`
+        + `<span class="proposal-options-value" data-proposal-locked="destination">${escapeHtml(projectLabel)}</span></div>`
+        + note(jt('chat.proposal.session.forkProjectNote', 'A fork stays in the project of the chat it copies.'))
+      : field('destination', jt('chat.proposal.session.project', 'Project'), lists.destinations, options.destination_project_id || '');
     const modes = MODE_LABELS();
     const runModes = caps.run_modes.filter((mode) => modes[mode]);
     const modeControl = runModes.length >= 2 && segmented
@@ -239,7 +247,7 @@
         options: runModes.map((mode) => ({ value: mode, label: modes[mode] })), dataset: { 'proposal-option': 'run_mode' },
       })
       : `<span class="proposal-options-value">${escapeHtml(modes[runModes[0]] || modes[options.run_mode] || modes.agent)}</span>`;
-    return field('destination', jt('chat.proposal.session.project', 'Project'), lists.destinations, options.destination_project_id || '')
+    return projectRow
       + field('model', jt('chat.proposal.session.model', 'Model'), lists.models, options.preferred_model || '')
       + field('effort', jt('chat.proposal.session.effort', 'Effort'), lists.efforts, options.reasoning_effort || '')
       + `<div class="proposal-options-row"><span class="proposal-options-label">${escapeHtml(jt('chat.proposal.session.mode', 'Mode'))}</span>${modeControl}</div>`
@@ -352,6 +360,17 @@
     return `<p class="proposal-session-title">${h.escapeHtml(String(display.title || ''))}</p>${description}`;
   }
 
+  /** Row 94 P2: "Fork of <title>" under a pending fork's title; the title comes with the capabilities read. */
+  function forkLine(h, proposal, lookup) {
+    const options = asObject(proposal && proposal.options);
+    if (!options || typeof options.fork_of_session_id !== 'string') return '';
+    const caps = lookup.capabilities && lookup.capabilities.status === 'ready' ? asObject(lookup.capabilities.value) : null;
+    const source = caps && asObject(caps.fork_source);
+    const title = source && typeof source.title === 'string' ? source.title : '';
+    const text = title ? jt('chat.proposal.session.forkOf', 'Fork of {title}', { title }) : jt('chat.proposal.session.forkOfChat', 'Fork of another chat');
+    return `<p class="proposal-session-meta" data-proposal-fork="1">${h.escapeHtml(text)}</p>`;
+  }
+
   /** ctx: {sessionId, proposalId, lookup}; the card for kind session (offer tray, suggestion row or receipt). */
   function buildSessionMarkup(h, ctx) {
     const { escapeHtml } = h;
@@ -389,7 +408,7 @@
     else if (pending) tail = h.restoreInfo(proposal) ? h.restoredPendingLine(h, proposal) : blockedLine(h, proposal);
     const dismiss = pending || !proposal ? h.dismissButton(h, !can('dismiss')) : '';
     return `${h.cardOpen(h, view, 'session', state, suggestion ? 'proposal-suggestion' : ['proposal-decision', 'proposal-session-offer'].join(' '))}${head}${eyebrow}`
-      + `${titleMarkup(h, display)}${authNote}`
+      + `${titleMarkup(h, display)}${pending ? forkLine(h, proposal, lookup) : ''}${authNote}`
       + `<div class="proposal-actions">${optionsMarkup(h, ctx, proposal)}<div class="proposal-choices">${choiceButtons(h, ctx, proposal, suggestion, can)}</div></div>`
       + `${alwaysAllowMarkup(h, ctx, proposal, suggestion)}`
       + `${dismiss}${tail}${h.noticeMarkup(h, lookup.notice)}</section>`;

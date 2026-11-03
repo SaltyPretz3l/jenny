@@ -48,7 +48,9 @@
 .composer-chat-panel {
   bottom: calc(100% + var(--space-3));
   inset-inline-start: 0;
-  width: min(340px, calc(100vw - 32px));
+  /* One list of rows; wider than the popover primitive's 320px cap. */
+  width: min(384px, calc(100vw - 32px));
+  max-width: none;
   padding: var(--space-4) 0 var(--space-2);
 }
 
@@ -58,8 +60,18 @@
   align-items: baseline;
   gap: var(--space-3);
   padding: 0 var(--space-5) var(--space-3);
+}
+
+.composer-chat-panel-title {
+  font-size: var(--font-size-body);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.composer-chat-panel-tally {
   font-size: var(--font-size-caption);
-  color: var(--text-secondary);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .composer-chat-link {
@@ -72,41 +84,10 @@
 }
 
 .composer-chat-link:focus-visible,
-.composer-chat-filter:focus-visible {
+.composer-chat-filter:focus-visible,
+.composer-tool-count:focus-visible {
   outline: var(--focus-ring-width) solid var(--focus-ring-color);
   outline-offset: var(--focus-ring-offset);
-}
-
-.composer-chat-panel-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  padding: 0 var(--space-5) var(--space-5);
-}
-
-.composer-chat-panel .composer-family-chip,
-.composer-chat-panel .composer-family-chip:hover:not(.inv-chip--disabled) {
-  color: var(--text-secondary);
-  border-color: var(--border-default);
-  background: transparent;
-  border-radius: var(--radius-pill);
-}
-
-.composer-chat-panel .composer-family-chip.inv-chip--on,
-.composer-chat-panel .composer-family-chip.inv-chip--on:hover {
-  color: var(--text-primary);
-  border-color: var(--border-strong);
-  background: transparent;
-}
-
-.composer-family-chip.inv-chip--on .inv-chip-icon {
-  color: var(--accent);
-}
-
-.composer-chat-panel .composer-family-chip--blocked,
-.composer-chat-panel .composer-family-chip--blocked:hover:not(.inv-chip--disabled) {
-  border-style: dashed;
-  color: var(--accent-amber);
 }
 
 .composer-chat-panel-row {
@@ -115,6 +96,161 @@
   align-items: center;
   padding: var(--space-3) var(--space-5);
   font-size: var(--font-size-body);
+}
+
+.composer-chat-filter {
+  box-sizing: border-box;
+  width: calc(100% - 2 * var(--space-5));
+  margin: 0 var(--space-5) var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+}
+
+.composer-chat-list {
+  max-height: min(56vh, 440px);
+  overflow-y: auto;
+}
+
+.composer-chat-section-label {
+  padding: var(--space-5) var(--space-5) var(--space-1);
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+}
+
+.composer-chat-list > section:first-child .composer-chat-section-label {
+  padding-top: var(--space-2);
+}
+
+/* Row: icon | name over one muted line | member count + switch. No borders. */
+.composer-tool-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  column-gap: var(--space-4);
+  align-items: center;
+  padding: 6px var(--space-5);
+  cursor: pointer;
+}
+
+.composer-tool-row:hover {
+  background: var(--surface-popover-row);
+}
+
+.composer-tool-row[data-blocked="true"] {
+  cursor: default;
+}
+
+.composer-tool-icon {
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+.composer-tool-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.composer-tool-row[data-on="true"] .composer-tool-icon {
+  color: var(--accent);
+}
+
+.composer-tool-text {
+  display: grid;
+  min-width: 0;
+}
+
+.composer-tool-label {
+  font-size: var(--font-size-body);
+  line-height: 1.35;
+  color: var(--text-secondary);
+}
+
+.composer-tool-row[data-on="true"] .composer-tool-label {
+  color: var(--text-primary);
+}
+
+.composer-tool-row[data-blocked="true"] .composer-tool-label {
+  color: var(--text-muted);
+}
+
+.composer-tool-sub {
+  font-size: var(--font-size-caption);
+  line-height: 1.4;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-tool-warn {
+  color: var(--accent-amber);
+}
+
+.composer-tool-trail {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.composer-tool-trail .inv-toggle-track {
+  flex-shrink: 0;
+}
+
+/* The member count shows on hover or focus, and stays while its list is open. */
+.composer-tool-count {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.composer-tool-row:hover .composer-tool-count,
+.composer-tool-row:focus-within .composer-tool-count,
+.composer-tool-count[aria-expanded="true"] {
+  opacity: 1;
+}
+
+/* Without hover (touch, pen) the count is always shown. */
+@media (hover: none) {
+  .composer-tool-count {
+    opacity: 1;
+  }
+}
+
+.composer-tool-count:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.composer-tool-members {
+  grid-column: 2 / 4;
+  margin: var(--space-2) 0 var(--space-1);
+  font-size: var(--font-size-caption);
+  line-height: 1.6;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.composer-tool-members code {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-caption);
+  color: var(--text-secondary);
+}
+
+.composer-chat-empty,
+.composer-chat-always-on {
+  margin: 0;
+  padding: var(--space-4) var(--space-5) 0;
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
 }
 
 .composer-chat-panel-foot {
@@ -127,101 +263,18 @@
   font-size: var(--font-size-caption);
 }
 
-.composer-chat-always-on {
-  color: var(--text-secondary);
+/* Reset sits at the start when shown; settings always ends the row. */
+.composer-chat-panel-foot [data-chat-panel-action="settings"] {
+  margin-inline-start: auto;
 }
 
-.composer-chat-list {
-  max-height: min(60vh, 420px);
-  overflow-y: auto;
-}
-
-.composer-chat-section-label {
-  padding: var(--space-4) var(--space-5) var(--space-1);
-  font-size: var(--font-size-caption);
-  color: var(--text-secondary);
-}
-
-.composer-tool-row {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
-  column-gap: var(--space-3);
-  align-items: start;
-  padding: var(--space-2) var(--space-5);
-  border-radius: var(--radius-sm);
-}
-
-.composer-tool-row:hover {
-  background: var(--surface-popover-row);
-}
-
-.composer-tool-row .inv-toggle {
-  flex-direction: row-reverse;
-  justify-content: space-between;
-  min-width: 0;
-}
-
-.composer-tool-row .inv-toggle-label-group {
-  min-width: 0;
-}
-
-.composer-tool-row .inv-toggle-track {
-  flex-shrink: 0;
-}
-
-.composer-tools-row-icon {
-  display: inline-flex;
-  color: var(--text-secondary);
-}
-
-.composer-tool-row:has(.inv-toggle--on) .composer-tools-row-icon {
-  color: var(--accent);
-}
-
-.composer-tools-row-icon svg {
-  width: 16px;
-  height: 16px;
-}
-
-.composer-tool-reason,
-.composer-tool-partial,
-.composer-tool-members,
-.composer-tool-row > .composer-chat-link {
-  grid-column: 2;
-  font-size: var(--font-size-caption);
-  margin-top: var(--space-1);
-}
-
-.composer-tool-row > .composer-chat-link {
-  justify-self: start;
-}
-
-.composer-tool-reason {
-  color: var(--accent-amber);
-}
-
-.composer-tool-partial,
-.composer-tool-members {
-  color: var(--text-secondary);
-}
-
-.composer-tool-members {
+/* Bar chip: "N off" is plain amber text, not a count pill. */
+:is(.composer-rail, .composer-toolbar-left) .composer-tools-chip .inv-chip-count {
   padding: 0;
-  list-style: none;
-  margin-bottom: 0;
-  overflow-wrap: anywhere;
-}
-
-.composer-chat-filter {
-  box-sizing: border-box;
-  width: calc(100% - 2 * var(--space-5));
-  margin: 0 var(--space-5) var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-primary);
-  font-size: var(--font-size-body);
+  border: 0;
+  background: none;
+  color: var(--accent-amber);
+  font-size: var(--font-size-caption);
 }
 
 .composer-chat-panel [hidden] {

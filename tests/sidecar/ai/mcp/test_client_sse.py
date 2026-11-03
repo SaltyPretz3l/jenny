@@ -88,7 +88,7 @@ def allow_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         transport_sse,
         "validate_public_url",
-        lambda url, *, allow_private=False: ValidatedUrl(url=url, pinned_ip="127.0.0.1"),
+        lambda url, **_kwargs: ValidatedUrl(url=url, pinned_ip="127.0.0.1"),
     )
 
 
@@ -132,7 +132,7 @@ def test_configure_threads_allow_private_addresses_into_the_transport(
     monkeypatch.setattr(
         transport_sse,
         "validate_public_url",
-        lambda url, *, allow_private=False: (
+        lambda url, *, allow_private=False, **_kwargs: (
             seen.append(allow_private),
             ValidatedUrl(url=url, pinned_ip="127.0.0.1"),
         )[1],
@@ -153,6 +153,30 @@ def test_configure_threads_allow_private_addresses_into_the_transport(
     # close() restores the strict default so a later configure() cannot inherit
     # a stale opt-in.
     assert client._allow_private_addresses is False
+
+
+def test_configure_threads_allow_loopback_into_the_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    server: Any,
+) -> None:
+    seen: list[tuple[bool, bool]] = []
+
+    monkeypatch.setattr(
+        transport_sse,
+        "validate_public_url",
+        lambda url, *, allow_private=False, allow_loopback=False: (
+            seen.append((allow_private, allow_loopback)),
+            ValidatedUrl(url=url, pinned_ip="127.0.0.1"),
+        )[1],
+    )
+
+    client = MCPClient()
+    try:
+        client.configure((_sse_config(server.url),), sse_enabled=True, allow_loopback=True)
+        assert seen == [(False, True)]
+    finally:
+        client.close()
+    assert client._allow_loopback is False
 
 
 def test_build_transport_sse_disabled_still_raises_invariant() -> None:

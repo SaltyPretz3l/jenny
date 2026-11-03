@@ -38,6 +38,9 @@ const {
 const {
   USAGE_HISTORY_SCHEMA_VERSION,
 } = require('../services/usage-history-service');
+const {
+  USAGE_ROLLUP_SCHEMA_VERSION,
+} = require('../services/usage-rollup');
 
 const REGISTRY_PATH = '../services/backend/schema-version-registry';
 const SCHEDULER_SERVICE_PATH = '../services/scheduler-service';
@@ -91,6 +94,7 @@ test('getAllSchemaVersions returns Electron registry entries and normalized side
     ['electron.scheduled_tasks', SCHEDULED_TASKS_SCHEMA_VERSION],
     ['electron.turn_diagnostics', TURN_DIAGNOSTIC_SCHEMA_VERSION],
     ['electron.usage_history', USAGE_HISTORY_SCHEMA_VERSION],
+    ['electron.usage_rollup', USAGE_ROLLUP_SCHEMA_VERSION],
     ['electron.jenny_status', JENNY_STATUS_SCHEMA_VERSION],
     ['electron.mcp_servers', 2],
     ['sidecar.memory_store', 5],

@@ -4,6 +4,20 @@
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const noop = () => {};
 
+  // Delete all chats (row 95) removes sessions behind the renderer's back: reload the list, then run the
+  // single-delete teardown for every chat that went (the Jenny chat stays; unsent local drafts are not backend chats).
+  function createDeleteAllRefresh({ state, loadSessions, teardown }) {
+    const ids = () => new Set((state.sessions || []).filter((s) => s && s.id && s.session_role !== 'primary' && s.optimistic_local !== true).map((s) => s.id));
+    return async function refreshAfterDeleteAll() {
+      const before = ids();
+      await loadSessions?.(state.currentSessionId);
+      const after = new Set((state.sessions || []).map((s) => s && s.id));
+      for (const id of before) {
+        if (!after.has(id)) await teardown?.()?.forgetDeletedSession?.(id);
+      }
+    };
+  }
+
   function bindShellEventControllers(ctx) {
     const { state, constants, dom, controllers, callbacks, windowRef } = ctx;
     const { chatShellController, multiStreamController } = controllers;
@@ -64,12 +78,74 @@
       }) || noop);
     }
 
+    // Row 94: the primary chat changed other chats (rename, pin, archive, move, model, mode). Re-read the
+    // list (which also re-derives the open chat's pickers) and repaint the rail, the header and the composer.
+    const sessionsBridge = windowRef.jennyShell?.sessions || null;
+    if (sessionsBridge && typeof sessionsBridge.onChanged === 'function') {
+      registerCleanup(root.rendererSessionUnread?.bindSessionsChangedSync?.({
+        bridge: sessionsBridge,
+        refresh: async (sessionIds, flags) => {
+          await callbacks.refreshSessionSummaries?.(state.currentSessionId, { preserveCurrentSession: true });
+          renderSessions();
+          // Row 94 P2: the Jenny chat may also have created a project or removed one with Undo; the switcher re-reads.
+          if (flags?.projectsChanged) {
+            try { windowRef.dispatchEvent(new windowRef.CustomEvent('jenny:projects-changed', { detail: { source: 'primary_chat' } })); } catch (_error) { /* best-effort */ }
+          }
+          if (!sessionIds.includes(state.currentSessionId)) return;
+          callbacks.renderHeader?.();
+          callbacks.renderComposerState?.();
+        },
+      }) || noop);
+    }
+
     // Primary Jenny chat controls (row 76): the shared paused-state store behind the row tag, the row menu
     // and the composer notice. The Activity / Reset / Forget dialogs arrive as late globals, so a missing one is a no-op.
     const primaryChatStore = root.rendererPrimaryChatStore?.getDefaultPrimaryChatStore?.({ getBridge: () => windowRef.jennyShell?.primaryChat || null, state, onChanged: () => callbacks.renderSessions?.(), appendClientLog }) || null;
     if (windowRef.jennyShell?.primaryChat) primaryChatStore?.start();
     if (primaryChatStore) registerCleanup(() => primaryChatStore.dispose());
     const primaryDialogDeps = () => ({ documentRef: windowRef.document, stepModal: root.inventoryStepModal, overlayManager: controllers.overlayManager || null, appendClientLog, state, getBridge: () => windowRef.jennyShell?.primaryChat || null });
+    // Row 94 P3: app_view. Main pushes each request once; the controller opens it at once only while the user is
+    // idle on the Jenny chat, else shows the chip above the composer. IDE, split and preview openers come from app.js.
+    if (windowRef.jennyShell?.appView && root.rendererAppViewController) {
+      const more = callbacks.appViewOpeners || {};
+      const appView = root.rendererAppViewController.createAppViewController({
+        windowRef, documentRef: windowRef.document, appendClientLog, escapeHtml,
+        getChipHost: () => dom.composerWrap || null,
+        getActiveView: () => state.ui?.activeView || '',
+        getCurrentSessionId: () => state.currentSessionId || '',
+        getPrimarySessionId: () => primaryChatStore?.getSnapshot?.()?.session_id || (state.sessions || []).find((s) => s?.session_role === 'primary')?.id || '',
+        sessionTitle: (id) => String((state.sessions || []).find((s) => s?.id === id)?.title || ''),
+        sectionLabel: (id) => (root.rendererSettingsSectionRegistry?.SETTINGS_SECTION_DEFINITIONS || []).find((def) => def.id === id)?.label || id,
+        openers: {
+          ...more,
+          openSettings: (section) => openSettingsSection(section) !== false,
+          openChat: async (sessionId) => { await activateWorkspaceSession(sessionId, { mode: 'replace' }); return state.currentSessionId === sessionId; },
+          openActivity: (pane) => {
+            const dialog = state.features?.featureFlags?.primary_activity_log !== false ? root.rendererPrimaryActivity?.getDefaultPrimaryActivity?.(primaryDialogDeps()) : null;
+            return Boolean(dialog) && dialog.open({ sessionId: primaryChatStore?.getSnapshot?.()?.session_id || '', pane }) !== false;
+          },
+          // The context ring and project pill belong to the visible composer, and clicking them toggles.
+          openChatPanel: (sessionId, surface) => {
+            const detail = root.rendererChatWorkspaceDetail;
+            const popover = surface === 'context' || surface === 'environment';
+            if (popover && sessionId !== state.currentSessionId) return false;
+            if (popover && detail?.getCurrent?.()?.surface === surface) return true;
+            return detail?.open?.({ surface, ownerSessionId: sessionId }) === true;
+          },
+          setSidebarCollapsed: (collapsed) => { setSidebarCollapsed(collapsed); return true; },
+          close: (pane) => (pane === 'chat_panel' ? (root.rendererChatWorkspaceDetail?.close?.(), true) : more.close?.(pane) === true),
+          readLayout: () => ({ ...(more.readLayout?.() || {}), active_view: state.ui?.activeView || 'other', current_session_id: state.currentSessionId || null,
+            chat_panel_open: Boolean(root.rendererChatWorkspaceDetail?.getCurrent?.()) }),
+        },
+      });
+      registerCleanup(() => appView.dispose());
+    }
+    // Row 94 P4: terminal_run. Main pushes an approved command once; the IDE runs it in a terminal of its own.
+    if (windowRef.jennyShell?.terminalTools && root.rendererAppViewController?.createTerminalRunHandler) {
+      const terminalRun = root.rendererAppViewController.createTerminalRunHandler({ appendClientLog,
+        getBridge: () => windowRef.jennyShell?.terminalTools || null, runInTerminal: callbacks.appViewOpeners?.runInTerminal });
+      registerCleanup(() => terminalRun.dispose());
+    }
     // After a Reset: drop the pane's cached transcript, re-read the sessions list and repaint the (now empty) chat.
     const afterPrimaryReset = (result) => {
       const sessionId = String(result?.session_id || primaryChatStore?.getSnapshot?.().session_id || '');
@@ -81,6 +157,7 @@
       }).catch((error) => appendClientLog?.('WARN', 'primary_chat.reset_reload_failed', { reason: (error && (error.code || error.name)) || 'error' }));
     };
     const primaryResetDialog = () => root.rendererPrimaryResetDialog?.getDefaultPrimaryResetDialog?.({ ...primaryDialogDeps(), afterReset: afterPrimaryReset });
+    if (windowRef.jennyShell?.primaryChat) primaryResetDialog(); // row 90: /reset and /forget-chat reuse this instance
 
     // Session row actions (nav overhaul W7): context menu, inline rename,
     // pin/archive meta, and undo-windowed delete. Created before the event
@@ -116,6 +193,7 @@
         openPrimaryActivity: (request) => root.rendererPrimaryActivity?.getDefaultPrimaryActivity?.(primaryDialogDeps())?.open(request),
         confirmPrimaryReset: (request) => primaryResetDialog()?.confirmReset(request),
         confirmPrimaryForget: (request) => primaryResetDialog()?.confirmForget(request),
+        openYourData: () => openSettingsSection?.('account'), // the degraded-delete toast's link (row 95)
         openSendToChat: sendToChatReady
           ? (sessionId, trigger) => root.rendererChatSendModal.getDefaultModal({ showToast: showToastMessage, toastSource: constants.TOAST_SOURCE?.sessionAction, appendClientLog }).open({
             sourceSessionId: sessionId,
@@ -314,8 +392,20 @@
       }
     }
 
+    // Row 92: the one Wide transcript toggle (every pane's button and Ctrl+Alt+W), through the
+    // same appearance apply as Settings; Settings repaints its Chat width row when it is open.
+    const chatWidthToggle = (root.rendererTranscriptViewUtils || {}).createChatWidthToggle?.({
+      documentRef: ctx.documentRef,
+      getAppearance: () => state?.ui?.appearance || {},
+      applyAppearance: (preferences) => callbacks.applyAppearancePreferences?.(preferences),
+      onApplied: () => { if (state?.ui?.activeView === 'settings') callbacks.renderSettings?.(); },
+      appendClientLog: (...a) => appendClientLog(...a),
+    }) || null;
+    if (chatWidthToggle) registerCleanup(() => chatWidthToggle.dispose());
+
     // App-level shortcuts (nav overhaul W10): Ctrl+1-6 views, Ctrl+N new chat,
-    // Ctrl+B panel toggle, Ctrl+Shift+Space scratchpad capture, Ctrl+Shift+\ split toggle.
+    // Ctrl+B panel toggle, Ctrl+Shift+Space scratchpad capture, Ctrl+Shift+\ split toggle,
+    // Ctrl+Alt+W Wide transcript.
     const globalShortcutsController = (root.rendererGlobalShortcuts || {}).createGlobalShortcutsController?.({
       windowRef,
       // The startup curtain owns the keyboard until it is removed, like a modal.
@@ -331,6 +421,7 @@
         togglePanel: () => (state?.ui?.activeView === 'ide' && root.rendererIdeWorkbenchWiring?.getActive?.()?.togglePrimarySide?.() === true)
           || root.rendererTopNavShellController?.togglePanelForActiveView?.() === true,
         togglePaneSplit: () => root.rendererAppPaneComposition?.getPaneComposition?.()?.toggleSplit?.() === true,
+        toggleChatWidth: () => chatWidthToggle?.toggle('shortcut'),
         appendClientLog: (...a) => appendClientLog(...a),
         openCapture: () => {
           // Respect the per-user opt-out (Settings ▸ Home ▸ Quick-capture
@@ -379,6 +470,22 @@
         dictationController.dispose();
         if (root.rendererDictationLive === dictationController) root.rendererDictationLive = null;
       });
+    }
+
+    // Settings > Your data (row 95): sizes, folder links and the guarded clear flow.
+    const dataStorageController = (root.rendererDataStorage || {}).createDataStorageController?.({
+      windowRef,
+      documentRef: ctx.documentRef,
+      state,
+      appendClientLog: (...a) => appendClientLog(...a),
+      openSettingsSection: (...a) => openSettingsSection?.(...a),
+      // The reload also opens the chat that took the open one's place.
+      refreshSessions: createDeleteAllRefresh({ state, loadSessions: (...a) => loadSessions?.(...a), teardown: () => root.rendererSessionTeardown }),
+      overlayManager: controllers.overlayManager || null,
+    }) || null;
+    if (dataStorageController) {
+      dataStorageController.bind();
+      registerCleanup(() => dataStorageController.dispose());
     }
 
   }
@@ -450,5 +557,6 @@
   root.rendererAppShellBindingsControllers = {
     bindShellEventControllers,
     bindAttachments,
+    createDeleteAllRefresh,
   };
 })(window);

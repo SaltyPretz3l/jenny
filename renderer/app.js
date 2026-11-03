@@ -430,7 +430,8 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     renderOfflineManagerSafe, bindOfflineShellEventsSafe, handleOfflineModeChangeSafe,
     refreshApprovedMemoriesSafe, refreshPendingMemoriesSafe, refreshMemoryStatusSafe,
     renderApprovedMemoryManagerSafe,
-    renderIdeSafe, activateIdeSafe, layoutIdeEditorSafe, reconcileChatDockHostSafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe, getIdeCommandItemsSafe, openIdeHelpOverlaySafe,
+    renderIdeSafe, activateIdeSafe, layoutIdeEditorSafe, reconcileChatDockHostSafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe, revealIdePathSafe, getIdeCommandItemsSafe, openIdeHelpOverlaySafe,
+    openIdeTerminalSafe, runIdeTaskTerminalSafe, closeIdeBottomPanelSafe,
     refreshCompanionStateSafe, shouldRenderHomePanelSafe,
     renderHomePanelSafe, applyCompanionPayload, getAvailableCompanionDeferPresets, initSetupControllerSafe,
     applySetupBackendStatusSafe, openSetupTileSafe,
@@ -561,7 +562,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
     pruneInteractiveRoundRecapExpansionState,
     setFollowLatest, scheduleMessageViewportSync, getScrollMetrics, scrollMessageIntoView, getPendingQuestionBatch,
     hasStalePendingQuestionBatch, renderComposerInteractivePanel, setComposerHoloState,
-    renderSessions, renderAttachmentTray, renderComposerStatusNotice, syncBackendNotice, renderIdeSafe, layoutIdeEditorSafe, reconcileChatDockHostSafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe,
+    renderSessions, renderAttachmentTray, renderComposerStatusNotice, syncBackendNotice, renderIdeSafe, layoutIdeEditorSafe, reconcileChatDockHostSafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe, revealIdePathSafe,
     renderArtifactReviewPanelSafe, isArtifactReviewVisible, getArtifactsForSession, selectArtifact,
     shouldRenderHomePanelSafe, renderHomePanelSafe, renderToastViewport,
     setReasoningPhaseExpandedPreference,
@@ -741,6 +742,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       commandPaletteFieldIcon,
       composerAttachShortcut,
       composerAttachMenu,
+      composerWrap,
       conversationGroups,
       copyLogsReportButton,
       logAutoScrollToggle,
@@ -847,6 +849,7 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       renderLogs: (...a) => renderLogs(...a),
       renderOfflineManager: (...a) => renderOfflineManagerSafe(...a),
       renderSessions: (...a) => renderSessions(...a),
+      renderSettings: (...a) => renderSettings(...a),
       setRovingChatSession: (...a) => setRovingChatSession(...a),
       toggleChatsScope: (...a) => toggleChatsScope(...a),
       resetAttachmentQueue,
@@ -858,6 +861,28 @@ var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18
       setDropActive,
       setSessionMessages: (...a) => setSessionMessages(...a),
       setSidebarCollapsed,
+      // Row 94 P3: the app_view openers that live here (renderer/shell/renderer-app-view-controller.js).
+      appViewOpeners: {
+        openFile: (path, line) => { const event = new CustomEvent('ide:open-file-at-line', { cancelable: true, detail: { path, line: line || 1, column: 1, preferIde: true } }); window.dispatchEvent(event); return event.defaultPrevented; },
+        openTerminal: async () => { setActiveView('ide'); return await openIdeTerminalSafe() === true; },
+        runInTerminal: async (command) => { setActiveView('ide'); return await runIdeTaskTerminalSafe(command); }, // row 94 P4 terminal_run
+        split: async (sessionId) => {
+          if (paneLayoutController?.isSessionInPane?.(sessionId)) return (paneLayoutController.getPaneCount?.() || 1) > 1;
+          if ((state.workspace?.openSessionIds || []).includes(sessionId)) return paneLayoutController?.openBeside?.(sessionId) === true;
+          const previous = state.currentSessionId; // not an open tab: open it, then put the previous chat beside it
+          await activateWorkspaceSession(sessionId, { mode: 'new-tab' });
+          return Boolean(previous) && previous !== sessionId && paneLayoutController?.openBeside?.(previous) === true;
+        },
+        close: (pane) => (pane === 'preview' ? shellArtifactBridge?.collapseSidePanel?.() === true
+          : pane === 'terminal' ? closeIdeBottomPanelSafe()
+            : pane === 'split' && (paneLayoutController?.getPaneCount?.() || 1) > 1 // the pane the user is not on, as the split toggle does
+              ? paneLayoutController.closePane(paneLayoutController.getLayout?.().focusedPaneId === 0 ? 1 : 0) !== false : false),
+        readLayout: () => ({
+          split_session_ids: (paneLayoutController?.getPaneCount?.() || 1) > 1 ? (paneLayoutController.getLayout?.().panes || []).map((pane) => pane?.sessionId).filter(Boolean) : [],
+          sidebar_collapsed: workspace?.classList?.contains?.('panel-collapsed') === true,
+          preview_open: shellArtifactBridge?.isArtifactReviewVisible?.() === true,
+        }),
+      },
       showComposerActionError,
       showSessionActionError,
       showShellErrorToast,

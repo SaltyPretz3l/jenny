@@ -19,6 +19,16 @@
       readArtifact: (sessionId, artifactId) => root.jennyShell.artifacts.read(sessionId, artifactId),
     });
     root.rendererImageEditDraftController = drafts;
+    // Row 91: Edit prompt and the undrawn /image restore, against the composer that shows the chat.
+    const imagePrompts = root.rendererImagePrompt?.createController({
+      state: ctx.state,
+      getInput: (sessionId) => drafts?.inputFor?.(sessionId) || null,
+      repaint: () => ctx.callbacks?.renderAttachmentTray?.(),
+      syncInput: (input) => input.dispatchEvent(new root.Event('input', { bubbles: true })),
+      setNotice: (_sessionId, text) => ctx.callbacks?.setComposerStatusNotice?.(text, { owner: 'image-prompt:not-drawn', tone: 'info' }),
+      log: ctx.callbacks?.appendClientLog,
+    });
+    if (ctx.state && imagePrompts) ctx.state.imagePromptController = imagePrompts;
     const jt = root.jennyI18n?.t || root.jennyI18nFallback || ((key, fallback) => fallback);
     const artifactMethods = { copy: 'copyImage', 'save-as': 'saveAs', open: 'openExternal', 'open-with': 'openWith', reveal: 'reveal' };
     const sourceMethods = { copy: 'copyImage', 'save-as': 'saveAs', reveal: 'reveal' };
@@ -96,6 +106,7 @@
     root.rendererImageViewerController = launcher;
     ctx.callbacks?.registerCleanup?.(() => {
       launcher.dispose(); drafts?.dispose();
+      if (imagePrompts && ctx.state?.imagePromptController === imagePrompts) ctx.state.imagePromptController = null;
       if (root.rendererImageEditDraftController === drafts) root.rendererImageEditDraftController = null;
       if (root.rendererImageViewerController === launcher) root.rendererImageViewerController = null;
     });

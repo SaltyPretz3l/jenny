@@ -117,7 +117,7 @@
   // A Docker sandbox receipt's header facts, and the per-chat budget block's recovery link.
   const EXECUTION_SCALAR_KEYS = Object.freeze(['backend', 'status', 'exit_code', 'exitCode', 'output_truncated',
     'cleanup_confirmed']);
-  const PROVENANCE_SCALAR_KEYS = Object.freeze(['seed', 'image_prompt', 'image_negative_prompt']);
+  const PROVENANCE_SCALAR_KEYS = Object.freeze(['seed', 'image_prompt', 'image_negative_prompt', 'prompt_source']);
 
   function copyPresentationMetadata(metadata, value, resultKind) {
     if (resultKind === 'project_notes') copyProjectNotesMetadata(metadata, value);

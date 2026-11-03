@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "description": "Nested-process coverage. 'tickets' are the live tickets in the lease root; 'inherited' are the ids from JENNY_WORK_LEASES; 'request' is what the nested process wants; expect_uncovered is the subset it must still publish, in request order.",
+  "cases": [
+    {
+      "name": "held exclusive parent covers the same exclusive take",
+      "tickets": [
+        {"ticket": "aaaaaaaaaaaaaaaa", "state": "held", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]}
+      ],
+      "inherited": ["aaaaaaaaaaaaaaaa"],
+      "request": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}],
+      "expect_uncovered": []
+    },
+    {
+      "name": "parent covering both takes of a test run",
+      "tickets": [
+        {"ticket": "aaaaaaaaaaaaaaaa", "state": "held", "resources": [
+          {"key": "tests@tree:g:/repo", "units": "all", "capacity": 1},
+          {"key": "deps@tree:g:/repo", "units": 1, "capacity": null}
+        ]}
+      ],
+      "inherited": ["aaaaaaaaaaaaaaaa"],
+      "request": [
+        {"key": "tests@tree:g:/repo", "units": "all", "capacity": 1},
+        {"key": "deps@tree:g:/repo", "units": 1, "capacity": null}
+      ],
+      "expect_uncovered": []
+    },
+    {
+      "name": "partial coverage publishes only the uncovered take",
+      "tickets": [
+        {"ticket": "aaaaaaaaaaaaaaaa", "state": "held", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]}
+      ],
+      "inherited": ["aaaaaaaaaaaaaaaa"],
+      "request": [
+        {"key": "tests@tree:g:/repo", "units": "all", "capacity": 1},
+        {"key": "deps@tree:g:/repo", "units": 1, "capacity": null}
+      ],
+      "expect_uncovered": [{"key": "deps@tree:g:/repo", "units": 1, "capacity": null}]
+    },
+    {
+      "name": "a shared take never covers an exclusive one",
+      "tickets": [
+        {"ticket": "aaaaaaaaaaaaaaaa", "state": "held", "resources": [{"key": "deps@tree:g:/repo", "units": 1, "capacity": null}]}
+      ],
+      "inherited": ["aaaaaaaaaaaaaaaa"],
+      "request": [{"key": "deps@tree:g:/repo", "units": "all", "capacity": null}],
+      "expect_uncovered": [{"key": "deps@tree:g:/repo", "units": "all", "capacity": null}]
+    },
+    {
+      "name": "more shared units cover fewer",
+      "tickets": [
+        {"ticket": "aaaaaaaaaaaaaaaa", "state": "held", "resources": [{"key": "deps@tree:g:/repo", "units": 2, "capacity": null}]}
+      ],
+      "inherited": ["aaaaaaaaaaaaaaaa"],
+      "request": [{"key": "deps@tree:g:/repo", "units": 1, "capacity": null}],
+      "expect_uncovered": []
+    },
+    {
+      "name": "a waiting parent covers nothing",
+      "tickets": [
+        {"ticket": "aaaaaaaaaaaaaaaa", "state": "waiting", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]}
+      ],
+      "inherited": ["aaaaaaaaaaaaaaaa"],
+      "request": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}],
+      "expect_uncovered": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]
+    },
+    {
+      "name": "a parent on another tree covers nothing",
+      "tickets": [
+        {"ticket": "aaaaaaaaaaaaaaaa", "state": "held", "resources": [{"key": "tests@tree:g:/repo-wt/a", "units": "all", "capacity": 1}]}
+      ],
+      "inherited": ["aaaaaaaaaaaaaaaa"],
+      "request": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}],
+      "expect_uncovered": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]
+    },
+    {
+      "name": "an inherited id that is not in the root covers nothing",
+      "tickets": [],
+      "inherited": ["bbbbbbbbbbbbbbbb"],
+      "request": [{"key": "git-write@repo", "units": "all", "capacity": 1}],
+      "expect_uncovered": [{"key": "git-write@repo", "units": "all", "capacity": 1}]
+    },
+    {
+      "name": "a live held ticket that was not inherited covers nothing",
+      "tickets": [
+        {"ticket": "aaaaaaaaaaaaaaaa", "state": "held", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]}
+      ],
+      "inherited": [],
+      "request": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}],
+      "expect_uncovered": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]
+    }
+  ]
+}

@@ -270,6 +270,7 @@
       clientLogForwarder?.dispose();
       disposeDeferredVisualStartup();
       snapshotRefresh.dispose?.(); // its catalog-retry timer
+      appearanceController.disposeAppearanceRelay?.();
       attachmentQueueController?.dispose?.();
       composerSessionStateController?.clearAll?.();
       if (window.rendererComposerSessionStateController === composerSessionStateController) {
@@ -445,6 +446,7 @@
       window,
       document,
     });
+    appearanceController.bindAppearanceRelay?.(); // row 88 D8: the Jenny chat's appearance reads and changes
     const {
       adjustChatZoomPercent,
       applyAppearancePreferences,
@@ -837,11 +839,24 @@
       appendClientLog('INFO', 'sessions.renamed', { sessionId });
     }
 
+    function discardSessionPreflight(id) {
+      const sp = state.sendPreflight;
+      const pending = getMultiStreamController()?.getPreflight?.(id);
+      if (pending) pending.discarded = true;
+      if (sp && [sp.sessionId, sp.optimisticSessionId].some((value) => String(value || '').trim() === id)) sp.discarded = true;
+    }
+    function dropSessionState(id) { fwd.removeSessionState(id, { tombstone: true }); call.invalidateSessionArtifacts?.(id); }
+    // Renderer teardown for a session the backend already deleted; Delete all chats (row 95) reuses it.
+    async function forgetDeletedSession(sessionId) {
+      const id = String(sessionId || '').trim();
+      if (id) { discardSessionPreflight(id); await clearSessionStreamState(id, { cancelActive: true }); dropSessionState(id); }
+    }
+    window.rendererSessionTeardown = { forgetDeletedSession };
+
     async function handleDeleteSession(sessionId, options = {}) {
       // Confirmation moved to the undo window: renderer-session-actions defers
       // this hard delete behind an Undo toast; callers reach it via that path.
-      const sessionSummary = state.sessions.find((session) => session.id === sessionId) || null;
-      const isOptimisticLocal = sessionSummary?.optimistic_local === true;
+      const isOptimisticLocal = state.sessions.find((session) => session.id === sessionId)?.optimistic_local === true;
       const normalizedSessionId = String(sessionId || '').trim();
       const controllerPreflight = getMultiStreamController()?.getPreflight?.(normalizedSessionId) || null;
       if (options.onlyIfIdle === true && (controllerPreflight
@@ -851,25 +866,18 @@
         || state.sendPreflight?.optimisticSessionId === normalizedSessionId)) {
         return { id: sessionId, deleted: false, reason: 'session_busy' };
       }
-      if (controllerPreflight) controllerPreflight.discarded = true;
-      if (state.sendPreflight && (
-        String(state.sendPreflight.sessionId || '').trim() === normalizedSessionId
-        || String(state.sendPreflight.optimisticSessionId || '').trim() === normalizedSessionId
-      )) {
-        state.sendPreflight.discarded = true;
-      }
+      discardSessionPreflight(normalizedSessionId);
       if (options.onlyIfIdle !== true) await clearSessionStreamState(sessionId, { cancelActive: true });
+      let cleanup = {};
       if (!isOptimisticLocal) {
         const deleteResult = await window.jennyShell.sessions.delete(sessionId, options);
+        // The main-process cleanup outcome rides back for the delete toast.
+        if (deleteResult?.cleanup_status) cleanup = { cleanup_status: deleteResult.cleanup_status, freed: deleteResult.freed };
         if (options.onlyIfIdle === true && (deleteResult?.id !== sessionId || deleteResult?.deleted !== true)) {
           return { id: sessionId, deleted: false, reason: deleteResult?.reason || 'delete_unacknowledged' };
         }
-        if (
-          deleteResult
-          && typeof deleteResult === 'object'
-          && Object.prototype.hasOwnProperty.call(deleteResult, 'deleted')
-          && deleteResult.deleted !== true
-        ) {
+        if (deleteResult && typeof deleteResult === 'object'
+          && Object.prototype.hasOwnProperty.call(deleteResult, 'deleted') && deleteResult.deleted !== true) {
           if (options.onlyIfIdle === true) return deleteResult;
           throw new Error('Session could not be deleted because the session store refused the delete request.');
         }
@@ -878,14 +886,11 @@
       // optimistic-local and never reached the backend), so a stale list
       // snapshot must not resurrect the id (Audit A2).
       if (options.onlyIfIdle === true) await clearSessionStreamState(sessionId, { cancelActive: false });
-      fwd.removeSessionState(normalizedSessionId, { tombstone: true });
-      if (typeof call.invalidateSessionArtifacts === 'function') {
-        call.invalidateSessionArtifacts(sessionId);
-      }
+      dropSessionState(normalizedSessionId);
       await loadSessions();
       fwd.renderAll();
       appendClientLog('INFO', 'sessions.deleted', { sessionId });
-      return { id: sessionId, deleted: true };
+      return { id: sessionId, deleted: true, ...cleanup };
     }
 
     const attachmentQueueController = attachmentQueueUtils.createAttachmentQueueController?.({ state, windowRef: window, constants: { TOAST_SOURCE }, callbacks: { clearAttachmentNotice: fwd.clearAttachmentNotice, buildAttachmentToastMessage: fwd.buildAttachmentToastMessage, showToastMessage: fwd.showToastMessage, renderAttachmentTray: fwd.renderAttachmentTray, renderComposerState: (...a) => fwd.renderComposerState(...a), closeComposerPopover, appendClientLog } }) || {};

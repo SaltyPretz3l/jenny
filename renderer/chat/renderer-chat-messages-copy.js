@@ -182,9 +182,43 @@
   const reportToLine = (title) => jt('chat.messages.report.reportTo', 'Report to “{title}”', { title });
   const reportDiscardLabel = () => jt('chat.messages.report.discard', 'Discard report');
 
+  // Row 85: the Activity label of a scheduled check's lifecycle entry ('' for any other kind).
+  function scheduleKindLabel(kind) {
+    switch (kind) {
+      case 'schedule_created': return jt('chat.primary.kind.schedule_created', 'Check created');
+      case 'schedule_updated': return jt('chat.primary.kind.schedule_updated', 'Check changed');
+      case 'schedule_enabled': return jt('chat.primary.kind.schedule_enabled', 'Check turned on');
+      case 'schedule_disabled': return jt('chat.primary.kind.schedule_disabled', 'Check turned off');
+      case 'schedule_cancelled': return jt('chat.primary.kind.schedule_cancelled', 'Check deleted');
+      case 'schedule_skipped': return jt('chat.primary.kind.schedule_skipped', 'Check skipped');
+      case 'schedule_missed': return jt('chat.primary.kind.schedule_missed', 'Check missed');
+      case 'schedule_fired': return jt('chat.primary.kind.schedule_fired', 'Check ran');
+      default: return '';
+    }
+  }
+
+  // Why a check was skipped or missed, else who made the change ('' when the entry says neither).
+  function scheduleDetail(entry) {
+    if (!isObject(entry) || !String(entry.kind || '').startsWith('schedule_')) return '';
+    switch (entry.reason) {
+      case 'paused': return jt('chat.primary.schedule.reason.paused', 'Jenny was paused.');
+      case 'late': return jt('chat.primary.schedule.reason.late', 'Jenny was not running when it was due.');
+      case 'rate_limited': return jt('chat.primary.schedule.reason.rateLimited', 'Too many checks ran in the last hour or day.');
+      case 'ineligible': return jt('chat.primary.schedule.reason.ineligible', 'The Jenny chat could not take a turn.');
+      case 'disabled': return jt('chat.primary.schedule.reason.disabled', 'Scheduled checks are turned off.');
+      case 'capacity': return jt('chat.primary.schedule.reason.capacity', 'Too many checks were waiting.');
+      case null: case undefined: case '': break;
+      default: return jt('chat.primary.schedule.reason.refused', 'Jenny could not start the turn.');
+    }
+    if (entry.by === 'jenny') return jt('chat.primary.schedule.byJenny', 'Jenny asked and you approved.');
+    if (entry.by === 'user') return jt('chat.primary.schedule.byUser', 'You made this change.');
+    return '';
+  }
+
   return {
     jt, jtn, MAX_BODY_BYTES, GRANT_PURPOSE_MAX_BYTES, isObject, escapeHtml, byteLength, formatTime, formatGrantExpiry, clip, chatTitle, projectName,
     reasonToken, deliveryFailureDetail, actionFailureText, restoreFailureText, restoredStripWord, restoredStripDetail, reviewAndSendLabel, shortHash,
     isReportEnvelope, reportOutcome, isReportClipped, reportFromLabel, reportCardAria, reportClippedText, reportOpenChatLabel, reportToLine, reportDiscardLabel,
+    scheduleKindLabel, scheduleDetail,
   };
 });

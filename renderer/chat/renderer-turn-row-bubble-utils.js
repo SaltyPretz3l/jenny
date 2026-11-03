@@ -159,7 +159,9 @@
       const applicationTurn = globalThis.chatBubbleActionUtils?.applicationTurnOf?.(sourceMessage) || '';
       if (applicationTurn === 'handoff_preparation' || applicationTurn === 'wake') return '';
       if (applicationTurn) {
-        return `<p class="chat-app-turn-note" role="note">${escapeHtml(jt('chat.applicationTurn.autoResumed', 'Resumed automatically after a turn-budget stop'))}</p>`;
+        const noteText = globalThis.chatBubbleActionUtils?.applicationTurnNoteText?.(sourceMessage)
+          || jt('chat.applicationTurn.autoResumed', 'Resumed automatically after a turn-budget stop');
+        return `<p class="chat-app-turn-note" role="note">${escapeHtml(noteText)}</p>`;
       }
       const text = String(payload.content || sourceMessage && sourceMessage.content || '');
       const messageId = normalizeId(row && row.primary_message_id);

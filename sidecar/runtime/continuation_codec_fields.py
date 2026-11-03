@@ -22,7 +22,7 @@ _REVISION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}\Z")
 _TOOL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _RESOURCE_CLASSES = frozenset(
-    {"tool_operations", "native_processes", "tests", "sandbox_commands", "filesystem"}
+    {"tool_operations", "native_processes", "tests", "sandbox_commands", "filesystem", "work"}
 )
 
 _TOP_KEYS = frozenset(

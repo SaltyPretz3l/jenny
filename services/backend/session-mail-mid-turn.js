@@ -275,6 +275,7 @@ module.exports = {
   attachMidTurnMail,
   createMidTurnMailState,
   finishMidTurnMail,
+  liveManagedStream,
   markConsumed,
   pushMidTurnMail,
   releaseMidTurnMailForStream,

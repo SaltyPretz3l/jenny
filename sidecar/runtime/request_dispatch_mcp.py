@@ -152,6 +152,7 @@ def process_mcp_method(  # noqa: PLR0913 - matches the shared dispatcher seam
                 allow_private_addresses=bool(
                     getattr(runtime_config, "tools_web_allow_private_addresses", False)
                 ),
+                allow_loopback=bool(getattr(runtime_config, "tools_web_allow_loopback", False)),
                 cancel_handle=cancel_handle,
             )
         return ProcessOutcome(initialized, False, result_response(message_id, result), [])

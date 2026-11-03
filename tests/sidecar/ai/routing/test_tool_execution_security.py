@@ -625,6 +625,203 @@ def test_live_run_mode_updates_apply_to_the_next_approval_scan() -> None:
     assert ask_result is not None
 
 
+def test_settings_change_asks_even_in_auto_run() -> None:
+    # Row 88: the main-side port writes only for a call that had its card, so Auto must still ask;
+    # the continuation after the user's Allow (approvals pre-granted) runs without a second card.
+    descriptor = SimpleNamespace(
+        name="settings_change",
+        side_effecting=True,
+        input_schema={"type": "object", "properties": {}},
+        source_kind="builtin",
+        tool_family="helpers",
+        availability=SimpleNamespace(plan_mode_only=False),
+    )
+    kernel = SimpleNamespace(
+        _config=RuntimeConfig(safety_mode="normal"),
+        _is_direct_deferred_tool_call=lambda call, context: False,
+        _mcp_client=SimpleNamespace(tool_descriptor=lambda name: descriptor),
+    )
+    call = ToolCallRequest(
+        tool_id="settings_change",
+        arguments={"changes": [{"key": "time_format_24h", "value": True}], "purpose": "24-hour clock"},
+        call_id="settings-auto",
+    )
+
+    def ask(pre_granted: bool) -> object | None:
+        return approval_if_needed(
+            kernel,
+            (call,),
+            mode="assist",
+            mode_allows_side_effecting=True,
+            require_approval=True,
+            approvals_pre_granted=pre_granted,
+            resolution_context=None,
+            tool_contract=_Contract(descriptor),
+            approval_mode="auto_run",
+        )
+
+    approval = ask(False)
+    assert approval is not None
+    assert approval.tool_name == "settings_change"
+    assert ask(True) is None
+
+
+def test_chat_configure_asks_even_in_auto_run() -> None:
+    # Row 94 P1: a model/effort/run-mode change on a chat applies only through the card the app
+    # builds for that call, so Auto must still ask; chat_organize is an ordinary ask-tool.
+    descriptor = SimpleNamespace(
+        name="chat_configure",
+        side_effecting=True,
+        input_schema={"type": "object", "properties": {}},
+        source_kind="builtin",
+        tool_family="helpers",
+        availability=SimpleNamespace(plan_mode_only=False),
+    )
+    kernel = SimpleNamespace(
+        _config=RuntimeConfig(safety_mode="normal"),
+        _is_direct_deferred_tool_call=lambda call, context: False,
+        _mcp_client=SimpleNamespace(tool_descriptor=lambda name: descriptor),
+    )
+    call = ToolCallRequest(
+        tool_id="chat_configure",
+        arguments={"session_id": "s1", "action": "set_effort", "value": "high", "purpose": "think harder"},
+        call_id="chat-configure-auto",
+    )
+
+    def ask(pre_granted: bool) -> object | None:
+        return approval_if_needed(
+            kernel,
+            (call,),
+            mode="assist",
+            mode_allows_side_effecting=True,
+            require_approval=True,
+            approvals_pre_granted=pre_granted,
+            resolution_context=None,
+            tool_contract=_Contract(descriptor),
+            approval_mode="auto_run",
+        )
+
+    approval = ask(False)
+    assert approval is not None
+    assert approval.tool_name == "chat_configure"
+    assert ask(True) is None
+
+
+def test_schedule_change_asks_even_in_auto_run() -> None:
+    # Row 85 S4 (Q2): every scheduled-check change shows the user a card, so Auto must still ask.
+    descriptor = SimpleNamespace(
+        name="schedule_change",
+        side_effecting=True,
+        input_schema={"type": "object", "properties": {}},
+        source_kind="builtin",
+        tool_family="helpers",
+        availability=SimpleNamespace(plan_mode_only=False),
+    )
+    kernel = SimpleNamespace(
+        _config=RuntimeConfig(safety_mode="normal"),
+        _is_direct_deferred_tool_call=lambda call, context: False,
+        _mcp_client=SimpleNamespace(tool_descriptor=lambda name: descriptor),
+    )
+    call = ToolCallRequest(
+        tool_id="schedule_change",
+        arguments={"action": "disable", "reminder_id": "rem_1", "purpose": "pause the check"},
+        call_id="schedule-change-auto",
+    )
+    approval = approval_if_needed(
+        kernel,
+        (call,),
+        mode="assist",
+        mode_allows_side_effecting=True,
+        require_approval=True,
+        approvals_pre_granted=False,
+        resolution_context=None,
+        tool_contract=_Contract(descriptor),
+        approval_mode="auto_run",
+    )
+    assert approval is not None
+    assert approval.tool_name == "schedule_change"
+    assert "scheduled check" in approval.reason
+
+
+def test_project_create_asks_even_in_auto_run() -> None:
+    # Row 94 P2: a new project binds a folder only through the card the app prepares for that call, so
+    # Auto must still ask.
+    descriptor = SimpleNamespace(
+        name="project_create",
+        side_effecting=True,
+        input_schema={"type": "object", "properties": {}},
+        source_kind="builtin",
+        tool_family="helpers",
+        availability=SimpleNamespace(plan_mode_only=False),
+    )
+    kernel = SimpleNamespace(
+        _config=RuntimeConfig(safety_mode="normal"),
+        _is_direct_deferred_tool_call=lambda call, context: False,
+        _mcp_client=SimpleNamespace(tool_descriptor=lambda name: descriptor),
+    )
+    call = ToolCallRequest(
+        tool_id="project_create",
+        arguments={"name": "App", "folder": "G:/Work/app", "purpose": "work in the app folder"},
+        call_id="project-create-auto",
+    )
+    approval = approval_if_needed(
+        kernel,
+        (call,),
+        mode="assist",
+        mode_allows_side_effecting=True,
+        require_approval=True,
+        approvals_pre_granted=False,
+        resolution_context=None,
+        tool_contract=_Contract(descriptor),
+        approval_mode="auto_run",
+    )
+    assert approval is not None
+    assert approval.tool_name == "project_create"
+    assert "folder" in approval.reason
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments", "reason_word"),
+    [
+        ("session_export", {"session_id": "s1", "chat_title": "Notes", "purpose": "keep a copy"}, "Downloads"),
+        ("terminal_run", {"command": "git status", "purpose": "see the changes"}, "terminal"),
+    ],
+)
+def test_row94_p4_writers_ask_even_in_auto_run(
+    tool_name: str, arguments: dict[str, str], reason_word: str
+) -> None:
+    # Row 94 P4: an export and a terminal command happen only through the card the app prepares for
+    # that call, so Auto must still ask.
+    descriptor = SimpleNamespace(
+        name=tool_name,
+        side_effecting=True,
+        input_schema={"type": "object", "properties": {}},
+        source_kind="builtin",
+        tool_family="helpers",
+        availability=SimpleNamespace(plan_mode_only=False),
+    )
+    kernel = SimpleNamespace(
+        _config=RuntimeConfig(safety_mode="normal"),
+        _is_direct_deferred_tool_call=lambda call, context: False,
+        _mcp_client=SimpleNamespace(tool_descriptor=lambda name: descriptor),
+    )
+    call = ToolCallRequest(tool_id=tool_name, arguments=arguments, call_id=f"{tool_name}-auto")
+    approval = approval_if_needed(
+        kernel,
+        (call,),
+        mode="assist",
+        mode_allows_side_effecting=True,
+        require_approval=True,
+        approvals_pre_granted=False,
+        resolution_context=None,
+        tool_contract=_Contract(descriptor),
+        approval_mode="auto_run",
+    )
+    assert approval is not None
+    assert approval.tool_name == tool_name
+    assert reason_word in approval.reason
+
+
 def test_plan_mode_only_ask_precedes_auto_run() -> None:
     descriptor = SimpleNamespace(
         name="exit_plan_mode",

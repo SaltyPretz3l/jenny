@@ -30,6 +30,45 @@
   } = load('rendererSettingsLazyRenderers', './renderer-settings-lazy-renderers');
   const { renderSettingsV2Surfaces, paintSlot } = load('rendererSettingsV2Surfaces', './renderer-settings-v2-surfaces');
 
+  /* Settings > Jenny chat (row 86, picks S1 + Q1): the Digests group's "While you were away" switch (the
+   * primary_digests flag) and one Quiet hours row holding the chatUi digestQuietStart / digestQuietEnd
+   * selects, in its own group since row 89 (pick Q1: quiet hours also silence the Jenny chat's desktop
+   * notifications, so they stay editable while digests are off). Rendered once, then patched in place, so
+   * a select keeps its node and focus across the re-render that follows a save. */
+  const QUIET_HOURS_IDS = ['digestQuietStartSelect', 'digestQuietEndSelect'];
+  function renderJennyChatDigests(list, state, quietList = list) {
+    // The binding module loads after this one; resolve at render time and skip until it is there.
+    const pick = (globalName, path) => globalThis[globalName] || (typeof require === 'function' ? require(path) : null);
+    const descriptors = pick('rendererSettingsFieldDescriptors', './renderer-settings-field-descriptors');
+    const binding = pick('rendererSettingsFieldBinding', './renderer-settings-field-binding');
+    const settingsField = globalThis.inventory?.settingsField || pick('inventorySettingsField', '../inventory/settings-field');
+    const { escapeHtml } = pick('stringUtils', '../shared/string-utils') || {};
+    if (!list || typeof list.querySelector !== 'function' || !quietList || typeof quietList.querySelector !== 'function') return;
+    if (!descriptors || !binding || typeof settingsField !== 'function' || !escapeHtml) return;
+    const toggle = descriptors.getSettingDescriptor('primaryDigestsToggle');
+    const quiet = QUIET_HOURS_IDS.map((id) => descriptors.getSettingDescriptor(id));
+    const on = state?.features?.featureFlags?.primary_digests === true;
+    const values = quiet.map((descriptor) => descriptors.normalizeSettingValue(descriptor, state?.[descriptor.key]));
+    if (!list.firstElementChild) {
+      const [start, end] = quiet.map((descriptor, index) => binding.renderSettingControl(descriptor, values[index], { describedBy: 'digestQuietHoursHelp' }));
+      const to = escapeHtml(jt('settings.jennyChat.quietHours.to', 'to'));
+      const quietRow = settingsField({
+        id: 'digestQuietHoursRow', variant: 'row', label: jt('settings.jennyChat.quietHours.label', 'Quiet hours'),
+        help: binding.resolveSettingCopy(quiet[0]).description, helpId: 'digestQuietHoursHelp',
+        dataset: { 'setting-id': 'digestQuietHoursRow' },
+        controlHtml: `<span class="settings-field-stack-line">${start}<span class="settings-field-side" aria-hidden="true">${to}</span>${end}</span>`,
+      });
+      if (quietList === list) list.innerHTML = binding.renderSettingRow(toggle, on) + quietRow;
+      else {
+        list.innerHTML = binding.renderSettingRow(toggle, on);
+        quietList.innerHTML = quietRow;
+      }
+      return;
+    }
+    binding.syncSettingRow(list, toggle, on);
+    quiet.forEach((descriptor, index) => binding.syncSettingRow(quietList, descriptor, values[index]));
+  }
+
   function createSettingsRenderer(deps) {
     const { state, shouldPatchSection = () => true } = deps;
     const { ACTIVITY_SCOPE } = deps.constants;
@@ -365,6 +404,9 @@
       if (notificationsSettingsSection) {
         globalThis.rendererSettingsNotificationsSection?.renderNotificationsSection?.({ container: notificationsSettingsSection, state });
       }
+      const jennyChatDigestsList = typeof document !== 'undefined' ? document.getElementById('jennyChatDigestsList') : null;
+      const jennyChatQuietList = jennyChatDigestsList ? document.getElementById('jennyChatQuietList') : null;
+      if (jennyChatDigestsList) renderJennyChatDigests(jennyChatDigestsList, state, jennyChatQuietList || jennyChatDigestsList);
       const dictationSettingsSection = typeof document !== 'undefined' ? document.getElementById('dictationSettingsSection') : null;
       if (dictationSettingsSection) {
         globalThis.rendererSettingsDictationSection?.renderDictationSection?.({ container: dictationSettingsSection, state });
@@ -419,5 +461,5 @@
     };
   }
 
-  return { createSettingsRenderer };
+  return { createSettingsRenderer, renderJennyChatDigests };
 });

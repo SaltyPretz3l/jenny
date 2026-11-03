@@ -77,6 +77,17 @@ test('segmentedControl closed-enum guard: fewer than 2 or more than 4 options re
   assert.equal(segmentedControl({ value: '1', options: fiveOptions }), '');
 });
 
+test('segmentedControl maxOptions opts into up to 6 options and is capped there', () => {
+  const make = (count) => Array.from({ length: count }, (_, index) => ({ value: String(index + 1), label: 'Opt ' + (index + 1) }));
+  const countOptions = (html) => (html.match(/role="radio"/g) || []).length;
+  assert.equal(countOptions(segmentedControl({ value: '1', maxOptions: 6, options: make(6) })), 6);
+  assert.equal(segmentedControl({ value: '1', options: make(5) }), '', 'without maxOptions five still renders nothing');
+  assert.equal(segmentedControl({ value: '1', options: make(6) }), '');
+  assert.equal(countOptions(segmentedControl({ value: '1', maxOptions: 9, options: make(6) })), 6);
+  assert.equal(segmentedControl({ value: '1', maxOptions: 9, options: make(7) }), '', 'maxOptions is capped at 6');
+  assert.equal(segmentedControl({ value: '1', maxOptions: 2, options: make(4) }) === '', false, 'maxOptions never lowers the default ceiling of 4');
+});
+
 test('segmentedControl accepts the boundary sizes 2 and 4', () => {
   assert.notEqual(segmentedControl({ value: 'a', options: TWO_OPTIONS }), '');
   const fourOptions = [1, 2, 3, 4].map((n) => ({ value: String(n), label: 'Opt ' + n }));

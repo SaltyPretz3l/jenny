@@ -29,6 +29,7 @@ test('settings section registry preserves ids and defaults', () => {
     'editor',
     'home',
     'notifications',
+    'jennyChat',
     'dictation',
     'offline',
     'usage',
@@ -85,7 +86,7 @@ test('settings section registry exposes six uniform ordered groups', () => {
     ['modelTools', 'Model & tools', ['readiness', 'models', 'offline', 'tools']],
     ['work', 'Work', ['runtime', 'usage']],
     ['context', 'Context & memory', ['context', 'memories', 'personality']],
-    ['app', 'App', ['appearance', 'editor', 'home', 'notifications', 'dictation']],
+    ['app', 'App', ['appearance', 'editor', 'home', 'notifications', 'jennyChat', 'dictation']],
     ['system', 'System', ['extensions', 'account']],
     ['developer', 'Developer', ['advanced']],
   ]);
@@ -94,6 +95,14 @@ test('settings section registry exposes six uniform ordered groups', () => {
   assert.equal(getSettingsSectionDefinition('advanced').label, 'Limits & budgets');
   assert.equal(getSettingsSectionDefinition('runtime').label, 'Projects');
   assert.equal(getSettingsSectionDefinition('memories').lazy, true);
+});
+
+test('Jenny chat page (row 86, pick S1) sits after Notifications and is found by its words', () => {
+  const section = getSettingsSectionDefinition('jennyChat');
+  assert.equal(section.label, 'Jenny chat');
+  assert.equal(section.group, 'app');
+  assert.equal(Boolean(section.lazy), false);
+  for (const word of ['digest', 'away', 'quiet hours', 'summary']) assert.ok(section.keywords.includes(word), word);
 });
 
 test('merged pages normalize to hosts and retain companion lifecycle metadata', () => {

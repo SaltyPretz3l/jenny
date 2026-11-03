@@ -310,6 +310,7 @@
     if (Number.isInteger(seed) && seed >= 0) meta += (meta ? ' · ' : '') + jt('chat.artifactFigure.metaSeed', 'seed {seed}', { seed });
     // The prompt actually sent to the engine: a clamped caption line, the full text in the tooltip.
     const prompt = typeof options?.prompt === 'string' ? options.prompt.trim() : '';
+    if (prompt && options?.promptSource === 'user') meta += (meta ? ' · ' : '') + jt('chat.artifactFigure.metaYourPrompt', 'your prompt');
     const negative = prompt && typeof options.negativePrompt === 'string' ? options.negativePrompt.trim() : '';
     let promptTitle = prompt ? `${jt('chat.artifactFigure.promptLabel', 'Prompt')}: ${prompt}` : '';
     if (negative) promptTitle += `\n${jt('chat.artifactFigure.negativePromptLabel', 'Negative prompt')}: ${negative}`;
@@ -322,7 +323,9 @@
     return figure.renderFigure({ callId, artifactId: pres.id, sessionId: pres.sessionId, imageKey,
       title: pres.title, width, height, src, meta, state: failedImages.has(imageKey) ? 'unavailable' : '',
       prompt: prompt.replace(/\s+/g, ' '), promptTitle,
+      editPrompt: prompt ? { prompt, seed, width, height } : null,
       labels: {
+        editPrompt: jt('chat.artifactFigure.editPrompt', 'Edit prompt'),
         viewAria: jt('chat.artifactFigure.viewAria', 'View {title}', { title: pres.title }),
         unavailable: jt('chat.artifactFigure.unavailable', 'Image unavailable'),
         copy: jt('chat.artifactFigure.copyImage', 'Copy image'),

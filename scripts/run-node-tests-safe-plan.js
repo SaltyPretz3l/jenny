@@ -13,6 +13,7 @@ const {
 } = require('./run-node-tests-safe-support');
 const { retryInfrastructureFailures } = require('./run-node-tests-safe-reporting');
 const { readHistoryFile, resolveHistoryPath } = require('./run-node-tests-safe-history');
+const { createProgressTracker } = require('./run-node-tests-safe-progress');
 
 // Orders files by their most recent recorded duration, longest first. Files
 // with no history keep their relative order and go first (an unknown file may
@@ -44,6 +45,9 @@ async function runManagedPlan(parsed, state, { runManagedFile, runCapturedChild,
   const { parallelArgs, sequentialArgs: allSequentialArgs } = selectRunGroups(parsed);
   // Reserve the post-parallel quiet machine for measured cases (see splitLoadTail).
   const { sequentialArgs, loadArgs } = splitLoadTail(allSequentialArgs);
+
+  state.progress = createProgressTracker(parallelArgs.length + allSequentialArgs.length);
+  state.progress.announce();
 
   let aborted = false;
 
@@ -132,6 +136,8 @@ async function runManagedPlan(parsed, state, { runManagedFile, runCapturedChild,
     await loadLane.drain();
     await retryInfrastructureFailuresOrAbort();
   }
+
+  state.progress.flush(state.results);
 
   if (aborted) {
     for (const lane of [parallelLane, ...chainLanes, loadLane]) {

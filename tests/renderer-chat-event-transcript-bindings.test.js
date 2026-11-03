@@ -382,7 +382,7 @@ test('the transcript view control mounts in the pane cluster, opens a radio menu
   const cluster = doc.querySelector('[data-chat-node="chatTimelineUtilityCluster"]');
   const button = cluster.querySelector('[data-transcript-view-toggle]');
   assert.ok(button, 'the control is built into the pane cluster');
-  assert.equal(button.previousElementSibling?.getAttribute('data-chat-node'), 'artifactSplitViewToggle', 'it sits after the split toggle');
+  assert.deepEqual([button.previousElementSibling?.getAttribute('data-chat-node'), button.nextElementSibling?.hasAttribute('data-chat-width-toggle')], ['artifactSplitViewToggle', true], 'it sits after the split toggle; the row 92 Wide toggle follows it');
   assert.equal(button.tagName, 'BUTTON');
   assert.ok(button.classList.contains('chat-timeline-utility-button') && button.classList.contains('chat-timeline-view-toggle'));
   assert.equal(button.getAttribute('aria-haspopup'), 'menu');

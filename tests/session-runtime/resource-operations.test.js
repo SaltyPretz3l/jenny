@@ -30,6 +30,7 @@ function createHarness(t, { limits, sandboxCommands = false, onSettled = null } 
   t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
   let revision = 1;
   let decision = 'auto';
+  let legacyShell = true;
   let uuid = 0;
   let lease = 0;
   let policyChecks = 0;
@@ -47,7 +48,7 @@ function createHarness(t, { limits, sandboxCommands = false, onSettled = null } 
       policyChecks += 1;
       return { version: 3, legacy_policies: {
         read_file: decision, write_file: decision, verify: decision,
-        run_command: decision, run_temp_script: decision, workspace_manifest_read: decision,
+        ...(legacyShell ? { run_command: decision } : {}), run_temp_script: decision, workspace_manifest_read: decision,
         git_diff: decision, worktree_create: decision, monitor: decision,
         check_background_job: decision, stop_background_job: decision,
         check_monitor: decision, jenny_status: decision,
@@ -56,6 +57,7 @@ function createHarness(t, { limits, sandboxCommands = false, onSettled = null } 
     knowledgeService: { getSidecarConfig: () => ({ tools_knowledge_enabled: false,
       knowledge_roots: [] }) },
     resolveProjectWorkspaceServices: () => ({}),
+    isReadOnlyCommandsEnabled: () => true,
     randomUUID: () => `authority-${++uuid}`,
   });
   const broker = new ResourceBroker({ limits, createId: () => `resource-${++lease}` });
@@ -69,7 +71,8 @@ function createHarness(t, { limits, sandboxCommands = false, onSettled = null } 
   return { authorityService, broker, createGateway, pathResolver, workspace,
     policyChecks: () => policyChecks,
     revoke() { revision += 1; },
-    setDecision(value) { decision = value; } };
+    setDecision(value) { decision = value; },
+    useBuiltinShellDefault() { legacyShell = false; } };
 }
 
 function admit(trusted, overrides = {}) {
@@ -326,6 +329,25 @@ test('gateway rejects spoofed fields and rechecks live policy after resource res
   assert.equal(stale.reason, 'project_authority_stale');
   assert.equal(harness.broker.snapshot().lease_count, 0);
   assert.equal(gateway.handle(admit(trusted)).reason, 'tool_resource_operation_duplicate');
+});
+
+test('the lease re-check of a read-only command is admitted by the grant recorded for that operation', t => {
+  const harness = createHarness(t);
+  harness.setDecision('ask');
+  harness.useBuiltinShellDefault(); // a stored v1 run_command policy would win (row 102)
+  const { binding, gateway, trusted } = harness.createGateway('request-ro');
+  const args = { command: 'git log -5' };
+  const command = (operationId) => admit(trusted, { operation_id: operationId, tool_name: 'run_command', arguments: args });
+
+  assert.equal(gateway.handle(command('ro-never-checked')).reason, 'policy_rejected');
+  const check = harness.authorityService.checkRuntimeOperation(binding, {
+    api_version: '2026-10-15', schema_version: 1, request_id: trusted.requestId, session_id: trusted.sessionId,
+    authority_revision: trusted.authorityRevision, operation_id: 'ro-1', phase: 'check',
+    tool_name: 'run_command', arguments: args, grant: 'read_only_command',
+  });
+  assert.equal(check.status, 'granted');
+  assert.equal(gateway.handle(command('ro-1')).status, 'granted');
+  gateway.close();
 });
 
 test('a close during final policy validation cannot publish a granted resource', t => {

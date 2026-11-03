@@ -300,7 +300,7 @@ test('background tasks: unsupported sources keep counts unknown; supported rows 
     scope: 'session_and_direct_children',
     counts: { active: null, waiting: null, failed: null, completed: null },
     coverage: 'partial',
-    unsupported_sources: ['workspace_test', 'session_runtime', 'linked_chat_turn'],
+    unsupported_sources: ['workspace_test', 'session_runtime', 'linked_chat_turn', 'background_job'],
     items: [],
   });
 
@@ -315,7 +315,7 @@ test('background tasks: unsupported sources keep counts unknown; supported rows 
   const testSource = { getActivityRuns: () => rows, subscribeActivity: () => () => {} };
   const on = (await makeService({ activityEnabled: true, testSource }).service.getSummary(req())).summary.background_tasks;
   assert.equal(on.data.coverage, 'partial');
-  assert.deepEqual(on.data.unsupported_sources, ['session_runtime', 'linked_chat_turn']);
+  assert.deepEqual(on.data.unsupported_sources, ['session_runtime', 'linked_chat_turn', 'background_job']);
   assert.deepEqual(on.data.counts, { active: 1, waiting: null, failed: 1, completed: 1 });
   assert.deepEqual(on.data.items.map((item) => item.operation_id), ['r1', 'r2', 'r3']);
   assert.deepEqual(on.data.items[1], {
@@ -324,13 +324,78 @@ test('background tasks: unsupported sources keep counts unknown; supported rows 
   });
 });
 
-test('background task items are capped at ten and complete coverage is possible only with every source', () => {
-  const rows = Array.from({ length: 15 }, (_, i) => ({ runId: `r${i}`, state: 'running', updatedAt: '2026-10-15T00:00:00.000Z' }));
+test('background task items are capped at thirty and complete coverage is possible only with every source', () => {
+  const rows = Array.from({ length: 35 }, (_, i) => ({ runId: `r${i}`, state: 'running', updatedAt: '2026-10-15T00:00:00.000Z' }));
   const section = buildBackgroundTasksSection({ sampledAt: 's', sessionId: SESSION, rows, workspaceTestSupported: true });
-  assert.equal(section.data.items.length, 10);
-  assert.equal(section.data.counts.active, 15);
+  assert.equal(section.data.items.length, 30);
+  assert.equal(section.data.counts.active, 35);
   const complete = buildBackgroundTasksSection({ sampledAt: 's', sessionId: SESSION, rows: [], workspaceTestSupported: true, sessionRuntimeSupported: true });
   assert.equal(complete.data.coverage, 'partial', 'linked_chat_turn has no source in checkpoint 2');
+});
+
+function jobSnapshot(jobId, state, extra = {}) {
+  return {
+    jobId, sessionId: SESSION, command: `cmd ${jobId}`, toolCallId: 'call', state, pid: 1, exitCode: null, error: '',
+    startedAtMs: 1_000, endedAtMs: 0, outputTruncated: false, stopRequested: false, ...extra,
+  };
+}
+
+test('background jobs become task items: live first, finished history newest first, unsupported without a tracker', () => {
+  const jobRows = [
+    jobSnapshot('aaaaaaaaaaa1', 'completed', { endedAtMs: 5_000, exitCode: 0 }),
+    jobSnapshot('aaaaaaaaaaa2', 'running', { startedAtMs: 2_000 }),
+    jobSnapshot('aaaaaaaaaaa3', 'failed', { endedAtMs: 9_000, exitCode: -1, stopRequested: true }),
+    jobSnapshot('aaaaaaaaaaa4', 'killing', { startedAtMs: 3_000 }),
+    jobSnapshot('aaaaaaaaaaa5', 'bogus'),
+    jobSnapshot('aaaaaaaaaaa2', 'completed'),
+    { state: 'running' },
+  ];
+  const section = buildBackgroundTasksSection({
+    sampledAt: 's', sessionId: SESSION, rows: [], workspaceTestSupported: true, sessionRuntimeSupported: true, linkedRows: [], jobRows,
+  });
+  assert.equal(section.data.coverage, 'complete');
+  assert.deepEqual(section.data.unsupported_sources, []);
+  // The stopped job counts as finished, not failed: the header must not keep flagging a Stop red.
+  assert.deepEqual(section.data.counts, { active: 2, waiting: 0, failed: 0, completed: 2 });
+  assert.deepEqual(section.data.items.map((item) => item.job_id), ['aaaaaaaaaaa4', 'aaaaaaaaaaa2', 'aaaaaaaaaaa3', 'aaaaaaaaaaa1']);
+  assert.deepEqual(section.data.items[2], {
+    source_kind: 'background_job', operation_id: 'job:aaaaaaaaaaa3', session_id: SESSION, job_id: 'aaaaaaaaaaa3',
+    command: 'cmd aaaaaaaaaaa3', state: 'failed', started_at_ms: 1_000, ended_at_ms: 9_000, exit_code: -1, stop_requested: true,
+  });
+  assert.deepEqual([section.data.items[1].ended_at_ms, section.data.items[1].exit_code, section.data.items[1].stop_requested], [null, null, false]);
+
+  // Row 96: a running job's progress rides the item; a job without it keeps the exact original shape.
+  const withProgress = buildBackgroundTasksSection({
+    sampledAt: 's', sessionId: SESSION, rows: [], workspaceTestSupported: true, linkedRows: [],
+    jobRows: [
+      jobSnapshot('aaaaaaaaaaa7', 'running', { progress: { percent: 140, done: 5, total: 9, totalUnit: 'tests', failed: 2.7, failureMarks: [0.2, 9, 'x', -1] } }),
+      jobSnapshot('aaaaaaaaaaa8', 'running', { progress: { percent: null, failed: 0, failureMarks: [] } }),
+      jobSnapshot('aaaaaaaaaaa9', 'running', { progress: null }),
+    ],
+  });
+  const byId = Object.fromEntries(withProgress.data.items.map((item) => [item.job_id, item]));
+  assert.deepEqual([byId.aaaaaaaaaaa7.progress_percent, byId.aaaaaaaaaaa7.progress_failed, byId.aaaaaaaaaaa7.progress_marks], [100, 2, [0.2, 1, 0]]);
+  assert.deepEqual([byId.aaaaaaaaaaa8.progress_percent, byId.aaaaaaaaaaa8.progress_marks], [null, []]);
+  assert.equal('progress_percent' in byId.aaaaaaaaaaa9, false);
+
+  const hostile = buildBackgroundTasksSection({
+    sampledAt: 's', sessionId: SESSION, rows: [], workspaceTestSupported: true, linkedRows: [],
+    jobRows: [jobSnapshot('aaaaaaaaaaa6', 'running', { command: 'rm\u202e -rf\u0007 x', exitCode: 1.5, startedAtMs: -4 })],
+  });
+  assert.deepEqual([hostile.data.items[0].command, hostile.data.items[0].started_at_ms], ['rm -rf x', null]);
+
+  const off = buildBackgroundTasksSection({ sampledAt: 's', sessionId: SESSION, rows: [], workspaceTestSupported: true, linkedRows: [] });
+  assert.deepEqual(off.data.unsupported_sources, ['session_runtime', 'background_job']);
+});
+
+test('the service reads the session jobs from the background-job tracker', async () => {
+  const asked = [];
+  const tracker = { getSessionJobs: (id) => { asked.push(id); return [jobSnapshot('bbbbbbbbbbb1', 'running')]; } };
+  const tasks = (await makeService({ backgroundJobTracker: tracker }).service.getSummary(req())).summary.background_tasks;
+  assert.deepEqual(asked, [SESSION]);
+  assert.equal(tasks.data.unsupported_sources.includes('background_job'), false);
+  assert.deepEqual(tasks.data.items.map((item) => item.operation_id), ['job:bbbbbbbbbbb1']);
+  assert.equal(tasks.data.counts.active, 1);
 });
 
 test('summaries are per session: another session never receives this session values', async () => {

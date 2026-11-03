@@ -8,6 +8,7 @@ from __future__ import annotations
 import fnmatch
 import os
 import re
+import stat
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ from sidecar.ai.tools.builtins.filesystem import (
 from sidecar.ai.tools.contracts import ToolExecutionFailure
 
 if TYPE_CHECKING:
+    from sidecar.ai.tools.builtins.search_ignore import SearchIgnoreFilter
     from sidecar.ai.tools.workspace import WorkspaceGuard
 
 MAX_RENDERED_LINE_CHARS = 500
@@ -31,6 +33,7 @@ MAX_BRACE_EXPANSIONS = 32
 _FILE_ATTRIBUTE_REPARSE_POINT = 0x400
 _IO_REPARSE_TAG_NAME_SURROGATE = 0x20000000
 _WALK_BUDGET_CHECK_INTERVAL = 256
+_GLOB_METACHARACTERS = frozenset("*?[")
 
 
 class BraceExpansionLimitError(ValueError):
@@ -99,11 +102,25 @@ def is_link_entry(entry: os.DirEntry[str]) -> bool:
         return True
     if os.name != "nt":
         return False
-    info = entry.stat(follow_symlinks=False)
+    return _is_name_surrogate(entry.stat(follow_symlinks=False))
+
+
+def _is_name_surrogate(info: os.stat_result) -> bool:
     if not getattr(info, "st_file_attributes", 0) & _FILE_ATTRIBUTE_REPARSE_POINT:
         return False
     tag = int(getattr(info, "st_reparse_tag", 0) or 0)
     return not tag or bool(tag & _IO_REPARSE_TAG_NAME_SURROGATE)
+
+
+def is_link_path(path: Path) -> bool:
+    """``is_link_entry`` for a path; an unreadable entry fails closed."""
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return True
+    if stat.S_ISLNK(info.st_mode):
+        return True
+    return os.name == "nt" and _is_name_surrogate(info)
 
 
 def iter_candidate_files(
@@ -112,6 +129,7 @@ def iter_candidate_files(
     include_patterns: Sequence[str] | None,
     *,
     budget_exhausted: Callable[[], bool] | None = None,
+    ignore_filter: SearchIgnoreFilter | None = None,
 ) -> Iterator[Path]:
     """Files under ``search_root`` in walk order, never following links.
 
@@ -119,6 +137,9 @@ def iter_candidate_files(
     non-link entry of a verified directory (the worker re-verifies the opened
     handle against the workspace root). ``budget_exhausted`` is polled every
     256 entries so a walk whose files ``include_patterns`` all reject still stops.
+    When every include pattern has a literal leading directory the walk starts
+    there instead (same matches, see ``literal_anchor_directories``), and
+    ``ignore_filter`` prunes what git ignores below ``search_root``.
     """
     if search_root.is_file():
         if not include_patterns or any(
@@ -126,7 +147,8 @@ def iter_candidate_files(
         ):
             yield search_root
         return
-    walk = _CandidateWalk(search_root, workspace, budget_exhausted)
+    starts = _walk_starts(search_root, workspace, include_patterns, ignore_filter)
+    walk = _CandidateWalk(starts, workspace, budget_exhausted, ignore_filter)
     while walk.pending:
         files = walk.next_directory()
         if files is None:
@@ -140,19 +162,97 @@ def iter_candidate_files(
             yield candidate
 
 
+def literal_anchor_directories(patterns: Sequence[str]) -> tuple[str, ...] | None:
+    """Search-root-relative directories that hold every file the patterns can match.
+
+    Per ``matches_relative_glob``, a pattern with a slash is anchored at the
+    search root, so its literal leading directory segments bound where it can
+    match. None (walk everything) when any pattern is slash-free (it matches at
+    any depth), starts with a glob segment, or holds a ``.``/``..`` segment.
+    Nested anchors collapse into their ancestor.
+    """
+    anchors: list[tuple[str, ...]] = []
+    for pattern in patterns:
+        token = pattern.replace("\\", "/")
+        parts = tuple(part for part in token.split("/") if part)
+        if "/" not in token or any(part in {".", ".."} for part in parts):
+            return None
+        literal: list[str] = []
+        for part in parts[:-1]:
+            if any(character in _GLOB_METACHARACTERS for character in part):
+                break
+            literal.append(part)
+        if not literal:
+            return None
+        anchors.append(tuple(literal))
+    return tuple("/".join(anchor) for anchor in _outermost(anchors))
+
+
+def _outermost(anchors: Iterable[tuple[str, ...]]) -> list[tuple[str, ...]]:
+    """Deduplicated anchors in walk order (the walk sorts names case-blind),
+    dropping any inside another; names compare case-blind only on Windows.
+    """
+    def same(parts: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(part.lower() for part in parts) if os.name == "nt" else parts
+
+    kept: list[tuple[str, ...]] = []
+    for anchor in sorted(anchors, key=lambda parts: tuple(part.lower() for part in parts)):
+        if not any(same(anchor)[: len(outer)] == same(outer) for outer in kept):
+            kept.append(anchor)
+    return kept
+
+
+def _walk_starts(
+    search_root: Path,
+    workspace: WorkspaceGuard,
+    include_patterns: Sequence[str] | None,
+    ignore_filter: SearchIgnoreFilter | None,
+) -> list[Path]:
+    """The directories the walk starts from: the search root, or its literal anchors.
+
+    An anchor is kept only where the full walk would reach it: through no link,
+    ``SEARCH_IGNORE_DIRS`` entry or gitignored directory, and inside the root.
+    """
+    anchors = literal_anchor_directories(include_patterns) if include_patterns else None
+    if anchors is None:
+        return [search_root]
+    resolved: list[tuple[tuple[str, ...], Path]] = []
+    for anchor in anchors:
+        lexical = search_root / anchor
+        try:
+            target = workspace.ensure_within_root(lexical)
+            parts = target.relative_to(search_root).parts
+        except (ToolExecutionFailure, ValueError):
+            continue
+        chain = [search_root.joinpath(*parts[: index + 1]) for index in range(len(parts))]
+        if (
+            not parts
+            or not target.is_dir()
+            or any(part in SEARCH_IGNORE_DIRS for part in parts)
+            or any(is_link_path(step) for step in chain)
+            or (ignore_filter is not None and not ignore_filter.allows_directory_chain(target))
+        ):
+            continue
+        resolved.append((parts, target))
+    by_parts = {parts: target for parts, target in resolved}
+    return [by_parts[parts] for parts in _outermost(by_parts)]
+
+
 class _CandidateWalk:
     def __init__(
         self,
-        root: Path,
+        roots: Sequence[Path],
         workspace: WorkspaceGuard,
         budget_exhausted: Callable[[], bool] | None,
+        ignore_filter: SearchIgnoreFilter | None = None,
     ) -> None:
         self._workspace = workspace
         self._budget_exhausted = budget_exhausted
+        self._ignore_filter = ignore_filter
         self._entries = 0
-        self.pending = [root]
+        self.pending = list(reversed(roots))
         # Backstop against any link shape the entry check misses.
-        self._seen = {os.path.normcase(str(root))}
+        self._seen = {os.path.normcase(str(root)) for root in roots}
 
     def next_directory(self) -> list[Path] | None:
         """The next directory's files, sorted; queues its subdirectories.
@@ -175,14 +275,22 @@ class _CandidateWalk:
                 if is_link_entry(entry):
                     continue
                 if entry.is_dir(follow_symlinks=False):
-                    if entry.name not in SEARCH_IGNORE_DIRS:
+                    if entry.name not in SEARCH_IGNORE_DIRS and self._allows_directory(
+                        directory / entry.name
+                    ):
                         subdirectories.append(entry.name)
                 elif entry.is_file(follow_symlinks=False):
                     files.append(entry.name)
             except OSError:
                 continue
         self._queue(directory, subdirectories)
-        return [directory / name for name in sorted(files, key=str.lower)]
+        paths = [directory / name for name in sorted(files, key=str.lower)]
+        if self._ignore_filter is None:
+            return paths
+        return [path for path in paths if self._ignore_filter.allows_file(path)]
+
+    def _allows_directory(self, path: Path) -> bool:
+        return self._ignore_filter is None or self._ignore_filter.allows_directory(path)
 
     def _over_budget(self) -> bool:
         return self._budget_exhausted is not None and self._budget_exhausted()
@@ -202,8 +310,14 @@ class _CandidateWalk:
 
 
 def expand_brace_patterns(pattern: str) -> tuple[str, ...]:
-    """Expand comma-separated brace alternatives without invoking a shell."""
-    pending = [pattern]
+    """Expand comma lists and brace alternatives without invoking a shell.
+
+    A top-level comma (outside braces and brackets) separates alternatives, so
+    ``"a.js, b.js"`` reads like ``{a.js,b.js}``.
+    """
+    pending = list(reversed(split_top_level_commas(pattern)))
+    if len(pending) > MAX_BRACE_EXPANSIONS:
+        raise BraceExpansionLimitError
     expanded: list[str] = []
     while pending:
         candidate = pending.pop()
@@ -218,6 +332,40 @@ def expand_brace_patterns(pattern: str) -> tuple[str, ...]:
         suffix = candidate[end + 1 :]
         pending.extend(f"{prefix}{alternative}{suffix}" for alternative in alternatives)
     return tuple(dict.fromkeys(expanded))
+
+
+def split_top_level_commas(pattern: str) -> tuple[str, ...]:
+    """Split on commas outside braces and brackets, trimming each alternative.
+
+    Empty alternatives are dropped; a pattern with none left stays whole, and
+    so does one where any part has no ``.``, ``/`` or glob character, so a
+    literal name such as ``Smith, John.docx`` still matches itself.
+    """
+    parts: list[str] = []
+    depth = 0
+    in_bracket = False
+    start = 0
+    for index, character in enumerate(pattern):
+        if in_bracket:
+            in_bracket = character != "]"
+        elif character == "[":
+            in_bracket = True
+        elif character == "{":
+            depth += 1
+        elif character == "}" and depth:
+            depth -= 1
+        elif character == "," and not depth:
+            parts.append(pattern[start:index])
+            start = index + 1
+    parts.append(pattern[start:])
+    alternatives = tuple(part.strip() for part in parts if part.strip())
+    if len(alternatives) > 1 and not all(_looks_like_file_pattern(part) for part in alternatives):
+        return (pattern,)
+    return alternatives or (pattern,)
+
+
+def _looks_like_file_pattern(part: str) -> bool:
+    return any(character in part for character in "./\\*?[{")
 
 
 def _find_expandable_brace(pattern: str) -> tuple[int, int, tuple[str, ...]] | None:

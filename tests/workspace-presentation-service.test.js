@@ -38,7 +38,7 @@ test('invalid views and unsafe paths fail closed without dispatching', () => {
     sendBridgeEvent: (methodPath, payload) => sent.push({ methodPath, payload }),
     isRendererAvailable: () => true,
   });
-  assert.deepEqual(VALID_VIEWS, ['preview', 'file_map', 'change_diff']);
+  assert.deepEqual(VALID_VIEWS, ['preview', 'file_map', 'change_diff', 'file']);
   assert.equal(service.requestPresentation({ view: 'editor' }).reason, 'unsupported_view');
   assert.equal(service.requestPresentation({ view: 'preview', path: '../up.md' }).reason, 'unsafe_path');
   assert.equal(service.requestPresentation({ view: 'preview', path: 'C:/x.md' }).reason, 'unsafe_path');

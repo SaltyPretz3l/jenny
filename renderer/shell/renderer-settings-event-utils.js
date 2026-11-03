@@ -18,6 +18,9 @@
     startupModelLoad: jt('settings.models.startupLoad.updateFailed', 'Startup Load Update Failed'),
     appZoomPercent: jt('settings.appearance.appZoomUpdateFailed', 'App Zoom Update Failed'),
     'featureFlags.text_spellcheck': jt('settings.editor.spellCheckUpdateFailed', 'Spell Check Update Failed'),
+    'featureFlags.primary_digests': jt('settings.jennyChat.digestsUpdateFailed', 'Digest Setting Update Failed'),
+    digestQuietStart: jt('settings.jennyChat.quietHoursUpdateFailed', 'Quiet Hours Update Failed'),
+    digestQuietEnd: jt('settings.jennyChat.quietHoursUpdateFailed', 'Quiet Hours Update Failed'),
     'webSearch.provider': jt('settings.tools.webSearch.providerUpdateFailed', 'Web Search Provider Update Failed'),
     'webSearch.searxngUrl': jt('settings.tools.webSearch.searxngUrlUpdateFailed', 'SearXNG URL Update Failed'),
   });
@@ -629,6 +632,10 @@
           container: dictationSettingsSection, state, renderSettings, registerListener, listenerOptions,
         });
       }
+
+      // Jenny chat (row 86): the digests switch (features adapter) and the quiet-hours selects (chatUi).
+      const jennyChatSettingsSection = typeof document !== 'undefined' ? document.getElementById('jennyChatSettingsSection') : null;
+      if (jennyChatSettingsSection) bindDescriptorFields(jennyChatSettingsSection, ['primaryDigestsToggle', 'digestQuietStartSelect', 'digestQuietEndSelect']);
 
       // Web search provider section: renders inside the same toolsConfigFieldList
       // container, in toolsWebList. Provider/URL fields

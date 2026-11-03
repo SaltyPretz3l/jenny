@@ -23,6 +23,7 @@ const {
 } = require('../services/workspace-git-checkpoint');
 const { probeHeadState } = require('../services/workspace-git-root-guard');
 const { runWorkspaceGit } = require('../services/workspace-git-executor');
+const { plainGitReads } = require('./helpers/workspace-git-plain-exec');
 const {
   cleanupTrackedResources,
   createTrackedTempDir,
@@ -54,7 +55,7 @@ function createService(root, { exec, rootProvider, stubFs = false } = {}) {
   return new WorkspaceGitService({
     configService: { getToolsWorkspaceRoot: rootProvider || (() => root) },
     featureFlagProvider: () => ({ workspace_git: true }),
-    ...(exec ? { exec } : {}),
+    ...(exec ? { exec: plainGitReads(exec) } : {}),
     ...(stubFs ? { fs: { realpath: async (value) => value } } : {}),
     logger() {},
   });

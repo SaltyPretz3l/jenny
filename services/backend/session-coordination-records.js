@@ -12,8 +12,10 @@
 
 const { normalizeReceiptContainer } = require('./coordination-receipts');
 
+// background_tasks_finished is the Background tasks section's collapsible
+// "finished" divider (the per-chat job history), not a section of its own.
 const DISCLOSURE_KEYS = Object.freeze([
-  'environment', 'context', 'outputs', 'changes', 'background_tasks',
+  'environment', 'context', 'outputs', 'changes', 'background_tasks', 'background_tasks_finished',
 ]);
 const COORDINATION_FIELDS = Object.freeze([
   'spawned_from', 'coordination_revision', 'coordination_receipts',

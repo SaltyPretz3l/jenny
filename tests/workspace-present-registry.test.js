@@ -38,16 +38,17 @@ test('workspace_present registry entry requires an explicit toolsWorkspacePresen
   assert.equal(tool.workspaceRequired, true);
 });
 
-test('workspace_present carries the manifest input schema including change_diff', () => {
+test('workspace_present carries the manifest input schema including change_diff and file', () => {
   const registry = createDefaultRegistry({ toolsWorkspacePresentEnabled: true });
   const tool = registry.getTool('workspace_present');
   const schema = tool.parameters;
 
   assert.ok(schema, 'manifest schema is attached via withManifestSchema');
   assert.equal(tool.toolFamily, 'workspace');
-  assert.deepEqual(schema.properties.view.enum, ['preview', 'file_map', 'change_diff']);
+  assert.deepEqual(schema.properties.view.enum, ['preview', 'file_map', 'change_diff', 'file']);
   assert.equal(schema.properties.path.type, 'string');
   assert.equal(schema.properties.change_id.type, 'string');
+  assert.equal(schema.properties.line.type, 'integer');
   assert.deepEqual(schema.required, ['view']);
 });
 

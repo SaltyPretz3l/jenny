@@ -641,6 +641,7 @@ function startMainProcess() {
           createBackendService();
           scheduleStartupRetentionTasks({ artifactService, backendService, attachmentAssetStore, log });
           workspaceProcessServices = registerIpcHandlers() || {};
+          if (backendService) backendService.workspacePtyService = workspaceProcessServices.workspacePtyService || null; // row 94 P4 terminal_read/run
           workspaceProcessServices.windowExitGuard?.attach?.(mainWindow);
           startPostWindowServices();
           emitStartupAuditMark('main-sync-init-end', { source: 'main' });

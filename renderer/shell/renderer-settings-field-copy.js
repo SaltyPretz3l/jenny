@@ -440,6 +440,26 @@
       keywords: [jt('settings.fieldCopy.dictationEnabledToggle.keywords.voice', 'voice'), jt('settings.fieldCopy.dictationEnabledToggle.keywords.speech', 'speech'), jt('settings.fieldCopy.dictationEnabledToggle.keywords.microphone', 'microphone'), jt('settings.fieldCopy.dictationEnabledToggle.keywords.pushToTalk', 'push to talk')],
     },
 
+    // ── Jenny chat (row 86; rendered in renderer-settings-utils.js) ──
+    primaryDigestsToggle: {
+      label: jt('settings.fieldCopy.primaryDigestsToggle.label', 'While you were away'),
+      description: jt('settings.fieldCopy.primaryDigestsToggle.description', 'When you come back after 4 hours or more, Jenny posts one short summary of what happened in your chats. Only when something new happened, at most once every 6 hours. It reads; it never acts.'),
+      sectionId: 'jennyChat',
+      keywords: [jt('settings.fieldCopy.primaryDigestsToggle.keywords.digest', 'digest'), jt('settings.fieldCopy.primaryDigestsToggle.keywords.summary', 'summary'), jt('settings.fieldCopy.primaryDigestsToggle.keywords.away', 'away'), jt('settings.fieldCopy.primaryDigestsToggle.keywords.welcomeBack', 'welcome back')],
+    },
+    digestQuietStartSelect: {
+      label: jt('settings.fieldCopy.digestQuietStartSelect.label', 'Quiet hours start'),
+      description: jt('settings.fieldCopy.digestQuietStartSelect.description', 'Between these times the Jenny chat sends no desktop notifications and no digest. Anything that needs you waits in Needs you.'),
+      sectionId: 'jennyChat',
+      keywords: [jt('settings.fieldCopy.digestQuietStartSelect.keywords.quietHours', 'quiet hours'), jt('settings.fieldCopy.digestQuietStartSelect.keywords.night', 'night'), jt('settings.fieldCopy.digestQuietStartSelect.keywords.doNotDisturb', 'do not disturb'), jt('settings.fieldCopy.digestQuietStartSelect.keywords.digest', 'digest')],
+    },
+    digestQuietEndSelect: {
+      label: jt('settings.fieldCopy.digestQuietEndSelect.label', 'Quiet hours end'),
+      description: jt('settings.fieldCopy.digestQuietEndSelect.description', 'When quiet hours end; a digest they held back can run then.'),
+      sectionId: 'jennyChat',
+      keywords: [jt('settings.fieldCopy.digestQuietEndSelect.keywords.quietHours', 'quiet hours'), jt('settings.fieldCopy.digestQuietEndSelect.keywords.morning', 'morning'), jt('settings.fieldCopy.digestQuietEndSelect.keywords.digest', 'digest')],
+    },
+
     // ── Notifications (desktop toasts; renderer-settings-notifications-section.js) ──
     notificationsEnabledToggle: {
       label: jt('settings.fieldCopy.notificationsEnabledToggle.label', 'Desktop notifications'),
@@ -461,7 +481,7 @@
     },
     notificationsCategoryRepliesToggle: {
       label: jt('settings.fieldCopy.notificationsCategoryRepliesToggle.label', 'A reply is ready'),
-      description: jt('settings.fieldCopy.notificationsCategoryRepliesToggle.description', 'A chat finished responding.'),
+      description: jt('settings.fieldCopy.notificationsCategoryRepliesToggle.description', 'A chat finished responding to you.'),
       sectionId: 'notifications',
       keywords: ['reply', 'response', 'finished', 'done'],
     },
@@ -488,6 +508,12 @@
       description: jt('settings.fieldCopy.notificationsCategoryRemindersToggle.description', 'Reminders you set on Home.'),
       sectionId: 'notifications',
       keywords: ['reminder', 'reminders', 'due'],
+    },
+    notificationsCategoryJennyToggle: {
+      label: jt('settings.fieldCopy.notificationsCategoryJennyToggle.label', 'Jenny finishes a check or an update'),
+      description: jt('settings.fieldCopy.notificationsCategoryJennyToggle.description', 'A scheduled check finished, or the Jenny chat replied to a chat it started. Approvals and questions use the switches above.'),
+      sectionId: 'notifications',
+      keywords: ['check', 'scheduled', 'update', 'wake', 'digest'],
     },
     notificationsReplyPreviewToggle: {
       label: jt('settings.fieldCopy.notificationsReplyPreviewToggle.label', 'Show the first line of the reply'),

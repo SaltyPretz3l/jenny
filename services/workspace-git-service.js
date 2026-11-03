@@ -56,8 +56,10 @@ const {
   parseBlamePorcelain,
 } = require('./workspace-git-parsers');
 const { buildResolveDeleteCommand } = require('./workspace-git-resolve-delete');
+const { readGitOperation } = require('./workspace-ide-gitdir');
 const { listNonIgnoredFilesRead, checkIgnoredRead, normalizeCheckIgnoredPaths } = require('./workspace-git-ignore-reads');
 const { createWorkspaceGitExtras, classifyHeadPathMiss, trashUntracked } = require('./workspace-git-service-extras');
+const { createCheckpointGitExec, createReadOnlyGitExec } = require('./workspace-git-neutralize');
 
 const MAX_DIFF_CHARS = 200000;
 const MAX_BLAME_LINES = 2000;
@@ -105,7 +107,11 @@ class WorkspaceGitService {
       throw new TypeError('WorkspaceGitService resource admission requires a contained Git runner.');
     }
     this._resources = createWorkspaceGitResources({ resourceAdmissionProvider });
-    this._exec = this._resources.wrapExecutor(exec);
+    // Row 103: every read runs with the repository's executable config
+    // neutralized (workspace-git-neutralize); only _runWrite's commands and
+    // checkpoint writes use the unwrapped executor.
+    this._writeExec = this._resources.wrapExecutor(exec);
+    this._exec = createReadOnlyGitExec(this._writeExec);
     this._fs = fs;
     this._path = path;
     this._pathPolicy = new ToolPathPolicy({ fs, path, logger });
@@ -135,7 +141,7 @@ class WorkspaceGitService {
         }, handler),
         isResourceError: isWorkspaceGitResourceError,
       }),
-      exec: this._exec,
+      exec: createCheckpointGitExec({ read: this._exec, write: this._writeExec }),
       execFailure: (op, result) => this._execFailure(op, result),
       probeHeadState,
       log: (level, event, details) => this._log(level, event, details),
@@ -337,7 +343,8 @@ class WorkspaceGitService {
     for (const args of argvs) assertWriteVerb(args[0]);
     let r = { stdout: '', stderr: '' };
     for (const [index, each] of commands.entries()) {
-      r = await this._exec(root, argvs[index], { signal: operation.signal, input: Array.isArray(each) ? null : each?.input });
+      // User-initiated writes run the repository's filters, as in any editor (not neutralized).
+      r = await this._writeExec(root, argvs[index], { signal: operation.signal, input: Array.isArray(each) ? null : each?.input });
       if (!operation.isCurrent()) return this._unavailable(op, 'root_changed');
       if (!r.success) return this._execFailure(op, r);
     }
@@ -364,6 +371,9 @@ class WorkspaceGitService {
         op: 'getStatus',
         ...parseStatus(r.truncated ? String(r.stdout).slice(0, String(r.stdout).lastIndexOf('\0') + 1) : r.stdout),
         truncated: r.truncated === true, droppedBytes: Math.max(0, Number(r.droppedBytes) || 0),
+        // In-progress merge/rebase (state files only, no spawn): a merge can be
+        // concluded with nothing staged, and a rebase swaps ours/theirs.
+        operation: await readGitOperation(root, { fs: this._fs, path: this._path }),
       };
     }, { signal });
   }

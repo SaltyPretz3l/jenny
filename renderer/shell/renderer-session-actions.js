@@ -49,7 +49,7 @@
       stopSessionStream,
       getProjectSwitcher,
       openLinkedSessions,
-      openSendToChat,
+      openSendToChat, openYourData,
     } = deps.callbacks;
 
     const contextMenu = deps.inventory?.contextMenu || windowRef.inventoryContextMenu;
@@ -174,6 +174,13 @@
       return `${summary?.updated_at || ''}|${summary?.message_count || 0}`;
     }
 
+    function reportDeleteOutcome(result) {
+      const degraded = result?.cleanup_status === 'degraded';
+      const bytes = Number(result?.freed?.bytes) || 0;
+      if (!degraded && bytes <= 0) return; // cleanup_status and freed come from the main-process delete
+      showToastMessage(degraded ? jt('sidebar.sessionActions.deletedPartial', 'Chat deleted. Some of its files could not be removed.') : jt('sidebar.sessionActions.deletedFreed', 'Chat deleted. Freed {size}.', { size: windowRef.dataLifecycleUtils?.formatBytes?.(bytes) || `${bytes} B` }), { tone: degraded ? 'warning' : 'info', source: TOAST_SOURCE.sessionAction, ...(degraded && openYourData ? { actions: [{ id: 'open-your-data', label: jt('sidebar.sessionActions.openYourData', 'Your data'), kind: 'secondary', onClick: openYourData }] } : {}) });
+    }
+
     function requestDeleteSession(sessionId) {
       const summary = getSummary(sessionId);
       if (!summary || isPrimary(summary) || state.ui.sidebarBulkBusy || metaPending.has(sessionId) || isSessionPendingDelete(sessionId)) {
@@ -205,7 +212,7 @@
               return;
             }
             try {
-              await hardDeleteSession(sessionId);
+              reportDeleteOutcome(await hardDeleteSession(sessionId));
             } finally {
               state.ui.pendingSessionDeletes = getPendingDeleteIds().filter((id) => id !== sessionId);
             }

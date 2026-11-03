@@ -699,6 +699,22 @@ schema is preserved byte-for-byte and all writes fail closed. Clear and
 session-removal mutations persist their candidate row set before replacing
 in-memory state, so write failure preserves both detail and derived totals.
 
+## Usage rollup schema (JSON)
+
+**Source of truth:** `USAGE_ROLLUP_SCHEMA_VERSION = 1` in
+[services/usage-rollup.js](../../services/usage-rollup.js), persisted as
+`{userData}/usage-rollup.json` and registered as `electron.usage_rollup`
+(row 98, the Home Usage section).
+
+The rollup is a durable per-local-day aggregate (turns, tokens, generation
+time, a 24-slot hour histogram and up to 12 models per day) that outlives the
+history retention. It holds no session ids or content, so chat deletes and the
+primary-chat reset leave it; `usage.clearHistory` clears it with the history.
+It is seeded from the retained history rows only when the file is missing.
+Past 1830 daily buckets the oldest merge into `archived`, so lifetime totals
+stay exact. A corrupt, wrong-shape, unreadable or future-schema file is kept
+byte-for-byte and writes fail closed until Clear usage.
+
 ## Personality workspace schema (JSON)
 
 **Source of truth:** `PERSONALITY_WORKSPACE_SCHEMA_VERSION = 2` in

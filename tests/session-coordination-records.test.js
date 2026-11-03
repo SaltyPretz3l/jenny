@@ -79,9 +79,11 @@ function createFakeStore(initial, { failFlush = false, failWrite = false, newerS
   };
 }
 
-test('schema 26 is the current session store schema and names exactly the five disclosure keys', () => {
+test('schema 26 is the current session store schema and names exactly the six disclosure keys', () => {
   assert.equal(STORE_SCHEMA_VERSION, 26);
-  assert.deepEqual([...DISCLOSURE_KEYS], ['environment', 'context', 'outputs', 'changes', 'background_tasks']);
+  assert.deepEqual([...DISCLOSURE_KEYS], [
+    'environment', 'context', 'outputs', 'changes', 'background_tasks', 'background_tasks_finished',
+  ]);
   assert.deepEqual([...COORDINATION_FIELDS].sort(), [
     'chat_proposals', 'coordination_receipts', 'coordination_revision',
     'session_mail', 'spawned_from', 'workspace_view',
@@ -210,6 +212,17 @@ test('stripCoordinationFields removes only the six fields from a patch', () => {
     chat_proposals: {}, coordination_receipts: [] };
   assert.deepEqual(stripCoordinationFields(patch), { title: 'keep' });
   assert.equal(stripCoordinationFields(null), null);
+});
+
+test('the finished-jobs divider disclosure round-trips through the patch validator and the normalizer', () => {
+  const patch = { disclosures: { background_tasks: true, background_tasks_finished: false } };
+  const checked = validateWorkspaceViewPatch(patch);
+  assert.deepEqual(checked, { ok: true, patch });
+  const view = normalizeWorkspaceView({ schema_version: 1, disclosures: checked.patch.disclosures });
+  assert.deepEqual(view.disclosures, { background_tasks: true, background_tasks_finished: false });
+  assert.deepEqual(normalizeWorkspaceView(view), view);
+  assert.deepEqual(validateWorkspaceViewPatch({ disclosures: { background_tasks_finished: 'open' } }),
+    { ok: false, reason: 'invalid_patch' });
 });
 
 test('validateWorkspaceViewPatch is a closed schema', () => {

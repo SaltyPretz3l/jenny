@@ -59,6 +59,8 @@
     'propose_command',
     'propose_session',
     'complete_session_handoff',
+    // And the next-step card (its buttons come from the result metadata).
+    'suggest_next_step',
     'web_search',
     // And the review findings list (Fix / Show in diff).
     'report_findings',
@@ -459,10 +461,18 @@
         ...(reason ? { reason } : {}),
         ...(payload.session_stop_approval && typeof payload.session_stop_approval === 'object'
           ? { sessionStopApproval: payload.session_stop_approval } : {}),
-        // Only the live request carries the exact command/write presentation; the card reads it
-        // from here (resolveApprovalCardState), so a rehydrated approval has none and no Allow.
+        ...(payload.settings_change_approval && typeof payload.settings_change_approval === 'object'
+          ? { settingsChangeApproval: payload.settings_change_approval } : {}),
+        ...(payload.schedule_change_approval && typeof payload.schedule_change_approval === 'object'
+          ? { scheduleChangeApproval: payload.schedule_change_approval } : {}),
+        // Only the live request (or, on a reopen, the backend's live waiter) carries the exact
+        // command/write presentation; the card reads it from here (resolveApprovalCardState).
         ...(payload.exact_approval && typeof payload.exact_approval === 'object' && !Array.isArray(payload.exact_approval)
           ? { exactApproval: payload.exact_approval } : {}),
+        // Likewise what a command card's Always allow covers (row 103).
+        ...(payload.alwaysAllowScope && typeof payload.alwaysAllowScope === 'object' && !Array.isArray(payload.alwaysAllowScope)
+          ? { alwaysAllowScope: payload.alwaysAllowScope } : {}),
+        ...(payload.rememberOffer === 'linked_children' ? { rememberOffer: 'linked_children' } : {}), // row 87 C1
       });
       const activeMessages = [...getSessionMessages(payload.sessionId)];
       const toolUseIndex = findToolMessageIndex(activeMessages, {

@@ -8,6 +8,7 @@
   'use strict';
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
+  const jtn = (globalThis.jennyI18n && globalThis.jennyI18n.tn) || function (k, count, params, one, other) { return jt.call(null, k, count === 1 ? one : other, params); };
   const DEFAULT_INLINE_PROMPT = jt('approval.block.requiredPrompt', 'Approval is required before this tool can continue.');
   // The card shows the exact command being approved; beyond this the Input
   // panel (auto-expanded while awaiting approval) carries the full payload.
@@ -69,7 +70,9 @@
   // A call that ran, or is running, was allowed even when the record of the
   // answer itself is missing.
   const RECEIPT_RAN_STATES = new Set(['approved', 'running', 'completed', 'errored', 'interrupted']);
-  const RECEIPT_SUBJECT_MAX_CHARS = 80;
+  // The receipt subject ellipsizes in CSS; this bound stays above what a
+  // Wide chat width row shows.
+  const RECEIPT_SUBJECT_MAX_CHARS = 500;
 
   // The plan card owns a plan approval's record.
   function approvalKeepsReceipt(toolName) {
@@ -89,6 +92,9 @@
     const resolved = normalizeText(last.approval_state || last.status).toLowerCase();
     if (resolved === 'approved') {
       const scope = normalizeText(last.approval_scope).toLowerCase();
+      // A command's Always allow saved a program + subcommand prefix (row 103).
+      const prefix = scope === 'always' ? normalizeText(last.always_allow_prefix) : '';
+      if (prefix) return { decision: 'allowed', scope, alwaysAllowPrefix: prefix };
       return scope === 'always' || scope === 'once' ? { decision: 'allowed', scope } : { decision: 'allowed' };
     }
     if (RECEIPT_HARD_OUTCOMES.has(resolved)) return { decision: resolved };
@@ -104,6 +110,8 @@
     rowPayload.decision = receipt.decision;
     if (receipt.scope) rowPayload.approval_scope = receipt.scope;
     else delete rowPayload.approval_scope;
+    if (receipt.alwaysAllowPrefix) rowPayload.always_allow_prefix = receipt.alwaysAllowPrefix;
+    else delete rowPayload.always_allow_prefix;
   }
 
   function receiptLabel(decision, scope) {
@@ -130,7 +138,10 @@
     const decision = receiptDecision(source.decision);
     const mark = decision === 'allowed' ? '\u2713' : (decision === 'denied' ? '\u2715' : '');
     const firstLine = String(source.commandText == null ? '' : source.commandText).trim().split('\n')[0];
-    const command = subjectText ? '' : boundedText(firstLine, RECEIPT_SUBJECT_MAX_CHARS);
+    // An Always allowed command names what the saved rule covers (row 103).
+    const savedPrefix = source.approvalScope === 'always' ? normalizeText(source.alwaysAllowPrefix) : '';
+    const command = subjectText ? '' : (savedPrefix ? `${boundedText(savedPrefix, RECEIPT_SUBJECT_MAX_CHARS)} …`
+      : boundedText(firstLine, RECEIPT_SUBJECT_MAX_CHARS));
     const subject = command
       ? `<code class="tool-approval-receipt-subject">${escapeHtml(command)}</code>`
       : `<span class="tool-approval-receipt-subject">${escapeHtml(boundedText(subjectText, RECEIPT_SUBJECT_MAX_CHARS) || displayToolName)}</span>`;
@@ -149,7 +160,8 @@
   // receipt, as does a row the sealed fold marked interrupted (the turn is
   // over). Anything else keeps today's buttons: before the live approvals and
   // paused work load, a card must not claim it is dead. A live approval also
-  // hands over its exact presentation, which only the live request carries.
+  // hands over its exact presentation, which only the live request (or the backend's waiter, on a
+  // reopen) carries.
   function resolveApprovalCardState(state, ref) {
     const callId = normalizeText(ref && ref.callId);
     if (!state || !callId) return { state: 'live' };
@@ -157,8 +169,12 @@
       ? [...state.pendingToolApprovals.values()] : [];
     const live = approvals.find((approval) => normalizeText(approval && approval.callId) === callId);
     if (live) {
-      return live.exactApproval && typeof live.exactApproval === 'object'
+      const card = live.exactApproval && typeof live.exactApproval === 'object'
         ? { state: 'live', exactApproval: live.exactApproval } : { state: 'live' };
+      // What a command card's Always allow covers (row 103): only the live request carries it.
+      if (live.alwaysAllowScope && typeof live.alwaysAllowScope === 'object') card.alwaysAllowScope = live.alwaysAllowScope;
+      if (live.rememberOffer === 'linked_children') card.rememberOffer = 'linked_children'; // row 87 C1
+      return card;
     }
     const sessionId = normalizeText(ref.sessionId);
     const turnId = normalizeText(ref.turnId);
@@ -247,7 +263,10 @@
   // Commands and writes are approved against the exact arguments that decide what runs
   // (`exact_approval`, built by services/backend/chat-stream-tool-approval.js, whose
   // EXACT_APPROVAL_FIELDS keys this set mirrors), never the redacted, clipped input snapshot.
-  const EXACT_APPROVAL_TOOLS = new Set(['run_command', 'run_temp_script', 'python_execute', 'monitor', 'write_file', 'edit_file']);
+  // Mirrors EXACT_APPROVAL_FIELDS (services/backend/chat-stream-tool-approval.js): these cards show the decisive
+  // fields whole, never the clipped preview.
+  const EXACT_APPROVAL_TOOLS = new Set(['run_command', 'run_temp_script', 'python_execute', 'monitor', 'write_file', 'edit_file',
+    'project_create', 'session_export', 'terminal_run']);
   const EXACT_APPROVAL_MAX_CHARS = 32 * 1024;
 
   function normalizeExactApproval(value) {
@@ -348,6 +367,72 @@
       + `</div>`;
   }
 
+  // Row 88: the words for a settings change Jenny asks for, shared by the settings_change card and
+  // the Activity entry (renderer-primary-activity.js). A setting's name comes from the catalog by its
+  // key; a value is translated where the app owns the word and otherwise shows the label the app
+  // carried with the change (palette, typography and language names), never the model's text.
+  const SETTING_NAMES = {
+    time_format_24h: () => jt('primarySettings.key.time_format_24h', '24-hour time'),
+    ui_language: () => jt('primarySettings.key.ui_language', 'Language'),
+    default_run_mode: () => jt('primarySettings.key.default_run_mode', 'Default run mode'),
+    transcript_view_default: () => jt('primarySettings.key.transcript_view_default', 'Transcript view'),
+    app_zoom_percent: () => jt('primarySettings.key.app_zoom_percent', 'App zoom'),
+    palette: () => jt('primarySettings.key.palette', 'Palette'),
+    typography: () => jt('primarySettings.key.typography', 'Typography'),
+    font_scale: () => jt('primarySettings.key.font_scale', 'Text size'),
+    chat_width: () => jt('primarySettings.key.chat_width', 'Chat width'),
+    notifications_enabled: () => jt('primarySettings.key.notifications_enabled', 'Desktop notifications'),
+    notifications_sound: () => jt('primarySettings.key.notifications_sound', 'Notification sound'),
+    notifications_only_when_unfocused: () => jt('primarySettings.key.notifications_only_when_unfocused', 'Notify only when Jenny is in the background'),
+    notifications_category_replies: () => jt('primarySettings.key.notifications_category_replies', 'Notify when a reply is ready'),
+    notifications_category_failures: () => jt('primarySettings.key.notifications_category_failures', 'Notify when a run fails'),
+    notifications_category_permissions: () => jt('primarySettings.key.notifications_category_permissions', 'Notify when Jenny needs permission'),
+    notifications_category_questions: () => jt('primarySettings.key.notifications_category_questions', 'Notify when Jenny asks or a plan is ready'),
+    notifications_category_reminders: () => jt('primarySettings.key.notifications_category_reminders', 'Notify when a reminder is due'),
+    memory_take_notes: () => jt('primarySettings.key.memory_take_notes', 'Take notes automatically'),
+    memory_ask_before_saving: () => jt('primarySettings.key.memory_ask_before_saving', 'Ask before saving a memory'),
+    memory_pause_saving: () => jt('primarySettings.key.memory_pause_saving', 'Pause memory saving'),
+    memory_use_in_chats: () => jt('primarySettings.key.memory_use_in_chats', 'Use memory in chats'),
+    editor_font_size: () => jt('primarySettings.key.editor_font_size', 'Editor font size'),
+    editor_tab_size: () => jt('primarySettings.key.editor_tab_size', 'Editor tab size'),
+    editor_auto_save: () => jt('primarySettings.key.editor_auto_save', 'Editor auto save'),
+  };
+  const SETTING_VALUE_WORDS = {
+    default_run_mode: {
+      ask: () => jt('chat.primary.mode.ask', 'Ask'),
+      plan: () => jt('chat.primary.mode.plan', 'Plan'),
+      propose: () => jt('chat.primary.mode.propose', 'Propose'),
+    },
+    transcript_view_default: {
+      answers: () => jt('settings.transcriptView.answers', 'Answers'),
+      thinking: () => jt('settings.transcriptView.thinking', 'Thinking'),
+      everything: () => jt('settings.transcriptView.everything', 'Everything'),
+    },
+    editor_auto_save: {
+      off: () => jt('common.off', 'Off'),
+      afterDelay: () => jt('settings.editor.autoSave.afterDelay', 'After a delay'),
+      onFocusChange: () => jt('settings.editor.autoSave.onFocusChange', 'When the editor loses focus'),
+      onWindowChange: () => jt('settings.editor.autoSave.onWindowChange', 'When the window loses focus'),
+    },
+  };
+  const SETTING_LABEL_MAX_CHARS = 120;
+  const hasOwn = (object, key) => typeof key === 'string' && Object.prototype.hasOwnProperty.call(object, key);
+
+  /** A setting's display name by its key ('' for a key the app does not know). */
+  function settingName(key) {
+    return hasOwn(SETTING_NAMES, key) ? SETTING_NAMES[key]() : '';
+  }
+
+  /** A setting value's display text: On / Off, an app-owned word, a zoom percentage, else the carried label. */
+  function settingValueText(key, value, label) {
+    if (typeof value === 'boolean') return value ? jt('common.on', 'On') : jt('common.off', 'Off');
+    const words = hasOwn(SETTING_VALUE_WORDS, key) ? SETTING_VALUE_WORDS[key] : null;
+    if (words && hasOwn(words, value)) return words[value]();
+    if (key === 'app_zoom_percent' && Number.isFinite(value)) return `${value}%`;
+    return boundedText(label, SETTING_LABEL_MAX_CHARS)
+      || (typeof value === 'string' || Number.isFinite(value) ? boundedText(String(value), SETTING_LABEL_MAX_CHARS) : '');
+  }
+
   // Stopping another chat (row 69 Q11, owner 2026-10-20). The model names the chat only by id; the
   // card names it from the app's own directory (title, project, live state) and says what the stop
   // does in that state. The raw id never shows; a target that did not arrive reads as unnamed.
@@ -392,6 +477,234 @@
       + `</div>`;
   }
 
+  // A settings change Jenny asks for (row 88, owner design "A1 lines"). The model names keys and
+  // values; the card shows the app's own reading of them (`settings_change_approval`): each setting
+  // and its before -> after. A change the app could not read, refused, or that arrived malformed shows
+  // no rows and has no Allow: nothing is approved on a partial or unverifiable card.
+  const SETTINGS_CHANGE_TOOL = 'settings_change';
+  const SETTINGS_CHANGE_MAX_ROWS = 5;
+  const SETTINGS_REFUSAL_REASONS = new Set(['not_allowed', 'invalid_value', 'unchanged', 'unavailable']);
+
+  function normalizeSettingsChangeApproval(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || value.schema_version !== 1) return null;
+    if (value.state === 'refused') {
+      return { state: 'refused', reason: SETTINGS_REFUSAL_REASONS.has(value.reason) ? value.reason : 'other' };
+    }
+    if (value.state !== 'ready' || !Array.isArray(value.rows) || !value.rows.length || value.rows.length > SETTINGS_CHANGE_MAX_ROWS) return null;
+    const rows = [];
+    for (const entry of value.rows) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+      const name = settingName(entry.key);
+      const before = settingValueText(entry.key, entry.before, entry.before_label);
+      const after = settingValueText(entry.key, entry.after, entry.after_label);
+      if (!name || !before || !after) return null;
+      rows.push({ key: entry.key, name, before, after });
+    }
+    return { state: 'ready', rows };
+  }
+
+  function settingsRefusedText(reason) {
+    switch (reason) {
+      case 'not_allowed': return jt('approval.block.settingsRefusedNotAllowed', "Jenny can't change that setting, so this can't be approved. Deny it.");
+      case 'invalid_value': return jt('approval.block.settingsRefusedInvalidValue', "That value isn't one this setting takes, so this can't be approved. Deny it.");
+      case 'unchanged': return jt('approval.block.settingsRefusedUnchanged', 'Nothing would change: these settings already have those values. Deny it.');
+      case 'unavailable': return jt('approval.block.settingsRefusedUnavailable', "The app couldn't read these settings right now, so this can't be approved. Deny it.");
+      default: return jt('approval.block.settingsRefused', "This change can't be shown, so it can't be approved. Deny it.");
+    }
+  }
+
+  function settingsChangeNote(count) {
+    if (count === 1) return jt('approval.block.settingsNoteOne', 'You can undo this from Activity.');
+    if (count === 2) return jt('approval.block.settingsNoteTwo', 'Both change together, or neither does. You can undo this from Activity.');
+    return jt('approval.block.settingsNoteMany', 'All {count} change together, or none does. You can undo this from Activity.', { count });
+  }
+
+  function renderSettingsChangeApproval(change, escapeHtml) {
+    if (!change || change.state !== 'ready') {
+      return `<p class="tool-approval-message-note" data-approval-settings-unavailable="${change ? change.reason : 'missing'}">`
+        + `${escapeHtml(settingsRefusedText(change && change.reason))}</p>`;
+    }
+    const to = ` ${jt('approval.block.settingTo', 'to')} `;
+    return `<div class="tool-approval-message" data-approval-settings="ready"><ul class="tool-approval-settings">`
+      + change.rows.map((entry) => `<li class="tool-approval-setting"><span class="tool-approval-setting-name">${escapeHtml(entry.name)}</span>`
+        + `<span class="tool-approval-setting-change"><span class="tool-approval-setting-before">${escapeHtml(entry.before)}</span>`
+        + `<span class="tool-approval-setting-arrow" aria-hidden="true">\u2192</span><span class="sr-only">${escapeHtml(to)}</span>`
+        + `<span class="tool-approval-setting-after">${escapeHtml(entry.after)}</span></span></li>`).join('')
+      + `</ul><p class="tool-approval-message-note">${escapeHtml(settingsChangeNote(change.rows.length))}</p></div>`;
+  }
+
+  function settingsChangeSubject(change, decision) {
+    if (!change || change.state !== 'ready') return '';
+    const count = change.rows.length;
+    return decision === 'allowed'
+      ? jtn('approval.block.settingsChanged', count, { count }, 'Changed 1 setting', 'Changed {count} settings')
+      : jtn('approval.block.settingsChange', count, { count }, 'Change 1 setting', 'Change {count} settings');
+  }
+
+  // A scheduled-check change (row 85, owner pick "B · Approval cards"). The model names a check by id
+  // and proposes text and a cadence; the card shows what the app computed from the record the change
+  // would write (`schedule_change_approval`): the label and instruction as stored, the cadence in words
+  // and the next fire times, before -> after for an edit, in the row 88 setting lines. A refused,
+  // missing or malformed reading has no Allow, and a check change is never "always".
+  const SCHEDULE_CHANGE_TOOL = 'schedule_change';
+  const SCHEDULE_ACTIONS = new Set(['create', 'update', 'enable', 'disable', 'cancel']);
+  const SCHEDULE_REFUSAL_REASONS = new Set(['invalid_input', 'not_found', 'not_a_check', 'limit_reached', 'denied', 'disabled']);
+  const SCHEDULE_TEXT_MAX_CHARS = 160;
+  const SCHEDULE_NEXT_FIRES = 3;
+  const isRecord = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+  function normalizeScheduleSide(side) {
+    if (!isRecord(side)) return null;
+    const instruction = typeof side.instruction === 'string' && side.instruction.length <= EXACT_APPROVAL_MAX_CHARS
+      ? side.instruction : '';
+    const nextFires = (Array.isArray(side.next_fires) ? side.next_fires : [])
+      .filter((at) => typeof at === 'string' && Number.isFinite(Date.parse(at))).slice(0, SCHEDULE_NEXT_FIRES);
+    return { label: boundedText(side.label, SCHEDULE_TEXT_MAX_CHARS), instruction,
+      cadence: boundedText(side.cadence_text, SCHEDULE_TEXT_MAX_CHARS), enabled: side.enabled !== false, nextFires };
+  }
+
+  function normalizeScheduleChangeApproval(value) {
+    if (!isRecord(value) || value.schema_version !== 1) return null;
+    if (value.state === 'refused') {
+      return { state: 'refused', reason: SCHEDULE_REFUSAL_REASONS.has(value.reason) ? value.reason : 'other' };
+    }
+    const action = value.action;
+    if (value.state !== 'ready' || !SCHEDULE_ACTIONS.has(action)) return null;
+    const before = normalizeScheduleSide(value.before);
+    const after = normalizeScheduleSide(value.after);
+    // Create has no before and cancel no after; every other side must be there and readable.
+    if ((action === 'create') !== (value.before == null) || (action === 'cancel') !== (value.after == null)) return null;
+    if ((action !== 'create' && !before) || (action !== 'cancel' && !after)) return null;
+    if (action === 'create' && (!after.instruction.trim() || !after.cadence)) return null;
+    const label = action === 'create' ? after.label : (before.label || (after && after.label));
+    if (action !== 'create' && !label) return null;
+    if (action === 'cancel' && !before.cadence) return null;
+    return { state: 'ready', action, label, before, after };
+  }
+
+  function scheduleActionText(action) {
+    switch (action) {
+      case 'create': return jt('chat.approval.schedule.create', 'Schedule a check');
+      case 'update': return jt('chat.approval.schedule.update', 'Change a check');
+      case 'enable': return jt('chat.approval.schedule.enable', 'Turn on a check');
+      case 'disable': return jt('chat.approval.schedule.disable', 'Turn off a check');
+      default: return jt('chat.approval.schedule.cancel', 'Delete a check');
+    }
+  }
+
+  function scheduleFacts(change) {
+    if (change.action === 'create') {
+      return [scheduleActionText('create'), change.after.cadence, jt('chat.approval.schedule.asksBeforeTools', 'Always asks before tools')];
+    }
+    return [scheduleActionText(change.action), change.label].concat(change.action === 'cancel' ? [change.before.cadence] : []);
+  }
+
+  function scheduleRefusedText(reason) {
+    switch (reason) {
+      case 'invalid_input': return jt('chat.approval.schedule.refusedInvalidInput', "That check isn't one Jenny can save, so this can't be approved. Deny it.");
+      case 'not_found': return jt('chat.approval.schedule.refusedNotFound', "That check no longer exists, so this can't be approved. Deny it.");
+      case 'not_a_check': return jt('chat.approval.schedule.refusedNotACheck', "That reminder isn't a Jenny check, so Jenny can't change it. Deny it.");
+      case 'limit_reached': return jt('chat.approval.schedule.refusedLimitReached', "You already have as many checks as Jenny can keep, so this can't be approved. Deny it.");
+      case 'denied': return jt('chat.approval.schedule.refusedDenied', "The app couldn't prepare this change, so it can't be approved. Deny it.");
+      case 'disabled': return jt('chat.approval.schedule.refusedDisabled', "Scheduled checks are turned off, so this can't be approved. Deny it.");
+      default: return jt('chat.approval.schedule.refused', "This change can't be shown, so it can't be approved. Deny it.");
+    }
+  }
+
+  // "Tue 3 Nov 8 AM": the local short form; minutes only when the time has them.
+  function shortFireText(iso) {
+    const at = new Date(iso);
+    const tag = globalThis.jennyI18n?.tag?.();
+    const day = at.toLocaleDateString(tag, { weekday: 'short', day: 'numeric', month: 'short' });
+    const time = at.toLocaleTimeString(tag, at.getMinutes() ? { hour: 'numeric', minute: '2-digit' } : { hour: 'numeric' });
+    return `${day} ${time}`;
+  }
+
+  function scheduleLineMarkup(name, before, after, escapeHtml) {
+    const beforeMarkup = before == null ? ''
+      : `<span class="tool-approval-setting-before">${quotedArgumentMarkup(before, escapeHtml)}</span>`
+        + `<span class="tool-approval-setting-arrow" aria-hidden="true">→</span>`
+        + `<span class="sr-only">${escapeHtml(` ${jt('approval.block.settingTo', 'to')} `)}</span>`;
+    return `<li class="tool-approval-setting"><span class="tool-approval-setting-name">${escapeHtml(name)}</span>`
+      + `<span class="tool-approval-setting-change">${beforeMarkup}`
+      + `<span class="tool-approval-setting-after">${quotedArgumentMarkup(after, escapeHtml)}</span></span></li>`;
+  }
+
+  function renderScheduleChangeApproval(change, escapeHtml) {
+    if (!change || change.state !== 'ready') {
+      return `<p class="tool-approval-message-note" data-approval-schedule-unavailable="${change ? change.reason : 'missing'}">`
+        + `${escapeHtml(scheduleRefusedText(change && change.reason))}</p>`;
+    }
+    const { action, before, after } = change;
+    const lines = [];
+    if (action === 'update') {
+      if (before.label !== after.label) lines.push([jt('chat.approval.schedule.title', 'Title'), before.label, after.label]);
+      if (before.instruction !== after.instruction) {
+        lines.push([jt('chat.approval.schedule.instruction', 'Instruction'), before.instruction, after.instruction]);
+      }
+      if (before.cadence !== after.cadence) lines.push([jt('chat.approval.schedule.time', 'Time'), before.cadence, after.cadence]);
+    }
+    if ((action === 'create' || action === 'update' || action === 'enable') && after.nextFires.length) {
+      lines.push([jt('chat.approval.schedule.next', 'Next'), null, after.nextFires.map(shortFireText).join(' · ')]);
+    }
+    let note = '';
+    if (action === 'create') note = jt('chat.approval.schedule.noteCreate', 'It runs as a turn in this chat. Turn it off or delete it from Home, or ask Jenny.');
+    else if (action === 'update' && before.instruction === after.instruction) note = jt('chat.approval.schedule.noteSameInstruction', 'The instruction stays the same.');
+    else if (action === 'cancel') note = jt('chat.approval.schedule.noteCancel', 'It will not run again. Your plain reminders are not touched.');
+    return `<div class="tool-approval-message" data-approval-schedule="${action}">`
+      + (action === 'create' ? `<blockquote class="tool-approval-schedule-instruction" data-approval-schedule-instruction>${quotedArgumentMarkup(after.instruction, escapeHtml)}</blockquote>` : '')
+      + (lines.length ? `<ul class="tool-approval-settings">${lines.map((line) => scheduleLineMarkup(line[0], line[1], line[2], escapeHtml)).join('')}</ul>` : '')
+      + (note ? `<p class="tool-approval-message-note">${escapeHtml(note)}</p>` : '')
+      + `</div>`;
+  }
+
+  function scheduleChangeSubject(change) {
+    if (!change || change.state !== 'ready') return '';
+    const actionText = scheduleActionText(change.action);
+    return change.label ? jt('chat.approval.schedule.subject', '{action}: {label}', { action: actionText, label: change.label }) : actionText;
+  }
+
+  // Row 103 (owner pick B, 2026-11-02): a command card names what "Always allow" saves -- the
+  // program + subcommand with any arguments, or exactly this command -- from the backend's own
+  // derivation (services/tools/command-prefix.js). A chained command is allowed once only.
+  const RUN_COMMAND_TOOL = 'run_command';
+  const CODE_SLOT = '\u0000';
+
+  function normalizeCommandScope(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    if (value.kind === 'exact' || value.kind === 'none') return { kind: value.kind };
+    const prefix = value.kind === 'prefix' ? boundedText(value.prefix, RECEIPT_SUBJECT_MAX_CHARS) : '';
+    return prefix ? { kind: 'prefix', prefix } : null;
+  }
+
+  // A translated sentence whose {prefix} was filled with CODE_SLOT: escaped first, then the slot
+  // becomes inline <code>.
+  function withCodeSlot(text, codeText, escapeHtml) {
+    return escapeHtml(text).split(CODE_SLOT).join(`<code>${escapeHtml(codeText)}</code>`);
+  }
+
+  function commandAlwaysAllowCopy(scope, escapeHtml) {
+    if (scope.kind === 'prefix') {
+      const slot = { prefix: CODE_SLOT };
+      return {
+        labelHtml: withCodeSlot(jt('approval.block.alwaysAllowCommandPrefix', 'Always allow {prefix}', slot), `${scope.prefix} …`, escapeHtml),
+        title: jt('approval.block.alwaysAllowCommandPrefixTitle', 'Allow this command and stop asking for {prefix} with any arguments in this project', { prefix: scope.prefix }),
+        ariaLabel: jt('approval.block.alwaysAllowCommandPrefixAriaLabel', 'Always allow {prefix} with any arguments in this project', { prefix: scope.prefix }),
+        noteHtml: withCodeSlot(jt('approval.block.scopeNotePrefix', 'Covers {prefix} with any arguments, in this project. Other commands still ask.', slot), scope.prefix, escapeHtml),
+      };
+    }
+    return {
+      labelHtml: escapeHtml(jt('approval.block.alwaysAllowThisCommand', 'Always allow this command')),
+      title: jt('approval.block.alwaysAllowCommandExactTitle', 'Allow this command and stop asking for exactly this command in this project'),
+      ariaLabel: jt('approval.block.alwaysAllowCommandExactAriaLabel', 'Always allow exactly this command in this project'),
+      noteHtml: escapeHtml(jt('approval.block.scopeNoteExact', 'Covers exactly this command, in this project. Other commands still ask.')),
+    };
+  }
+
+  function scopeNoteMarkup(noteHtml) {
+    return noteHtml ? `<p class="tool-approval-scope-note">${noteHtml}</p>` : '';
+  }
+
   function renderApprovalBlock(options, deps) {
     const source = options || {};
     const dependencies = deps || {};
@@ -413,7 +726,18 @@
     const exactApproval = needsExact ? normalizeExactApproval(source.exactApproval) : null;
     const exactUnavailable = exactApproval && exactApproval.tooLarge ? 'too_large'
       : (needsExact && !exactApproval && Object.prototype.hasOwnProperty.call(source, 'exactApproval') ? 'missing' : '');
-    const withholdsAllow = (sendsMessage && !sessionMessage) || Boolean(exactUnavailable);
+    // A settings change is approved against the app's own reading of it or not at all, and only on its
+    // own card: its Allow is withheld unless the rows arrived intact, and it is never "always".
+    const changesSettings = toolName === SETTINGS_CHANGE_TOOL;
+    const settingsChange = changesSettings ? normalizeSettingsChangeApproval(source.settingsChangeApproval) : null;
+    const settingsReady = Boolean(settingsChange && settingsChange.state === 'ready');
+    // A scheduled-check change likewise (row 85): Allow once only on the app's own reading of it.
+    const changesSchedule = toolName === SCHEDULE_CHANGE_TOOL;
+    const scheduleChange = changesSchedule ? normalizeScheduleChangeApproval(source.scheduleChangeApproval) : null;
+    const scheduleReady = Boolean(scheduleChange && scheduleChange.state === 'ready');
+    const ownCardOnly = changesSettings || changesSchedule;
+    const withholdsAllow = (sendsMessage && !sessionMessage) || Boolean(exactUnavailable) || (changesSettings && !settingsReady)
+      || (changesSchedule && !scheduleReady);
     const displayToolName = normalizeText(source.displayToolName) || toolName || jt('approval.block.thisTool', 'this tool');
     const mode = source.mode === 'card' ? 'card' : 'inline';
     const prompt = normalizeText(source.prompt)
@@ -440,8 +764,13 @@
     const rowIdentity = ` data-tool-call-id="${callIdAttr}" data-call-id="${callIdAttr}"${approvalAttrMarkup}`;
     if (source.cardState === 'resolved') {
       const stopTarget = toolName === SESSION_STOP_TOOL ? normalizeSessionStopApproval(source.sessionStopApproval) : null;
+      const settingsSubject = toolName === SETTINGS_CHANGE_TOOL
+        ? settingsChangeSubject(normalizeSettingsChangeApproval(source.settingsChangeApproval), receiptDecision(source.decision))
+        // A check change's receipt never quotes the model's input: without a reading it names the tool.
+        : (toolName === SCHEDULE_CHANGE_TOOL
+          ? scheduleChangeSubject(normalizeScheduleChangeApproval(source.scheduleChangeApproval)) || displayToolName : '');
       const receipt = renderResolvedReceipt(source, displayToolName, escapeHtml, stopTarget && stopTarget.title
-        ? jt('approval.block.sessionStopSubject', 'Stop {title}', { title: stopTarget.title }) : '');
+        ? jt('approval.block.sessionStopSubject', 'Stop {title}', { title: stopTarget.title }) : settingsSubject);
       const decisionAttr = ` data-approval-status="resolved" data-approval-decision="${receiptDecision(source.decision)}"`;
       return mode === 'inline'
         ? `<div class="approval-gap-row" role="status" aria-live="polite"${rowIdentity}${decisionAttr}>${receipt}</div>`
@@ -473,12 +802,15 @@
     const promptMarkup = `<${promptTag} class="tool-approval-prompt"`
       + ` data-approval-intent="${purpose ? 'stated' : 'derived'}">`
       + `${attributionMarkup}${escapeHtml(headline)}</${promptTag}>`;
-    // "Another chat" is the backend's scope for session_stop (shown via approval.scope.anotherChat).
+    // "Another chat" (session_stop), "App settings" (settings_change) and "Scheduled checks"
+    // (schedule_change) are the backend's own scopes (shown via approval.scope.anotherChat /
+    // approval.scope.appSettings / chat.approval.schedule.scope).
     const requestedScope = normalizeText(source.policyScope);
-    const policyScope = requestedScope === 'Another chat' ? requestedScope
-      : normalizePolicyText(source.policyScope, POLICY_SCOPES);
+    const policyScope = requestedScope === 'Another chat' || requestedScope === 'App settings' || requestedScope === 'Scheduled checks'
+      ? requestedScope : normalizePolicyText(source.policyScope, POLICY_SCOPES);
     const policyConsequence = normalizePolicyText(source.policyConsequence, POLICY_CONSEQUENCES);
-    const localizedPolicyScope = translatePolicyText('approvalScope', policyScope);
+    const localizedPolicyScope = policyScope === 'Scheduled checks' ? jt('chat.approval.schedule.scope', 'Scheduled checks')
+      : translatePolicyText('approvalScope', policyScope);
     const localizedPolicyConsequence = translatePolicyText('approvalConsequence', policyConsequence);
     // Bounded like the policy strings above: this also renders from persisted
     // and replayed payloads, which never passed through the backend sanitizer.
@@ -492,7 +824,15 @@
     // side-effecting call teaches the reader to click through it.
     const chips = [{ field: 'tool', label: displayToolName }];
     if (policyScope) chips.push({ field: 'scope', label: localizedPolicyScope });
-    for (const fact of normalizeFacts(source.facts)) {
+    if (settingsReady) {
+      const count = settingsChange.rows.length;
+      chips.push({ field: 'settings', label: jtn('approval.block.settingsCount', count, { count }, '1 setting', '{count} settings') });
+    }
+    // A check change's facts are the app's reading of it; the input-derived facts never stand in.
+    if (scheduleReady) {
+      for (const label of scheduleFacts(scheduleChange)) chips.push({ field: 'schedule', label });
+    }
+    for (const fact of changesSchedule ? [] : normalizeFacts(source.facts)) {
       chips.push({ field: fact.kind, label: fact.label });
     }
     if (sendsMessage) {
@@ -512,6 +852,10 @@
     let commandMarkup = '';
     if (toolName === SESSION_STOP_TOOL) {
       commandMarkup = renderSessionStopApproval(normalizeSessionStopApproval(source.sessionStopApproval), escapeHtml);
+    } else if (changesSettings) {
+      commandMarkup = renderSettingsChangeApproval(settingsChange, escapeHtml);
+    } else if (changesSchedule) {
+      commandMarkup = renderScheduleChangeApproval(scheduleChange, escapeHtml);
     } else if (sessionMessage) {
       commandMarkup = renderSessionMessageApproval(sessionMessage, escapeHtml);
     } else if (sendsMessage) {
@@ -542,11 +886,28 @@
     // travels on the button that was pressed.
     const buttonIdentity = ` data-tool-call-id="${callIdAttr}" data-call-id="${callIdAttr}"`
       + `${approvalAttrMarkup}`;
-    const alwaysAllowMarkup = sendsMessage || withholdsAllow || source.oneOffOnly === true || source.one_off_only === true ? ''
+    // A command offers Always allow only with a known, persistable scope (row 103).
+    const commandScope = toolName === RUN_COMMAND_TOOL ? normalizeCommandScope(source.alwaysAllowScope) : null;
+    const commandCopy = commandScope && commandScope.kind !== 'none' ? commandAlwaysAllowCopy(commandScope, escapeHtml) : null;
+    const alwaysWithheld = sendsMessage || ownCardOnly || withholdsAllow || source.oneOffOnly === true || source.one_off_only === true
+      || (toolName === RUN_COMMAND_TOOL && !commandCopy);
+    const alwaysAllowMarkup = alwaysWithheld ? ''
       : `<button class="tool-approve-btn tool-approve-always-btn" type="button" data-action="approve"`
         + ` data-approval-scope="always"${buttonIdentity}`
-        + ` title="${escapeHtml(jt('approval.block.alwaysAllowTitle', 'Allow this tool call and stop asking for {tool}', { tool: displayToolName }))}"`
-        + ` aria-label="${escapeHtml(jt('approval.block.alwaysAllowAriaLabel', 'Always allow {tool}', { tool: displayToolName }))}">${escapeHtml(jt('approval.block.alwaysAllow', 'Always allow'))}</button>`;
+        + ` title="${escapeHtml(commandCopy ? commandCopy.title : jt('approval.block.alwaysAllowTitle', 'Allow this tool call and stop asking for {tool}', { tool: displayToolName }))}"`
+        + ` aria-label="${escapeHtml(commandCopy ? commandCopy.ariaLabel : jt('approval.block.alwaysAllowAriaLabel', 'Always allow {tool}', { tool: displayToolName }))}">`
+        + `${commandCopy ? commandCopy.labelHtml : escapeHtml(jt('approval.block.alwaysAllow', 'Always allow'))}</button>`;
+    const scopeNote = commandScope && commandScope.kind === 'none'
+      ? scopeNoteMarkup(escapeHtml(jt('approval.block.scopeNoteChained', 'Chained commands can only be allowed once.')))
+      : scopeNoteMarkup(alwaysAllowMarkup && commandCopy ? commandCopy.noteHtml : '');
+    // Row 87 C1: a Jenny-chat message to a chat it started offers a standing rule; the backend made the offer.
+    const rememberButton = sessionMessage && source.rememberOffer === 'linked_children' ? resolveActionButton() : null;
+    const rememberMarkup = rememberButton ? rememberButton({
+      id: 'approve', plain: true, className: 'tool-approve-btn tool-approve-always-btn',
+      label: jt('approval.block.rememberLinked', 'Always allow for chats Jenny started'),
+      dataset: { 'approval-scope': 'once', 'approval-remember': 'linked_children', 'tool-call-id': toolCallId, 'call-id': toolCallId,
+        ...(approvalId ? { 'approval-id': approvalId } : {}) },
+    }) : '';
     const actionButton = cardState === 'paused' ? resolveActionButton() : null;
     const resumeKey = normalizeText(source.resumeKey);
     const pausedActionsMarkup = `<div class="tool-approval-actions tool-approval-actions--paused">`
@@ -566,10 +927,11 @@
       + (withholdsAllow ? '' : `<button class="tool-approve-btn" type="button" data-action="approve"`
       + ` data-approval-scope="once"${buttonIdentity}`
       + ` title="${escapeHtml(jt('approval.block.allowTitle', 'Allow this tool call'))}" aria-label="${escapeHtml(jt('approval.block.allowOnceAriaLabel', 'Allow {tool} once', { tool: displayToolName }))}">${escapeHtml(jt('approval.block.allowOnce', 'Allow once'))}</button>`)
-      + alwaysAllowMarkup
+      + alwaysAllowMarkup + rememberMarkup
       + `<button class="tool-deny-btn" type="button" data-action="deny"${buttonIdentity}`
       + ` title="${escapeHtml(jt('approval.block.denyTitle', 'Deny this tool call'))}" aria-label="${escapeHtml(jt('approval.block.denyAriaLabel', 'Deny {tool}', { tool: displayToolName }))}">${escapeHtml(jt('approval.block.deny', 'Deny'))}</button>`
-      + `</div>`;
+      + `</div>${scopeNote}${rememberMarkup ? scopeNoteMarkup(escapeHtml(jt('approval.block.rememberLinkedNote',
+        'Always allow saves a rule you can remove in Activity > Permissions. Each message is still recorded.'))) : ''}`;
 
     const approvalStatus = cardState === 'paused' ? 'paused' : 'pending';
     const block = `<div class="tool-approval-block"`
@@ -583,7 +945,7 @@
       // card, never by a batch.
       return `<div class="approval-gap-row" role="status" aria-live="polite"`
         + `${rowIdentity}`
-        + `${sendsMessage || withholdsAllow ? ' data-approval-exact="true"' : ''}`
+        + `${sendsMessage || ownCardOnly || withholdsAllow ? ' data-approval-exact="true"' : ''}`
         + ` data-approval-status="${approvalStatus}">`
         + `${block}`
         + `</div>`;
@@ -598,8 +960,14 @@
     approvalKeepsReceipt,
     deriveApprovalReceipt,
     normalizeSessionMessageApproval,
+    normalizeScheduleChangeApproval,
+    scheduleChangeSubject: (value) => scheduleChangeSubject(normalizeScheduleChangeApproval(value)),
     normalizeSessionStopApproval,
+    normalizeSettingsChangeApproval,
     renderApprovalBlock,
     resolveApprovalCardState,
+    settingName,
+    settingValueText,
+    settingsChangeSubject: (value) => settingsChangeSubject(normalizeSettingsChangeApproval(value), 'pending'),
   };
 });

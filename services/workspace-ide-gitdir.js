@@ -75,6 +75,36 @@ async function resolveGitMetaLayout(rootPath, { fs = fsPromises, path = nodePath
   return { mode: 'external', gitDir, commonDir };
 }
 
+async function existsAt(fs, filePath) {
+  try {
+    await fs.stat(filePath);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+/**
+ * The multi-step operation in progress in this checkout, read from the
+ * per-worktree state files git leaves in gitDir (no git subprocess):
+ * 'rebase' | 'merge' | 'cherry-pick' | 'revert', or '' for none or an
+ * unreadable layout (callers then behave as if nothing is in progress).
+ * A rebase is checked first: its conflicts swap ours/theirs, and a rebase
+ * that stops on a conflicted merge commit can leave MERGE_HEAD too.
+ */
+async function readGitOperation(rootPath, { fs = fsPromises, path = nodePath } = {}) {
+  const layout = await resolveGitMetaLayout(rootPath, { fs, path });
+  if (layout.mode === 'none') return '';
+  const at = (name) => path.join(layout.gitDir, name);
+  // `rebase-apply` alone is also `git am`; only its `rebasing` marker is a rebase.
+  if (await existsAt(fs, at('rebase-merge')) || await existsAt(fs, at(path.join('rebase-apply', 'rebasing')))) return 'rebase';
+  if (await existsAt(fs, at('MERGE_HEAD'))) return 'merge';
+  if (await existsAt(fs, at('CHERRY_PICK_HEAD'))) return 'cherry-pick';
+  if (await existsAt(fs, at('REVERT_HEAD'))) return 'revert';
+  return '';
+}
+
 module.exports = {
+  readGitOperation,
   resolveGitMetaLayout,
 };

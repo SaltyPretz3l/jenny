@@ -269,6 +269,56 @@ test('controls yield permission and history entries', () => {
   assert.equal(result.entries.length, 3 + 4, 'history permission rows are not duplicated');
 });
 
+test('a Jenny-made settings batch is one entry with its changes and its undo time (row 88)', () => {
+  const CID = (n) => `sc_${String(n).padStart(32, '0')}`;
+  const changes = [{ key: 'time_format_24h', before: false, after: true }, { key: 'palette', before: 'slate', after: 'paper', before_label: 'Slate', after_label: 'Paper' }];
+  const controls = {
+    getState: () => ({
+      permissions: [],
+      history: [
+        { kind: 'setting_changed', at: at(20), change_id: CID(1), changes },
+        { kind: 'setting_changed', at: at(10), change_id: CID(2), changes },
+        { kind: 'setting_undone', at: at(5), change_id: CID(1) },
+      ],
+    }),
+  };
+  const result = build({ controls }).service.list();
+  assert.deepEqual(result.entries.map((item) => [item.id, item.kind, item.undone_at]), [
+    [`set:${CID(2)}`, 'setting_changed', null],
+    [`set:${CID(1)}`, 'setting_changed', at(5)],
+  ], 'the undo is a state of its batch, not an entry of its own');
+  assert.deepEqual(byId(result, `set:${CID(1)}`).changes, changes);
+  assert.equal(byId(result, `set:${CID(1)}`).change_id, CID(1));
+});
+
+test('a Jenny-made chat change is one entry with its target, values and undo time (row 94)', () => {
+  const CID = (n) => `sc_${String(n).padStart(32, '0')}`;
+  const row = (n, extra) => ({
+    kind: 'chat_changed', at: at(n), change_id: CID(n), session_id: 'sess_t', action: 'rename', field: 'title', before: 'A', after: 'B', ...extra,
+  });
+  const controls = {
+    getState: () => ({
+      permissions: [],
+      history: [
+        row(20), row(10, { action: 'move_to_project', field: 'project_id', before: null, after: 'proj_x' }),
+        { kind: 'chat_change_undone', at: at(5), change_id: CID(20) },
+        { kind: 'chat_changed', at: at(30), change_id: 7 },
+      ],
+    }),
+  };
+  const result = build({ controls, deps: { getSessionSummary: (id) => (id === 'sess_t' ? { title: 'Target chat' } : null), getProject: (id) => ({ id, name: 'Project X' }) } }).service.list();
+  assert.deepEqual(result.entries.map((item) => [item.id, item.kind, item.undone_at]), [
+    [`chat:${CID(10)}`, 'chat_changed', null],
+    [`chat:${CID(20)}`, 'chat_changed', at(5)],
+  ], 'the undo is a state of its change, not an entry of its own');
+  assert.deepEqual(byId(result, `chat:${CID(20)}`), {
+    id: `chat:${CID(20)}`, kind: 'chat_changed', at: at(20), status: null, title: 'Target chat', detail: null, session_id: 'sess_t',
+    project: null, authorization: null, permission_id: null, change_id: CID(20), action: 'rename', field: 'title',
+    before: 'A', after: 'B', undone_at: at(5),
+  });
+  assert.deepEqual(byId(result, `chat:${CID(10)}`).project, { id: 'proj_x', name: 'Project X' }, 'a move names its destination project');
+});
+
 test('entries are newest first, limit and truncated apply, before pages', () => {
   const mail = { outbox: [], discarded: [], authorizations: [], inbox: [] };
   for (let index = 1; index <= 7; index += 1) {
@@ -406,6 +456,72 @@ test('permissions lists launch permissions, directional grants and non-standing 
 
 test('permissions degrades per source and logs the failed source once', () => {
   const { service, logs } = build({ deps: { readMail: () => { throw new Error('x'); }, readProposals: () => { throw new Error('y'); } } });
-  assert.deepEqual(service.permissions(), { ok: true, schema_version: 1, launch: [], message_grants: [], turn_grants: [] });
+  assert.deepEqual(service.permissions(), { ok: true, schema_version: 1, launch: [], message_grants: [], turn_grants: [], rules: [] });
   assert.deepEqual(logs.map((line) => line.fields.source).sort(), ['mail', 'proposals']);
+});
+
+test('schedule history kinds project as entries with their label, reason and author (row 85)', () => {
+  const history = [
+    { kind: 'schedule_created', at: at(30), reminder_id: 'rem_1', label: 'Morning\nsummary', by: 'jenny' },
+    { kind: 'schedule_updated', at: at(25), reminder_id: 'rem_1', label: 'Morning summary', by: 'user' },
+    { kind: 'schedule_enabled', at: at(24), reminder_id: 'rem_1', label: 'Morning summary', by: 'jenny' },
+    { kind: 'schedule_disabled', at: at(23), reminder_id: 'rem_1', label: 'Morning summary', by: 'jenny' },
+    { kind: 'schedule_skipped', at: at(20), reminder_id: 'rem_1', label: 'Morning summary', reason: 'paused' },
+    { kind: 'schedule_missed', at: at(20), reminder_id: 'rem_2', label: 'Release PR', reason: 'too_late' },
+    { kind: 'schedule_cancelled', at: at(10), reminder_id: 'rem_2', label: 'Release PR', by: 'jenny' },
+  ];
+  const result = build({ controls: { getState: () => ({ permissions: [], history }) } }).service.list();
+  assert.deepEqual(result.entries.map((item) => item.kind), [
+    'schedule_cancelled', 'schedule_skipped', 'schedule_missed', 'schedule_disabled', 'schedule_enabled', 'schedule_updated', 'schedule_created',
+  ]);
+  assert.equal(result.entries.length, 7, 'two entries at the same instant stay distinct');
+  assert.deepEqual(byId(result, `hist:schedule_created:${at(30)}:rem_1`), {
+    id: `hist:schedule_created:${at(30)}:rem_1`, kind: 'schedule_created', at: at(30), status: null, title: 'Morning summary',
+    detail: null, session_id: null, project: null, authorization: null, permission_id: null,
+    reminder_id: 'rem_1', reason: null, by: 'jenny',
+  });
+  assert.equal(byId(result, `hist:schedule_missed:${at(20)}:rem_2`).reason, 'too_late');
+  assert.equal(byId(result, `hist:schedule_skipped:${at(20)}:rem_1`).by, null);
+});
+
+test('schedule_fired comes from the sched_ key and the stored visible prompt (row 85)', () => {
+  const rows = [
+    { work_id: 'work_s', session_id: PRIMARY, turn_id: 't1', status: 'completed', created_at: at(12), updated_at: at(11), idempotency_key: `sched_${'a'.repeat(32)}` },
+    { work_id: 'work_w', session_id: PRIMARY, turn_id: 't2', status: 'completed', created_at: at(8), updated_at: at(7), idempotency_key: 'wake_abc' },
+    { work_id: 'work_x', session_id: PRIMARY, turn_id: 't3', status: 'completed', created_at: at(6), updated_at: at(6), idempotency_key: 'schedule_typed' },
+  ];
+  const runtime = {
+    listSummaries: () => ({ items: rows, next_cursor: null }),
+    get: (id) => ({ input: { request: { visiblePrompt: id === 'work_s' ? 'Scheduled check: Morning summary' : 'Woken' } } }),
+  };
+  const result = build({ runtime }).service.list();
+  assert.deepEqual(result.entries.map((item) => [item.id, item.kind]), [['wake:work_w', 'woken'], ['sched:work_s', 'schedule_fired']]);
+  assert.deepEqual(byId(result, 'sched:work_s'), {
+    id: 'sched:work_s', kind: 'schedule_fired', at: at(12), status: 'completed', title: 'Scheduled check: Morning summary', detail: null,
+    session_id: null, project: null, authorization: null, permission_id: null,
+  });
+});
+
+test('the projected schedule kinds are exactly the stored ones (row 85)', () => {
+  const { SCHEDULE_HISTORY_KINDS } = require('../services/primary-activity-log');
+  const stored = require('../services/shell-config-primary-chat').SCHEDULE_HISTORY_KINDS;
+  assert.deepEqual([...SCHEDULE_HISTORY_KINDS].sort(), [...stored].sort());
+});
+
+test('row 86: a digest turn comes from the digest_ key; a held-back digest projects its reason', () => {
+  const rows = [
+    { work_id: 'work_d', session_id: PRIMARY, turn_id: 't1', status: 'completed', created_at: at(12), updated_at: at(11), idempotency_key: `digest_${'b'.repeat(32)}` },
+  ];
+  const runtime = {
+    listSummaries: () => ({ items: rows, next_cursor: null }),
+    get: () => ({ input: { request: { visiblePrompt: 'While you were away' } } }),
+  };
+  const history = [{ kind: 'digest_skipped', at: at(20), reason: 'quiet_hours' }, { kind: 'digest_skipped', at: at(21) }];
+  const result = build({ runtime, controls: { getState: () => ({ permissions: [], history }) } }).service.list();
+  assert.deepEqual(byId(result, 'digest:work_d'), {
+    id: 'digest:work_d', kind: 'digest', at: at(12), status: 'completed', title: 'While you were away', detail: null,
+    session_id: null, project: null, authorization: null, permission_id: null,
+  });
+  assert.equal(byId(result, `hist:digest_skipped:${at(20)}`).reason, 'quiet_hours');
+  assert.equal(result.entries.filter((item) => item.kind === 'digest_skipped').length, 1, 'no reason, no entry');
 });

@@ -281,6 +281,33 @@ describe('home tool writes', () => {
     }
   });
 
+  test('reminder_upsert and reminder_delete never touch a scheduled Jenny check; upsert never carries an action (row 85)', async () => {
+    const check = { id: 'rem_check', label: 'Morning', scheduleType: 'daily_at', dailyAt: '08:00', action: 'jenny_turn' };
+    const service = stubService({ getProactive() { return { reminders: [check] }; } });
+    for (const input of [
+      { action: 'reminder_upsert', id: 'rem_check', label: 'Renamed' },
+      { action: 'reminder_upsert', id: 'rem_check', prompt: 'Do something else', remind_at: '09:00' },
+    ]) {
+      const result = await homeTool.execute(input, context(service));
+      assert.equal(result.isError, true);
+      assert.equal(result.metadata.reason, 'scheduled_check_use_schedule_change');
+      assert.match(result.content, /schedule_change/);
+    }
+    for (const confirm of [undefined, true]) {
+      const result = await homeTool.execute({ action: 'reminder_delete', id: 'rem_check', confirm }, context(service));
+      assert.equal(result.isError, true, 'a check is cancelled only through the card or on Home');
+      assert.equal(result.metadata.reason, 'scheduled_check_use_schedule_change');
+    }
+    assert.deepEqual(mutationCalls(service), []);
+    const plain = stubService();
+    await homeTool.execute({ action: 'reminder_upsert', label: 'Stretch', remind_at: '09:30', reminder_action: 'jenny_turn' }, context(plain));
+    await homeTool.execute({ action: 'reminder_upsert', id: 'rem_1', label: 'Stretch more' }, context(plain));
+    for (const [, payload] of plain.calls.filter(([name]) => name === 'upsertReminder')) {
+      assert.equal(Object.hasOwn(payload, 'action'), false, 'the home tool never sets a reminder action');
+    }
+    assert.equal(plain.calls.filter(([name]) => name === 'upsertReminder').length, 2, 'plain reminders stay editable');
+  });
+
   test('reminder_upsert clips label and prompt to the reminder bounds', async () => {
     const service = stubService();
     await homeTool.execute(

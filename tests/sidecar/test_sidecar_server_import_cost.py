@@ -86,7 +86,12 @@ import sys
 # count ladder, token_budget and chat_decision), primary_chat_overlay (row 69, prompt_modes),
 # tool_budget_pairs (row 69, tool_budget_filter) and advisory_file_lock (both ledgers).
 # subagent_transcript (row 67) now loads with the first child run.
-_MEASURED_SIDECAR_MODULES = 400
+# 2026-11-02: 411. Small modules reached from already-eager seams: background_job_notices and
+# turn_job_notices (row 71), read_only_command_grant and shell_path_scope (row 102),
+# pending_todos, skill_mentions, executable_lookup, exact_secret_redaction, and row 103's
+# verify_after_write (tool_loop hub, with verification_gate) and web_url_policy (split out
+# of web_http, no new eager code). 412: row 103 item 2's command_prefix (with tools/policy).
+_MEASURED_SIDECAR_MODULES = 412
 _MAX_SIDECAR_MODULES = _MEASURED_SIDECAR_MODULES + 5
 # Floored as well as capped: without a lower bound, a later graph reduction to
 # (say) 320 would leave this recorded 345 stale and silently widen the slack to

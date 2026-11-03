@@ -645,7 +645,14 @@
       surface.revealButton.disabled = !isGenerated;
       surface.openExternalButton.disabled = !isGenerated;
       surface.deleteButton.disabled = !isGenerated || state.artifacts.loading || state.artifacts.savePending;
-      if (isGenerated && ['loading', 'error', 'unavailable'].includes(state.artifacts.loadState)) {
+      const kind = rendererRegistryModule.resolveArtifactRenderKind(artifact, rendererKindPredicates);
+      // A turn-settle re-read of an HTML artifact keeps its live preview frame on screen: the
+      // preview renderer holds the frame until the read lands, so hiding it here would blink it
+      // every turn (renderer-artifact-html-preview-render.js shouldRenderHtmlPreview).
+      const htmlPreview = globalThis.rendererArtifactHtmlPreviewRender || null;
+      const holdsLiveFrame = state.artifacts.loadState === 'loading'
+        && htmlPreview?.hasLiveFrameForArtifact?.({ surface, artifact }, kind) === true;
+      if (isGenerated && !holdsLiveFrame && ['loading', 'error', 'unavailable'].includes(state.artifacts.loadState)) {
         const failed = state.artifacts.loadState === 'error';
         surface.editorShell?.classList.add('hidden');
         surface.previewContent?.classList.add('hidden');
@@ -659,7 +666,6 @@
         renderProvenanceTimeline(surface.provenanceTimeline, artifact);
         return;
       }
-      const kind = rendererRegistryModule.resolveArtifactRenderKind(artifact, rendererKindPredicates);
       artifactRendererRegistry.render(kind, {
         surface,
         artifact,

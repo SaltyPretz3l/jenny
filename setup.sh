@@ -67,11 +67,11 @@ if ! have npm || ! npm_supported; then
   echo "npm 10 or newer is required."
   exit 10
 fi
-if ! node -e 'const {parseArgs}=require("./scripts/setup/setup"); const parsed=parseArgs(process.argv.slice(1)); if(parsed.errors.length){console.error(parsed.errors.join(" "));process.exit(10)}' -- "${USER_ARGS[@]}"; then
+if ! node -e 'const {parseArgs}=require("./scripts/setup/setup"); const parsed=parseArgs(process.argv.slice(1)); if(parsed.errors.length){console.error(parsed.errors.join(" "));process.exit(10)}' -- ${USER_ARGS[@]+"${USER_ARGS[@]}"}; then
   exit 10
 fi
 if [ "$HELP" = "1" ]; then
-  exec node scripts/setup/setup.js "${USER_ARGS[@]}"
+  exec node scripts/setup/setup.js ${USER_ARGS[@]+"${USER_ARGS[@]}"}
 fi
 # True when a Python >= 3.11 interpreter is on PATH. Presence alone is not enough: macOS
 # (and older Linux) ship a python3 below 3.11, which would otherwise skip the install offer
@@ -110,4 +110,4 @@ if ! npm install; then
   exit 1
 fi
 
-exec node scripts/setup/setup.js --bootstrapped-npm "${USER_ARGS[@]}"
+exec node scripts/setup/setup.js --bootstrapped-npm ${USER_ARGS[@]+"${USER_ARGS[@]}"}

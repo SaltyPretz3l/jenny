@@ -617,6 +617,7 @@
           renderArtifactReviewPanel: () => artifactSurfaceController?.renderArtifactReviewPanel?.(),
           syncArtifactReviewLayout: () => artifactSurfaceController?.syncArtifactReviewLayout?.(),
           appendClientLog: (...args) => appendClientLog(...args),
+          showToastMessage: (...args) => showToastMessage(...args),
         });
         if (filePreviewController && !filePreviewBound) {
           filePreviewController.bind?.();

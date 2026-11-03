@@ -21,13 +21,19 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+from scripts.checks.repo_venv import ensure_repo_venv  # noqa: E402
+
+if __name__ == "__main__":
+    # Every stage runs under sys.executable, so the gate itself must be the venv interpreter.
+    ensure_repo_venv(("psutil", "pytest", "xdist", "mypy", "ruff"))
 
 # The Windows power-throttling (EcoQoS) keeper lives in its own module so the
 # safe Node runner can start the same keeper for a direct `npm test` run.
@@ -326,6 +332,57 @@ def _filter_stages(stages: list[Stage]) -> list[Stage]:
     return [s for s in stages if s.name in wanted]
 
 
+# Smart App Control in enforcement mode gives every freshly built unsigned
+# sidecar.exe its own cloud verdict, so the Windows packaged smoke cannot pass
+# reliably there (its self-check was blocked, WinError 4551, 2026-10-28). On
+# such a host the stage runs the Linux packaged smoke in Docker instead.
+# JENNY_CI_PACKAGED_SMOKE=native or =docker overrides the detection. Its
+# budget leaves the gate's remaining time for the driver's own cleanup.
+_DOCKER_SMOKE_CMD = [
+    sys.executable,
+    "scripts/packaging/smoke_packaged_linux_docker.py",
+    "--timeout-seconds",
+    "1200",
+]
+
+
+def _smart_app_control_enforced() -> bool:
+    if not sys.platform.startswith("win"):
+        return False
+    import winreg  # Windows-only module
+
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\CI\Policy"
+        ) as key:
+            value, _kind = winreg.QueryValueEx(key, "VerifiedAndReputablePolicyState")
+    except OSError:
+        return False
+    return value == 1
+
+
+def _route_packaged_smoke(stages: list[Stage], *, sac_enforced: bool | None = None) -> list[Stage]:
+    mode = os.environ.get("JENNY_CI_PACKAGED_SMOKE", "").strip().lower()
+    if mode not in {"", "native", "docker"}:
+        print("ERROR: JENNY_CI_PACKAGED_SMOKE must be 'native' or 'docker'")
+        raise SystemExit(2)
+    if mode == "native":
+        return stages
+    if mode == "":
+        enforced = _smart_app_control_enforced() if sac_enforced is None else sac_enforced
+        if not enforced:
+            return stages
+    routed = []
+    for stage in stages:
+        if stage.name != "smoke_packaged_flow":
+            routed.append(stage)
+            continue
+        reason = "JENNY_CI_PACKAGED_SMOKE=docker" if mode else "Smart App Control is enforcing"
+        print(f"NOTE: smoke_packaged_flow runs the Linux packaged smoke in Docker ({reason})")
+        routed.append(replace(stage, command=list(_DOCKER_SMOKE_CMD)))
+    return routed
+
+
 def _print_list(stages: list[Stage], *, serial: bool) -> None:
     mode = "SERIAL (JENNY_CI_SERIAL=1)" if serial else "WAVES"
     print(f"=== run_ci.py --list ({mode}) ===")
@@ -407,7 +464,7 @@ def main() -> int:
     args = parser.parse_args()
 
     serial_mode = os.environ.get("JENNY_CI_SERIAL") == "1"
-    stages = _filter_stages(STAGES)
+    stages = _route_packaged_smoke(_filter_stages(STAGES))
 
     if args.list:
         _print_list(stages, serial=serial_mode)

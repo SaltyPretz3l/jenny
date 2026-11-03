@@ -49,10 +49,16 @@ _NAMED_STRING_VALUES = {
 
 
 def _minimal_value(schema: dict[str, object], *, field_name: str = "") -> object:
+    # An untyped union (settings_change's change items): its first branch is a valid shape.
+    union = schema.get("anyOf")
+    if "type" not in schema and isinstance(union, list) and union and isinstance(union[0], dict):
+        schema = union[0]
     enum = schema.get("enum")
     if isinstance(enum, list) and enum:
         return enum[0]
     value_type = schema.get("type")
+    if isinstance(value_type, list) and value_type:
+        value_type = value_type[0]  # a multi-type field takes its first type
     if value_type == "object":
         properties = schema.get("properties", {})
         required = list(schema.get("required", []))

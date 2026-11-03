@@ -1,6 +1,8 @@
 'use strict';
 
 // W2-2: background-job tracker — status.json polling, liveness backstop, kill.
+// Finished-job history, subscriptions and readOutput live in
+// background-job-tracker-history.test.js.
 
 const path = require('node:path');
 const test = require('node:test');
@@ -11,7 +13,6 @@ const {
   DEAD_PID_GRACE_MS,
   KILL_ESCALATION_MS,
   MISSING_STATUS_GRACE_MS,
-  TERMINAL_RETENTION_MS,
 } = require('../services/main/background-job-tracker');
 
 const JOB_ID = 'abc123def456';
@@ -32,6 +33,7 @@ function makeTracker(t, overrides = {}) {
       }
       return { ok: true, text: JSON.stringify(statusByPath.get(statusPath)) };
     }),
+    readProgressFileImpl: overrides.readProgressFileImpl,
     isPidAliveImpl: overrides.isPidAliveImpl || (() => true),
     getProcessStartTimeImpl: overrides.getProcessStartTimeImpl || (() => 'generation-1'),
     killPidTreeImpl: overrides.killPidTreeImpl || (async () => ({ ok: true, reason: '' })),
@@ -456,45 +458,57 @@ test('a kill that leaves the process alive escalates to a forceful kill after th
   assert.equal(killCalls.length, 2);
 });
 
-test('the standing timer keeps pruning after the last job settles', async (t) => {
-  let now = 1_000_000;
-  const statusByPath = new Map();
-  const bridgeEvents = [];
-  const tracker = createBackgroundJobTracker({
-    getWorkspaceRoot: () => 'C:\\ws',
-    sendBridgeEvent: (name, payload) => bridgeEvents.push({ name, payload }),
-    log: () => {},
-    readStatusFileImpl: (statusPath) => (statusByPath.has(statusPath)
-      ? { ok: true, text: JSON.stringify(statusByPath.get(statusPath)) }
-      : { ok: false, reason: 'not_found' }),
-    isPidAliveImpl: () => true,
-    nowImpl: () => now,
-    pollIntervalMs: 10,
+// Row 96: live test-run progress read from progress.json while a job runs.
+test('progress appears in getSessionJobs while running, changes emit, and finishing drops it', (t) => {
+  let progress = { percent: 10, done: 100, total: 1000, totalUnit: 'tests', failed: 0, failureMarks: [] };
+  const seen = [];
+  const { tracker, bridgeEvents, statusByPath, statusPath } = makeTracker(t, {
+    readProgressFileImpl: (progressPath, options) => {
+      seen.push({ progressPath, jobId: options.jobId });
+      return progress;
+    },
   });
-  t.after(() => tracker.dispose());
-  tracker.registerJob({ jobId: JOB_ID });
-  statusByPath.set(
-    `C:\\ws\\.jenny\\tool-results\\${JOB_ID}\\status.json`,
-    { job_id: JOB_ID, state: 'completed', exit_code: 0 }
-  );
+  const changes = [];
+  tracker.onChanged((sessionIds) => changes.push(sessionIds));
+  tracker.registerJob({ jobId: JOB_ID, sessionId: 's1', pid: 0 });
+  statusByPath.set(statusPath(), { state: 'running' });
+  const startingEvents = bridgeEvents.length;
   tracker.pollNow();
-  assert.equal(tracker.getState().jobs.length, 1);
-  now += TERMINAL_RETENTION_MS + 1_000;
-  // No manual pollNow: the standing interval must prune on its own.
-  const deadline = Date.now() + 2_000;
-  while (tracker.getState().jobs.length > 0 && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  assert.equal(tracker.getState().jobs.length, 0);
+  assert.deepEqual(seen[0], { progressPath: statusPath().replace('status.json', 'progress.json'), jobId: JOB_ID });
+  assert.deepEqual(tracker.getSessionJobs('s1')[0].progress, progress);
+  assert.equal(bridgeEvents.length, startingEvents + 1, 'first progress is a change');
+
+  tracker.pollNow();
+  assert.equal(bridgeEvents.length, startingEvents + 1, 'an unchanged poll emits nothing');
+
+  progress = { ...progress, percent: 55, done: 550, failed: 1, failureMarks: [0.5] };
+  tracker.pollNow();
+  assert.equal(bridgeEvents.length, startingEvents + 2, 'a progress change emits');
+  assert.equal(changes.at(-1)[0], 's1');
+  assert.equal(tracker.getState().jobs[0].progress.percent, 55);
+
+  const changeCount = changes.length;
+  progress = { ...progress, percent: 57, done: 570 };
+  tracker.pollNow();
+  assert.equal(bridgeEvents.length, startingEvents + 3, 'a move inside one 5% step still pushes the bridge state');
+  assert.equal(changes.length, changeCount, 'but does not make listeners refetch the workspace summary');
+  progress = { ...progress, percent: 61, done: 610 };
+  tracker.pollNow();
+  assert.equal(changes.length, changeCount + 1, 'the next 5% step notifies listeners');
+
+  statusByPath.set(statusPath(), { state: 'completed', exit_code: 0 });
+  tracker.pollNow();
+  assert.equal(tracker.getSessionJobs('s1')[0].state, 'completed');
+  assert.equal(tracker.getSessionJobs('s1')[0].progress, null, 'a finished job drops progress');
+  const callsAtFinish = seen.length;
+  tracker.pollNow();
+  assert.equal(seen.length, callsAtFinish, 'finished jobs are not re-read');
 });
 
-test('terminal jobs are pruned from the snapshot after the retention window', (t) => {
-  const { tracker, statusByPath, statusPath, advance } = makeTracker(t);
-  tracker.registerJob({ jobId: JOB_ID });
-  statusByPath.set(statusPath(), { job_id: JOB_ID, state: 'completed', exit_code: 0 });
+test('a job without a progress file reports progress null', (t) => {
+  const { tracker, statusByPath, statusPath } = makeTracker(t, { readProgressFileImpl: () => null });
+  tracker.registerJob({ jobId: JOB_ID, sessionId: 's1' });
+  statusByPath.set(statusPath(), { state: 'running' });
   tracker.pollNow();
-  assert.equal(tracker.getState().jobs.length, 1);
-  advance(TERMINAL_RETENTION_MS + 1_000);
-  tracker.pollNow();
-  assert.equal(tracker.getState().jobs.length, 0);
+  assert.equal(tracker.getSessionJobs('s1')[0].progress, null);
 });

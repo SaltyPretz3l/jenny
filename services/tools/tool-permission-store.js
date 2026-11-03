@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const { FileJsonStore } = require('../backend/file-json-store');
 const { normalizePolicySnapshot } = require('./tool-policy-evaluator');
+const { deriveCommandScope } = require('./command-prefix');
 const {
   authoritiesMatch,
   createEmptyPermissionDocument,
@@ -147,6 +148,25 @@ function matchForToolGrant(toolName, pathPrefix) {
   return match;
 }
 
+// Row 103: the card's "Always allow" on a command covers its program +
+// subcommand, or the exact command; a chained one is never persisted.
+function commandGrantScope(input) {
+  const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const derived = deriveCommandScope(source.command);
+  if (derived.scope === 'prefix') {
+    return { match: { command_prefix: derived.prefix },
+      result: { scope: 'command_prefix', commandPrefix: derived.prefix } };
+  }
+  if (derived.scope === 'exact') {
+    return { match: { command_exact: derived.command },
+      result: { scope: 'command_exact', commandExact: derived.command } };
+  }
+  throw new ToolPermissionStoreError(
+    'permission_command_unscoped',
+    'A chained, redirected or substituted command can only be allowed once.'
+  );
+}
+
 function matchForReviewedGrant(record) {
   if (record.original_kind === 'rule' || record.original_kind === 'scoped_grant') {
     return { ...(record.original_record.match || {}) };
@@ -217,6 +237,21 @@ function commitDocument(instance, document) {
   instance._document = validatedDocument;
   instance._snapshotCache = null;
   instance._authoritySnapshots.clear();
+}
+
+// Idempotent: the same tool, match and authority is one grant id.
+function persistScopedGrant(instance, toolName, match, authority) {
+  const grant = buildScopedGrant(toolName, match, authority, new Date().toISOString());
+  if (instance._document.scoped_grants.some((item) => item.id === grant.id)) return grant.id;
+  if (instance._document.scoped_grants.length >= MAX_SCOPED_GRANT_COUNT) {
+    throw new ToolPermissionStoreError(
+      'permission_capacity_exceeded', 'Scoped permission grant capacity has been reached.'
+    );
+  }
+  const next = cloneDocument(instance._document);
+  next.scoped_grants.push(grant);
+  commitDocument(instance, next);
+  return grant.id;
 }
 
 function markReadOnly(instance, reason, details = {}) {
@@ -313,7 +348,13 @@ class ToolPermissionStore {
       );
     }
     const normalizedName = assertToolName(toolName);
-    if (policy === 'auto') return this.grantAlwaysAllow(normalizedName, {}, authority);
+    if (policy === 'auto') {
+      // The Settings path keeps the whole-tool grant (run_command included).
+      assertPersistableAlwaysAllow(normalizedName);
+      const match = matchForToolGrant(normalizedName, null);
+      return { scope: 'tool', toolName: normalizedName,
+        ruleId: persistScopedGrant(this, normalizedName, match, assertAuthority(authority)) };
+    }
     const next = cloneDocument(this._document);
     next.legacy_policies[normalizedName] = policy;
     // A global ask/deny is the user's later word: the tool's scoped always-allow
@@ -327,25 +368,18 @@ class ToolPermissionStore {
     const normalizedName = assertToolName(toolName);
     assertPersistableAlwaysAllow(normalizedName);
     const normalizedAuthority = assertAuthority(authority);
+    if (normalizedName === 'run_command') {
+      const command = commandGrantScope(input);
+      const match = { ...matchForToolGrant(normalizedName, null), ...command.match };
+      return { ...command.result, toolName: normalizedName,
+        ruleId: persistScopedGrant(this, normalizedName, match, normalizedAuthority) };
+    }
     const pathPrefix = normalizedPathPrefix(input);
     const match = matchForToolGrant(normalizedName, pathPrefix);
-    const grant = buildScopedGrant(
-      normalizedName, match, normalizedAuthority, new Date().toISOString()
-    );
-    const existing = this._document.scoped_grants.find((item) => item.id === grant.id);
-    if (!existing) {
-      if (this._document.scoped_grants.length >= MAX_SCOPED_GRANT_COUNT) {
-        throw new ToolPermissionStoreError(
-          'permission_capacity_exceeded', 'Scoped permission grant capacity has been reached.'
-        );
-      }
-      const next = cloneDocument(this._document);
-      next.scoped_grants.push(grant);
-      commitDocument(this, next);
-    }
     return {
       scope: pathPrefix ? 'path' : 'tool', toolName: normalizedName,
-      ...(pathPrefix ? { pathPrefix } : {}), ruleId: grant.id,
+      ...(pathPrefix ? { pathPrefix } : {}),
+      ruleId: persistScopedGrant(this, normalizedName, match, normalizedAuthority),
     };
   }
 

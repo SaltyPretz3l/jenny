@@ -24,8 +24,9 @@
  * (consumeOutcomeNote → the `workspace_presentation` context block), so the
  * model learns what the user actually saw without the tool ever waiting. */
 
-const VALID_VIEWS = Object.freeze(['preview', 'file_map', 'change_diff']);
+const VALID_VIEWS = Object.freeze(['preview', 'file_map', 'change_diff', 'file']);
 const OPAQUE_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
+const MAX_LINE = 1_000_000;
 const OUTCOME_DECISIONS = Object.freeze([
   'shown', 'shown_by_user', 'prompted', 'dismissed', 'superseded', 'rejected', 'dropped',
 ]);
@@ -84,7 +85,9 @@ function describeOutcome(record) {
     ? `Preview of ${quotedPath}`
     : record.view === 'change_diff'
       ? `Change diff for ${quotedPath}`
-      : record.path ? `File Map at ${quotedPath}` : 'File Map';
+      : record.view === 'file'
+        ? `File ${quotedPath}${record.line ? ` at line ${record.line}` : ''}`
+        : record.path ? `File Map at ${quotedPath}` : 'File Map';
   const parts = [record.decision ? DECISION_TEXT[record.decision] : 'no IDE decision reported yet'];
   if (record.render === 'loaded') {
     parts.push('the document rendered');
@@ -137,11 +140,12 @@ class WorkspacePresentationService {
     this._outcomeListener = typeof listener === 'function' ? listener : null;
   }
 
-  _track(requestId, { view, path, sessionId, callId }) {
+  _track(requestId, { view, path, line, sessionId, callId }) {
     this._tracked.set(requestId, {
       requestId,
       view,
       path,
+      line,
       sessionId,
       callId,
       decision: '',
@@ -279,6 +283,7 @@ class WorkspacePresentationService {
     workspace_id: workspaceId = '',
     change_id: changeId = '',
     call_id: callId = '',
+    line = null,
   } = {}, scopedService = null) {
     let scopedIdentity = null;
     if (scopedService) {
@@ -304,6 +309,15 @@ class WorkspacePresentationService {
       // fail closed rather than emitting a payload with a dropped field.
       this._logger('WARN', 'workspace_presentation.path_rejected', { view });
       return { delivered: false, reason: 'unsafe_path' };
+    }
+    if (view === 'file' && !relPath) {
+      return { delivered: false, reason: 'path_required' };
+    }
+    // `line` rides only on a file request, as a bounded 1-based integer.
+    const hasLine = line !== undefined && line !== null;
+    if (hasLine && (view !== 'file' || !Number.isInteger(line) || line < 1 || line > MAX_LINE)) {
+      this._logger('WARN', 'workspace_presentation.line_rejected', { view });
+      return { delivered: false, reason: 'invalid_line' };
     }
     const normalizedSessionId = normalizeOpaqueId(scopedIdentity?.session_id || sessionId);
     const normalizedWorkspaceId = normalizeOpaqueId(scopedIdentity?.workspace_id || workspaceId, 64);
@@ -337,6 +351,7 @@ class WorkspacePresentationService {
           workspace_id: normalizedWorkspaceId.toLowerCase(),
         } : {}),
         ...(view === 'change_diff' && normalizedChangeId ? { change_id: normalizedChangeId } : {}),
+        ...(hasLine ? { line } : {}),
       });
     } catch (error) {
       if (error?.reason) {
@@ -353,6 +368,7 @@ class WorkspacePresentationService {
     this._track(requestId, {
       view,
       path: relPath,
+      line: hasLine ? line : null,
       sessionId: normalizedSessionId,
       callId: normalizeOpaqueId(callId),
     });

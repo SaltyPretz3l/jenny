@@ -1417,3 +1417,25 @@ def test_serialize_turn_event_approval_resolved_approved() -> None:
     assert p["approved"] is True
     assert p["tool_name"] == "delete_file"
     assert p["approval_plan_hash"] == "abc123"
+
+
+def test_serialize_tool_output_chunk_forwards_test_progress_only_when_present() -> None:
+    """Row 96: a progress object rides tool.output_chunk unchanged; absent stays absent."""
+    progress = {"runner": "pytest", "unit": "none", "done": 3, "final": False}
+    with_progress = _serialize_loop_event(
+        ToolOutputChunkEvent(
+            call_id="call-progress", tool_name="run_command", sequence=1, lines=(),
+            test_progress=progress,
+        ),
+        "req", trace_id="trace", session_id="session",
+    )
+    assert with_progress is not None
+    assert with_progress["params"]["test_progress"] == progress
+    assert with_progress["params"]["lines"] == []
+
+    without = _serialize_loop_event(
+        ToolOutputChunkEvent(call_id="c", tool_name="run_command", sequence=1, lines=()),
+        "req", trace_id="trace", session_id="session",
+    )
+    assert without is not None
+    assert "test_progress" not in without["params"]

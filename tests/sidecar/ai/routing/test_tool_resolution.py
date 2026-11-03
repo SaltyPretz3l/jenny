@@ -295,15 +295,15 @@ def test_build_tool_payload_plan_mode_excludes_side_effecting(tmp_path) -> None:
         ),
         available_tools=[
             _fake_descriptor("web_search", side_effecting=False, tool_family="web"),
-            _fake_descriptor("run_command", side_effecting=True, tool_family="shell"),
+            _fake_descriptor("write_file", side_effecting=True, tool_family="filesystem"),
         ],
     )
     payload = tr.build_tool_payload(kernel, None, plan_mode=True)
     names = {p["name"] for p in payload}
     # web_search is read-only → survives plan mode
     assert "web_search" in names
-    # run_command is side-effecting → blocked in plan mode
-    assert "run_command" not in names
+    # write_file is side-effecting (a read-only run_command stays listed, row 102) → blocked in plan mode
+    assert "write_file" not in names
 
 
 def test_build_tool_payload_tool_preferences_restricts_to_enabled(tmp_path) -> None:
@@ -342,14 +342,14 @@ def test_tool_status_entries_plan_mode_blocks_side_effecting(tmp_path) -> None:
             tools_web_enabled=True,
         ),
         available_tools=[
-            _fake_descriptor("run_command", side_effecting=True, tool_family="shell"),
+            _fake_descriptor("write_file", side_effecting=True, tool_family="filesystem"),
             _fake_descriptor("web_search", side_effecting=False, tool_family="web"),
         ],
     )
     entries = tr.tool_status_entries(kernel, plan_mode=True)
     by_name = {e.name: e for e in entries}
-    # run_command is side-effecting → blocked in plan mode
-    assert by_name["run_command"].available is False
+    # write_file is side-effecting (a read-only run_command stays listed, row 102) → blocked in plan mode
+    assert by_name["write_file"].available is False
     # web_search is read-only → survives plan mode
     assert by_name["web_search"].available is True
 

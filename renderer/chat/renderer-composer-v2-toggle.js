@@ -21,6 +21,14 @@
       && equalMap(persisted?.tool_connection_overrides, requested.tool_connection_overrides);
   }
 
+  // Rows that are on and usable, usable rows that are off, and every row, from one view model.
+  function countRows(vm) {
+    const rows = [...(vm?.sections || []).flatMap((section) => section.families), ...(vm?.connections || [])];
+    const usable = rows.filter((row) => row.usable > 0);
+    const on = usable.filter((row) => row.on).length;
+    return { on, off: usable.length - on, total: rows.length };
+  }
+
   function createComposerV2ToggleController(deps = {}) {
     const state = deps.state || {};
     const getSessionId = () => String(deps.getCurrentSessionId?.() || state.currentSessionId || '').trim();
@@ -184,22 +192,14 @@
           ...describe(family.id, families.get(family.id), false, lockdown),
           label: familyLabel(family.id), description: familyDescription(family.id), icon: family.icon,
         })),
-      })), connections: [...connections].map(([id, group]) => {
-        const { members, approval, ...row } = describe(id, group, true, lockdown);
-        return { ...row, label: group.label, kind: group.kind };
-      }), hasOverrides: Object.values(context.overrides).some((map) => Object.keys(map).length > 0) };
-    }
-
-    function getToolsChipCount() {
-      const vm = getViewModel();
-      const rows = [...vm.sections.flatMap((section) => section.families), ...vm.connections];
-      const on = rows.filter((row) => row.on && row.usable > 0).length;
-      return { on, present: rows.length, text: String(on) };
+      })), connections: [...connections].map(([id, group]) => ({
+        ...describe(id, group, true, lockdown), label: group.label, kind: group.kind,
+      })), hasOverrides: Object.values(context.overrides).some((map) => Object.keys(map).length > 0) };
     }
 
     hydrateFromToolSettings({});
     return { setAvailableTools, hydrateFromToolSettings, hydrateForSession, setToggle, resetToDefaults,
-      getToggleStates, getToolsChipCount, getViewModel };
+      getToggleStates, getViewModel };
   }
-  return { createComposerV2ToggleController, sessionToolOverrideEchoMatches };
+  return { createComposerV2ToggleController, sessionToolOverrideEchoMatches, countRows };
 });

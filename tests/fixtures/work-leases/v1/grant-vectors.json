@@ -1,0 +1,217 @@
+{
+  "version": 1,
+  "description": "Grant computation. Each case lists live tickets (seq, state, resources, optional enforcement); expect_grants is the sorted seq list of waiting tickets that may become held. Keys: T=tests@tree:g:/repo, T2=tests@tree:g:/repo-wt/a, D=deps@tree:g:/repo, G=git-write@repo.",
+  "cases": [
+    {
+      "name": "single waiter on a free resource is granted",
+      "tickets": [
+        {"seq": 1, "state": "waiting", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]}
+      ],
+      "expect_grants": [1]
+    },
+    {
+      "name": "held exclusive blocks a waiter on the same resource",
+      "tickets": [
+        {"seq": 1, "state": "held", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]},
+        {"seq": 2, "state": "waiting", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]}
+      ],
+      "expect_grants": []
+    },
+    {
+      "name": "two waiters on a free resource: only the older is granted",
+      "tickets": [
+        {"seq": 1, "state": "waiting", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]},
+        {"seq": 2, "state": "waiting", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]}
+      ],
+      "expect_grants": [1]
+    },
+    {
+      "name": "independent resources do not block each other",
+      "tickets": [
+        {"seq": 1, "state": "held", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]},
+        {"seq": 2, "state": "waiting", "resources": [{"key": "git-write@repo", "units": "all", "capacity": 1}]}
+      ],
+      "expect_grants": [2]
+    },
+    {
+      "name": "tests in different working trees run in parallel",
+      "tickets": [
+        {"seq": 1, "state": "held", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]},
+        {"seq": 2, "state": "waiting", "resources": [{"key": "tests@tree:g:/repo-wt/a", "units": "all", "capacity": 1}]}
+      ],
+      "expect_grants": [2]
+    },
+    {
+      "name": "shared takes of an unlimited resource are all granted",
+      "tickets": [
+        {"seq": 1, "state": "held", "resources": [{"key": "deps@tree:g:/repo", "units": 1, "capacity": null}]},
+        {"seq": 2, "state": "waiting", "resources": [{"key": "deps@tree:g:/repo", "units": 1, "capacity": null}]},
+        {"seq": 3, "state": "waiting", "resources": [{"key": "deps@tree:g:/repo", "units": 1, "capacity": null}]}
+      ],
+      "expect_grants": [2, 3]
+    },
+    {
+      "name": "exclusive take waits for shared holders",
+      "tickets": [
+        {"seq": 1, "state": "held", "resources": [{"key": "deps@tree:g:/repo", "units": 1, "capacity": null}]},
+        {"seq": 2, "state": "waiting", "resources": [{"key": "deps@tree:g:/repo", "units": "all", "capacity": null}]}
+      ],
+      "expect_grants": []
+    },
+    {
+      "name": "a waiting exclusive take is not overtaken by a later shared take",
+      "tickets": [
+        {"seq": 1, "state": "held", "resources": [{"key": "deps@tree:g:/repo", "units": 1, "capacity": null}]},
+        {"seq": 2, "state": "waiting", "resources": [{"key": "deps@tree:g:/repo", "units": "all", "capacity": null}]},
+        {"seq": 3, "state": "waiting", "resources": [{"key": "deps@tree:g:/repo", "units": 1, "capacity": null}]}
+      ],
+      "expect_grants": []
+    },
+    {
+      "name": "a test run waits while an install holds deps exclusively",
+      "tickets": [
+        {"seq": 1, "state": "held", "resources": [{"key": "deps@tree:g:/repo", "units": "all", "capacity": null}]},
+        {"seq": 2, "state": "waiting", "resources": [
+          {"key": "tests@tree:g:/repo", "units": "all", "capacity": 1},
+          {"key": "deps@tree:g:/repo", "units": 1, "capacity": null}
+        ]}
+      ],
+      "expect_grants": []
+    },
+    {
+      "name": "a blocked multi-resource waiter reserves all its resources",
+      "tickets": [
+        {"seq": 1, "state": "held", "resources": [{"key": "git-write@repo", "units": "all", "capacity": 1}]},
+        {"seq": 2, "state": "waiting", "resources": [
+          {"key": "git-write@repo", "units": "all", "capacity": 1},
+          {"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}
+        ]},
+        {"seq": 3, "state": "waiting", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]}
+      ],
+      "expect_grants": []
+    },
+    {
+      "name": "a reservation does not block unrelated resources",
+      "tickets": [
+        {"seq": 1, "state": "held", "resources": [{"key": "git-write@repo", "units": "all", "capacity": 1}]},
+        {"seq": 2, "state": "waiting", "resources": [{"key": "git-write@repo", "units": "all", "capacity": 1}]},
+        {"seq": 3, "state": "waiting", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]}
+      ],
+      "expect_grants": [3]
+    },
+    {
+      "name": "capacity two admits one more shared take",
+      "tickets": [
+        {"seq": 1, "state": "held", "resources": [{"key": "tests@tree:g:/repo", "units": 1, "capacity": 2}]},
+        {"seq": 2, "state": "waiting", "resources": [{"key": "tests@tree:g:/repo", "units": 1, "capacity": 2}]},
+        {"seq": 3, "state": "waiting", "resources": [{"key": "tests@tree:g:/repo", "units": 1, "capacity": 2}]}
+      ],
+      "expect_grants": [2]
+    },
+    {
+      "name": "the smallest declared capacity wins",
+      "tickets": [
+        {"seq": 1, "state": "held", "resources": [{"key": "tests@tree:g:/repo", "units": 1, "capacity": 2}]},
+        {"seq": 2, "state": "waiting", "resources": [{"key": "tests@tree:g:/repo", "units": 1, "capacity": 1}]}
+      ],
+      "expect_grants": []
+    },
+    {
+      "name": "units above capacity on a free resource count as exclusive and are granted",
+      "tickets": [
+        {"seq": 1, "state": "waiting", "resources": [{"key": "tests@tree:g:/repo", "units": 3, "capacity": 2}]}
+      ],
+      "expect_grants": [1]
+    },
+    {
+      "name": "units above capacity wait for a shared holder",
+      "tickets": [
+        {"seq": 1, "state": "held", "resources": [{"key": "tests@tree:g:/repo", "units": 1, "capacity": 2}]},
+        {"seq": 2, "state": "waiting", "resources": [{"key": "tests@tree:g:/repo", "units": 3, "capacity": 2}]}
+      ],
+      "expect_grants": []
+    },
+    {
+      "name": "advisory tickets never take units",
+      "tickets": [
+        {"seq": 1, "state": "held", "enforcement": "advisory", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]},
+        {"seq": 2, "state": "waiting", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]}
+      ],
+      "expect_grants": [2]
+    },
+    {
+      "name": "an advisory waiter is never reported as a grant",
+      "tickets": [
+        {"seq": 1, "state": "waiting", "enforcement": "advisory", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]},
+        {"seq": 2, "state": "waiting", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]}
+      ],
+      "expect_grants": [2]
+    },
+    {
+      "name": "unknown enforcement counts as blocking",
+      "tickets": [
+        {"seq": 1, "state": "held", "enforcement": "strict-v9", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]},
+        {"seq": 2, "state": "waiting", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]}
+      ],
+      "expect_grants": []
+    },
+    {
+      "name": "unknown state counts as held",
+      "tickets": [
+        {"seq": 1, "state": "paused", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]},
+        {"seq": 2, "state": "waiting", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]}
+      ],
+      "expect_grants": []
+    },
+    {
+      "name": "unknown units count as exclusive",
+      "tickets": [
+        {"seq": 1, "state": "held", "resources": [{"key": "deps@tree:g:/repo", "units": "half", "capacity": null}]},
+        {"seq": 2, "state": "waiting", "resources": [{"key": "deps@tree:g:/repo", "units": 1, "capacity": null}]}
+      ],
+      "expect_grants": []
+    },
+    {
+      "name": "missing capacity counts as unlimited",
+      "tickets": [
+        {"seq": 1, "state": "held", "resources": [{"key": "deps@tree:g:/repo", "units": 1}]},
+        {"seq": 2, "state": "waiting", "resources": [{"key": "deps@tree:g:/repo", "units": 5}]}
+      ],
+      "expect_grants": [2]
+    },
+    {
+      "name": "a synthetic external holder with seq 0 blocks",
+      "tickets": [
+        {"seq": 0, "state": "held", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]},
+        {"seq": 5, "state": "waiting", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]}
+      ],
+      "expect_grants": []
+    },
+    {
+      "name": "several waiters on different resources are granted in one pass",
+      "tickets": [
+        {"seq": 1, "state": "waiting", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]},
+        {"seq": 2, "state": "waiting", "resources": [{"key": "git-write@repo", "units": "all", "capacity": 1}]},
+        {"seq": 3, "state": "waiting", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]}
+      ],
+      "expect_grants": [1, 2]
+    },
+    {
+      "name": "over-committed held tickets are still counted",
+      "tickets": [
+        {"seq": 1, "state": "held", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]},
+        {"seq": 2, "state": "held", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]},
+        {"seq": 3, "state": "waiting", "resources": [{"key": "tests@tree:g:/repo", "units": 1, "capacity": 1}]}
+      ],
+      "expect_grants": []
+    },
+    {
+      "name": "sequence order, not list order, decides",
+      "tickets": [
+        {"seq": 9, "state": "waiting", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]},
+        {"seq": 4, "state": "waiting", "resources": [{"key": "tests@tree:g:/repo", "units": "all", "capacity": 1}]}
+      ],
+      "expect_grants": [4]
+    }
+  ]
+}

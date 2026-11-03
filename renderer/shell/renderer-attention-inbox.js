@@ -378,13 +378,15 @@
       var id = slug(row.key);
       var busy = inFlight.has(row.key);
       if (row.kind === 'approval') {
-        control(actions, {
-          action: 'allow', domId: 'attention-inbox-allow-' + id, className: ACTION_CLASS, modifier: 'attention-inbox__action--allow',
-          label: jt('chat.attentionInbox.allow', 'Allow'), disabled: busy,
-          title: jt('chat.attentionInbox.allowTitle', 'Allow this one call'),
-          onClick: function onAllow() { answerApproval(row, 'once'); },
-        });
-        if (row.canAlwaysAllow) {
+        if (row.canAllow !== false) {
+          control(actions, {
+            action: 'allow', domId: 'attention-inbox-allow-' + id, className: ACTION_CLASS, modifier: 'attention-inbox__action--allow',
+            label: jt('chat.attentionInbox.allow', 'Allow'), disabled: busy,
+            title: jt('chat.attentionInbox.allowTitle', 'Allow this one call'),
+            onClick: function onAllow() { answerApproval(row, 'once'); },
+          });
+        }
+        if (row.canAllow !== false && row.canAlwaysAllow) {
           control(actions, {
             action: 'always', domId: 'attention-inbox-always-' + id, className: ACTION_CLASS, modifier: 'attention-inbox__action--always',
             label: jt('chat.attentionInbox.alwaysAllow', 'Always allow'), disabled: busy,
@@ -541,7 +543,7 @@
       // The second gate: what the rows would actually say, so a source that
       // moved without changing a word still touches no DOM.
       var next = JSON.stringify([readCollapsed(), answerable, rows.map(function rowContent(row) {
-        return [row.key, row.sessionTitle, row.toolName, row.preview, row.canAlwaysAllow, row.questionCount,
+        return [row.key, row.sessionTitle, row.toolName, row.preview, row.canAllow, row.canAlwaysAllow, row.questionCount,
           row.introText, row.consequence, row.policyScope, row.failedCount,
           (row.facts || []).map(function labelOf(fact) { return fact.label; }),
           stale.has(row.key), inFlight.has(row.key)];

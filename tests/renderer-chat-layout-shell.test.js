@@ -474,10 +474,10 @@ test('composer tools chip owns web search: popover switch persists tools.web and
 
   const chip = doc.getElementById('composerToolsChip');
   assert.ok(chip, 'tools chip renders into the tool-toggle slot');
-  assert.equal(chip.getAttribute('aria-label'), 'Tools for this chat: 2 on');
+  assert.equal(chip.getAttribute('aria-label'), 'Tools for this chat: 2 of 3 on');
   assert.equal(
     chip.querySelector('.inv-chip-label').textContent,
-    '2 tools',
+    'Tools',
     'hydration honors the persisted tools config (web starts off in the stub config)'
   );
 
@@ -490,7 +490,6 @@ test('composer tools chip owns web search: popover switch persists tools.web and
   assert.equal(popover.hidden, false, 'chip click opens the popover');
   assert.equal(chip.getAttribute('aria-expanded'), 'true');
 
-  popover.querySelector('[data-chat-panel-action="all-tools"]').click();
   const webSwitch = popover.querySelector('[data-inv-toggle="tool-target:web"]');
   assert.ok(webSwitch, 'web search switch lives only in the tools popover');
   assert.equal(webSwitch.getAttribute('aria-checked'), 'false', 'switch reflects hydrated web=off');
@@ -501,13 +500,14 @@ test('composer tools chip owns web search: popover switch persists tools.web and
   const rolledBackSwitch = doc.querySelector('[data-inv-toggle="tool-target:web"]');
   const rolledBackChip = doc.getElementById('composerToolsChip');
   assert.equal(rolledBackSwitch.getAttribute('aria-checked'), 'false', 'unsaved chat rejects and rolls back the override');
-  assert.equal(rolledBackChip.querySelector('.inv-chip-label').textContent, '2 tools', 'chip count rolls back in place');
+  assert.equal(rolledBackChip.getAttribute('aria-label'), 'Tools for this chat: 2 of 3 on', 'chip count rolls back in place');
+  assert.equal(rolledBackChip.querySelector('.inv-chip-count'), null, 'a rolled-back toggle leaves no off count');
   assert.ok(window.__rendererState.logs.some((entry) => entry.event === 'composer.tool_toggle_persist_failed'), 'failed overrides are reported through the renderer log');
 
   rolledBackSwitch.click();
   await waitForUi(window, 20);
   assert.equal(doc.querySelector('[data-inv-toggle="tool-target:web"]').getAttribute('aria-checked'), 'false');
-  assert.equal(doc.getElementById('composerToolsChip').querySelector('.inv-chip-label').textContent, '2 tools');
+  assert.equal(doc.getElementById('composerToolsChip').getAttribute('aria-label'), 'Tools for this chat: 2 of 3 on');
 });
 
 test('context log disclosure stays collapsed by default and does not persist a separate preference', async (t) => {

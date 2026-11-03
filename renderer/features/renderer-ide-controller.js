@@ -950,6 +950,7 @@
       // Chat-dock surface for the render pipeline's renderLayout reconcile.
       chatDock: ideChatDock,
       openFile,
+      revealInExplorer: (path, options) => { revealInExplorer(path, options); return true; }, // Chat folder chips (row 95): the explorer tree reveal; true once requested.
       showActivityOutput: output => activityView?.showOutput(output),
       openFileAtLine: (path, line, column, origin) => handleSearchResultOpen(path, line, column, origin), // Chat timeline path chips and cite links use the same open-then-revealPosition seam as search; resolves true only when the file actually opened.
       saveActiveFile, openGitView: () => showPanel('source-control'), // The Changes panel's "Open in Git" (row 59 checkpoint 2).
@@ -965,6 +966,18 @@
         ];
       },
       openHelpOverlay: () => { ideCommands?.openHelpOverlay(); },
+      // app_view (row 94 P3): the terminal in the bottom stack, opened focused or the stack collapsed.
+      openTerminalPanel: () => workbenchWiring?.bottomPanel?.open('terminal') === true,
+      closeBottomPanel: () => { workbenchWiring?.bottomPanel?.close(); return true; },
+      // terminal_run (row 94 P4): the approved line in a terminal of its own (openTaskTerminal: an idle Jenny terminal or a
+      // new one; null when none is free, false when its shell would not start), never a shell the user is using.
+      runInTaskTerminal: async (command) => {
+        if (!terminals?.openTaskTerminal) return { ok: false, reason: 'no_ide' };
+        const task = await terminals.openTaskTerminal();
+        if (!task) return { ok: false, reason: task === null ? 'no_free_terminal' : 'start_failed' };
+        const sessionId = task.getSessionId(); // read first: a shell that exits right after the line clears it
+        return await task.sendCommand(command) === true ? { ok: true, session_id: task.getSessionId() || sessionId } : { ok: false, reason: 'send_failed' };
+      },
       // Transcript diff rows resolve a ledger changeId to its record and open the diff://change/ review tab.
       openLedgerChangeById: (changeId, options) => { const id = String(changeId || '').trim(); const ledger = options?.secondChat === true ? workspaceChats?.secondLedger() : getChangeLedger(); const change = id ? (ledger?.changes || []).find((entry) => String(entry?.changeId || '') === id) : null; return change ? openChangeDiff(change, { pane: options?.secondChat === true ? 1 : 0 }) : false; },
     };

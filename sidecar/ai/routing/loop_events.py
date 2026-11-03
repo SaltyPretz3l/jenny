@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from sidecar.protocol import SESSION_MAIL_CONSUMED_METHOD
+from sidecar.protocol import SESSION_JOB_NOTICE_CONSUMED_METHOD, SESSION_MAIL_CONSUMED_METHOD
 
 if TYPE_CHECKING:
     from sidecar.ai.engines.provider_metrics import InferencePerformance
@@ -50,6 +50,21 @@ class MailConsumedEvent(LoopEvent):
 
     def notification_params(self, ctx: dict[str, Any]) -> dict[str, Any]:
         return {**ctx, "message_ids": list(self.message_ids), "iteration": int(self.iteration)}
+
+
+@dataclass
+class BackgroundJobNoticeConsumedEvent(LoopEvent):
+    """Mid-turn background-job notices were drained; ephemeral, never journaled.
+
+    Carries job ids only (every drained id, announced or already read): Electron marks them read.
+    """
+
+    job_ids: list[str]
+    iteration: int
+    method: ClassVar[str] = SESSION_JOB_NOTICE_CONSUMED_METHOD
+
+    def notification_params(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        return {**ctx, "job_ids": list(self.job_ids), "iteration": int(self.iteration)}
 
 
 @dataclass
@@ -162,6 +177,8 @@ class ToolOutputChunkEvent(LoopEvent):
     emitted_lines: int = 0
     dropped_lines: int = 0
     elapsed_ms: int = 0
+    # Row 96: optional live test-run progress object, forwarded unchanged.
+    test_progress: dict[str, object] | None = None
 
 
 @dataclass

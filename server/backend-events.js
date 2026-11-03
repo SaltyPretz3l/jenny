@@ -1,6 +1,7 @@
 'use strict';
 
 const { EventStream } = require('./event-stream');
+const { MAX_FAILURES, MAX_GRID_CELLS, MAX_LABEL_CHARS } = require('../services/backend/chat-stream-test-progress');
 
 const LIVE_CHAR_LIMIT = 262_144;
 const LIVE_REASONING_LIMIT = 65_536;
@@ -9,7 +10,7 @@ const LIVE_REASONING_LIMIT = 65_536;
 const MAX_LIVE_SESSIONS = 8;
 const MAX_ACTIVE_IDENTITIES = 64;
 const STREAM_TYPES = new Set(['user_questions_requested', 'user_questions_resolved', 'started', 'delta', 'thinking_status', 'phase_started', 'phase_completed',
-  'stream_reset', 'tool_use', 'tool_result', 'tool_output_chunk', 'message_updated',
+  'stream_reset', 'tool_use', 'tool_result', 'tool_output_chunk', 'tool_test_progress', 'message_updated',
   'tool_approval_needed', 'question_batch', 'complete', 'error', 'context_compacted', 'context_usage']);
 
 const validId = (value) => typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
@@ -25,6 +26,29 @@ function wireReasoning(entry) {
     id: String(entry.id || '').slice(0, 256), text: String(entry.text || '').slice(0, LIVE_REASONING_LIMIT),
     timestamp: String(entry.timestamp || '').slice(0, 40), thinking_id: String(entry.thinkingId || '').slice(0, 256),
   };
+}
+
+const TEST_PROGRESS_INTS = [['sequence', 'sequence'], ['total', 'total'], ['done', 'done'], ['tests', 'tests'], ['passed', 'passed'],
+  ['failed', 'failed'], ['skipped', 'skipped'], ['elapsedMs', 'elapsed_ms'], ['etaMs', 'eta_ms'], ['labelsFrom', 'labels_from'], ['stage', 'stage']];
+
+// Row 96 live test-run progress: the desktop event is already bounded; copy only
+// known fields, re-clipped. Ephemeral like tool_output_chunk (never replayed).
+function testProgressDto(event) {
+  const clip = (value) => (typeof value === 'string' ? value.slice(0, MAX_LABEL_CHARS) : '');
+  const out = { runner: clip(event.runner), unit: clip(event.unit), total_unit: clip(event.totalUnit), final: event.final === true,
+    percent: Number.isFinite(event.percent) ? Math.min(100, Math.max(0, event.percent)) : null };
+  for (const [source, target] of TEST_PROGRESS_INTS) {
+    if (Number.isSafeInteger(event[source]) && event[source] >= 0) out[target] = event[source];
+  }
+  out.failures = (Array.isArray(event.failures) ? event.failures : []).slice(0, MAX_FAILURES)
+    .filter((entry) => entry && typeof entry === 'object')
+    .map((entry) => ({ file: clip(entry.file), name: clip(entry.name), at: Number.isFinite(entry.at) ? Math.min(1, Math.max(0, entry.at)) : 0 }));
+  const grid = event.grid;
+  out.grid = grid && Number.isSafeInteger(grid.count) && grid.count > 0 && grid.count <= MAX_GRID_CELLS && typeof grid.states === 'string'
+    ? { count: grid.count, group: Number.isSafeInteger(grid.group) && grid.group > 0 ? grid.group : 1, px: grid.px === 4 ? 4 : 6,
+      states: grid.states.slice(0, grid.count) } : null;
+  out.labels = (Array.isArray(event.labels) ? event.labels : []).slice(0, MAX_GRID_CELLS).map(clip);
+  return out;
 }
 
 // Explicit desktop-event to browser-wire boundary. Tool bodies and canonical
@@ -69,6 +93,7 @@ function streamEventDto(event) {
       if (Number.isSafeInteger(event[source]) && event[source] >= 0) dto[target] = event[source];
     }
   }
+  if (event.type === 'tool_test_progress') Object.assign(dto, testProgressDto(event));
   return dto;
 }
 
@@ -83,19 +108,51 @@ function withdrawalDto(event) {
   return { session_id: event.sessionId, stream_id: event.streamId, [key[1]]: event[key[0]].slice(0, 512) };
 }
 
+// Every published frame is retained for replay, so a 4 Hz test-progress stream would evict
+// its own stream's tool and approval events: publish at most one frame per second per call
+// (the final one always), carrying the grid labels of the frames skipped in between.
+const TEST_PROGRESS_INTERVAL_MS = 1000;
+function createTestProgressThrottle(now) {
+  const calls = new Map();
+  return (dto) => {
+    if (dto.type !== 'tool_test_progress') return dto;
+    const key = `${dto.stream_id}:${dto.call_id}`;
+    const entry = calls.get(key) || { at: -Infinity, labelsFrom: null, labels: [] };
+    // A multi-stage command moved to another stage: the carried labels belong to the old grid.
+    if (entry.labelsFrom !== null && entry.stage !== dto.stage) Object.assign(entry, { labelsFrom: null, labels: [] });
+    if (entry.labelsFrom !== null) {
+      entry.labels = entry.labels.concat(dto.labels).slice(0, MAX_GRID_CELLS);
+      dto.labels_from = entry.labelsFrom;
+      dto.labels = entry.labels;
+    }
+    if (!dto.final && now() - entry.at < TEST_PROGRESS_INTERVAL_MS) {
+      if (dto.labels.length && entry.labelsFrom === null) Object.assign(entry, { labelsFrom: dto.labels_from ?? 0, labels: dto.labels, stage: dto.stage });
+      calls.delete(key);
+      calls.set(key, entry);
+      while (calls.size > MAX_ACTIVE_IDENTITIES) calls.delete(calls.keys().next().value);
+      return null;
+    }
+    if (dto.final) calls.delete(key);
+    else calls.set(key, { at: now(), labelsFrom: null, labels: [] });
+    return dto;
+  };
+}
+
 class BackendEvents {
   constructor({ backend, bootEpoch, now = Date.now }) {
     this.backend = backend;
     this.events = new EventStream({ bootEpoch, now });
     this.live = new Map();
     this.active = new Map();
+    const throttleTestProgress = createTestProgressThrottle(now);
     this.onStream = (event) => {
       const withdrawal = withdrawalDto(event);
       if (withdrawal) {
         this.events.publish('decision_changed', withdrawal);
         return;
       }
-      const dto = streamEventDto(event);
+      const wire = streamEventDto(event);
+      const dto = wire && throttleTestProgress(wire);
       if (!dto) return;
       if (dto.type === 'started') {
         if (!this.active.has(dto.session_id) && this.active.size >= MAX_ACTIVE_IDENTITIES) return;

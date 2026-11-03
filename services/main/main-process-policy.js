@@ -5,6 +5,8 @@ const MANAGED_CONFIG_REFRESH_REASONS = new Set([
   'workspace_root_cleared',
   'assistant_identity_updated',
   'assistant_identity_reset',
+  // Factory reset restores the default assistant name the sidecar reads from the managed config.
+  'onboarding_reset',
   'skills_settings_updated',
   'tools_worktree_enabled_updated',
   'feature_settings_updated',

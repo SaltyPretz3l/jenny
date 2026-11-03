@@ -53,6 +53,11 @@ const HOME_LAYOUT_RAIL_WIDTH_MIN = 280;
 const HOME_LAYOUT_RAIL_WIDTH_MAX = 720;
 const HOME_LAYOUT_RAIL_WIDTH_DEFAULT = 360;
 
+// Home "Usage" widget range pick (row 98). Additive and always-on like layout:
+// the normalizer is total, so a config without `usageStats` reads back the default.
+const HOME_USAGE_STATS_RANGES = Object.freeze(['1d', '7d', '30d', '6mo', '1y', 'all']);
+const DEFAULT_HOME_USAGE_STATS_RANGE = '7d';
+
 const DEFAULT_HOME_WIDGETS = Object.freeze({
   order: Object.freeze([]),
   hidden: Object.freeze([]),
@@ -95,12 +100,17 @@ const DEFAULT_HOME_LAYOUT = Object.freeze({
   railWidth: HOME_LAYOUT_RAIL_WIDTH_DEFAULT,
 });
 
+const DEFAULT_HOME_USAGE_STATS = Object.freeze({
+  range: DEFAULT_HOME_USAGE_STATS_RANGE,
+});
+
 const DEFAULT_HOME = Object.freeze({
   links: Object.freeze([]),
   widgets: DEFAULT_HOME_WIDGETS,
   scratchpad: DEFAULT_HOME_SCRATCHPAD,
   calendar: DEFAULT_HOME_CALENDAR,
   layout: DEFAULT_HOME_LAYOUT,
+  usageStats: DEFAULT_HOME_USAGE_STATS,
   focusMode: false,
   // One durable owner for contextual Home guidance. The retired
   // featureOverrides.tips_surface + tips.enabled pair is migrated here by the
@@ -419,6 +429,14 @@ function normalizeHomeLayout(value = {}) {
   };
 }
 
+function normalizeHomeUsageStats(value = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const range = normalizeString(source.range);
+  return {
+    range: HOME_USAGE_STATS_RANGES.includes(range) ? range : DEFAULT_HOME_USAGE_STATS_RANGE,
+  };
+}
+
 function normalizeHomeConfig(value = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   return {
@@ -427,6 +445,7 @@ function normalizeHomeConfig(value = {}) {
     scratchpad: normalizeHomeScratchpad(source.scratchpad),
     calendar: normalizeHomeCalendar(source.calendar),
     layout: normalizeHomeLayout(source.layout),
+    usageStats: normalizeHomeUsageStats(source.usageStats),
     focusMode: source.focusMode === true,
     showContextualTips: source.showContextualTips !== false,
   };
@@ -460,6 +479,8 @@ module.exports = {
   DEFAULT_HOME_CALENDAR,
   DEFAULT_HOME_CALENDAR_VIEW_MODE,
   DEFAULT_HOME_LAYOUT,
+  DEFAULT_HOME_USAGE_STATS,
+  HOME_USAGE_STATS_RANGES,
   HOME_LAYOUT_RAIL_WIDTH_MIN,
   HOME_LAYOUT_RAIL_WIDTH_MAX,
   HOME_LAYOUT_RAIL_WIDTH_DEFAULT,
@@ -493,5 +514,6 @@ module.exports = {
   normalizeHomeScratchpadSettings,
   normalizeHomeCalendar,
   normalizeHomeLayout,
+  normalizeHomeUsageStats,
   normalizeHomeHttpUrl,
 };

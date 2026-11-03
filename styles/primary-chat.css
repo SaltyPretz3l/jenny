@@ -73,7 +73,8 @@
 }
 .primary-activity__perm-title { color: var(--text-primary); font-size: var(--font-size-body); overflow-wrap: anywhere; }
 .primary-activity__perm-meta { grid-column: 1; color: var(--text-muted); font-size: var(--font-size-footnote); }
-.primary-activity__perm-act { grid-row: 1 / span 2; }
+/* Its own column: auto-placed, the action took column 1 and pushed the title right. */
+.primary-activity__perm-act { grid-column: 2; grid-row: 1 / span 2; }
 .primary-activity__form {
   display: flex;
   flex-wrap: wrap;
@@ -84,6 +85,22 @@
   font-size: var(--font-size-footnote);
 }
 .primary-activity__form .inv-select-field { min-inline-size: 180px; }
+
+/* A Jenny settings change (row 88): the change lines, then the status with a text Undo at its end. */
+.primary-activity__changes {
+  display: grid;
+  gap: 2px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-secondary);
+  font-size: var(--font-size-body);
+}
+.primary-activity__change { min-inline-size: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.primary-activity__setting-name { color: var(--text-primary); font-weight: 500; }
+.primary-activity__setting-before, .primary-activity__setting-arrow { color: var(--text-muted); }
+.primary-activity__setting-after { color: var(--text-primary); }
+.primary-activity__undo { margin-inline-start: auto; }
 
 /* Offer card (E1): the "always allow" row under the choices. */
 .proposal-always {

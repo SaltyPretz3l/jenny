@@ -97,7 +97,9 @@
     doc.addEventListener('composer-state-rendered', refresh);
     win.addEventListener('jenny:focused-chat-changed', refresh);
     refresh();
-    return { add, restore, refresh, clear, snapshot: (id) => records.has(id) ? clone(records.get(id)) : null,
+    // The composer input that shows a chat, or null (row 91 Edit prompt reuses the pane lookup).
+    const inputFor = (sessionId) => (getBindings() || []).find(b => b.sessionId === sessionId)?.input || null;
+    return { add, restore, refresh, clear, inputFor, snapshot: (id) => records.has(id) ? clone(records.get(id)) : null,
       consume: (record) => { if (record) clear(record.sessionId, record.revision); },
       dispose() { disposed = true; doc.removeEventListener('composer-state-rendered', refresh); win.removeEventListener('jenny:focused-chat-changed', refresh); for (const host of cards.keys()) removeCard(host); records.clear(); } };
   }

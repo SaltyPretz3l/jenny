@@ -700,3 +700,312 @@ test('a markdown-decorated inline path chip is keyboard-activatable and carries 
   assert.equal(calls.openIdeFileAtLine.length, 1);
   assert.deepEqual(calls.openIdeFileAtLine[0], { path: 'src/app.js', line: 42, column: 7 });
 });
+
+// ---------------------------------------------------------------------------
+// Row 95 phase 3: absolute paths, out-of-root copy, folders (absolute_path_links)
+// ---------------------------------------------------------------------------
+
+const markdownInlinePaths = require('../renderer/shared/markdown-inline-paths');
+
+function absHarness(bodyHtml, overrides) {
+  const dom = buildDom(bodyHtml);
+  const revealed = [];
+  const copied = [];
+  const harness = makeHarness(dom, Object.assign({
+    state: { workspaceRoot: { path: 'G:\\workspace' }, features: { featureFlags: { absolute_path_links: true } } },
+    revealInIdeTree(path) { revealed.push(path); return Promise.resolve(true); },
+  }, overrides || {}));
+  dom.window.jennyShell = { clipboard: { writeText(text) { copied.push(text); return Promise.resolve(); } } };
+  return Object.assign(harness, { dom, revealed, copied });
+}
+
+function clickCode(dom, text) {
+  const code = dom.window.document.querySelector('code');
+  assert.equal(code.textContent, text);
+  const event = new dom.window.MouseEvent('click', { bubbles: true, cancelable: true });
+  code.dispatchEvent(event);
+  return event;
+}
+
+function menuLabels(harness) {
+  assert.equal(harness.calls.menus.length, 1, 'one menu shown');
+  return harness.calls.menus[0].items.filter((item) => item.label).map((item) => item.label);
+}
+
+function openContextMenu(dom, selector) {
+  const event = new dom.window.MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+  dom.window.document.querySelector(selector).dispatchEvent(event);
+  return event;
+}
+
+const DIR_CHIP_HTML = '<div class="tool-call-row" data-chat-path="src/lib" data-chat-path-kind="dir">'
+  + '<span class="tool-path-chip" role="link" tabindex="0" data-chat-path-open="src/lib" data-chat-path-kind="dir">src/lib</span></div>';
+
+for (const [label, text, expected] of [
+  ['an in-root Windows path with :line:col', 'G:\\workspace\\src\\a.js:42:7', { path: 'src/a.js', line: 42, column: 7 }],
+  ['the forward-slash variant', 'G:/workspace/src/a.js:5', { path: 'src/a.js', line: 5, column: null }],
+  ['a different drive-letter and segment case', 'g:\\WORKSPACE\\src\\a.js', { path: 'src/a.js', line: null, column: null }],
+  ['a file:/// URL', 'file:///G:/workspace/src/a%2Eb.js:3', { path: 'src/a.b.js', line: 3, column: null }],
+]) {
+  test(`inline code with ${label} opens the in-root file`, async () => {
+    const h = absHarness(`<p><code>${text}</code></p>`);
+    const event = clickCode(h.dom, text);
+    await flush();
+    assert.equal(event.defaultPrevented, true);
+    assert.deepEqual(h.calls.openIdeFileAtLine, [expected]);
+    assert.deepEqual(h.calls.openInDefaultApp, []);
+  });
+}
+
+test('a decorated absolute chip carries the shared chip contract and opens in root', async () => {
+  const h = absHarness('<p><code>G:\\workspace\\src\\a.js:42:7</code></p>');
+  markdownInlinePaths.decorateInlinePathChips(h.dom.window.document.getElementById('chatTimeline'));
+  const code = h.dom.window.document.querySelector('code');
+  assert.equal(code.getAttribute('data-chat-path-open'), 'G:/workspace/src/a.js');
+  assert.equal(code.getAttribute('data-chat-path-line'), '42');
+  code.dispatchEvent(new h.dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await flush();
+  assert.deepEqual(h.calls.openIdeFileAtLine, [{ path: 'src/a.js', line: 42, column: 7 }]);
+});
+
+test('an out-of-root absolute path never opens; its menu offers Copy Path only, copying the path', async () => {
+  const h = absHarness('<p><code>C:\\Users\\me\\secret.txt</code></p>');
+  clickCode(h.dom, 'C:\\Users\\me\\secret.txt');
+  await flush();
+  assert.deepEqual(h.calls.openIdeFileAtLine, []);
+  assert.deepEqual(h.calls.setActiveView, []);
+  assert.deepEqual(h.calls.toasts, []);
+  assert.equal(openContextMenu(h.dom, 'code').defaultPrevented, true);
+  assert.deepEqual(menuLabels(h), ['Copy Path']);
+  const copy = h.calls.menus[0].items.find((item) => item.label === 'Copy Path');
+  await copy.action();
+  assert.deepEqual(h.copied, ['C:\\Users\\me\\secret.txt']);
+  assert.equal(h.calls.logs.some((log) => JSON.stringify(log.payload || {}).includes('secret')), false, 'logs never carry the path');
+});
+
+test('with no workspace root bound an absolute path offers Copy Path only', async () => {
+  const h = absHarness('<p><code>G:\\workspace\\src\\a.js</code></p>', {
+    state: { workspaceRoot: { path: '' }, features: { featureFlags: { absolute_path_links: true } } },
+  });
+  clickCode(h.dom, 'G:\\workspace\\src\\a.js');
+  await flush();
+  assert.deepEqual(h.calls.openIdeFileAtLine, []);
+  openContextMenu(h.dom, 'code');
+  assert.deepEqual(menuLabels(h), ['Copy Path']);
+});
+
+test('a ".." escape and a UNC path stay inert: no open, no menu, native context menu kept', async () => {
+  for (const text of ['G:\\workspace\\..\\..\\secret\\a.js', '\\\\srv\\share\\a.js']) {
+    const h = absHarness(`<p><code>${text}</code></p>`);
+    const click = clickCode(h.dom, text);
+    await flush();
+    assert.equal(click.defaultPrevented, false, text);
+    assert.deepEqual(h.calls.openIdeFileAtLine, []);
+    assert.equal(openContextMenu(h.dom, 'code').defaultPrevented, false, text);
+    assert.equal(h.calls.menus.length, 0);
+  }
+});
+
+test('an in-root absolute path menu matches the relative one', () => {
+  const h = absHarness('<p><code>G:\\workspace\\src\\a.js</code></p>');
+  openContextMenu(h.dom, 'code');
+  assert.deepEqual(menuLabels(h), [
+    'Open in IDE', 'Reveal in File Explorer', 'Open in Default App', 'Copy Path', 'Copy Relative Path', 'Copy Name',
+  ]);
+});
+
+test('a directory chip reveals it in the IDE tree and offers Reveal in File Explorer plus Copy Path', async () => {
+  const h = absHarness(DIR_CHIP_HTML);
+  h.dom.window.document.querySelector('.tool-path-chip')
+    .dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  await flush();
+  assert.deepEqual(h.revealed, ['src/lib']);
+  assert.deepEqual(h.calls.openIdeFileAtLine, []);
+  assert.deepEqual(h.calls.setActiveView, ['ide']);
+  openContextMenu(h.dom, '.tool-path-chip');
+  const labels = menuLabels(h);
+  assert.ok(labels.includes('Reveal in File Explorer'));
+  assert.ok(labels.includes('Copy Path'));
+  assert.equal(labels.includes('Open in Default App'), false);
+});
+
+test('a trailing-slash absolute inline path reveals the folder in the tree', async () => {
+  const h = absHarness('<p><code>G:\\workspace\\src\\</code></p>');
+  clickCode(h.dom, 'G:\\workspace\\src\\');
+  await flush();
+  assert.deepEqual(h.revealed, ['src']);
+  assert.deepEqual(h.calls.openIdeFileAtLine, []);
+});
+
+test('a file open refused as "not a file" falls back to the tree reveal instead of a toast', async () => {
+  const h = absHarness(CHIP_ROW_HTML, {
+    openIdeFileAtLine() {
+      const error = new Error('Path is not a regular file.');
+      error.error_code = 'CMP-WORKSPACEFS-0005';
+      return Promise.reject(error);
+    },
+  });
+  h.dom.window.document.querySelector('.tool-path-chip')
+    .dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  await flush();
+  assert.deepEqual(h.revealed, ['a/b.js']);
+  assert.deepEqual(h.calls.toasts, []);
+});
+
+test('a directory chip with no tree-reveal wiring toasts instead of opening a file or the OS', async () => {
+  const h = absHarness(DIR_CHIP_HTML, { revealInIdeTree: null });
+  h.dom.window.document.querySelector('.tool-path-chip')
+    .dispatchEvent(new h.dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  await flush();
+  assert.deepEqual(h.calls.openIdeFileAtLine, []);
+  assert.deepEqual(h.calls.openInDefaultApp, []);
+  assert.equal(h.calls.toasts.length, 1);
+});
+
+test('absolute_path_links off restores the old behavior: absolute inert, dir hint ignored', async () => {
+  const off = { workspaceRoot: { path: 'G:\\workspace' }, features: { featureFlags: { absolute_path_links: false } } };
+  const abs = absHarness('<p><code>G:\\workspace\\src\\a.js</code></p>', { state: off });
+  const click = clickCode(abs.dom, 'G:\\workspace\\src\\a.js');
+  await flush();
+  assert.equal(click.defaultPrevented, false);
+  assert.deepEqual(abs.calls.openIdeFileAtLine, []);
+  assert.equal(openContextMenu(abs.dom, 'code').defaultPrevented, false);
+
+  const dir = absHarness(DIR_CHIP_HTML, { state: off });
+  dir.dom.window.document.querySelector('.tool-path-chip')
+    .dispatchEvent(new dir.dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  await flush();
+  assert.deepEqual(dir.revealed, []);
+  assert.deepEqual(dir.calls.openIdeFileAtLine, [{ path: 'src/lib', line: null, column: null }]);
+});
+
+// ---------------------------------------------------------------------------
+// Row 95 P1: the hover "more" button after a path chip opens the chip's own menu
+// ---------------------------------------------------------------------------
+
+const MORE = '.chat-path-more';
+
+function hoverChip(dom, selector) {
+  dom.window.document.querySelector(selector)
+    .dispatchEvent(new dom.window.MouseEvent('pointerover', { bubbles: true }));
+}
+
+function clickMore(dom, selector) {
+  const button = dom.window.document.querySelector(selector || MORE);
+  button.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  return button;
+}
+
+const OUTSIDE_CHIP_HTML = '<p><code class="chat-inline-path" role="link" tabindex="0" data-chat-path-open="C:/Users/me/logs" data-chat-path="C:/Users/me/logs">C:\\Users\\me\\logs</code></p>';
+
+test('the more button is inserted lazily on hover or focus, once, with menu semantics', () => {
+  const h = absHarness(CHIP_ROW_HTML);
+  const doc = h.dom.window.document;
+  assert.equal(doc.querySelector(MORE), null, 'the render path carries no button');
+  hoverChip(h.dom, '.tool-path-chip');
+  hoverChip(h.dom, '.tool-path-chip');
+  const buttons = doc.querySelectorAll(MORE);
+  assert.equal(buttons.length, 1);
+  const button = buttons[0];
+  assert.equal(button.previousElementSibling, doc.querySelector('.tool-path-chip'));
+  assert.equal(button.tagName, 'BUTTON');
+  assert.equal(button.getAttribute('type'), 'button');
+  assert.equal(button.getAttribute('aria-label'), 'More for this path');
+  assert.equal(button.getAttribute('aria-haspopup'), 'menu');
+  assert.equal(button.getAttribute('aria-expanded'), 'false');
+
+  const keyboard = absHarness(CHIP_ROW_HTML);
+  keyboard.dom.window.document.querySelector('.tool-path-chip')
+    .dispatchEvent(new keyboard.dom.window.FocusEvent('focusin', { bubbles: true }));
+  assert.equal(keyboard.dom.window.document.querySelectorAll(MORE).length, 1);
+});
+
+test('no more button for non-path targets, fenced code or an unclassifiable chip', () => {
+  const h = absHarness('<p><code>state.ui.value</code></p><pre><code>src/a.js</code></pre>'
+    + '<span class="tool-path-chip" data-chat-path-open="../escape.js">x</span>');
+  for (const selector of ['p code', 'pre code', '.tool-path-chip']) hoverChip(h.dom, selector);
+  assert.equal(h.dom.window.document.querySelector(MORE), null);
+});
+
+test('the more button opens the file menu: same items as right-click, anchored on the button', async () => {
+  const h = absHarness(CHIP_ROW_HTML);
+  let toggleSaw = 0;
+  h.dom.window.document.getElementById('chatTimeline').addEventListener('click', (event) => {
+    if (event.target.closest('[data-tool-row-toggle]')) toggleSaw += 1;
+  });
+  hoverChip(h.dom, '.tool-path-chip');
+  const button = clickMore(h.dom);
+  await flush();
+  assert.equal(h.calls.menus.length, 1);
+  assert.equal(h.calls.menus[0].anchorEl, button);
+  assert.equal(h.calls.menus[0].restoreFocusTo, button);
+  assert.equal(button.getAttribute('aria-expanded'), 'true');
+  assert.equal(toggleSaw, 0, 'the button never toggles its row');
+  assert.deepEqual(h.calls.openIdeFileAtLine, [], 'opening the menu opens nothing');
+  const moreLabels = menuLabels(h);
+  const right = absHarness(CHIP_ROW_HTML);
+  openContextMenu(right.dom, '.tool-path-chip');
+  assert.deepEqual(moreLabels, menuLabels(right));
+  assert.deepEqual(moreLabels, ['Open in IDE', 'Reveal in File Explorer', 'Open in Default App', 'Copy Path', 'Copy Relative Path', 'Copy Name']);
+  h.calls.menus[0].onHide();
+  assert.equal(button.getAttribute('aria-expanded'), 'false');
+});
+
+test('the more button on a folder chip offers the tree reveal and no file-only items', async () => {
+  const h = absHarness(DIR_CHIP_HTML);
+  hoverChip(h.dom, '.tool-path-chip');
+  clickMore(h.dom);
+  const labels = menuLabels(h);
+  assert.deepEqual(labels, ['Reveal in Explorer View', 'Reveal in File Explorer', 'Copy Path', 'Copy Relative Path', 'Copy Name']);
+  await h.calls.menus[0].items.find((item) => item.label === 'Reveal in Explorer View').action();
+  assert.deepEqual(h.revealed, ['src/lib']);
+});
+
+test('the more button on an outside-root absolute path offers Copy Path only', async () => {
+  const h = absHarness(OUTSIDE_CHIP_HTML);
+  hoverChip(h.dom, 'code');
+  clickMore(h.dom);
+  assert.deepEqual(menuLabels(h), ['Copy Path']);
+  await h.calls.menus[0].items[0].action();
+  assert.deepEqual(h.copied, ['C:\\Users\\me\\logs']);
+});
+
+test('a decorated inline-code chip in prose gets the button too', () => {
+  const h = absHarness('<p>See <code>src/a.js:3</code> now</p>');
+  markdownInlinePaths.decorateInlinePathChips(h.dom.window.document.getElementById('chatTimeline'));
+  hoverChip(h.dom, 'code');
+  clickMore(h.dom);
+  assert.equal(h.calls.menus.length, 1);
+  assert.ok(menuLabels(h).includes('Open in IDE'));
+});
+
+test('clicking the open button again closes the menu; Enter and Space on it never reach the row toggle', () => {
+  let hidden = 0;
+  const h = absHarness(CHIP_ROW_HTML, { contextMenu: { show(menuOpts) { h.calls.menus.push(menuOpts); }, hide() { hidden += 1; } } });
+  hoverChip(h.dom, '.tool-path-chip');
+  const button = clickMore(h.dom);
+  assert.equal(button.getAttribute('aria-expanded'), 'true');
+  clickMore(h.dom);
+  assert.equal(hidden, 1);
+  assert.equal(h.calls.menus.length, 1, 'the second click closes instead of reopening');
+  let toggleSaw = 0;
+  h.dom.window.document.getElementById('chatTimeline').addEventListener('keydown', () => { toggleSaw += 1; });
+  for (const key of ['Enter', ' ']) {
+    button.dispatchEvent(new h.dom.window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+  }
+  assert.equal(toggleSaw, 0);
+});
+
+test('right-click on a chip keeps working beside the button', () => {
+  const h = absHarness(CHIP_ROW_HTML);
+  hoverChip(h.dom, '.tool-path-chip');
+  assert.equal(openContextMenu(h.dom, '.tool-path-chip').defaultPrevented, true);
+  assert.equal(h.calls.menus.length, 1);
+});
+
+test('absolute_path_links off: a chip that is only classifiable absolutely gets no button', () => {
+  const off = { workspaceRoot: { path: 'G:\\workspace' }, features: { featureFlags: { absolute_path_links: false } } };
+  const h = absHarness(OUTSIDE_CHIP_HTML, { state: off });
+  hoverChip(h.dom, 'code');
+  assert.equal(h.dom.window.document.querySelector(MORE), null);
+});

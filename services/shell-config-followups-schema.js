@@ -29,6 +29,14 @@ const REMINDER_SCHEDULE_TYPES = Object.freeze(['daily_at', 'interval_minutes', '
 // (services/home-calendar-schema.js): only HomeAssistantService stamps it, only
 // on create, and every reader tests `=== 'assistant'`.
 const REMINDER_SOURCE_KINDS = Object.freeze(['assistant']);
+// Row 85: a reminder with action 'jenny_turn' runs a visible Jenny-chat turn
+// when due instead of a toast. '' is a plain reminder. Additive fields (action,
+// weekdays, lastDueAt) with safe defaults: no CONFIG_VERSION bump. An older
+// build drops them on rewrite, so a check degrades to a plain toast reminder.
+const REMINDER_ACTIONS = Object.freeze(['jenny_turn']);
+const JENNY_TURN_MIN_INTERVAL_MINUTES = 30;
+const ONE_OFF_CATCH_UP_LIMIT_MS = 24 * 60 * 60000;
+const RECURRING_CATCH_UP_CAP_MS = 6 * 60 * 60000;
 const FOLLOW_UP_STATUSES = Object.freeze(['active', 'deferred', 'resolved']);
 const FOLLOW_UP_DEFER_PRESETS = Object.freeze(['later_today', 'tomorrow', 'next_week']);
 const FOLLOW_UP_SOURCE_KINDS = Object.freeze([
@@ -129,6 +137,20 @@ function normalizeIntervalMinutes(value) {
   return Math.max(5, Math.floor(parsed));
 }
 
+function normalizeReminderAction(value) {
+  const token = normalizeString(value).toLowerCase();
+  return REMINDER_ACTIONS.includes(token) ? token : '';
+}
+
+// Local weekdays (0 = Sunday, as Date#getDay). [] means every day, so a full
+// set collapses to [] and the stored shape has one spelling per cadence.
+function normalizeReminderWeekdays(value) {
+  if (!Array.isArray(value)) return [];
+  const days = [...new Set(value.filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))]
+    .sort((left, right) => left - right);
+  return days.length === 7 ? [] : days;
+}
+
 function normalizeIsoString(value) {
   const token = normalizeString(value);
   if (!token) {
@@ -167,6 +189,8 @@ function reminderDueAt(reminder, nowMs) {
     const match = /^(\d{2}):(\d{2})$/.exec(normalizeString(reminder.dailyAt));
     if (!match || Number(match[1]) > 23 || Number(match[2]) > 59) return null;
     const nowDate = new Date(nowMs);
+    const weekdays = Array.isArray(reminder.weekdays) ? reminder.weekdays : [];
+    if (weekdays.length && !weekdays.includes(nowDate.getDay())) return null;
     return new Date(
       nowDate.getFullYear(),
       nowDate.getMonth(),
@@ -210,6 +234,64 @@ function isReminderDue(reminder, nowMs) {
       && nowMs - lastFiredMs >= Number(reminder.intervalMinutes) * 60000;
   }
   return false;
+}
+
+// Row 85: a check that is created, turned on or re-timed at atMs never fires for an
+// occurrence that passed before then (its card and list skip that one too): an interval
+// counts from atMs, and a daily check whose time today has passed counts as fired today.
+function armJennyCheck(reminder, atMs) {
+  const at = new Date(atMs).toISOString();
+  if (reminder.scheduleType === 'interval_minutes') return { ...reminder, lastFiredAt: at };
+  if (reminder.scheduleType !== 'daily_at') return reminder;
+  const todayAt = reminderDueAt({ ...reminder, lastFiredAt: '' }, atMs);
+  return { ...reminder, lastFiredAt: todayAt !== null && todayAt <= atMs ? at : '' };
+}
+
+// True when two reminders fire on the same cadence (labels and prompts aside).
+function sameReminderCadence(left, right) {
+  return ['scheduleType', 'dailyAt', 'intervalMinutes', 'onceAt'].every((key) => String(left?.[key] ?? '') === String(right?.[key] ?? ''))
+    && normalizeReminderWeekdays(left?.weekdays).join(',') === normalizeReminderWeekdays(right?.weekdays).join(',');
+}
+
+// The next `count` local fire instants strictly after fromMs, for approval cards
+// and lists. A daily_at reminder that already fired today skips today.
+function nextReminderOccurrences(reminder, fromMs, count = 3) {
+  if (!reminder || reminder.enabled === false || !Number.isFinite(fromMs)) return [];
+  const scheduleType = String(reminder.scheduleType || '');
+  if (scheduleType === 'once_at') {
+    const dueAt = reminderDueAt(reminder, fromMs);
+    return dueAt !== null && dueAt > fromMs ? [dueAt] : [];
+  }
+  if (scheduleType === 'interval_minutes') {
+    const dueAt = reminderDueAt(reminder, fromMs);
+    if (dueAt === null) return [];
+    const stepMs = Number(reminder.intervalMinutes) * 60000;
+    const first = Math.max(dueAt, fromMs);
+    return Array.from({ length: count }, (_value, index) => first + index * stepMs);
+  }
+  if (scheduleType !== 'daily_at') return [];
+  const lastFiredMs = parseReminderInstant(normalizeString(reminder.lastFiredAt));
+  const fromDate = new Date(fromMs);
+  const occurrences = [];
+  for (let offset = 0; offset < 8 * count && occurrences.length < count; offset += 1) {
+    const dayMs = new Date(fromDate.getFullYear(), fromDate.getMonth(), fromDate.getDate() + offset, 12).getTime();
+    const dueAt = reminderDueAt(reminder, dayMs);
+    if (dueAt === null || dueAt <= fromMs) continue;
+    if (lastFiredMs !== null && isSameLocalDay(lastFiredMs, dueAt)) continue;
+    occurrences.push(dueAt);
+  }
+  return occurrences;
+}
+
+// How late a due Jenny check may still fire (D7): a one-off within 24 h, a
+// recurring one within half its period, capped at 6 h. Later is `missed`.
+function reminderCatchUpLimitMs(reminder) {
+  const scheduleType = String(reminder?.scheduleType || '');
+  if (scheduleType === 'once_at') return ONE_OFF_CATCH_UP_LIMIT_MS;
+  const periodMs = scheduleType === 'interval_minutes'
+    ? Number(reminder.intervalMinutes) * 60000
+    : 24 * 60 * 60000;
+  return Math.min(RECURRING_CATCH_UP_CAP_MS, Math.max(0, periodMs / 2));
 }
 
 function normalizeFollowUpStatus(value, legacyResolved = false) {
@@ -281,16 +363,20 @@ function normalizeResourceAlertThreshold(value) {
 function normalizeReminder(value = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const scheduleType = normalizeScheduleType(source.scheduleType || source.schedule_type);
+  const action = normalizeReminderAction(source.action);
+  const intervalMinutes = scheduleType === 'interval_minutes'
+    ? normalizeIntervalMinutes(source.intervalMinutes || source.interval_minutes)
+    : 0;
   return {
     id: normalizeString(source.id) || createReminderId(),
     label: clipText(source.label || 'Reminder', MAX_PROACTIVE_REMINDER_LABEL_CHARS) || 'Reminder',
     prompt: clipText(source.prompt, MAX_PROACTIVE_REMINDER_PROMPT_CHARS),
     scheduleType,
     dailyAt: scheduleType === 'daily_at' ? normalizeDailyAt(source.dailyAt || source.daily_at) : '',
-    intervalMinutes:
-      scheduleType === 'interval_minutes'
-        ? normalizeIntervalMinutes(source.intervalMinutes || source.interval_minutes)
-        : 0,
+    intervalMinutes: action === 'jenny_turn' && intervalMinutes
+      ? Math.max(JENNY_TURN_MIN_INTERVAL_MINUTES, intervalMinutes)
+      : intervalMinutes,
+    weekdays: scheduleType === 'daily_at' ? normalizeReminderWeekdays(source.weekdays) : [],
     // Same discipline as dailyAt/intervalMinutes: the key is always present but
     // only carries a value for its own scheduleType, so switching cadence can
     // never leave a stale one-shot time behind.
@@ -300,6 +386,8 @@ function normalizeReminder(value = {}) {
     enabled: source.enabled !== false,
     createdAt: normalizeIsoString(source.createdAt || source.created_at) || new Date().toISOString(),
     lastFiredAt: normalizeIsoString(source.lastFiredAt || source.last_fired_at),
+    action,
+    lastDueAt: normalizeIsoString(source.lastDueAt || source.last_due_at),
   };
 }
 
@@ -359,6 +447,8 @@ module.exports = {
   MAX_PROACTIVE_REMINDERS,
   MAX_PROACTIVE_REMINDER_LABEL_CHARS,
   MAX_PROACTIVE_REMINDER_PROMPT_CHARS,
+  REMINDER_ACTIONS,
+  JENNY_TURN_MIN_INTERVAL_MINUTES,
   MAX_FOLLOW_UP_LABEL_CHARS,
   MAX_FOLLOW_UP_BODY_CHARS,
   MAX_REMINDER_SOURCE_ID_CHARS,
@@ -379,6 +469,12 @@ module.exports = {
   normalizeIsoString,
   reminderDueAt,
   isReminderDue,
+  armJennyCheck,
+  sameReminderCadence,
+  nextReminderOccurrences,
+  reminderCatchUpLimitMs,
+  normalizeReminderAction,
+  normalizeReminderWeekdays,
   normalizeFollowUpStatus,
   normalizeFollowUpDeferPreset,
   normalizeFollowUpSourceKind,

@@ -59,7 +59,8 @@
         await api[method]({ path });
       } catch (error) {
         showShellErrorToast(toErrorMessage(error, failed), toastMeta);
-        appendClientLog('WARN', logEvent, { message: String(error?.message || error || '') });
+        // Code or name only: a bridge error message can carry the absolute path.
+        appendClientLog('WARN', logEvent, { reason: String((error && (error.error_code || error.code || error.name)) || 'error').slice(0, 64) });
       }
     }
 
@@ -138,5 +139,48 @@
     return { buildPathUtilityMenuItems };
   }
 
-  return { createIdePathMenu };
+  /**
+   * Opens the shared path menu (Reveal / Copy items only: no Open in Default App unless the kind is a file)
+   * for a view that holds a WORKSPACE-RELATIVE path (session rail, Changes view). The shell bridge, toasts
+   * and the menu itself come from the window globals the chat path menu uses. An absolute or escaping path
+   * shows nothing: workspaceFs only speaks workspace-relative paths.
+   * @param {Object} options { path, kind: 'file'|'dir'|'directory', anchorX, anchorY, anchorEl, restoreFocusTo,
+   *   rootEl, windowRef, contextMenu, appendClientLog }
+   * @returns {boolean} whether a menu was shown
+   */
+  function showPathMenu(options) {
+    const o = options || {};
+    const win = o.windowRef || (typeof globalThis !== 'undefined' ? globalThis : {});
+    const menu = o.contextMenu || win.inventoryContextMenu;
+    const path = String(o.path || '');
+    if (!path || !menu || typeof menu.show !== 'function') return false;
+    if (/^([a-zA-Z]:|[\\/])/.test(path) || path.split(/[\\/]/).includes('..')) return false;
+    const appendClientLog = typeof o.appendClientLog === 'function' ? o.appendClientLog : noop;
+    const toast = (message, meta) => {
+      const host = win.rendererSuggestedChangesHost;
+      if (host && typeof host.showToastMessage === 'function') host.showToastMessage(message, meta);
+    };
+    const pathMenu = createIdePathMenu({
+      getWorkspaceFsApi: () => (win.jennyShell && win.jennyShell.workspaceFs) || null,
+      windowRef: win,
+      showShellErrorToast: (message, meta) => toast(message, { ...meta, tone: 'danger' }),
+      showToastMessage: toast,
+      appendClientLog,
+    });
+    const items = pathMenu.buildPathUtilityMenuItems(path, o.kind === 'dir' || o.kind === 'directory' ? 'directory' : 'file');
+    while (items.length && items[0].separator === true) items.shift();
+    menu.show({
+      items,
+      anchorX: o.anchorX,
+      anchorY: o.anchorY,
+      anchorEl: o.anchorEl,
+      restoreFocusTo: o.restoreFocusTo,
+      rootEl: o.rootEl,
+      // Code or name only: a bridge error message can carry the absolute path.
+      onActionError: (error) => appendClientLog('WARN', 'path_menu.action_failed', { reason: String((error && (error.code || error.name)) || 'error').slice(0, 64) }),
+    });
+    return true;
+  }
+
+  return { createIdePathMenu, showPathMenu };
 });

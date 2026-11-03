@@ -10,6 +10,10 @@
  * Two sources, both already computed elsewhere:
  *   - a top-level turn's terminal (the terminal-settle wrappers call
  *     onTerminal after the raw complete/error handler returned terminal:true);
+ *     a turn the Jenny chat started itself (row 89: the stream's
+ *     applicationTurn is a scheduled check, a wake or a digest) goes under the
+ *     `jenny` category and says what finished; a wake groups into main's one
+ *     counting toast; another chat's wake stays an ordinary reply;
  *   - the "Needs you" model rows (the attention inbox calls onInboxRows on
  *     every pass whose sources moved). A row key not seen before is new; keys
  *     are pruned to the live set, so a re-render never re-fires, and rows that
@@ -30,14 +34,17 @@
 
   var jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
-  var NOTIFICATION_CATEGORIES = Object.freeze(['replies', 'failures', 'permissions', 'questions', 'reminders']);
+  var NOTIFICATION_CATEGORIES = Object.freeze(['replies', 'failures', 'permissions', 'questions', 'reminders', 'jenny']);
   var DEFAULT_NOTIFICATION_SETTINGS = Object.freeze({
     enabled: true,
     onlyWhenUnfocused: true,
     sound: true,
     replyPreview: false,
-    categories: Object.freeze({ replies: true, failures: true, permissions: true, questions: true, reminders: true }),
+    categories: Object.freeze({ replies: true, failures: true, permissions: true, questions: true, reminders: true, jenny: true }),
   });
+  /* App-started turns that are the Jenny chat's own work; an auto-resume
+   * continues the person's turn and stays an ordinary reply. */
+  var JENNY_TURNS = Object.freeze(['scheduled_check', 'wake', 'digest']);
   var LOG_LIMIT = 32;
   var PREVIEW_MAX_CHARS = 240;
   var DETAIL_MAX_CHARS = 120;
@@ -95,6 +102,11 @@
       replyPreview: flag(source.replyPreview, DEFAULT_NOTIFICATION_SETTINGS.replyPreview),
       categories: normalizedCategories,
     };
+  }
+
+  function isPrimarySession(sessions, sessionId) {
+    var utils = globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null);
+    return Boolean(utils && typeof utils.isPrimarySessionId === 'function' && utils.isPrimarySessionId(sessions, sessionId));
   }
 
   function resolveTerminalStateModule() {
@@ -236,6 +248,18 @@
       return clip(head.length >= 12 ? head : full, DETAIL_MAX_CHARS);
     }
 
+    function jennyTurnTitle(kind, turn, checkTitle) {
+      var done = kind === 'complete';
+      if (turn === 'scheduled_check') {
+        if (!checkTitle) return done ? jt('notifications.toast.checkDoneUntitled', 'Check done') : jt('notifications.toast.checkFailedUntitled', 'Check failed');
+        return done
+          ? jt('notifications.toast.checkDone', 'Check done: {title}', { title: checkTitle })
+          : jt('notifications.toast.checkFailed', 'Check failed: {title}', { title: checkTitle });
+      }
+      if (turn === 'digest' && done) return jt('notifications.toast.digest', 'While you were away');
+      return done ? jt('notifications.toast.update', 'Jenny has an update') : jt('notifications.toast.updateFailed', 'Update failed');
+    }
+
     /**
      * @param {{kind: 'complete'|'error', payload: Object, result: Object, messageId?: string}} event
      * @returns {Object|null} the candidate sent, or null when suppressed
@@ -257,24 +281,28 @@
         if (isDelegateChild(payload, message)) return null;
         var sessionTitle = sessionTitleFor(sessionId);
         var key = 'turn:' + (streamId || messageId || sessionId);
+        var turn = text(payload.applicationTurn);
+        var jenny = JENNY_TURNS.indexOf(turn) !== -1 && isPrimarySession(state.sessions, sessionId);
+        var jennyTitle = jenny ? jennyTurnTitle(input.kind, turn, clip(payload.applicationTurnTitle, DETAIL_MAX_CHARS)) : '';
         if (input.kind === 'complete') {
           var candidate = {
-            category: 'replies',
+            category: jenny ? 'jenny' : 'replies',
             key: key,
             sessionId: sessionId,
-            title: jt('notifications.toast.replyReady', 'Reply ready'),
+            title: jennyTitle || jt('notifications.toast.replyReady', 'Reply ready'),
             body: sessionTitle,
           };
           var preview = clip(firstLine((message && message.content) || payload.content), PREVIEW_MAX_CHARS);
           if (preview) candidate.preview = preview;
+          if (jenny && turn === 'wake') candidate.group = 'updates';
           return emit(candidate);
         }
         var detail = failureDetail(payload.message);
         return emit({
-          category: 'failures',
+          category: jenny ? 'jenny' : 'failures',
           key: key,
           sessionId: sessionId,
-          title: jt('notifications.toast.runFailed', 'Run failed'),
+          title: jennyTitle || jt('notifications.toast.runFailed', 'Run failed'),
           body: detail ? sessionTitle + SEPARATOR + detail : sessionTitle,
         });
       } catch (error) {

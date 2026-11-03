@@ -28,6 +28,7 @@ const {
   mergeReasoningEntriesById,
   assistantTextPayloadHasUsableText,
   normalizeCanonicalTurnEventForCapture,
+  orderToolSpansCanonically,
 } = require('./canonical-turn-event-collector-normalize');
 
 class CanonicalTurnEventCollector {
@@ -431,7 +432,7 @@ class CanonicalTurnEventCollector {
       normalizeId(event?.turn_id) === normalizedTurnId && LIVE_CAPTURED_KINDS.has(normalizeId(event?.kind))
     ), sourceMessages);
     settleCapturedReasoningFromProjection(rawCapturedLiveEvents, projectedEvents);
-    const capturedLiveEvents = rawCapturedLiveEvents.filter((event) => {
+    const capturedLiveEvents = orderToolSpansCanonically(rawCapturedLiveEvents.filter((event) => {
       if (assistantTextPayloadHasUsableText(event)) {
         return true;
       }
@@ -446,7 +447,7 @@ class CanonicalTurnEventCollector {
       return false;
     }).sort((left, right) =>
       (Number(left?._capture_order) || 0) - (Number(right?._capture_order) || 0)
-    );
+    ));
     const capturedReplacementKeys = new Set();
     // A continuation starts execution of an already-persisted request. Its
     // new tool message is an execution anchor, not a second request.

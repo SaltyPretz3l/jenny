@@ -1,17 +1,20 @@
 'use strict';
 
 const { registerRuntimeChildCapability } = require('../session-runtime/child-capabilities');
+const { APPLICATION_TURN_DIGEST, narrowDigestToolPreferences } = require('./application-turns');
 const { RuntimeOperations } = require('../session-runtime/operations');
 const { captureSessionRuntimeProviderRoute, assertSessionRuntimeProviderRouteCurrent } = require('./session-runtime-provider-route');
 const { bindRuntimeInferenceBudget, assertRuntimeWork } = require('../session-runtime/runtime-work-authority');
 
+// A row 86 digest turn's authority is read-only and limited to the digest's read tools.
 function executionOptionsFor(request, cancellation) {
   const planMode = request.normalizedPreferences?.plan_mode === true;
+  const digest = request.applicationTurn === APPLICATION_TURN_DIGEST;
   return {
     signal: cancellation?.signal || null,
     mode: planMode ? 'plan' : 'assist',
-    readOnly: request.runtimeChildReadOnly === true,
-    toolPreferences: request.toolPreferences,
+    readOnly: request.runtimeChildReadOnly === true || digest,
+    toolPreferences: digest ? narrowDigestToolPreferences(request.toolPreferences) : request.toolPreferences,
     approvalMode: request.approvalMode,
     handoffPreparation: request.sessionHandoffPreparation,
   };

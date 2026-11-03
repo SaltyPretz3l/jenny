@@ -385,6 +385,21 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Row 85: the "Jenny checks" list reuses the standing footer rows. */
+.cal-agenda__check-next {
+  min-width: 9ch;
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+
+.cal-agenda__standing-row--off .cal-agenda__standing-title,
+.cal-agenda__standing-row--off .cal-agenda__standing-cadence,
+.cal-agenda__standing-row--off .cal-agenda__check-next {
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
 /* ---- "added by jenny" attribution + one-click undo ---- */
 
 /* The same violet family the reminder rows use, blended TOWARD the text color

@@ -182,3 +182,19 @@ def test_invoked_skill_rides_the_turn_row_so_the_leading_prompt_survives_it(
     assert all(
         "## Invoked Skill" not in str(message["content"]) for message in next_call["messages"]
     )
+
+
+def test_a_skill_named_mid_message_is_applied_in_both_lanes(flag: bool, tmp_path: Any) -> None:
+    """No skill_invocation: "/insight" mid-sentence still loads the skill."""
+    engine = _CapturingEngine()
+    _router_turn(
+        engine, [{"role": "user", "content": "Please /insight the harness"}], 0,
+        builder=_skill_builder(tmp_path),
+    )
+
+    call = engine.calls[0]
+    texts = [str(call.get("system") or ""), *(str(m["content"]) for m in call["messages"])]
+    invoked = [text for text in texts if "## Invoked Skill: Harness Insight" in text]
+    assert len(invoked) == 1
+    assert "named this skill with /insight in their message" in invoked[0]
+    assert invoked[0].startswith(tc.TURN_CONTEXT_HEADER) is flag

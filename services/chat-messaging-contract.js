@@ -43,6 +43,10 @@ const REASON_CLASSES = Object.freeze({
   unsupported: [CODES.UNAVAILABLE, false],
   authorization_required: [CODES.AUTHORIZATION_REQUIRED, false],
   authorization_revoked: [CODES.AUTHORIZATION_REVOKED, false],
+  // Row 87: a Jenny-chat rule refused the send (deny), stopped being live or spent its daily cap.
+  rule_denied: [CODES.AUTHORIZATION_REQUIRED, false],
+  rule_not_live: [CODES.AUTHORIZATION_REQUIRED, false],
+  rule_cap_reached: [CODES.AUTHORIZATION_REQUIRED, false],
   idempotency_conflict: [CODES.IDEMPOTENCY_CONFLICT, false],
   recipient_archived: [CODES.RECIPIENT_ARCHIVED, true],
   recipient_deleted: [CODES.RECIPIENT_DELETED, false],
@@ -68,6 +72,11 @@ function stableReason(reason) {
   const token = typeof reason === 'string' ? reason : '';
   return REASON_PATTERN.test(token) ? token : 'unavailable';
 }
+
+// Row 87 D4: a rule-authorized send persists as an ordinary agent_once whose consent id names the rule.
+const RULE_CONSENT_PREFIX = 'rule:';
+const ruleIdFromConsent = (consentEventId) => (typeof consentEventId === 'string' && consentEventId.startsWith(RULE_CONSENT_PREFIX)
+  ? consentEventId.slice(RULE_CONSENT_PREFIX.length) : null);
 
 const revisionOrNull = (value) => (Number.isSafeInteger(value) && value >= 0 ? value : null);
 
@@ -280,6 +289,7 @@ module.exports = {
   MAX_MESSAGE_IDS,
   REASON_CLASSES,
   RECIPIENT_DEFAULT_LIMIT,
+  RULE_CONSENT_PREFIX,
   SCHEMA_VERSION,
   UNSUPPORTED_METHODS,
   boundText,
@@ -289,6 +299,7 @@ module.exports = {
   fail,
   isPlainObject,
   lastError,
+  ruleIdFromConsent,
   stableReason,
   succeed,
   validSessionId,

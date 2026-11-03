@@ -1,0 +1,115 @@
+/* The suggest_next_step card (row 97, owner pick A "Inline"): a labelled recap, an optional question and
+   up to three reply buttons, drawn at the end of the reply whatever the tool call's position. */
+
+/* End of reply: the turn's row list is a flex column, so `order` moves the card's row below the closing
+   text without reordering the DOM (the row-order invariant reads DOM order and stays true). Row spacing in
+   chat-thread-rail.css follows DOM adjacency, so the moved row sets its own gap from the prose above it. */
+.turn-row-list > .chat-row:has(.next-step-card) {
+  order: 1;
+  margin-block-start: var(--tl-cluster-gap);
+}
+
+/* The closing text that follows the card in the DOM sits visually right under the prose above it: keep the
+   paragraph gap, not the cluster gap the rail gives a prose row after a tool row. */
+.turn-row-list > .chat-row:has(.next-step-card) + .chat-row[data-row-kind="assistant_text"] {
+  margin-block-start: var(--space-4);
+}
+
+.next-step-card {
+  display: grid;
+  gap: var(--space-3);
+  max-width: min(100%, var(--chat-card-max-width));
+  padding: var(--space-5) 0;
+  color: var(--text-primary);
+}
+
+.next-step-header {
+  display: grid;
+  grid-template-columns: auto minmax(24px, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.next-step-eyebrow {
+  font-weight: 500;
+}
+
+.next-step-rule {
+  display: block;
+  height: 1px;
+  background: var(--border-subtle);
+}
+
+.next-step-recap {
+  margin: var(--space-3) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+}
+
+.next-step-question {
+  margin: var(--space-3) 0 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.next-step-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.next-step-action {
+  min-height: 30px;
+  padding: 0 var(--space-6);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-base);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--font-size-footnote);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.next-step-action[data-primary="true"] {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--widget-button-primary-color);
+}
+
+.next-step-action:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.next-step-action[data-primary="true"]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 86%, var(--text-primary));
+}
+
+.next-step-action:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.next-step-action:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* Settled by a newer message: picked names the choice; passed fades and has no buttons. */
+.next-step-receipt {
+  margin: var(--space-2) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.next-step-card[data-state="passed"] {
+  opacity: 0.6;
+}

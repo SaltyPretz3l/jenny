@@ -42,11 +42,13 @@ test('preload exposes workspace IPC helpers on window.jennyShell', async () => {
   const stateResult = await exposedApi.workspace.getState();
   const updateResult = await exposedApi.workspace.updateState({ activeSessionId: 'sess_9' });
   const clearUsageResult = await exposedApi.usage.clearHistory();
+  const usageStatsResult = await exposedApi.usage.getStats();
 
   assert.deepEqual(invokes, [
     { channel: 'workspace:get-state', args: [] },
     { channel: 'workspace:update-state', args: [{ activeSessionId: 'sess_9' }] },
     { channel: 'usage:clear-history', args: [] },
+    { channel: 'usage:get-stats', args: [] },
   ]);
   assert.deepEqual(stateResult, { channel: 'workspace:get-state', args: [] });
   assert.deepEqual(updateResult, {
@@ -54,6 +56,7 @@ test('preload exposes workspace IPC helpers on window.jennyShell', async () => {
     args: [{ activeSessionId: 'sess_9' }],
   });
   assert.deepEqual(clearUsageResult, { channel: 'usage:clear-history', args: [] });
+  assert.deepEqual(usageStatsResult, { channel: 'usage:get-stats', args: [] });
   assert.equal(exposedApi.cost, undefined);
 });
 

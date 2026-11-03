@@ -340,6 +340,41 @@ function normalizeCanonicalTurnEventForCapture(source, logger, prevalidatedResul
   };
 }
 
+// One call's events in their canonical order. The approval handler notes `tool_use` then
+// `approval_requested`, but the sidecar's own canonical `tool_approval_requested` can be
+// captured first (it rides `turn.event`, the approval itself a reverse request), and a reload
+// then drew "Allowed once" above its tool row (owner live check 2026-11-01).
+const TOOL_SPAN_RANK = {
+  tool_use: 0,
+  approval_requested: 1,
+  approval_resolved: 2,
+  tool_executing: 3,
+  tool_result: 4,
+  source_citations: 5,
+};
+
+// Reorders each call's events inside the slots they already hold; every other event keeps
+// its position, so the interleaving with text, reasoning and other calls is unchanged.
+function orderToolSpansCanonically(events) {
+  const list = Array.isArray(events) ? events : [];
+  const slotsByCall = new Map();
+  list.forEach((event, index) => {
+    const callId = normalizeId(event?.tool_call_id);
+    if (!callId || !Object.prototype.hasOwnProperty.call(TOOL_SPAN_RANK, normalizeId(event?.kind))) return;
+    const slots = slotsByCall.get(callId) || [];
+    slots.push(index);
+    slotsByCall.set(callId, slots);
+  });
+  const ordered = list.slice();
+  for (const slots of slotsByCall.values()) {
+    if (slots.length < 2) continue;
+    const span = slots.map((index) => list[index])
+      .sort((left, right) => TOOL_SPAN_RANK[normalizeId(left.kind)] - TOOL_SPAN_RANK[normalizeId(right.kind)]);
+    slots.forEach((slot, position) => { ordered[slot] = span[position]; });
+  }
+  return ordered;
+}
+
 module.exports = {
   TOOL_RELATED_KINDS,
   LIVE_CAPTURED_KINDS,
@@ -352,4 +387,5 @@ module.exports = {
   mergeReasoningEntriesById,
   assistantTextPayloadHasUsableText,
   normalizeCanonicalTurnEventForCapture,
+  orderToolSpansCanonically,
 };

@@ -51,6 +51,7 @@
 @import url("./styles/chat-review-findings.css");
 @import url("./styles/chat-tool-diff.css");
 @import url("./styles/chat-proposal-cards.css");
+@import url("./styles/chat-next-step.css");
 @import url("./styles/chat-session-messages.css");
 @import url("./styles/chat-messages.css");
 @import url("./styles/primary-chat.css");
@@ -58,6 +59,7 @@
 @import url("./styles/chat-tool-block-v2.css");
 @import url("./styles/chat-machinery.css");
 @import url("./styles/chat-activity-row.css");
+@import url("./styles/chat-test-progress.css");
 @import url("./styles/chat-hover-actions-v2.css");
 /* Mid-turn commentary rows and the settled-turn intermediate de-emphasis. */
 @import url("./styles/chat-commentary-v2.css");
@@ -66,6 +68,7 @@
 @import url("./renderer/inventory/inventory-artifact-figure.css");
 @import url("./renderer/inventory/inventory-chip-popover.css");
 @import url("./renderer/inventory/inventory-segmented.css");
+@import url("./renderer/inventory/inventory-heatmap.css");
 @import url("./renderer/inventory/inventory-anchored-listbox.css");
 @import url("./styles/chat-help-overlay-v2.css");
 @import url("./styles/capture-source-picker.css");
@@ -86,6 +89,7 @@
 @import url("./styles/views-home-board.css");
 @import url("./styles/views-home-dashboard.css");
 @import url("./styles/views-home-hero.css");
+@import url("./styles/views-home-usage-stats.css");
 @import url("./styles/views-home-calendar.css");
 @import url("./styles/views-home-calendar-agenda.css");
 @import url("./styles/views-home-calendar-week.css");
@@ -135,6 +139,7 @@
 @import url("./styles/context-panel.css");
 @import url("./styles/artifact-panel.css");
 @import url("./styles/chat-panes.css");
+@import url("./styles/artifact-panel-text.css");
 @import url("./styles/chat-session-rail.css");
 @import url("./styles/chat-session-rail-performance.css");
 @import url("./styles/image-viewer.css");

@@ -173,6 +173,19 @@
         openPreview: (path, options) => previewStage?.open(path, options),
         openFileMap: () => mapController?.openFileMap(),
         revealInMap: (path) => mapController?.revealInMap?.(path),
+        // view="file" re-enters the shared cancelable ide:open-file-at-line seam
+        // (renderer-chat-path-open → the IDE's open-then-revealPosition path),
+        // preferIde so it never lands in the chat preview rail. Claimed = taken.
+        openFileAtLine: (path, line) => {
+          try {
+            const event = new windowRef.CustomEvent('ide:open-file-at-line', {
+              detail: { path, line, column: 1, preferIde: true }, bubbles: true, cancelable: true,
+            });
+            return windowRef.dispatchEvent(event) === false;
+          } catch (_error) {
+            return false;
+          }
+        },
         getSessionId: getActiveSessionId,
         getWorkspaceId: () => String(getWorkspaceRootContext?.()?.rootId || '').toLowerCase(),
         getChangeLedger,
@@ -183,6 +196,7 @@
           const flags = getFeatureFlags() || {};
           return view === 'preview'
             || view === 'file_map'
+            || view === 'file'
             || (view === 'change_diff' && flags.tools_workspace_present_enabled === true);
         },
       }) || null;

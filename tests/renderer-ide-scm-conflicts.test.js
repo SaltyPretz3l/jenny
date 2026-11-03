@@ -52,7 +52,7 @@ function resolverHarness(over = {}) {
     store,
     getWorkspaceFsApi: () => (over.noFs ? null : {
       readFile: async ({ path }) => {
-        if (over.readThrows) throw new Error('binary');
+        if (over.readThrows) throw Object.assign(new Error('unreadable'), { code: over.readCode || '' });
         return { path, content: over.content != null ? over.content : 'clean\n' };
       },
     }),
@@ -102,10 +102,28 @@ test('resolveDelete confirms first, then calls the store; cancel does nothing', 
   assert.deepEqual(approved.calls.closeTab, ['docs/billing.md'], 'a clean open tab closes with its file');
 });
 
-test('resolveDelete keeps a dirty open tab, always confirms, and toasts a failure', async () => {
+test('resolveDelete names unsaved edits in an open tab and closes that tab on confirm', async () => {
+  const clean = resolverHarness({ open: true });
+  await clean.resolver.resolveDelete('docs/billing.md');
+  assert.equal(clean.calls.confirm[0].message, 'This moves billing.md to the recycle bin and marks the conflict resolved.',
+    'a clean open tab adds no warning');
+
   const dirty = resolverHarness({ open: true, dirty: true });
-  await dirty.resolver.resolveDelete('docs/billing.md');
-  assert.deepEqual(dirty.calls.closeTab, [], 'unsaved work is never closed silently');
+  assert.equal(await dirty.resolver.resolveDelete('docs/billing.md'), true);
+  assert.equal(dirty.calls.confirm[0].message,
+    'This moves billing.md to the recycle bin and marks the conflict resolved. billing.md has unsaved changes in an open tab; they will be discarded.');
+  assert.deepEqual(dirty.calls.closeTab, ['docs/billing.md'], 'the warned dirty tab closes without a save prompt');
+
+  const cancelled = resolverHarness({ open: true, dirty: true, confirm: false });
+  assert.equal(await cancelled.resolver.resolveDelete('docs/billing.md'), false);
+  assert.deepEqual(cancelled.calls.closeTab, [], 'cancel keeps the unsaved tab');
+
+  const refused = resolverHarness({ open: true, dirty: true, deleteResult: { ok: false, reason: 'not_conflicted' } });
+  await refused.resolver.resolveDelete('docs/billing.md');
+  assert.deepEqual(refused.calls.closeTab, [], 'a failed delete keeps the unsaved tab');
+});
+
+test('resolveDelete always confirms and toasts a failure', async () => {
 
   const ignored = resolverHarness();
   await ignored.resolver.resolveDelete('old/gone.txt', { confirm: false });
@@ -175,5 +193,84 @@ test('the git feature wires conflicted-row clicks to openFile and Mark resolved 
   panelEl.querySelector('[data-ide-scm-action="confirm-resolve"]').click();
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(staged, [{ paths: ['src/a.js'] }]);
+  feature.dispose();
+});
+
+test('resolve still stages a file over the read cap and remembers it is too large to check', async () => {
+  const { resolver, calls } = resolverHarness({ readThrows: true, readCode: 'CMP-WORKSPACEFS-0011' });
+  assert.equal(resolver.isTooLargeToCheck('logs/huge.log'), false);
+  await resolver.resolve('logs/huge.log');
+  assert.deepEqual(calls.stage, [['logs/huge.log']]);
+  assert.equal(resolver.isTooLargeToCheck('logs/huge.log'), true);
+});
+
+function featureWithConflict(fsApi) {
+  const dom = new JSDOM('<!doctype html><body><div id="wbView-source-control"></div></body>');
+  const panelEl = dom.window.document.getElementById('wbView-source-control');
+  const snapshot = {
+    available: true, isRepo: true, branch: 'main',
+    files: [{ path: 'logs/huge.log', index: 'U', worktree: 'U', state: 'conflicted', staged: true }],
+  };
+  const staged = [];
+  const store = {
+    getSnapshot: () => snapshot,
+    getBranch: () => 'main', getDirtyCount: () => 1, getDecoration: () => 'conflicted', getFolderRollup: () => null,
+    isRepo: () => true, isAvailable: () => true,
+    stage: async (payload) => { staged.push(payload); return { ok: true }; },
+    refresh: () => {}, refreshNow: () => Promise.resolve(), subscribe: () => () => {}, dispose: () => {},
+  };
+  const feature = createIdeGitFeature({
+    store,
+    getIde: () => ({ openTabs: [], railPanel: 'source-control' }),
+    getMountEl: () => panelEl,
+    getWorkspaceFsApi: () => fsApi,
+    openFile: () => {},
+  });
+  feature.bindEvents();
+  feature.renderPanel();
+  return { panelEl, feature, staged };
+}
+
+const ticks = async () => {
+  for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+};
+
+test('a conflicted file over the read cap says so on its row; Mark resolved still stages it', async () => {
+  const { panelEl, feature, staged } = featureWithConflict({
+    stat: async ({ path }) => ({ path, exists: true, kind: 'file', size: 6 * 1024 * 1024 }),
+    readFile: async () => { throw Object.assign(new Error('too large'), { code: 'CMP-WORKSPACEFS-0011' }); },
+  });
+  await ticks();
+  const note = panelEl.querySelector('[data-ide-scm-conflict-note]');
+  assert.ok(note, 'the row carries a note');
+  assert.equal(note.textContent.trim(), 'Too large to check for conflict markers.');
+  assert.equal(note.closest('[data-ide-scm-confirm-path]'), null, 'the note is not a confirm');
+  panelEl.querySelector('[data-ide-scm-action="resolve"]').click();
+  await ticks();
+  assert.deepEqual(staged, [{ paths: ['logs/huge.log'] }]);
+  feature.dispose();
+});
+
+test('a conflicted file under the read cap shows no size note', async () => {
+  const { panelEl, feature } = featureWithConflict({
+    stat: async ({ path }) => ({ path, exists: true, kind: 'file', size: 1024 }),
+    readFile: async () => ({ content: 'clean\n' }),
+  });
+  await ticks();
+  assert.equal(panelEl.querySelector('[data-ide-scm-conflict-note]'), null);
+  feature.dispose();
+});
+
+test('panel re-renders do not re-stat a conflicted file inside the probe interval', async () => {
+  let stats = 0;
+  const { feature } = featureWithConflict({
+    stat: async ({ path }) => { stats += 1; return { path, exists: true, kind: 'file', size: 6 * 1024 * 1024 }; },
+    readFile: async () => ({ content: '' }),
+  });
+  await ticks();
+  feature.renderPanel(); // a status refresh re-renders the panel
+  feature.renderPanel();
+  await ticks();
+  assert.equal(stats, 1);
   feature.dispose();
 });

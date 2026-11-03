@@ -11,6 +11,7 @@ const {
   LOCAL_ENDPOINT_ENGINES,
   SetupEndpointService,
   endpointUrlFor,
+  isLoopbackHost,
   normalizeEngineType,
 } = require('./setup-endpoint-service');
 const {
@@ -58,6 +59,22 @@ function normalizeBaseUrl(value, fallback) {
     return parsed.toString().replace(/\/$/, '');
   } catch (_error) {
     return '';
+  }
+}
+
+const OLLAMA_DEFAULT_BASE_URL = 'http://127.0.0.1:11434';
+
+// Detection runs from a renderer-supplied host: only loopback, never userinfo.
+function loopbackBaseUrl(host, fallback) {
+  const base = normalizeBaseUrl(host, fallback);
+  try {
+    const parsed = new URL(base);
+    if (!isLoopbackHost(parsed.hostname)) return fallback;
+    parsed.username = '';
+    parsed.password = '';
+    return parsed.toString().replace(/\/$/, '');
+  } catch (_error) {
+    return fallback;
   }
 }
 
@@ -287,9 +304,9 @@ class SetupService extends EventEmitter {
 
   _deriveReadinessSteps(steps, readiness) {
     const next = toSnakeSetupSteps(steps);
-    if (readiness.workspace_root.ready === true && next.workspace_root !== 'done') {
-      next.workspace_root = 'done';
-    }
+    // The root is config, not a probe, so a cleared one reopens a stale 'done'.
+    if (readiness.workspace_root.ready === true) next.workspace_root = 'done';
+    else if (!readiness.workspace_root.configured && next.workspace_root === 'done') next.workspace_root = 'pending';
     if (readiness.local_model.ready === true && next.local_model !== 'done') {
       next.local_model = 'done';
     }
@@ -411,6 +428,12 @@ class SetupService extends EventEmitter {
     const setupPatch = { ...source };
     delete setupPatch.assistantIdentity;
     delete setupPatch.assistant_identity;
+    // Completion is reachable only through complete(), which checks readiness.
+    // `false` still passes through ("Run setup again").
+    if (setupPatch.setupComplete === true) delete setupPatch.setupComplete;
+    if (setupPatch.setup_complete === true) delete setupPatch.setup_complete;
+    delete setupPatch.completedAt;
+    delete setupPatch.completed_at;
     this.configService.updateSetupState(setupPatch);
     return this.getState();
   }
@@ -533,7 +556,12 @@ class SetupService extends EventEmitter {
   }
 
   startOllamaPullPublic(payload = {}) {
-    return publicPullState(this.pullService.start(payload));
+    try {
+      return publicPullState(this.pullService.start(payload));
+    } catch (error) {
+      if (error?.code !== 'invalid_tag') throw error;
+      return { status: 'failed', code: 'invalid_tag', model: '', error: error.message };
+    }
   }
 
   deleteOllamaModel(payload = {}) {
@@ -555,7 +583,7 @@ class SetupService extends EventEmitter {
   /** Delegates to services/ollama-detection.js (extracted for the size cap). */
   detectOllama({ host, timeoutMs } = {}) {
     return detectOllamaWithDeps(this, {
-      baseUrl: normalizeBaseUrl(host, 'http://127.0.0.1:11434') || 'http://127.0.0.1:11434',
+      baseUrl: loopbackBaseUrl(host, OLLAMA_DEFAULT_BASE_URL),
       timeout: normalizeEndpointTimeoutMs(timeoutMs || 3000),
     });
   }

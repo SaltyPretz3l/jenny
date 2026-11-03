@@ -36,6 +36,7 @@ from sidecar.ai.routing import tool_restored_inputs as _tool_restored_inputs
 from sidecar.ai.routing.tool_resolution import contract_entry_for_call
 from sidecar.ai.tools import assembly as _tools_assembly
 from sidecar.ai.tools import plan_artifact_policy as _plan_artifact_policy
+from sidecar.ai.tools import read_only_command_grant as _read_only
 from sidecar.ai.tools import sanitization as _sanitization
 from sidecar.ai.tools import schema_examples as _tools_schema_examples
 from sidecar.ai.tools import tool_actions as _tool_actions
@@ -201,7 +202,9 @@ def _build_output_chunk_emitter(runtime: Any, call: ToolCallRequest) -> Any:
                 if text:
                     lines.append({"stream": stream, "text": text})
         partial = str(params.get("partial") or "")[:_MAX_CHUNK_LINE_CHARS]
-        if not lines and not partial:
+        raw_progress = params.get("test_progress")
+        test_progress = raw_progress if isinstance(raw_progress, dict) else None
+        if not lines and not partial and test_progress is None:
             return
         runtime.emit(
             _loop_events.ToolOutputChunkEvent(
@@ -213,6 +216,7 @@ def _build_output_chunk_emitter(runtime: Any, call: ToolCallRequest) -> Any:
                 emitted_lines=_coerce_count(params, "emitted_lines"),
                 dropped_lines=_coerce_count(params, "dropped_lines"),
                 elapsed_ms=_coerce_count(params, "elapsed_ms"),
+                test_progress=test_progress,
             )
         )
 
@@ -245,6 +249,7 @@ def _dispatch_tool_call(
         electron_request_type=ElectronToolBridgeRequest,
         electron_executor=execute_electron_tool, logger=logger,
         on_dispatch_ready=on_dispatch_ready, decision_snapshot=decision_snapshot,
+        read_only_grant=lambda: _read_only.read_only_grant(kernel, call, descriptor, runtime),
     )
 
 
@@ -381,7 +386,16 @@ def approval_if_needed(
             and descriptor.name == "run_command"
             and getattr(descriptor, "server_name", "") == "electron_tool_bridge"
         )
-        call_side_effecting = _tool_actions.effective_side_effecting(descriptor, call.arguments)
+        # Row 102: a read-only command is not side-effecting for the mode and unattended gates.
+        shell_classification = _read_only.candidate_classification(
+            kernel, call, descriptor, execution_context
+        )
+        read_only_command = _read_only.is_read_only_command(
+            kernel._config, descriptor, shell_classification
+        )
+        call_side_effecting = _tool_actions.effective_side_effecting(
+            descriptor, call.arguments
+        ) and not read_only_command
         plan_artifact_write = _plan_artifact_policy.is_plan_artifact_write_eligible(
             descriptor,
             call.tool_id,
@@ -407,25 +421,20 @@ def approval_if_needed(
         )
         if hosted_approval is not None:
             return hosted_approval
-        shell_classification = classify_run_command_for_approval(
-            kernel,
-            call,
-            descriptor_name=descriptor.name,
-            execution_context=execution_context,
-        )
+        if shell_classification is None:  # a non-candidate is classified only past the exits
+            shell_classification = classify_run_command_for_approval(
+                kernel, call, descriptor_name=descriptor.name, execution_context=execution_context
+            )
         request_safety = _route_policy_runtime.current_request_safety()
         paranoid_mode = (
             _route_policy_runtime.resolve_safety_mode(request_safety, kernel._config) == "paranoid"
         )
-        if shell_classification is not None:
-            if shell_classification.verdict is CommandVerdict.BLOCKED:
-                raise ToolExecutionFailure(
-                    code=CMP_TOOL_COMMAND_BLOCKED,
-                    message=(
-                        f"command blocked by security classifier: {shell_classification.reason}"
-                    ),
-                    retryable=False,
-                )
+        if shell_classification and shell_classification.verdict is CommandVerdict.BLOCKED:
+            raise ToolExecutionFailure(
+                code=CMP_TOOL_COMMAND_BLOCKED,
+                message=f"command blocked by security classifier: {shell_classification.reason}",
+                retryable=False,
+            )
         policy_decision = (policy_decisions_by_call or {}).get(tool_policy_call_key(call))
         if policy_decision is not None:
             if policy_decision.decision == POLICY_DECISION_DENY:
@@ -458,6 +467,18 @@ def approval_if_needed(
                 # The UI must not offer to persist an always-allow rule this gate never honours.
                 policy_decision=None,
             )
+        always_card = descriptor.name in _route_policy_runtime.ALWAYS_ASK_CARD_TOOLS
+        if always_card and not approvals_pre_granted:
+            return _route_policy_runtime.build_approval_request(
+                ApprovalRequest_, call, descriptor,
+                mode=mode,
+                reason=_route_policy_runtime.always_ask_card_reason(descriptor.name),
+                policy_decision=None,
+            )
+        if read_only_command and not auto_run and _read_only.approval_grant_applies(
+            policy_decision, paranoid=paranoid_mode
+        ):
+            continue  # not counted toward the Auto streak cap
         if (
             policy_decision is not None
             and policy_decision.decision == POLICY_DECISION_ASK

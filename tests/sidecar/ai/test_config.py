@@ -96,6 +96,20 @@ def test_parse_runtime_config_reads_web_search_provider_fields() -> None:
     }
 
 
+def test_parse_runtime_config_reads_web_loopback_flag_separately() -> None:
+    # Row 103: loopback-only opt-in, default off like the private-address flag.
+    default = parse_runtime_config({})
+    assert default.tools_web_allow_loopback is False
+    assert default.tools_web_allow_private_addresses is False
+    loopback = parse_runtime_config({"tools_web_allow_loopback": True})
+    assert loopback.tools_web_allow_loopback is True
+    assert loopback.tools_web_allow_private_addresses is False
+    # The private flag keeps its own value; it implies loopback at the validator.
+    private = parse_runtime_config({"tools_web_allow_private_addresses": True})
+    assert private.tools_web_allow_private_addresses is True
+    assert private.tools_web_allow_loopback is False
+
+
 def test_parse_runtime_config_web_search_provider_fields_default_none() -> None:
     config = parse_runtime_config({})
     assert config.tools_web_search_provider == "duckduckgo"
@@ -548,6 +562,7 @@ def test_parse_runtime_config_reads_search_tool_fields() -> None:
             "tools_automations_enabled": True,
             "tools_workspace_present_enabled": True,
             "tools_home_enabled": True,
+            "tools_next_step_enabled": True,
             "tools_rich_files_enabled": True,
             "tools_workspace_manifest_enabled": True,
             "tools_task_capsule_enabled": True,
@@ -570,6 +585,7 @@ def test_parse_runtime_config_reads_search_tool_fields() -> None:
     assert config.tools_automations_enabled is True
     assert config.tools_workspace_present_enabled is True
     assert config.tools_home_enabled is True
+    assert config.tools_next_step_enabled is True
     assert config.tools_rich_files_enabled is True
     assert config.tools_workspace_manifest_enabled is True
     assert config.tools_task_capsule_enabled is True
@@ -595,6 +611,7 @@ def test_parse_runtime_config_defaults_search_tool_fields() -> None:
     assert config.tools_automations_enabled is False
     assert config.tools_workspace_present_enabled is False
     assert config.tools_home_enabled is False
+    assert config.tools_next_step_enabled is False
     assert config.tools_rich_files_enabled is True
     assert config.tools_workspace_manifest_enabled is False
     assert config.tools_task_capsule_enabled is False

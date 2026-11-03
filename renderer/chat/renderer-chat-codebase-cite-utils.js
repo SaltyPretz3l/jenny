@@ -41,6 +41,8 @@
   var CITE_HREF_PREFIX = '#codebase:';
   var CITE_LINK_CLASS = 'codebase-cite-link';
   var ENHANCED_ATTR = 'data-codebase-cite-enhanced';
+  // The absolute-path pass is stamped on its own: it only counts once the workspace context was there to run it.
+  var ABSOLUTE_ATTR = 'data-codebase-abs-enhanced';
   var MAX_PATH_LENGTH = 512;
   var MAX_LINE = 100000000;
 
@@ -73,46 +75,24 @@
     );
   }
 
-  function normalizeRelPath(value) {
-    return String(value || '').trim().replace(/\\/g, '/');
-  }
-
-  // Reject anything that is not a plausible, contained workspace-relative path.
-  // Uses charCode checks (no regex escape literals) so the source carries no
-  // control bytes. Note: this is a best-effort renderer guard — the trusted
-  // boundary is the main-process workspaceFs path policy (realpath containment
-  // + existence check), which is authoritative for what actually opens.
-  function isSafeRelPath(value) {
-    var p = String(value || '');
-    if (!p || p.length > MAX_PATH_LENGTH) {
-      return false;
-    }
-    for (var i = 0; i < p.length; i += 1) {
-      var code = p.charCodeAt(i);
-      // Reject C0 controls, DEL, and any whitespace (incl. space at 0x20) so the
-      // find and parse sides agree on the legal path alphabet.
-      if (code <= 0x20 || code === 0x7f) {
-        return false;
-      }
-    }
-    if (p.charAt(0) === '/' || /^[a-zA-Z]:/.test(p)) {
-      return false; // absolute / drive-rooted
-    }
-    var segments = p.split('/');
-    for (var s = 0; s < segments.length; s += 1) {
-      if (segments[s] === '..') {
-        return false; // no parent-escape
-      }
-    }
-    return true;
-  }
-
+  // The path shape rule is shared with the chat path controller (workspace-path-resolve.js).
+  var shared = globalThis.jennyWorkspacePathResolve || require('../shared/workspace-path-resolve');
+  var normalizeRelPath = shared.normalizeRelPath;
+  var isSafeRelPath = shared.isOpenableRelPath;
   function clampLine(value) {
-    var n = parseInt(value, 10);
-    if (!Number.isFinite(n) || n < 1) {
-      return null;
-    }
-    return Math.min(n, MAX_LINE);
+    return shared.clampLine(value, MAX_LINE);
+  }
+
+  // Row 95: absolute in-workspace paths in prose become path chips (the data-chat-path-open
+  // contract renderer-chat-path-open.js drives). The flag, root and registered project folders come
+  // from the shared resolver's context, which that controller publishes; it is off until then.
+  function absoluteContext() {
+    var ctx = shared.getContext();
+    var projectRoots = ctx.projectRoots || [];
+    if (!ctx.enabled || !(ctx.workspaceRoot || projectRoots.length)) return null;
+    // The stamp is the context generation: new folders (or a new root) make every bubble due again.
+    var stamp = String(typeof shared.getContextGeneration === 'function' ? shared.getContextGeneration() : 1);
+    return { resolver: shared, root: ctx.workspaceRoot, projectRoots: projectRoots, stamp: stamp };
   }
 
   /**
@@ -239,6 +219,7 @@
     var scheduledWithAnimationFrame = false;
     var pendingEnhanceRoots = new Set();
     var detachClick = null;
+    var stopContextWatch = null;
 
     function isInsideSkippableNode(node) {
       var el = node && node.parentNode;
@@ -266,9 +247,12 @@
 
     // Replace a single text node with [text?, <a>, text?, <a>, ...] for each
     // citation it contains. Returns true if any link was injected.
-    function enhanceTextNode(textNode) {
+    function enhanceTextNode(textNode, absolute, withCites) {
       var value = textNode.nodeValue;
-      var citations = findCodebaseCitations(value);
+      var citations = withCites ? findCodebaseCitations(value) : [];
+      if (absolute) {
+        citations = absolute.resolver.mergeSpans(citations, absolute.resolver.linkableAbsoluteSpans(value, absolute.root, absolute.projectRoots));
+      }
       if (citations.length === 0) {
         return false;
       }
@@ -280,7 +264,7 @@
           fragment.appendChild(doc.createTextNode(value.slice(cursor, c.index)));
         }
         var matchText = value.slice(c.index, c.index + c.length);
-        fragment.appendChild(buildCiteAnchor(matchText, c));
+        fragment.appendChild(c.relPath ? absolute.resolver.createPathChip(doc, matchText, c) : buildCiteAnchor(matchText, c));
         cursor = c.index + c.length;
       }
       if (cursor < value.length) {
@@ -291,7 +275,16 @@
     }
 
     function enhanceBubble(bubble) {
-      if (!bubble || disposed || bubble.getAttribute(ENHANCED_ATTR) === '1') {
+      if (!bubble || disposed) {
+        return false;
+      }
+      // Two passes, two stamps: the relative-cite pass is done once; the absolute-path pass waits
+      // for the workspace context (restored history can render before the root is hydrated).
+      var citesDone = bubble.getAttribute(ENHANCED_ATTR) === '1';
+      var current = absoluteContext();
+      var absolute = current && bubble.getAttribute(ABSOLUTE_ATTR) !== current.stamp ? current : null;
+      var withCites = !citesDone && isEnabled();
+      if (citesDone && !absolute) {
         return false;
       }
       // Collect text nodes first; the walk must not be disturbed by the
@@ -300,20 +293,26 @@
       var pending = [];
       var node = walker.nextNode();
       while (node) {
-        if (node.nodeValue && /[\w.-]+\.[a-z0-9]+:\d/i.test(node.nodeValue) && !isInsideSkippableNode(node)) {
+        var value = node.nodeValue;
+        if (value && !isInsideSkippableNode(node)
+          && ((withCites && /[\w.-]+\.[a-z0-9]+:\d/i.test(value)) || (absolute && /[A-Za-z]:[\\/]|\/[\w.@+~-]+\//.test(value)))) {
           pending.push(node);
         }
         node = walker.nextNode();
       }
       var changed = false;
       for (var i = 0; i < pending.length; i += 1) {
-        if (enhanceTextNode(pending[i])) {
+        // Chips and inline code are already path chips: never nest links in them.
+        var parent = pending[i].parentNode;
+        var inChip = Boolean(absolute && parent && typeof parent.closest === 'function' && parent.closest('code, [data-chat-path-open]'));
+        if (enhanceTextNode(pending[i], inChip ? null : absolute, withCites)) {
           changed = true;
         }
       }
       // Stamp synchronously so the observer's async callback skips this bubble
       // (including the mutations our own link injection just produced).
       bubble.setAttribute(ENHANCED_ATTR, '1');
+      if (absolute) bubble.setAttribute(ABSOLUTE_ATTR, absolute.stamp);
       return changed;
     }
 
@@ -323,15 +322,18 @@
     }
 
     function enhanceWithin(rootNode) {
-      if (disposed || !rootNode || !isEnabled() || typeof rootNode.querySelectorAll !== 'function') {
+      if (disposed || !rootNode || (!isEnabled() && !absoluteContext()) || typeof rootNode.querySelectorAll !== 'function') {
         return 0;
       }
+      // Without a workspace context only the cite stamp matters; with one, a bubble still lacking the absolute stamp is due.
+      var current = absoluteContext();
+      var due = current ? ':not([' + ENHANCED_ATTR + '="1"][' + ABSOLUTE_ATTR + '="' + current.stamp + '"])' : ':not([' + ENHANCED_ATTR + '="1"])';
       var bubbles = Array.from(rootNode.querySelectorAll(
-        '[data-message-role="assistant"] .chat-bubble-markdown:not([' + ENHANCED_ATTR + '="1"])'
+        '[data-message-role="assistant"] .chat-bubble-markdown' + due
       ));
       if (
         rootNode.matches
-        && rootNode.matches('.chat-bubble-markdown:not([' + ENHANCED_ATTR + '="1"])')
+        && rootNode.matches('.chat-bubble-markdown' + due)
         && rootNode.closest?.('[data-message-role="assistant"]')
       ) {
         bubbles.unshift(rootNode);
@@ -521,6 +523,8 @@
           attributeFilter: ['data-message-status'],
         });
       }
+      // The path-open controller publishing the context (or the root hydrating) re-runs the absolute pass over settled bubbles.
+      stopContextWatch = typeof shared.onContextChange === 'function' ? shared.onContextChange(enhanceAll) : null;
       enhanceAll();
       return dispose;
     }
@@ -534,6 +538,10 @@
         observer.disconnect();
       }
       observer = null;
+      if (stopContextWatch) {
+        stopContextWatch();
+        stopContextWatch = null;
+      }
       if (scheduledHandle !== null && win) {
         if (scheduledWithAnimationFrame && typeof win.cancelAnimationFrame === 'function') {
           win.cancelAnimationFrame(scheduledHandle);
@@ -569,6 +577,7 @@
       return null; // non-browser (test) context
     }
     var enabled = false;
+    var absoluteLinks = false;
     var attached = false;
     var controller = null;
     var controllerDispose = null;
@@ -578,7 +587,7 @@
     }
 
     function ensureAttached() {
-      if (enabled && controller && !attached) {
+      if ((enabled || absoluteLinks) && controller && !attached) {
         attached = true;
         controllerDispose = controller.attach();
       }
@@ -588,6 +597,7 @@
       enabled = Boolean(
         state && state.featureFlags && state.featureFlags.workspace_codebase_context === true
       );
+      absoluteLinks = Boolean(state && state.featureFlags && state.featureFlags.absolute_path_links !== false);
       ensureAttached();
     }
 

@@ -267,5 +267,34 @@ test('the singleton returns one instance', () => {
   const dom = new JSDOM('<!doctype html><body></body>');
   const deps = { documentRef: dom.window.document, stepModal, actionButton, checkbox, getBridge: () => null };
   assert.equal(getDefaultPrimaryResetDialog(deps), getDefaultPrimaryResetDialog(deps));
+  // Row 90: the slash commands ask without deps and get the shell's instance, never a bare one.
+  assert.equal(getDefaultPrimaryResetDialog(), getDefaultPrimaryResetDialog(deps));
   dom.window.close();
+});
+
+// Row 85 D11 (Q6): with scheduled checks, Forget offers a ticked "Also delete Jenny's scheduled checks (N)".
+test('Forget offers a ticked scheduled-checks box when there are checks and sends its state', async (t) => {
+  const h = harness(t, { preview: { schema_version: 1, ok: true, memories: 3, pending: 1, scheduled_checks: 2 } });
+  const pending = h.dialog.confirmForget({ sessionId: SID, trigger: h.trigger });
+  await flush();
+  const box = h.$('input[data-primary-forget-delete-checks]');
+  assert.ok(box);
+  assert.equal(box.checked, true);
+  assert.match(h.$('.primary-reset').textContent, /Also delete Jenny's scheduled checks \(2\)/);
+  box.click();
+  h.button('confirm').click();
+  await pending;
+  assert.deepEqual(h.resetCalls()[0].request, {
+    schema_version: 1, forget: true, keep_copy: true, memory_opt_out: false, delete_scheduled_checks: false,
+  });
+});
+
+test('Forget shows no scheduled-checks box when there are none and leaves the request unchanged', async (t) => {
+  const h = harness(t, { preview: { schema_version: 1, ok: true, memories: 0, pending: 0, scheduled_checks: 0 } });
+  const pending = h.dialog.confirmForget({ sessionId: SID, trigger: h.trigger });
+  await flush();
+  assert.equal(h.$('input[data-primary-forget-delete-checks]'), null);
+  h.button('confirm').click();
+  await pending;
+  assert.equal('delete_scheduled_checks' in h.resetCalls()[0].request, false);
 });

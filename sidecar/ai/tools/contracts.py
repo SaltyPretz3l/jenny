@@ -203,7 +203,8 @@ def _validate_value(
         else:
             raise _validation_error(
                 tool_name,
-                f"{_describe_path(path)} must satisfy one of the allowed argument shapes",
+                f"{_describe_path(path)} must satisfy one of the allowed argument shapes"
+                + _describe_any_of_failure(any_of, base_schema, value=value, path=path),
             )
 
     enum_values = schema.get("enum")
@@ -414,6 +415,77 @@ def _validate_numeric_bounds(
 
 def _describe_path(path: str) -> str:
     return "arguments" if not path else f"argument '{path}'"
+
+
+_MAX_ANY_OF_SHAPES_CHARS = 300
+_MAX_ANY_OF_CAUSE_CHARS = 200
+
+
+def _bounded_text(text: str, limit: int) -> str:
+    return text if len(text) <= limit else f"{text[: limit - 1]}…"
+
+
+def _describe_any_of_option(option: dict[str, Any], base_schema: dict[str, Any]) -> str:
+    """Compact shape of one anyOf option: discriminating values and required keys."""
+    option_type = option.get("type")
+    if option_type is None and ("properties" in option or "required" in option):
+        option_type = "object"
+    if option_type is None:
+        option_type = base_schema.get("type")
+    if option_type == "object":
+        parts: list[str] = []
+        properties = option.get("properties")
+        for name, sub_schema in properties.items() if isinstance(properties, dict) else ():
+            if not isinstance(sub_schema, dict):
+                continue
+            if "const" in sub_schema:
+                values: list[Any] = [sub_schema["const"]]
+            elif isinstance(sub_schema.get("enum"), list):
+                values = sub_schema["enum"]
+            else:
+                continue
+            parts.append(f"{name}: " + "|".join(repr(item) for item in values))
+        required = option.get("required")
+        if isinstance(required, list) and required:
+            parts.append("required: " + ", ".join(str(key) for key in required))
+        return "{" + ", ".join(parts) + "}" if parts else "object"
+    if "const" in option:
+        return repr(option["const"])
+    if isinstance(option.get("enum"), list):
+        return "|".join(repr(item) for item in option["enum"])
+    if isinstance(option_type, list):
+        return "|".join(str(member) for member in option_type)
+    return str(option_type) if isinstance(option_type, str) else "any"
+
+
+def _shared_any_of_cause(
+    any_of: list[Any], base_schema: dict[str, Any], *, value: object, path: str
+) -> str:
+    """The failure every option inherits from the keys no option overrides, if any."""
+    overridden = {key for option in any_of if isinstance(option, dict) for key in option}
+    if "properties" in overridden:
+        overridden.add("additionalProperties")
+    shared = {key: item for key, item in base_schema.items() if key not in overridden}
+    try:
+        _validate_value("", value, shared, path=path)
+    except ToolExecutionFailure as error:
+        return error.message.partition("rejected malformed arguments: ")[2] or error.message
+    return ""
+
+
+def _describe_any_of_failure(
+    any_of: list[Any], base_schema: dict[str, Any], *, value: object, path: str
+) -> str:
+    shapes = " | ".join(
+        _describe_any_of_option(option, base_schema)
+        for option in any_of
+        if isinstance(option, dict)
+    )
+    text = f": {_bounded_text(shapes, _MAX_ANY_OF_SHAPES_CHARS)}" if shapes else ""
+    cause = _shared_any_of_cause(any_of, base_schema, value=value, path=path)
+    if cause:
+        text += f" (every shape failed: {_bounded_text(cause, _MAX_ANY_OF_CAUSE_CHARS)})"
+    return text
 
 
 def _validation_error(tool_name: str, message: str) -> "ToolExecutionFailure":

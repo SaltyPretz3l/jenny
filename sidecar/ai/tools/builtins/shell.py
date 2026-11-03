@@ -25,6 +25,7 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_IO_FAILED,
 )
 from sidecar.ai.tools.builtins import cancellation, output_chunk_slot, shell_harness
+from sidecar.ai.tools.builtins import shell_test_progress as _test_progress
 from sidecar.ai.tools.builtins.executable_lookup import (
     which_on_explicit_path as _which_on_explicit_path,
 )
@@ -41,6 +42,11 @@ from sidecar.ai.tools.builtins.shell_background import (
     read_background_job,
     start_background_job,
     stop_background_job,
+)
+from sidecar.ai.tools.builtins.shell_background_wait import (
+    MAX_WAIT_MS,
+    sleep_payload_if_waiting,
+    wait_for_settle,
 )
 from sidecar.ai.tools.builtins.shell_command_split import (
     cmd_exe_multiline_refusal,
@@ -357,9 +363,12 @@ def _run_owned_process(
 ) -> OwnedProcessResult:
     # An active per-call notification writer receives batched, sanitized
     # stdout/stderr lines while the command runs. The final captured result
-    # stays authoritative.
-    writer = output_chunk_slot.current_writer()
-    streamer = ToolOutputStreamer(emit=writer) if writer is not None else None
+    # stays authoritative. A test-progress tracker gets a no-op sink when nobody listens.
+    progress = _test_progress.take_active()
+    writer = output_chunk_slot.current_writer() or (
+        _test_progress.discard_batch if progress is not None else None
+    )
+    streamer = ToolOutputStreamer(emit=writer, progress=progress) if writer is not None else None
     try:
         return get_owned_process_service().run(
             argv,
@@ -653,6 +662,23 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
             "executable": verdict.executable,
         }
 
+    # ── Sleep while a background job runs: wait on the job instead ──
+    waited = sleep_payload_if_waiting(
+        command, arguments, timeout_seconds, workspace.require_root,
+        abort_event=cancellation.current_abort_event(),
+    )
+    if waited is not None:
+        sleep_payload = {
+            "command": command, "cwd": display_cwd, "exit_code": 0, "stdout": "", "stderr": "",
+            "ok": True, "shell": _shell_name(),
+            **waited,
+        }
+        return ToolHandlerResult(
+            output=json.dumps(sleep_payload, ensure_ascii=False, indent=2),
+            success=True,
+            metadata={"shell": _shell_name(), "exit_code": 0, "effects": "none"},
+        )
+
     argv = _shell_argv(command)
 
     # ── Background execution ──────────────────────────────────────
@@ -663,13 +689,17 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
             cwd=cwd,
             workspace_root=root,
             timeout_seconds=timeout_seconds,
+            progress_tap=_test_progress.background_tap_for(command, cwd, root),
         )
         job_id = started.job_id
         bg_payload = {
             "job_id": job_id,
             "timeout_seconds": timeout_seconds,
             "status": "started",
-            "message": f"Background job {job_id} started. Use check_background_job to check status.",
+            "message": (
+                f"Background job {job_id} started. Keep working; you are told when it finishes. "
+                "To block until then, call check_background_job with wait_ms."
+            ),
             "shell": _shell_name(),
         }
         return ToolHandlerResult(
@@ -685,6 +715,8 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
         )
 
     # ── Synchronous execution ─────────────────────────────────────
+    progress = _test_progress.tracker_for(command, cwd, workspace.root)
+    _test_progress.activate(progress)  # picked up by _run_owned_process on this thread
     try:
         completed = _run_owned_process(
             argv,
@@ -840,6 +872,8 @@ def run_command_tool(  # noqa: PLR0915 - linear tool-result assembly is intentio
             )
     if classification_meta is not None:
         metadata["classification"] = classification_meta
+    if (test_summary := _test_progress.summary_for(progress)) is not None:
+        metadata["test_summary"] = test_summary
     metadata.update(output_fields)
     if exit_code_covers_final_segment:
         metadata["exit_code_covers"] = "final_segment_only"
@@ -897,6 +931,19 @@ def _validated_background_job_id(arguments: dict[str, object]) -> str:
     return job_id
 
 
+def _parse_wait_ms(arguments: dict[str, object]) -> int:
+    value = arguments.get("wait_ms", 0)
+    if value is None:
+        return 0
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= MAX_WAIT_MS:
+        raise ToolExecutionFailure(
+            code=CMP_TOOL_INVALID_PATH,
+            message=f"tool argument 'wait_ms' must be a number from 0 to {MAX_WAIT_MS}",
+            retryable=False,
+        )
+    return int(value)
+
+
 def check_background_job_tool(
     arguments: dict[str, object],
     workspace: WorkspaceGuard,
@@ -905,6 +952,13 @@ def check_background_job_tool(
     job_id = _validated_background_job_id(arguments)
     root = workspace.require_root()
     status = read_background_job(root, job_id)
+    wait_ms = _parse_wait_ms(arguments)
+    if wait_ms and status.get("state") == "running":
+        settled = wait_for_settle(
+            root, [job_id], max_seconds=wait_ms / 1000,
+            abort_event=cancellation.current_abort_event(),
+        )
+        status = settled[1] if settled is not None else read_background_job(root, job_id)
     if status.get("state") == "not_found":
         raise ToolExecutionFailure(
             code=CMP_TOOL_BACKGROUND_NOT_FOUND,
@@ -912,6 +966,7 @@ def check_background_job_tool(
             retryable=False,
         )
     status.pop("schema_version", None)  # persistence detail, never model-facing
+    _test_progress.attach_job_progress(status, job_id)
     # A running or terminal job (completed, failed, cancelled, timed out) is a
     # state the poll read successfully: ``state``/``exit_code``/``error`` carry
     # the job's outcome. Only an unreadable or rejected status fails the poll.

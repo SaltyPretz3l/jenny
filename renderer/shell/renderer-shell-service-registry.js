@@ -774,7 +774,8 @@
     const prepareChatDockSessionTransitionSafe = (...args) => { try { return ideController?.chatDock?.prepareSessionTransition?.(...args) === true; } catch (error) { appendClientLog('WARN', 'ide_chat_dock.anchor_capture_failed', { message: String(error?.message || error).slice(0, 200) }); return false; } };
     const revealIdeChangesSafe = (target) => { try { return ideController?.chatDock?.revealChanges?.(target) === true; } catch (error) { appendClientLog('WARN', 'ide_chat_dock.reveal_changes_failed', { message: String(error?.message || error).slice(0, 200) }); return false; } }; // only a live dock can show it
     const getIdeCommandItemsSafe = ideSafe((...args) => ensureIdeController()?.getIdeCommandItems?.(...args) || []);
-    const openIdeHelpOverlaySafe = ideSafe((...args) => openIdeHelpOverlay(...args)); const openIdeChangeDiffSafe = openIdeAfterLoad('openLedgerChangeById'); const openIdeFileAtLineSafe = openIdeAfterLoad('openFileAtLine'); const openIdeTestOutputSafe = openIdeAfterLoad('showActivityOutput'); const openIdeGitViewSafe = openIdeAfterLoad('openGitView'); // an explicit user click may construct it
+    const openIdeHelpOverlaySafe = ideSafe((...args) => openIdeHelpOverlay(...args)); const openIdeChangeDiffSafe = openIdeAfterLoad('openLedgerChangeById'); const openIdeFileAtLineSafe = openIdeAfterLoad('openFileAtLine'); const revealIdePathSafe = openIdeAfterLoad('revealInExplorer'); const openIdeTestOutputSafe = openIdeAfterLoad('showActivityOutput'); const openIdeGitViewSafe = openIdeAfterLoad('openGitView'); const openIdeTerminalSafe = openIdeAfterLoad('openTerminalPanel'); const runIdeTaskTerminalSafe = openIdeAfterLoad('runInTaskTerminal');
+    const closeIdeBottomPanelSafe = () => { try { return ideController?.closeBottomPanel?.() === true; } catch (_error) { return false; } }; // app_view close: never builds the IDE; // an explicit user click may construct it
 
     const companionHandlers = shellStateRuntimeUtils.createCompanionSafeHandlers?.({
       state,
@@ -854,7 +855,7 @@
       ensureIdeController, ensureIdeLoaded,
       renderIdeSafe,
       activateIdeSafe,
-      layoutIdeEditorSafe, reconcileChatDockHostSafe, prepareChatDockSessionTransitionSafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe, openIdeTestOutputSafe, openIdeGitViewSafe, revealIdeChangesSafe,
+      layoutIdeEditorSafe, reconcileChatDockHostSafe, prepareChatDockSessionTransitionSafe, openIdeChangeDiffSafe, openIdeFileAtLineSafe, openIdeTestOutputSafe, revealIdePathSafe, openIdeGitViewSafe, revealIdeChangesSafe, openIdeTerminalSafe, runIdeTaskTerminalSafe, closeIdeBottomPanelSafe,
       getIdeCommandItemsSafe,
       openIdeHelpOverlaySafe,
       refreshCompanionStateSafe,

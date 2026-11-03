@@ -12,6 +12,7 @@ from sidecar.ai.context.runtime_overlays import (
     build_invoked_skill_message,
     runtime_clock_line,
 )
+from sidecar.ai.context.skill_mentions import latest_user_text
 from sidecar.ai.context.turn_context import (
     build_turn_context_row,
     fold_runtime_messages,
@@ -34,6 +35,7 @@ def build_request_system_messages(  # noqa: PLR0913
     history: Sequence[dict[str, object]] = (),
     turn_context_row: Mapping[str, Any] | None = None,
     execution_context: Any | None = None,
+    latest_user_content: str | None = None,
 ) -> list[dict[str, object]]:
     """Assemble the request: prompt block, typed context rows, history.
 
@@ -48,7 +50,13 @@ def build_request_system_messages(  # noqa: PLR0913
     runtime overlays fold into that row, which goes before the latest user
     message; the caller has already moved the per-turn context kinds and the
     invoked skill (``render_turn_context_row``) into it.
+
+    *latest_user_content* (default: the last user row of *history*) lets a
+    skill named mid-message with ``/<command>`` apply when no explicit
+    invocation came with the request.
     """
+    if latest_user_content is None:
+        latest_user_content = latest_user_text(history)
     messages: list[dict[str, object]] = [{"role": "system", "content": base_system_prompt}]
     messages.extend(
         build_dynamic_system_messages(
@@ -58,6 +66,7 @@ def build_request_system_messages(  # noqa: PLR0913
             personality_rendered=personality_rendered,
             skill_invocation=skill_invocation if turn_context_row is None else None,
             execution_context=execution_context,
+            latest_user_content=latest_user_content if turn_context_row is None else "",
         )
     )
     runtime = list(runtime_system_messages or [])
@@ -119,6 +128,7 @@ def render_turn_context_row(  # noqa: PLR0913
         config=config,
         skill_invocation=skill_invocation,
         execution_context=execution_context,
+        latest_user_content=latest_user_content,
     )
     clock = runtime_clock_line() if getattr(config, "use_24_hour_time", False) is True else ""
     return build_turn_context_row(

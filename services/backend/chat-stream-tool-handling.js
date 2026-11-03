@@ -146,6 +146,7 @@ function persistTerminalApprovalResult({
   policyDecisionId = '',
   turnEventCollector = null,
   output: outputOverride = '',
+  metadata: extraMetadata = null,
 }) {
   const normalizedState = String(approvalState || 'denied').trim() || 'denied';
   const output = String(outputOverride || '').trim() || approvalTerminalOutput(toolName, normalizedState);
@@ -156,6 +157,7 @@ function persistTerminalApprovalResult({
     approvalState: normalizedState,
   });
   const metadata = {
+    ...(extraMetadata && typeof extraMetadata === 'object' ? extraMetadata : {}),
     recovery: 'approval_resolved',
     terminal_state: normalizedState,
   };

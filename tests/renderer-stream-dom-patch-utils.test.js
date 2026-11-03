@@ -261,6 +261,143 @@ test('reconcileStreamUnits does not serialize an unchanged fingerprinted unit', 
   dom.window.close();
 });
 
+// reasoning tail fade (row 101 S1): the last unit routes through writeTailUnit.
+function streamUnitFixture(containerUnits, nextUnits) {
+  const unit = (index, fp, html) =>
+    `<div class="reasoning-stream-unit" data-stream-unit-index="${index}" data-su-fp="${fp}">${html}</div>`;
+  const dom = new JSDOM(`<!doctype html><body>
+    <div id="container">${containerUnits.map((u, i) => unit(i, u[0], u[1])).join('')}</div>
+    <div id="next">${nextUnits.map((u, i) => unit(i, u[0], u[1])).join('')}</div>
+  </body>`);
+  const doc = dom.window.document;
+  return { dom, doc, container: doc.getElementById('container'), next: doc.getElementById('next') };
+}
+
+test('reconcileStreamUnits routes only a changed tail unit through writeTailUnit', () => {
+  const { reconcileStreamUnits } = require('../renderer/chat/renderer-stream-dom-patch-utils');
+  const { dom, doc, container, next } = streamUnitFixture(
+    [['a', '<p>alpha</p>'], ['b', '<p>bet</p>']],
+    [['a', '<p>alpha</p>'], ['b2', '<p>beta</p>']]
+  );
+  const calls = [];
+  reconcileStreamUnits(container, next, doc, {
+    unitClassName: 'reasoning-stream-unit',
+    revealCap: 2,
+    writeTailUnit(el, html, index) {
+      calls.push({ index, html });
+      el.innerHTML = `<span>${html}</span>`;
+    },
+  });
+  assert.deepEqual(calls, [{ index: 1, html: '<p>beta</p>' }]);
+  assert.equal(container.children[1].innerHTML, '<span><p>beta</p></span>');
+  assert.equal(container.children[1].getAttribute('data-su-fp'), 'b2');
+  assert.equal(container.children[0].innerHTML, '<p>alpha</p>');
+  dom.window.close();
+});
+
+test('reconcileStreamUnits does not call writeTailUnit for an unchanged tail', () => {
+  const { reconcileStreamUnits } = require('../renderer/chat/renderer-stream-dom-patch-utils');
+  const { dom, doc, container, next } = streamUnitFixture(
+    [['a', '<p>alpha</p>'], ['b', '<p>beta</p>']],
+    [['a', '<p>alpha</p>'], ['b', '<p>beta</p>']]
+  );
+  let called = 0;
+  reconcileStreamUnits(container, next, doc, { writeTailUnit() { called += 1; } });
+  assert.equal(called, 0);
+  dom.window.close();
+});
+
+test('reconcileStreamUnits writes a newly appended last unit through writeTailUnit', () => {
+  const { reconcileStreamUnits } = require('../renderer/chat/renderer-stream-dom-patch-utils');
+  const { dom, doc, container, next } = streamUnitFixture(
+    [['a', '<p>alpha</p>']],
+    [['a', '<p>alpha</p>'], ['b', '<p>beta</p>'], ['c', '<p>gamma</p>']]
+  );
+  const calls = [];
+  reconcileStreamUnits(container, next, doc, {
+    unitClassName: 'reasoning-stream-unit',
+    revealCap: 2,
+    staggerMs: 90,
+    writeTailUnit(el, html, index) {
+      calls.push(index);
+      el.innerHTML = `<i>${html}</i>`;
+    },
+  });
+  assert.deepEqual(calls, [2], 'only the last unit, not the other appended unit');
+  assert.equal(container.children[1].innerHTML, '<p>beta</p>');
+  assert.equal(container.children[2].innerHTML, '<i><p>gamma</p></i>');
+  assert.equal(container.children[2].getAttribute('data-su-fp'), 'c');
+  assert.ok(container.children[2].classList.contains('is-revealed'));
+  assert.equal(container.children[2].style.animationDelay, '90ms');
+  dom.window.close();
+});
+
+test('reconcileStreamUnits skips writeTailUnit on both bulk fallbacks and matches the old output without it', () => {
+  const { reconcileStreamUnits } = require('../renderer/chat/renderer-stream-dom-patch-utils');
+  let called = 0;
+  const writeTailUnit = () => { called += 1; };
+  // Count desync: more existing units than the next body carries.
+  const desync = streamUnitFixture([['a', '<p>a</p>'], ['b', '<p>b</p>']], [['a', '<p>a</p>']]);
+  reconcileStreamUnits(desync.container, desync.next, desync.doc, { writeTailUnit });
+  // Settled body: no units at all.
+  const settledDom = new JSDOM('<!doctype html><body><div id="c"><div data-stream-unit-index="0"><p>x</p></div></div><div id="n"><p>settled</p></div></body>');
+  const sd = settledDom.window.document;
+  reconcileStreamUnits(sd.getElementById('c'), sd.getElementById('n'), sd, { writeTailUnit });
+  assert.equal(called, 0);
+  assert.equal(sd.getElementById('c').innerHTML, '<p>settled</p>');
+
+  const withOpt = streamUnitFixture([['a', '<p>a</p>']], [['a', '<p>a</p>'], ['b', '<p>beta</p>']]);
+  const without = streamUnitFixture([['a', '<p>a</p>']], [['a', '<p>a</p>'], ['b', '<p>beta</p>']]);
+  const plainOpts = { unitClassName: 'reasoning-stream-unit', revealCap: 2, staggerMs: 90 };
+  reconcileStreamUnits(withOpt.container, withOpt.next, withOpt.doc, plainOpts);
+  reconcileStreamUnits(without.container, without.next, without.doc, plainOpts);
+  assert.equal(withOpt.container.innerHTML, without.container.innerHTML);
+  [desync, withOpt, without].forEach((f) => f.dom.window.close());
+  settledDom.window.close();
+});
+
+// row 101 S2: a unit appended right after a previous reveal lands quickly.
+test('reconcileStreamUnits quick-reveals units appended within quickRevealWithinMs of the last reveal', () => {
+  const { reconcileStreamUnits } = require('../renderer/chat/renderer-stream-dom-patch-utils');
+  const units = [['a', '<p>1</p>']];
+  const { dom, doc, container } = streamUnitFixture(units, units);
+  let clock = 10000;
+  const step = (count) => {
+    const next = doc.getElementById('next');
+    next.innerHTML = Array.from({ length: count }, (_, i) =>
+      `<div class="reasoning-stream-unit" data-stream-unit-index="${i}" data-su-fp="f${i}"><p>${i}</p></div>`).join('');
+    reconcileStreamUnits(container, next, doc, {
+      unitClassName: 'reasoning-stream-unit', revealCap: 2, staggerMs: 90, quickRevealWithinMs: 1200, nowFn: () => clock,
+    });
+  };
+  // Unit 0 exists already (not revealed); first reveal is a normal landing.
+  step(2);
+  const first = container.children[1];
+  assert.ok(first.classList.contains('is-revealed'));
+  assert.equal(first.classList.contains('is-revealed-quick'), false);
+  assert.equal(first.style.animationDelay, '0ms');
+
+  clock += 500;
+  step(3);
+  const quick = container.children[2];
+  assert.ok(quick.classList.contains('is-revealed'));
+  assert.ok(quick.classList.contains('is-revealed-quick'));
+  assert.equal(quick.style.animationDelay, '', 'a quick landing is not staggered');
+
+  clock += 1300;
+  step(4);
+  const later = container.children[3];
+  assert.ok(later.classList.contains('is-revealed'));
+  assert.equal(later.classList.contains('is-revealed-quick'), false, 'after the window it is a normal landing again');
+
+  // A two-unit burst after the window keeps today's stagger on both units.
+  clock += 1300;
+  step(6);
+  assert.deepEqual([4, 5].map((i) => [container.children[i].style.animationDelay,
+    container.children[i].classList.contains('is-revealed-quick')]), [['0ms', false], ['90ms', false]]);
+  dom.window.close();
+});
+
 // timeline-perf 2026-09-30: per-row reconcile of a turn row list. The keyed
 // fallback used to re-parse and morph every node of every row per delta.
 const {

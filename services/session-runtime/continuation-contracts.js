@@ -19,7 +19,7 @@ const REVISION = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
 const TOOL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const RESOURCE_CLASSES = new Set([
-  'tool_operations', 'native_processes', 'tests', 'sandbox_commands', 'filesystem',
+  'tool_operations', 'native_processes', 'tests', 'sandbox_commands', 'filesystem', 'work',
 ]);
 
 const TOP_KEYS = ['authority', 'canonical_refs', 'eligibility', 'identity', 'kind',

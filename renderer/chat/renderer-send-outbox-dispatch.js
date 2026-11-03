@@ -170,6 +170,8 @@
       dispatchOptions.promptBlock = queuedMeta?.promptBlock || null;
       dispatchOptions.skillInvocation = queuedMeta?.skillInvocation && typeof queuedMeta.skillInvocation === 'object'
         ? queuedMeta.skillInvocation : null;
+      dispatchOptions.imagePromptPin = queuedMeta?.imagePromptPin && typeof queuedMeta.imagePromptPin === 'object'
+        ? queuedMeta.imagePromptPin : null;
       if (queuedMeta && Object.prototype.hasOwnProperty.call(queuedMeta, 'mentionContentsSnapshot')) {
         dispatchOptions.mentionContentsSnapshot = Array.isArray(queuedMeta.mentionContentsSnapshot)
           ? queuedMeta.mentionContentsSnapshot

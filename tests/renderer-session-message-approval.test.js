@@ -130,7 +130,8 @@ test('a request without a valid full-body field has no Allow button and says why
 });
 
 test('other tools never show the message card or get the session-message treatment', () => {
-  const root = render({ toolName: 'run_command', displayToolName: 'Run command', commandText: 'ls' });
+  // A command's Always allow needs its scope from the backend (row 103); `ls` has no prefix.
+  const root = render({ toolName: 'run_command', displayToolName: 'Run command', commandText: 'ls', alwaysAllowScope: { kind: 'exact' } });
   assert.equal(root.querySelector('[data-approval-session-message]'), null);
   assert.ok(root.querySelector('[data-approval-scope="always"]'));
 });

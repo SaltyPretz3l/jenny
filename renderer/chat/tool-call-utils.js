@@ -180,6 +180,10 @@
     return normalizedKind;
   }
 
+  // Row labels ellipsize in CSS; this bound keeps a runaway command out of the DOM and must stay
+  // above a 4K Wide chat width row (about 450 characters). Approval headlines wrap: they clip at 60.
+  const clipLabel = (text, max = 500) => { const chars = Array.from(text); return chars.length > max ? chars.slice(0, max - 3).join('') + '...' : text; };
+
   /**
    * Human-readable one-liner for a tool call.
    * e.g. "Read src/app.js", "Bash npm test", "Edit src/utils.js"
@@ -221,7 +225,7 @@
       case 'Bash': {
         const cmd = normalizeString(input.command);
         const desc = input.description ? normalizeString(input.description) : '';
-        let label = desc || (cmd ? 'Run ' + (cmd.length <= 56 ? cmd : cmd.slice(0, 53) + '...') : jt('chat.toolCall.runCommand', 'Run command'));
+        let label = desc || (cmd ? 'Run ' + clipLabel(cmd) : jt('chat.toolCall.runCommand', 'Run command'));
         const exitCode = readToolExitCode(meta);
         if (exitCode != null) label += ' (exit ' + exitCode + ')';
         return label;
@@ -237,15 +241,15 @@
       case 'python_execute': {
         const code = normalizeString(input.code);
         if (!code) return jt('chat.toolCall.runPython', 'Run Python');
-        return code.length <= 50 ? jt('chat.toolCall.runPythonCode', 'Run Python: {code}', { code: code }) : jt('chat.toolCall.runPythonCode', 'Run Python: {code}', { code: code.slice(0, 47) + '...' });
+        return jt('chat.toolCall.runPythonCode', 'Run Python: {code}', { code: clipLabel(code) });
       }
       case 'web_search': {
         const query = normalizeString(input.query);
-        return query ? jt('chat.toolCall.searchWebFor', 'Search web for {query}', { query: query.length <= 38 ? query : query.slice(0, 35) + '...' }) : jt('chat.toolCall.searchWeb', 'Search web');
+        return query ? jt('chat.toolCall.searchWebFor', 'Search web for {query}', { query: clipLabel(query) }) : jt('chat.toolCall.searchWeb', 'Search web');
       }
       case 'fetch_url': {
         const url = normalizeString(input.url);
-        return url ? 'Fetch ' + (url.length <= 50 ? url : url.slice(0, 47) + '...') : jt('chat.toolCall.fetchUrl', 'Fetch URL');
+        return url ? 'Fetch ' + clipLabel(url) : jt('chat.toolCall.fetchUrl', 'Fetch URL');
       }
       case 'todo_write': {
         const todos = Array.isArray(input.todos) ? input.todos : [];
@@ -261,8 +265,7 @@
         const diagramType = normalizeString(input.diagram_type) || 'flowchart';
         const prompt = normalizeString(input.prompt);
         if (!prompt) return jt('chat.toolCall.generateMermaidType', 'Generate Mermaid ({type})', { type: diagramType });
-        const clipped = prompt.length <= 44 ? prompt : prompt.slice(0, 41) + '...';
-        return 'Mermaid ' + diagramType + ': ' + clipped;
+        return 'Mermaid ' + diagramType + ': ' + clipLabel(prompt);
       }
       default: {
         // For unknown tools, try to extract a meaningful subject from common input fields
@@ -270,7 +273,7 @@
           input.file_name || input.path || input.file_path || input.title ||
           input.query || input.url || input.command || input.pattern
         );
-        if (subject) return subject.length <= 56 ? subject : subject.slice(0, 53) + '...';
+        if (subject) return clipLabel(subject);
         return getToolDisplayName(toolName);
       }
     }
@@ -366,7 +369,7 @@
    * e.g. "Jenny wants to run npm test"
    */
   function getApprovalLabel(toolName, input) {
-    const summary = formatToolCallSummary(toolName, input);
+    const summary = clipLabel(formatToolCallSummary(toolName, input), 60);
     switch (normalizeToolKind(toolName)) {
       case 'Bash':
         return jt('chat.toolCall.approvalRun', 'Jenny wants to run: {summary}', { summary: summary });
@@ -397,9 +400,25 @@
         const firstMove = Array.isArray(args.moves) && args.moves.length ? args.moves[0] : null;
         return normalizeString(args.destination || firstMove && firstMove.destination);
       }
+      // Directory targets: the path argument only (never the pattern); absent or the root itself returns ''.
+      case 'list_dir':
+      case 'Glob':
+      case 'Grep': {
+        const target = normalizeString(args.path);
+        return /^\.?[\\/]*$/.test(target) ? '' : target;
+      }
       default:
         return '';
     }
+  }
+
+  // { path, kind: 'dir' | '', appendChip }: kind is 'dir' only when known (list_dir, glob_files, a trailing slash);
+  // appendChip asks the row to add the chip after a summary that does not name the path (glob/grep).
+  function getToolPathTarget(toolName, input) {
+    const path = getToolPrimaryPath(toolName, input);
+    const toolKind = normalizeToolKind(toolName);
+    const search = toolKind === 'Glob' || toolKind === 'Grep';
+    return { path, kind: path && (toolKind === 'list_dir' || toolKind === 'Glob' || /[\\/]$/.test(path)) ? 'dir' : '', appendChip: Boolean(path) && search };
   }
 
   function getToolTargetBasename(toolName, input) {
@@ -444,6 +463,10 @@
   // payload or its metadata; either may carry the exit code.
   function getResultStatusLabel(status, result) {
     const normalized = normalizeToolStatus(status);
+    // Row 87: a Jenny-chat rule refused the call before any card (metadata.rule_denied from the backend).
+    if (normalized === 'denied' && result && result.metadata && result.metadata.rule_denied === true) {
+      return jt('chat.toolCall.ruleDenied', 'Blocked by your rule');
+    }
     if (normalized === 'errored') {
       const r = result && typeof result === 'object' && !Array.isArray(result) ? result : {};
       const exitCode = readToolExitCode(r.metadata) ?? readToolExitCode(r);
@@ -482,7 +505,6 @@
     return 'failure';
   }
 
-  const TOOL_FAILURE_SUMMARY_MAX_CHARS = 160;
   // The sidecar's per-chat budget guidance (tool_loop._quota_block_guidance);
   // "session's" is the wording rows persisted before TR-008 carry.
   const SESSION_TOOL_BUDGET_TEXT_RE = /(?:chat|session)'s tool budget \(\d+/u;
@@ -544,10 +566,7 @@
       .map((line) => line.trim()).find((line) => line && !JSON_OPENER_RE.test(line)) || '';
     const text = (firstOutputLine || normalizeString(r.resultSummary) || jt('chat.toolCall.toolFailed', 'Tool failed'))
       .replace(/[\p{Cc}\p{Cf}]/gu, ' ').replace(/\s+/gu, ' ').trim();
-    const characters = Array.from(text);
-    return characters.length > TOOL_FAILURE_SUMMARY_MAX_CHARS
-      ? characters.slice(0, TOOL_FAILURE_SUMMARY_MAX_CHARS - 3).join('') + '...'
-      : text;
+    return clipLabel(text);
   }
 
   function statusForToolResult(payload) {
@@ -730,7 +749,7 @@
   // artifacts, spawned tasks, calendar blocks, notes rows, proposal cards) never fold into a run.
   const TOOL_RUN_UNFOLDABLE_TOOLS = new Set([
     'ask_user', 'exit_plan_mode', 'image_generate', 'mermaid_generate', 'create_artifact',
-    'workspace_present', 'preview_test', 'session_spawn', 'delegate', 'home', 'project_notes', 'memory', 'propose_git_action', 'propose_command', 'propose_session', 'complete_session_handoff', 'report_findings',
+    'workspace_present', 'preview_test', 'session_spawn', 'delegate', 'home', 'project_notes', 'memory', 'propose_git_action', 'propose_command', 'propose_session', 'complete_session_handoff', 'report_findings', 'suggest_next_step',
   ]);
   // A step waiting on the user ends the run and stays its own open card.
   const TOOL_RUN_BREAK_STATUSES = new Set(['awaiting_approval', 'pending_user_input']);
@@ -974,35 +993,14 @@
   }
 
   return {
-    APPROVAL_FACT_KINDS,
-    deriveApprovalVariant,
-    hasPlanDocumentForTool,
-    normalizeToolKind,
-    getToolDisplayName,
-    formatToolCallSummary,
-    formatToolResultMeta,
-    getToolIcon,
-    getApprovalLabel,
-    getApprovalPurpose,
-    getApprovalFacts,
-    getApprovalCommandPreview,
-    getToolPrimaryPath,
-    getToolTargetBasename,
+    APPROVAL_FACT_KINDS, deriveApprovalVariant, hasPlanDocumentForTool, normalizeToolKind, getToolDisplayName,
+    formatToolCallSummary, formatToolResultMeta, getToolIcon,
+    getApprovalLabel, getApprovalPurpose, getApprovalFacts, getApprovalCommandPreview,
+    getToolPrimaryPath, getToolPathTarget, getToolTargetBasename,
     formatToolElapsedLabel, formatToolDurationMs,
-    getStatusLabel,
-    getResultStatusLabel,
-    normalizeToolStatus,
-    isFileOperationSettledStatus,
-    classifyToolResultOutcome,
-    statusForToolResult,
-    readToolExitCode,
-    readToolTimedOut,
-    summarizeToolFailure,
-    isSessionToolBudgetBlock,
-    getToolStatusSeverity,
-    shouldAutoExpandToolDetails,
-    buildToolRowKey,
-    toolRowKeySessionPrefix,
+    getStatusLabel, getResultStatusLabel, normalizeToolStatus, isFileOperationSettledStatus,
+    classifyToolResultOutcome, statusForToolResult, readToolExitCode, readToolTimedOut, summarizeToolFailure,
+    isSessionToolBudgetBlock, getToolStatusSeverity, shouldAutoExpandToolDetails, buildToolRowKey, toolRowKeySessionPrefix,
     isToolRunFoldable, groupToolRuns, summarizeToolRun, toolRunState, toolRunVerb, formatToolRunDuration,
     buildToolRunToggleInner, buildToolRunMemberAttributes, readToolRunMemberAttributes, getToolRunRows, isToolRunLiveStatus,
     buildToolRowDomToken,

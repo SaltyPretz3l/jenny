@@ -16,12 +16,24 @@ const SURFACE_FAMILIES = Object.freeze([
   { id: 'home', section: 'reach', sidecarFamilies: ['home'], toolNames: ['automation_list', 'automation_read'] },
   // Row 69 Q6 (2026-10-20): the session directory joined Helpers when it left the always-on list.
   { id: 'helpers', section: 'reach', sidecarFamilies: [],
-    toolNames: ['delegate', 'sessions_list', 'session_status', 'session_transcript', 'session_stop'] },
+    toolNames: ['delegate', 'sessions_list', 'session_status', 'session_transcript', 'session_stop',
+      // Row 88: Helpers, not always on, so primary-settings-tool-gate.js can deny them to every other chat.
+      'settings_get', 'settings_change',
+      // Row 94 P1: same rule, so primary-settings-tool-gate.js can deny them to every other chat.
+      'chat_organize', 'chat_configure',
+      // Row 94 P2/P3: same rule for the project pair and app_view.
+      'project_create', 'projects_list', 'app_view',
+      // Row 94 P4: the export and the terminal pair (terminal_read also reaches project chats on the IDE's project).
+      'session_export', 'terminal_read', 'terminal_run',
+      // Row 85: same rule for the scheduled-check pair.
+      'schedule_list', 'schedule_change',
+      // Row 86: same rule for the digest read.
+      'away_digest'] },
 ].map(family => Object.freeze({ ...family,
   sidecarFamilies: Object.freeze(family.sidecarFamilies), toolNames: Object.freeze(family.toolNames) })));
 
 const ALWAYS_ON_TOOL_NAMES = Object.freeze([
-  'ask_user', 'exit_plan_mode', 'todo_write', 'todo_read', 'operation_status', 'jenny_status',
+  'ask_user', 'suggest_next_step', 'exit_plan_mode', 'todo_write', 'todo_read', 'operation_status', 'jenny_status',
   'tool_search', 'load_skill', 'connections_list', 'session_spawn', 'session_wait', 'session_result',
   'memory', 'propose_git_action', 'propose_command', 'propose_session', 'complete_session_handoff',
   'session_message',

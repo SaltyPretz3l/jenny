@@ -61,12 +61,51 @@
     return `${leadHtml(row)}<span class="session-rail-ellip${row.pathLike ? ' session-rail-ellip--path' : ''}">${escapeHtml(row.text)}</span>${meta}`;
   }
 
+  /* Background tasks: the finished divider (its own disclosure, toggled like a section head), a live job
+     (a fact with its ticking elapsed time and a Stop button beside it) and a finished job (a row that opens
+     its output below itself, inside the same wrapper). */
+  function jobHtml(row) {
+    const key = escapeHtml(row.key);
+    if (row.kind === 'divider') {
+      return button({
+        plain: true, className: 'session-rail-divider', ariaExpanded: row.open === true,
+        dataset: { 'row-key': row.key, 'rail-section': 'background_tasks_finished' },
+        trustedHtml: `${CHEVRON}<span class="session-rail-divider-text">${escapeHtml(row.text)}</span><span class="session-rail-divider-rule" aria-hidden="true"></span>`,
+      });
+    }
+    if (row.kind === 'job') {
+      // The jobs helper writes the ticking elapsed text: the markup stays the same between ticks, so a repaint keeps it.
+      // A test run that reports progress (row 96) shows its % instead, and a 2 px bar with a tick per failure below.
+      const percent = Number.isFinite(row.progressPercent) ? Math.min(100, Math.max(0, row.progressPercent)) : null;
+      // Row 100 P2: "N waiting · " when other chats wait on this job (the jobs helper fills it).
+      const waiting = `<span data-rail-job-waiting="${escapeHtml(row.jobId)}"></span>`;
+      const meta = percent == null
+        ? `<span class="session-rail-meta">${waiting}<span data-rail-started-at="${Number(row.startedAtMs) || 0}"></span></span>`
+        : `<span class="session-rail-meta">${waiting}${Math.floor(percent)}%</span>`;
+      const ticks = (Array.isArray(row.progressMarks) ? row.progressMarks : []).map((at) => `<span class="session-rail-job-tick" style="inset-inline-start:${(Math.min(1, Math.max(0, Number(at) || 0)) * 100).toFixed(2)}%"></span>`).join('');
+      const bar = percent == null ? ''
+        : `<div class="inv-progress session-rail-job-progress" aria-hidden="true"><div class="inv-progress-track"><div class="inv-progress-fill" style="--progress:${percent.toFixed(2)}%"></div>${ticks}</div></div>`;
+      return `<div class="session-rail-job" data-row-key="${key}" data-job-state="running"${bar ? ' data-job-progress=""' : ''}>`
+        + `<div class="session-rail-fact" title="${escapeHtml(row.title)}">${leadHtml(row)}<span class="session-rail-ellip">${escapeHtml(row.text)}</span>${meta}</div>`
+        + button({
+          plain: true, className: 'session-rail-job-stop', label: row.stopLabel, ariaLabel: row.stopAria, title: row.stopTitle,
+          disabled: row.stopping === true, dataset: { 'rail-job-stop': row.jobId },
+        })
+        + `${bar}</div>`;
+    }
+    return `<div class="session-rail-job" data-row-key="${key}" data-job-state="done">${button({
+      plain: true, className: 'session-rail-fact session-rail-row', ariaLabel: `${row.text}, ${row.meta}`, title: row.title,
+      ariaExpanded: false, dataset: { 'rail-job-output': row.jobId }, trustedHtml: rowInner(row),
+    })}</div>`;
+  }
+
   function rowHtml(row) {
     // The composer ring's details popover renders this same markup (row 63).
     if (row.kind === 'breakdown') return contextPreview.breakdownHtml(row.projection);
     if (row.kind === 'note') {
       return `<p class="session-rail-note" data-row-key="${escapeHtml(row.key)}">${escapeHtml(row.text)}</p>`;
     }
+    if (row.kind === 'divider' || row.kind === 'job' || row.kind === 'job_done') return jobHtml(row);
     const title = row.title ? ` title="${escapeHtml(row.title)}"` : '';
     if (row.kind === 'fact') {
       return `<div class="session-rail-fact" data-row-key="${escapeHtml(row.key)}"${title}>${rowInner(row)}</div>`;
@@ -106,7 +145,9 @@
   /* The readout slot (row 59 cp6) stays hidden until the performance controller fills it (the dot separator is CSS, so the toggle's text stays "Session"). */
   function toggleContent(label) {
     return `${PANEL_GLYPH}<span class="chat-timeline-utility-text">${escapeHtml(label)}</span>`
-      + '<span class="session-rail-readout" data-session-rail-readout hidden><span class="session-rail-readout-sep" aria-hidden="true"></span><span class="session-rail-readout-value" data-session-rail-readout-value></span></span>';
+      + '<span class="session-rail-readout" data-session-rail-readout hidden><span class="session-rail-readout-sep" aria-hidden="true"></span><span class="session-rail-readout-value" data-session-rail-readout-value></span></span>'
+      // Background jobs running while the tray is out of sight (renderer-session-rail-jobs.js fills it).
+      + '<span class="session-rail-jobs-readout" data-session-rail-jobs-readout hidden><span class="status-dot status-dot--active session-rail-dot-pulse" aria-hidden="true"></span><span data-session-rail-jobs-readout-value></span></span>';
   }
 
   return { ICONS, CHEVRON, valueHtml, bodyHtml, headHtml, sectionHtml, toggleContent };

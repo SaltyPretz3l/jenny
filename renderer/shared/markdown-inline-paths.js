@@ -18,6 +18,18 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
+  // Absolute paths (row 95): `G:\ws\src\a.js:4`, `/home/me/ws/a.js` and file:/// URLs become
+  // chips too while absolute_path_links is on. Only the shape is checked here; whether the path
+  // is inside the workspace is decided at click time (renderer-chat-path-open.js), so the render
+  // cache never holds a root-dependent result. Out-of-root chips offer Copy path only.
+  function resolveAbsoluteResolver() {
+    if (typeof globalThis !== 'undefined' && globalThis.jennyWorkspacePathResolve) {
+      return globalThis.jennyWorkspacePathResolve;
+    }
+    try { return require('./workspace-path-resolve'); } catch (_e) { /* unavailable */ }
+    return null;
+  }
+
   // Parity with renderer-chat-path-open.js: workspace-relative shape, word-ish
   // segments, at least one separator, no absolute/parent escapes, optional
   // trailing :line[:column]. NB [\w.-]+ matches '..', so parent escapes must
@@ -46,6 +58,14 @@
     };
   }
 
+  function parseAbsoluteCodeTarget(rawText) {
+    const resolver = resolveAbsoluteResolver();
+    if (!resolver || !resolver.getContext().enabled) {
+      return null;
+    }
+    return resolver.parseAbsolutePathText(rawText);
+  }
+
   // contentRoot: the decorate template's DocumentFragment (or any container).
   // Fenced blocks (code inside <pre>) are never decorated.
   function decorateInlinePathChips(contentRoot) {
@@ -56,7 +76,7 @@
       if (codeNode.closest('pre') || codeNode.hasAttribute('data-chat-path-open')) {
         return;
       }
-      const pathTarget = parseInlineCodePathTarget(codeNode.textContent);
+      const pathTarget = parseInlineCodePathTarget(codeNode.textContent) || parseAbsoluteCodeTarget(codeNode.textContent);
       if (!pathTarget) {
         return;
       }
@@ -65,6 +85,9 @@
       codeNode.setAttribute('tabindex', '0');
       codeNode.setAttribute('data-chat-path-open', pathTarget.path);
       codeNode.setAttribute('data-chat-path', pathTarget.path);
+      if (pathTarget.isDir) {
+        codeNode.setAttribute('data-chat-path-kind', 'dir');
+      }
       if (pathTarget.line) {
         codeNode.setAttribute('data-chat-path-line', String(pathTarget.line));
       }
@@ -76,6 +99,7 @@
 
   return {
     parseInlineCodePathTarget,
+    parseAbsoluteCodeTarget,
     decorateInlinePathChips,
   };
 });

@@ -1,6 +1,6 @@
 'use strict';
 
-/* primaryChat.* IPC registration (row 76 slice S2): the nine descriptor-backed
+/* primaryChat.* IPC registration (row 76 slice S2; row 88 adds undoSettingChange; row 87 adds two rule channels): the thirteen descriptor-backed
  * channels, the trusted-sender gate, closed-schema validation before any service
  * call, the service-answer mapping, the failure envelope when a service is absent
  * or throws, and the lazy reset-module dispatch. The controls service, the
@@ -24,10 +24,17 @@ const CHANNELS = {
   resume: 'primary-chat:resume',
   grantLaunch: 'primary-chat:grant-launch',
   revokeLaunch: 'primary-chat:revoke-launch',
+  addRule: 'primary-chat:add-rule',
+  revokeRule: 'primary-chat:revoke-rule',
   reset: 'primary-chat:reset',
   forgetPreview: 'primary-chat:forget-preview',
+  undoSettingChange: 'primary-chat:undo-setting-change',
+  undoChatChange: 'primary-chat:undo-chat-change',
 };
 const PERMISSION_ID = `lp_${'a'.repeat(32)}`;
+const UNDO_ID = `sc_${'c'.repeat(32)}`;
+const RULE_ID = `ar_${'d'.repeat(32)}`;
+const ADD_RULE = { schema_version: 1, action: 'stop', target: { kind: 'any' }, effect: 'deny' };
 
 function fakeBackend(calls, overrides = {}) {
   const record = (name, answer) => async (...args) => { calls.push([name, ...args]); return answer; };
@@ -66,15 +73,62 @@ function register({ allow = true, backendService, loadReset } = {}) {
 
 const V1 = { schema_version: 1 };
 
-test('exactly the nine descriptor-backed invoke channels are registered, and onChanged is a subscription', () => {
+test('exactly the thirteen descriptor-backed invoke channels are registered, and onChanged is a subscription', () => {
   const { handlers } = register({ backendService: {} });
-  assert.deepEqual([...handlers.keys()].sort(), Object.values(CHANNELS).sort());
-  assert.equal(Object.keys(METHODS).length, 9);
+  // Row 94 P3: plus app_view's two report channels, which answer `{ok}` straight from the app-view port.
+  assert.deepEqual([...handlers.keys()].sort(), [...Object.values(CHANNELS), 'app-view:report-layout', 'app-view:report-outcome', 'terminal-tools:report-run'].sort());
+  assert.equal(Object.keys(METHODS).length, 13);
   assert.equal(Object.isFrozen(METHODS), true);
   for (const [method, channel] of Object.entries(CHANNELS)) {
     assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS[`primaryChat.${method}`], { kind: 'invoke', channel });
   }
   assert.deepEqual(JENNY_SHELL_BRIDGE_DESCRIPTORS['primaryChat.onChanged'], { kind: 'subscribe', channel: 'primary-chat:changed' });
+});
+
+test('undoSettingChange validates the change id, reaches the settings port and maps its refusals (row 88)', async () => {
+  const calls = [];
+  const CID = `sc_${'b'.repeat(32)}`;
+  let answer = { ok: true, change_id: CID, restored: [{ key: 'time_format_24h', value: false }] };
+  const backendService = fakeBackend(calls, { primarySettings: { undo: async (value) => { calls.push(['undo', value]); return answer; } } });
+  const { invoke } = register({ backendService });
+  for (const bad of [V1, { schema_version: 1, change_id: 'sc_x' }, { schema_version: 1, change_id: CID, extra: 1 }, { schema_version: 2, change_id: CID }]) {
+    assert.equal((await invoke(CHANNELS.undoSettingChange, bad)).code, CODES.INVALID_REQUEST, JSON.stringify(bad));
+  }
+  assert.equal(calls.length, 0);
+  assert.deepEqual(await invoke(CHANNELS.undoSettingChange, { schema_version: 1, change_id: CID }), {
+    schema_version: 1, ok: true, change_id: CID, restored: [{ key: 'time_format_24h', value: false }],
+  });
+  assert.deepEqual(calls, [['undo', { change_id: CID }]]);
+  for (const [reason, code] of [['already_undone', CODES.ALREADY_UNDONE], ['changed_since', CODES.CHANGED_SINCE], ['apply_failed', CODES.APPLY_FAILED], ['not_found', CODES.NOT_FOUND]]) {
+    answer = { ok: false, reason, key: 'palette' };
+    const result = await invoke(CHANNELS.undoSettingChange, { schema_version: 1, change_id: CID });
+    assert.equal(result.code, code, reason);
+    assert.equal(result.reason, reason);
+  }
+});
+
+test('undoChatChange validates the change id, reaches the chat-manage port and maps its refusals (row 94)', async () => {
+  const calls = [];
+  const CID = `sc_${'d'.repeat(32)}`;
+  let answer = { ok: true };
+  const backendService = fakeBackend(calls, { primaryChatManage: { undo: async (value) => { calls.push(['undoChat', value]); return answer; } } });
+  const { invoke } = register({ backendService });
+  for (const bad of [V1, { schema_version: 1, change_id: 'sc_x' }, { schema_version: 1, change_id: CID, extra: 1 }, { schema_version: 2, change_id: CID }]) {
+    assert.equal((await invoke(CHANNELS.undoChatChange, bad)).code, CODES.INVALID_REQUEST, JSON.stringify(bad));
+  }
+  assert.equal(calls.length, 0);
+  assert.deepEqual(await invoke(CHANNELS.undoChatChange, { schema_version: 1, change_id: CID }), { schema_version: 1, ok: true });
+  assert.deepEqual(calls, [['undoChat', { change_id: CID }]]);
+  for (const [reason, code, wire] of [
+    ['already_undone', CODES.ALREADY_UNDONE, 'already_undone'], ['changed_since', CODES.CHANGED_SINCE, 'changed_since'],
+    ['unknown', CODES.NOT_FOUND, 'not_found'], ['busy', CODES.BUSY, 'session_busy'], ['unavailable', CODES.UNAVAILABLE, 'unavailable'],
+    ['something_else', CODES.UNAVAILABLE, 'unavailable'],
+  ]) {
+    answer = { ok: false, reason };
+    const result = await invoke(CHANNELS.undoChatChange, { schema_version: 1, change_id: CID });
+    assert.equal(result.code, code, reason);
+    assert.equal(result.reason, wire, reason);
+  }
 });
 
 test('an untrusted sender reaches no service method', async () => {
@@ -178,19 +232,28 @@ test('a missing service and a throwing service answer CMP-PRIMARY-0002 without e
     [CHANNELS.getState, V1], [CHANNELS.activity, V1], [CHANNELS.permissions, V1], [CHANNELS.pause, V1],
     [CHANNELS.resume, V1], [CHANNELS.grantLaunch, { ...V1, project_id: '*' }],
     [CHANNELS.revokeLaunch, { ...V1, permission_id: PERMISSION_ID }], [CHANNELS.reset, V1], [CHANNELS.forgetPreview, V1],
+    [CHANNELS.undoSettingChange, { ...V1, change_id: UNDO_ID }], [CHANNELS.undoChatChange, { ...V1, change_id: UNDO_ID }],
+    [CHANNELS.addRule, ADD_RULE], [CHANNELS.revokeRule, { ...V1, rule_id: RULE_ID }],
   ]) {
     assert.deepEqual(await missing.invoke(channel, payload), expected, channel);
   }
   const boom = async () => { throw new Error('secret path C:\\Users\\x'); };
   const backend = fakeBackend([], {
-    primaryChatControls: { getState: boom, pause: boom, resume: boom, grantLaunch: boom, revokeLaunch: boom },
+    primaryChatControls: {
+      getState: boom, pause: boom, resume: boom, grantLaunch: boom, revokeLaunch: boom,
+      listActionRules: boom, addActionRule: boom, revokeActionRule: boom,
+    },
     primaryActivityLog: { list: boom, permissions: boom },
+    primarySettings: { undo: boom },
+    primaryChatManage: { undo: boom },
   });
   const loadReset = () => ({ resetPrimaryChat: boom, forgetPreview: boom });
   const throwing = register({ backendService: backend, loadReset });
   for (const channel of Object.values(CHANNELS)) {
     const payload = channel === CHANNELS.grantLaunch ? { ...V1, project_id: '*' }
-      : channel === CHANNELS.revokeLaunch ? { ...V1, permission_id: PERMISSION_ID } : V1;
+      : channel === CHANNELS.revokeLaunch ? { ...V1, permission_id: PERMISSION_ID }
+        : channel === CHANNELS.addRule ? ADD_RULE : channel === CHANNELS.revokeRule ? { ...V1, rule_id: RULE_ID }
+        : [CHANNELS.undoSettingChange, CHANNELS.undoChatChange].includes(channel) ? { ...V1, change_id: UNDO_ID } : V1;
     const result = await throwing.invoke(channel, payload);
     assert.deepEqual(result, expected, channel);
     assert.doesNotMatch(JSON.stringify(result), /secret|Users/u);
@@ -209,11 +272,24 @@ test('reset forwards the validated defaults and an explicit request to the reset
   await invoke(CHANNELS.reset, { ...V1, forget: true, keep_copy: false, memory_opt_out: true });
   const preview = await invoke(CHANNELS.forgetPreview, V1);
   assert.deepEqual(preview, { schema_version: 1, ok: true, memories: 2, pending: 1 });
+  await invoke(CHANNELS.reset, { ...V1, forget: true, delete_scheduled_checks: false });
   assert.deepEqual(calls, [
     ['reset', { forget: false, keep_copy: true, memory_opt_out: false }],
     ['reset', { forget: true, keep_copy: false, memory_opt_out: true }],
     ['forgetPreview'],
+    ['reset', { forget: true, keep_copy: true, memory_opt_out: false, delete_scheduled_checks: false }],
   ]);
+});
+
+test('reset validates delete_scheduled_checks as a boolean and still rejects unknown keys', async () => {
+  const calls = [];
+  const { invoke } = register({ backendService: fakeBackend(calls), loadReset: () => fakeReset(calls) });
+  for (const bad of [{ delete_scheduled_checks: 'no' }, { delete_scheduled_checks: null }, { delete_scheduled_checks: 0 }, { wipe: true }]) {
+    const result = await invoke(CHANNELS.reset, { ...V1, ...bad });
+    assert.equal(result.ok, false, JSON.stringify(bad));
+    assert.equal(result.reason, 'invalid_request');
+  }
+  assert.deepEqual(calls, []);
 });
 
 test('a reset refusal maps session_busy to the retryable busy code', async () => {

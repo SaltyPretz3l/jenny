@@ -174,7 +174,13 @@ WIRING_CAPS = {
     # 2026-10-19 tool review (C2 #1): the contract lookup for a call now goes
     # through tool_resolution.contract_entry_for_call so a bare MCP name resolves
     # to its namespaced contract entry (29 -> 30). Explicit security edge.
-    (ROOT / "sidecar/ai/routing/tool_execution.py").resolve(): 30,
+    # Row 102 (2026-11-01): the approval gate and dispatch consult the read-only
+    # command grant owner, read_only_command_grant (30 -> 31). Explicit security edge.
+    (ROOT / "sidecar/ai/routing/tool_execution.py").resolve(): 31,
+    # Row 102 (2026-11-01): leaves the concrete baseline below (15 -> 16): the
+    # read-only dispatch check lets a read-only command through and names the
+    # refusal for any other run_command (read_only_command_grant). Security edge.
+    (ROOT / "sidecar/ai/routing/tool_call_execution.py").resolve(): 16,
     # Row 60 W2: microcompaction and the compaction policy moved out to
     # compaction_micro (compaction.py 597 -> ~520 lines), one new edge (6 -> 7).
     (ROOT / "sidecar/ai/context/compaction.py").resolve(): 7,
@@ -205,8 +211,8 @@ CONCRETE_EDGE_BASELINE = {
     # 2026-10-19 tool review: tool_resolution.contract_entry_for_call (C2 #1/#2,
     # the bare-MCP-name and live-prompt descriptor lookups) and
     # failure_taxonomy.classify with the failure's own retryable flag (C7-D), the
-    # one place a failure becomes an outcome (13 -> 15).
-    (ROOT / "sidecar/ai/routing/tool_call_execution.py").resolve(): 15,
+    # one place a failure becomes an outcome (13 -> 15). Row 102 moved it to
+    # WIRING_CAPS (16).
     (ROOT / "sidecar/ai/routing/tool_loop_calls.py").resolve(): 13,
     (ROOT / "sidecar/ai/routing/tool_loop_finalize.py").resolve(): 8,
     (ROOT / "sidecar/ai/routing/tool_loop_recovery.py").resolve(): 7,
@@ -214,8 +220,9 @@ CONCRETE_EDGE_BASELINE = {
     # 2026-10-19 tool review (C7 #1/#10): the manifest's git commands take the
     # neutralizing config and environment from the git_process owner, and the
     # rendered block runs each item through the prompt-marker and injection
-    # neutralizers (7 -> 10). Explicit security edges, not a facade.
-    (ROOT / "sidecar/ai/tools/workspace_manifest.py").resolve(): 10,
+    # neutralizers (7 -> 10). Explicit security edges, not a facade. The
+    # 2026-10-31 refresh detach dropped owned_process_settlement (10 -> 9).
+    (ROOT / "sidecar/ai/tools/workspace_manifest.py").resolve(): 9,
     (ROOT / "sidecar/ai/tools/builtins/file_state.py").resolve(): 8,
 }
 

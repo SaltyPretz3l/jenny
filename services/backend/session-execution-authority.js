@@ -11,6 +11,7 @@ const { effectiveSideEffecting } = require('../tools/tool-policy-actions');
 const { ALWAYS_ON_TOOL_NAMES } = require('../tools/tool-surface-families');
 const { PROJECT_ERROR_CODES, RUNTIME_ERROR_CODES, TOOL_ERROR_CODES } = require('./error-codes');
 const { normalizeHandoffPreparation } = require('./session-handoff-context');
+const grants = require('./read-only-command-grant');
 
 const EXECUTION_CONTEXT_SCHEMA_VERSION = 1;
 const SIDECAR_API_VERSION = '2026-10-15';
@@ -33,17 +34,6 @@ const EMPTY_SKILLS_CONFIG = Object.freeze({
   skills_auto_index: 'auto',
 });
 const SKILLS_CONFIG_KEYS = Object.freeze(Object.keys(EMPTY_SKILLS_CONFIG).sort());
-const RUNTIME_OPERATION_KEYS = Object.freeze([
-  'api_version',
-  'arguments',
-  'authority_revision',
-  'operation_id',
-  'phase',
-  'request_id',
-  'schema_version',
-  'session_id',
-  'tool_name',
-]);
 
 const bindingStates = new WeakMap();
 
@@ -154,7 +144,8 @@ function rejected(operationId, code, reason, message) {
 }
 
 function validateRuntimeOperation(params) {
-  if (!isPlainRecord(params) || Object.keys(params).sort().join('\0') !== RUNTIME_OPERATION_KEYS.join('\0')) {
+  const envelope = isPlainRecord(params) ? grants.readOperationEnvelope(params) : { ok: false };
+  if (!envelope.ok) {
     return { ok: false, reason: 'invalid_schema', message: t('error.runtime.operationSchema', 'Runtime operation has an invalid schema.') };
   }
   const requestId = boundedToken(params.request_id, MAX_CORRELATION_CHARS);
@@ -174,7 +165,7 @@ function validateRuntimeOperation(params) {
       > MAX_RUNTIME_OPERATION_BYTES) {
       throw new Error('Runtime operation exceeds its encoded size limit.');
     }
-    return { ok: true, requestId, sessionId, authorityRevision, operationId, toolName, args };
+    return { ok: true, requestId, sessionId, authorityRevision, operationId, toolName, args, grant: envelope.grant };
   } catch (error) {
     return { ok: false, reason: 'payload_too_large', message: error.message };
   }
@@ -248,6 +239,7 @@ class SessionExecutionAuthority {
     resolveProjectWorkspaceServices,
     resolveSessionDisabledTools = null,
     resolveExternalToolDescriptor = null,
+    isReadOnlyCommandsEnabled = null,
     randomUUID: createUUID = randomUUID,
   } = {}) {
     if (!projectAuthority || typeof projectAuthority.captureSession !== 'function'
@@ -274,6 +266,7 @@ class SessionExecutionAuthority {
     // registry; this resolver only answers for a server the host vouches for.
     this._resolveExternalToolDescriptor = typeof resolveExternalToolDescriptor === 'function'
       ? resolveExternalToolDescriptor : null;
+    this._readOnlyCommandsEnabled = typeof isReadOnlyCommandsEnabled === 'function' ? isReadOnlyCommandsEnabled : () => false;
     this._sessionBindings = new Map();
   }
 
@@ -376,6 +369,7 @@ class SessionExecutionAuthority {
       authority,
       approved: new Map(),
       autoRun: approvalMode === 'auto_run',
+      capturedRunMode: runState?.runMode || '',
       authorityRevision,
       binding,
       closed: false,
@@ -384,6 +378,7 @@ class SessionExecutionAuthority {
       mode: capturedMode,
       nonPlanMode,
       planApprovals: new Map(),
+      readOnlyCommandGrants: new Map(),
       nonPlanReadOnly: readOnly === true,
       proposeMode: capturedPropose,
       readOnly: capturedReadOnly,
@@ -448,6 +443,10 @@ class SessionExecutionAuthority {
         { code: 'run_mode_changed', retryable: true }
       );
     }
+    // Follow an observed Ask -> Auto flip (the sidecar already stopped asking); a request
+    // captured while already Auto keeps its prompt approvals (2026-10-31 session review).
+    const flippedToAuto = currentRunState?.runMode === 'auto' && state.capturedRunMode !== 'auto';
+    if (flippedToAuto && !state.autoRun && !state.readOnly) state.autoRun = true;
     return state.authority;
   }
 
@@ -516,6 +515,9 @@ class SessionExecutionAuthority {
       return rejected(validation.operationId, TOOL_ERROR_CODES.POLICY_DENIED, 'handoff_preparation_only',
         'This turn may only complete the session handoff.');
     }
+    const signature = operationSignature(validation.toolName, validation.args);
+    const roGrant = grants.readOnlyCommandGrantApplies(validation, this._readOnlyCommandsEnabled(),
+      state.readOnlyCommandGrants.get(validation.operationId) === signature);
     const descriptor = this._executionDescriptor(validation.toolName);
     if (!descriptor || (descriptor.workspace_required && !state.authority.root_path)) {
       return rejected(validation.operationId, TOOL_ERROR_CODES.DISABLED, 'tool_unavailable',
@@ -523,16 +525,16 @@ class SessionExecutionAuthority {
     }
     if ((descriptor.plan_mode_only && state.mode !== 'plan')
       || (descriptor.propose_mode_only && state.proposeMode !== true)
-      || (state.readOnly && effectiveSideEffecting(descriptor, validation.args)
+      || (state.readOnly && !roGrant && effectiveSideEffecting(descriptor, validation.args)
         && !(state.mode === 'plan' && !state.nonPlanReadOnly
           && allowsPlanArtifact(descriptor, validation.args)))) {
       return rejected(validation.operationId, TOOL_ERROR_CODES.POLICY_DENIED, 'read_only',
         'The tool operation is unavailable in the captured read-only mode.');
     }
     const preferences = state.toolPreferences;
-    if ((Array.isArray(preferences?.disabled_tools)
-      && preferences.disabled_tools.includes(validation.toolName))
-      || state.liveDisabledTools.has(validation.toolName)) {
+    const allowlist = Array.isArray(preferences?.enabled_tools) && preferences.enabled_tools.length ? preferences.enabled_tools : null; // handoff prep, row 86 digests
+    if ((Array.isArray(preferences?.disabled_tools) && preferences.disabled_tools.includes(validation.toolName))
+      || (allowlist && !allowlist.includes(validation.toolName)) || state.liveDisabledTools.has(validation.toolName)) {
       return rejected(validation.operationId, TOOL_ERROR_CODES.POLICY_DENIED, 'tool_disabled',
         'The tool is disabled for this request.');
     }
@@ -550,18 +552,21 @@ class SessionExecutionAuthority {
       snapshot,
     });
     const approvedSignature = state.approved.get(validation.operationId);
-    const approved = approvedSignature === operationSignature(validation.toolName, validation.args);
+    const approved = approvedSignature === signature;
     // The trusted run grant covers ordinary asks; Python still applies its
     // mandatory destructive/interactive gates before this final authority check.
     const ordinaryAutoRun = state.autoRun && !descriptor.plan_mode_only && !descriptor.propose_mode_only;
     const planArtifactDefault = state.mode === 'plan' && !state.nonPlanReadOnly
       && allowsPlanArtifact(descriptor, validation.args)
       && policy.stage === 'tool_default' && policy.matched_rule_id === null;
+    const roAsk = roGrant && grants.admitsPolicyAsk(policy, snapshot);
     if (policy.decision !== 'auto'
-      && !(policy.decision === 'ask' && (approved || ordinaryAutoRun || planArtifactDefault))) {
+      && !(policy.decision === 'ask' && (approved || ordinaryAutoRun || planArtifactDefault || roAsk))) {
       return rejected(validation.operationId, TOOL_ERROR_CODES.POLICY_DENIED, 'policy_rejected',
         'Current tool policy does not authorize this operation.');
     }
+    // Record each grant-admitted call (a saved auto rule too): the lease re-check carries no grant.
+    if (roGrant) state.readOnlyCommandGrants.set(validation.operationId, signature);
     return {
       schema_version: EXECUTION_CONTEXT_SCHEMA_VERSION,
       status: 'granted',
@@ -579,6 +584,7 @@ class SessionExecutionAuthority {
     if (!bindings?.size) this._sessionBindings.delete(state.sessionId);
     state.approved.clear();
     state.planApprovals.clear();
+    state.readOnlyCommandGrants.clear();
     return true;
   }
 }

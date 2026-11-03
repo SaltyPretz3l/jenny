@@ -15,6 +15,8 @@
  *             itself generates no box in the one-pane view).
  *   cap       68ch (Narrow) / 92ch (Standard) in the prose font: the computed
  *             font of an assistant paragraph, with `1ch` read from a probe span.
+ *             Wide (`full`, row 92) has no cap: the measure is the pane minus
+ *             its gutter.
  */
 
 const fs = require('node:fs');
@@ -24,8 +26,8 @@ const { SKIP, withBrowser, mountComposer } = require('./composer-layout-harness'
 const ROOT = path.resolve(__dirname, '../..');
 const GUTTER_MAX_PX = 40;
 const FONT_SCALE_IDS = ['default', 'large'];
-const CHAT_WIDTH_IDS = ['narrow', 'standard'];
-const CAP_CH = { narrow: 68, standard: 92 };
+const CHAT_WIDTH_IDS = ['narrow', 'standard', 'full'];
+const CAP_CH = { narrow: 68, standard: 92, full: Infinity };
 
 const PROSE = [
   'The reading column is the one place Jenny asks the person to stay for more than a glance, so its line length has to be a deliberate choice rather than whatever a window happens to leave over. A line that runs past ninety characters loses the eye on the return sweep, and a line that is squeezed under forty turns every sentence into a stutter.',

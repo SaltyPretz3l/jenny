@@ -50,10 +50,10 @@ test('the composer Tools row appears once the backend reports ready after a cold
 
   const chip = slot().querySelector('[data-inv-chip="composer-tools"]');
   assert.ok(chip, 'the Tools row renders once the sidecar tool inventory exists');
-  assert.match(chip.textContent, /2 tools/, 'both sidecar categories are counted');
+  assert.equal(chip.getAttribute('aria-label'), 'Tools for this chat: 2 of 2 on', 'both sidecar categories are counted');
 });
 
-test('the composer settings group keeps the project pill and Full settings works while composer preferences are locked', async (t) => {
+test('the composer settings group keeps the project pill and Tool settings works while composer preferences are locked', async (t) => {
   const app = await loadRendererApp({ shell: { sessions: [{ id: 'chat-panel-test', title: 'Panel test', project_id: 'project_general' }], tools: { list: () => SIDECAR_TOOLS } } });
   t.after(async () => { await app.dispose(); });
   const { window } = app;

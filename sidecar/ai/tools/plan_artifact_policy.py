@@ -57,6 +57,21 @@ _EXTENSION_FAMILIES = {
     ".yml": "yaml",
     ".csv": "csv",
 }
+_PLAN_EDITS_SCHEMA: dict[str, Any] = {
+    "type": "array",
+    "minItems": 1,
+    "maxItems": 20,
+    "description": "Exact search-and-replace pairs applied in order; all or nothing.",
+    "items": {
+        "type": "object",
+        "properties": {
+            "old_string": {"type": "string", "minLength": 1},
+            "new_string": {"type": "string"},
+        },
+        "required": ["old_string", "new_string"],
+        "additionalProperties": False,
+    },
+}
 _LANGUAGE_EXTENSIONS = {
     "markdown": ".md",
     "text": ".txt",
@@ -129,7 +144,50 @@ def _normalized_language(value: object) -> str | None:
     return _LANGUAGE_ALIASES.get(normalized)
 
 
-def is_safe_plan_document(  # noqa: PLR0911 - explicit fail-closed classifier checks
+def _utf8_size(value: object) -> int | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return len(value.encode("utf-8"))
+    except UnicodeEncodeError:
+        return None
+
+
+def _payload_is_bounded(arguments: dict[Any, Any]) -> bool:
+    """Full ``content``, or (revisions only) well-formed ``edits``, within the cap.
+
+    The handler re-checks the revised file against the same 512 KiB limit."""
+
+    if "edits" not in arguments:
+        size = _utf8_size(arguments.get("content"))
+        return size is not None and size <= MAX_PLAN_ARTIFACT_BYTES
+    edits = arguments.get("edits")
+    if "content" in arguments or "replaces" not in arguments:
+        return False
+    if not isinstance(edits, list) or not edits:
+        return False
+    total = 0
+    for item in edits:
+        if not isinstance(item, dict):
+            return False
+        old_size = _utf8_size(item.get("old_string"))
+        new_size = _utf8_size(item.get("new_string"))
+        if old_size is None or new_size is None:
+            return False
+        total += new_size
+    return total <= MAX_PLAN_ARTIFACT_BYTES
+
+
+def _replaces_extension(arguments: dict[Any, Any]) -> str | None:
+    """A revision is classified by the replaced file's own suffix, which must be inert."""
+
+    if "replaces" not in arguments:
+        return ""
+    suffix = _filename_extension(arguments.get("replaces"))
+    return suffix or None
+
+
+def is_safe_plan_document(
     arguments: object,
 ) -> bool:
     """Return whether a create_artifact call is inert and internally consistent."""
@@ -139,19 +197,19 @@ def is_safe_plan_document(  # noqa: PLR0911 - explicit fail-closed classifier ch
     if str(arguments.get("artifact_kind") or "").strip().lower() != "document":
         return False
     title = arguments.get("title")
-    content = arguments.get("content")
-    if not isinstance(title, str) or not title.strip() or not isinstance(content, str):
-        return False
-    try:
-        if len(content.encode("utf-8")) > MAX_PLAN_ARTIFACT_BYTES:
-            return False
-    except UnicodeEncodeError:
+    if not isinstance(title, str) or not title.strip() or not _payload_is_bounded(arguments):
         return False
 
     language = _normalized_language(arguments.get("language", ""))
     extension = _normalized_extension(arguments.get("extension", ""))
     filename_extension = _filename_extension(arguments.get("file_name", ""))
-    if language is None or extension is None or filename_extension is None:
+    replaces_extension = _replaces_extension(arguments)
+    if (
+        language is None
+        or extension is None
+        or filename_extension is None
+        or replaces_extension is None
+    ):
         return False
 
     classifiers = {
@@ -160,6 +218,7 @@ def is_safe_plan_document(  # noqa: PLR0911 - explicit fail-closed classifier ch
             language or None,
             _EXTENSION_FAMILIES.get(extension) if extension else None,
             _EXTENSION_FAMILIES.get(filename_extension) if filename_extension else None,
+            _EXTENSION_FAMILIES.get(replaces_extension) if replaces_extension else None,
         )
         if classifier
     }
@@ -167,7 +226,8 @@ def is_safe_plan_document(  # noqa: PLR0911 - explicit fail-closed classifier ch
         return False
 
     resolved_extension = (
-        extension
+        replaces_extension
+        or extension
         or filename_extension
         or _LANGUAGE_EXTENSIONS.get(language or "")
         or ".md"
@@ -227,9 +287,17 @@ def prompt_schema_for_context(
                     "maxLength": MAX_PLAN_ARTIFACT_BYTES,
                     "description": (
                         "UTF-8 document content; the encoded payload must be at most "
-                        "512 KiB."
+                        "512 KiB. Required unless revising with replaces and edits."
                     ),
                 },
+                "replaces": {
+                    "type": "string",
+                    "description": (
+                        "Path of an inert document you created this session, to revise "
+                        "it in place."
+                    ),
+                },
+                "edits": deepcopy(_PLAN_EDITS_SCHEMA),
                 "file_name": {
                     "type": "string",
                     "description": (
@@ -246,12 +314,14 @@ def prompt_schema_for_context(
                     "enum": sorted(SAFE_PLAN_ARTIFACT_EXTENSIONS),
                 },
             },
-            "required": ["artifact_kind", "title", "content"],
+            "required": ["artifact_kind", "title"],
             "additionalProperties": False,
         }
         description = (
             "Create one inert, session-scoped Plan Mode document under .jenny/artifacts. "
-            "Only Markdown, plain text, Mermaid, JSON, YAML, and CSV classifiers are allowed."
+            "Only Markdown, plain text, Mermaid, JSON, YAML, and CSV classifiers are allowed. "
+            "To revise a document you created, pass replaces=<its path> and edits "
+            "(or full content)."
         )
     return {
         "name": str(getattr(descriptor, "name", "") or ""),

@@ -104,6 +104,18 @@ async function executeResolvedTool(executor, call, context, {
       // Not project-scoped: the directory derives the caller's scope from the session itself.
       sessionDirectoryService: typeof executor._sessionDirectoryService === 'function'
         ? executor._sessionDirectoryService() : null,
+      // Not project-scoped either: the port is profile-wide and the tool names the caller from its live binding.
+      primarySettingsService: typeof executor._primarySettingsService === 'function'
+        ? executor._primarySettingsService() : null,
+      primaryChatManageService: typeof executor._primaryChatManageService === 'function'
+        ? executor._primaryChatManageService() : null,
+      primaryChatPlacementService: typeof executor._primaryChatPlacementService === 'function'
+        ? executor._primaryChatPlacementService() : null,
+      appViewService: typeof executor._appViewService === 'function' ? executor._appViewService() : null,
+      primaryChatExportService: typeof executor._primaryChatExportService === 'function' ? executor._primaryChatExportService() : null,
+      terminalToolsService: typeof executor._terminalToolsService === 'function' ? executor._terminalToolsService() : null,
+      primaryScheduleService: typeof executor._primaryScheduleService === 'function'
+        ? executor._primaryScheduleService() : null,
       refreshManagedConfig: executor._refreshManagedConfig,
       logger: executor._logger,
       };

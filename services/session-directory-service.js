@@ -62,7 +62,7 @@ function failureFacts(messages, work) {
 function createSessionDirectoryService({
   sessionStore, projectService, runtime, configService, projectNotesService, chatWorkspaceService,
   pendingApprovals, visibleChat, cancelChatStream, primaryChatEnabled = null, stopSettleMs = STOP_SETTLE_MS,
-  log = () => {},
+  waitNotices = null, log = () => {},
 } = {}) {
   const note = (event, fields) => attempt(() => log('INFO', event, fields), null);
 
@@ -174,6 +174,7 @@ function createSessionDirectoryService({
     }
     let scan = null;
     const names = new Map();
+    const folders = new Map();
     const projects = read(projectService);
     const shown = new Map();
     return {
@@ -199,6 +200,15 @@ function createSessionDirectoryService({
         }
         return names.get(projectId);
       },
+      // The project's folder, only for a project the caller may see (so a file can be named by its full path).
+      projectFolder(projectId) {
+        if (scope.project_ids && !scope.project_ids.has(projectId)) return null;
+        if (!folders.has(projectId)) {
+          const folder = attempt(() => projects?.get?.(projectId)?.root_path, null);
+          folders.set(projectId, typeof folder === 'string' && folder ? folder.slice(0, 1024) : null);
+        }
+        return folders.get(projectId);
+      },
     };
   }
 
@@ -207,14 +217,27 @@ function createSessionDirectoryService({
       work: fact.shownWork(summary.id), approvalCount: fact.approvals.get(summary.id) || 0 });
   }
 
+  // Row 100 P2: what a queued chat waits behind (another chat's tests, a test run outside Jenny, a git
+  // command), so `queued` behind a lease reads apart from `queued` for the model. A holder chat the caller
+  // may not see stays unnamed; the command is the holder's own redacted preview, passed as data.
+  function waitingFor(scope, work) {
+    const wait = work?.status === 'paused' ? attempt(() => read(waitNotices)?.waitFor?.(work.work_id), null) : null;
+    if (!wait) return null;
+    const visible = wait.session_id && scope.session_ids.has(wait.session_id);
+    if (wait.holder === 'chat' && !visible) return { ...wait, session_id: null, title: null, command: null, pid: null };
+    return { ...wait, session_id: visible ? wait.session_id : null,
+      title: visible ? D.clip(scope.byId.get(wait.session_id)?.title, D.TITLE_CHARS) : null };
+  }
+
   function row(scope, fact, summary) {
     const projectId = scopeRules.projectOf(summary);
     const parent = scopeRules.parentOf(summary);
     const state = status(fact, summary);
+    const waiting = state === 'queued' ? waitingFor(scope, fact.shownWork(summary.id)) : null;
     return {
       session_id: summary.id,
       title: D.clip(summary.title, D.TITLE_CHARS),
-      project: { id: projectId, name: fact.projectName(projectId) },
+      project: { id: projectId, name: fact.projectName(projectId), folder: fact.projectFolder(projectId) },
       status: state,
       last_outcome: scopeRules.lastOutcome(fact.shownWork(summary.id)),
       preferred_model: D.clip(normalizePreferredModel(summary.preferred_model), 200),
@@ -229,6 +252,7 @@ function createSessionDirectoryService({
         children_count: (fact.children.get(summary.id) || []).length,
       },
       waiting_on_user: scopeRules.WAITING_ON_USER.has(state),
+      ...(waiting ? { waiting_for: waiting } : {}),
     };
   }
 
@@ -254,11 +278,12 @@ function createSessionDirectoryService({
   // Open tasks and the note only for a project the caller may see (its own, or every one for the primary).
   function projectFacts(fact, projectId, scope) {
     const name = fact.projectName(projectId);
-    if (scope.project_ids && !scope.project_ids.has(projectId)) return { id: projectId, name, open_tasks: [], note: null };
+    if (scope.project_ids && !scope.project_ids.has(projectId)) return { id: projectId, name, folder: null, open_tasks: [], note: null };
     const state = attempt(() => read(configService)?.getState?.(), null);
     return {
       id: projectId,
       name,
+      folder: fact.projectFolder(projectId),
       open_tasks: D.openTasks(state, projectId),
       note: D.noteFacts(attempt(() => read(projectNotesService)?.get?.(projectId), null)),
     };
@@ -351,7 +376,15 @@ function createSessionDirectoryService({
     return { ok: true, session_id: sessionId, stopped: { stream, queued_work: queued }, cleanup };
   }
 
-  return { digest, list, stop, transcript };
+  // A chat's title for this caller, in the digest's scope, without reading its transcript (row 94 P4 session_export).
+  function title({ callerSessionId, sessionId } = {}) {
+    const scope = scopeFor(callerSessionId);
+    if (!scope.ok) return { ok: false, reason: scope.reason };
+    if (typeof sessionId !== 'string' || !scope.session_ids.has(sessionId)) return NOT_FOUND;
+    return { ok: true, session_id: sessionId, title: D.clip(scope.byId.get(sessionId)?.title, D.TITLE_CHARS) };
+  }
+
+  return { digest, list, stop, title, transcript };
 }
 
 module.exports = { createSessionDirectoryService };

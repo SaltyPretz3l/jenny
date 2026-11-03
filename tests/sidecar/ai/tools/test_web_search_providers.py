@@ -656,6 +656,38 @@ class TestSearXNGProvider:
         mock_read.assert_called_once()
         assert mock_read.call_args.kwargs["allow_private"] is True
 
+    @pytest.mark.parametrize("base_url", ["http://127.0.0.1:8080", "http://localhost:8080"])
+    @patch(_READ_URL_PATCH)
+    def test_allow_loopback_permits_local_instance_only(
+        self, mock_read: MagicMock, base_url: str
+    ) -> None:
+        # Row 103: the loopback-only flag reaches a SearXNG on this machine (and
+        # its revalidated redirect hops) without opening private ranges.
+        mock_read.return_value = _url_read_result(_searxng_body(1))
+        payload = SearXNGProvider(base_url=base_url, allow_loopback=True).search(
+            "q", **_search_kwargs()
+        )
+        assert payload["error"] == ""
+        assert mock_read.call_args.kwargs["allow_loopback"] is True
+        assert mock_read.call_args.kwargs["allow_private"] is False
+
+        mock_read.reset_mock()
+        lan = SearXNGProvider(base_url="http://192.168.1.20:8080", allow_loopback=True)
+        assert lan.search("q", **_search_kwargs())["error"]
+        mock_read.assert_not_called()
+
+    def test_dispatch_threads_allow_loopback_to_every_provider(self) -> None:
+        dispatch = build_provider_dispatch(
+            ddg_search=_fake_ddg_search,
+            searxng_url="http://127.0.0.1:8080",
+            provider_keys=None,
+            allow_loopback=True,
+        )
+        searxng = dispatch["searxng"]
+        assert isinstance(searxng, SearXNGProvider)
+        assert searxng._allow_loopback is True
+        assert searxng._allow_private_addresses is False
+
 
 class TestVendorHttpPosture:
     """The shared vendor request path must never leak keys via redirects or

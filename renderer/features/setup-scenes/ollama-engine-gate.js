@@ -321,9 +321,12 @@
 
     function applyInstallFailure(payload) {
       view.phase = 'error';
+      var failureText = payload.summary
+        || (typeof payload.error === 'string' && payload.error.trim().slice(0, 240))
+        || jt('setup.ollamaGate.installDidNotComplete', 'Ollama install did not complete.');
       view.errorText = payload.manualFallbackUrl
-        ? jt('setup.ollamaGate.installFailedWithManualFallback', '{summary} Install manually from {url}.', { summary: payload.summary || jt('setup.ollamaGate.installDidNotComplete', 'Ollama install did not complete.'), url: payload.manualFallbackUrl })
-        : (payload.summary || jt('setup.ollamaGate.installDidNotComplete', 'Ollama install did not complete.'));
+        ? jt('setup.ollamaGate.installFailedWithManualFallback', '{summary} Install manually from {url}.', { summary: failureText, url: payload.manualFallbackUrl })
+        : failureText;
       view.installRequestId = '';
       teardownProgress();
       render();

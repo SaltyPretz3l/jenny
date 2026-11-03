@@ -1,0 +1,121 @@
+/* Home "Usage" section (row 98): token headline, a stat row and a year
+ * heatmap. Open section like every Home widget: no fill, no border, no box.
+ * The widget draws its own header row (the registry descriptor is
+ * headerless) so the range control can sit on the section hairline; it reuses
+ * .dashboard-card__header / __title, so the rule and eyebrow stay the page's
+ * single heading system. Approved mockup:
+ * po-mockups/home-usage-stats/index.html (owner pick A, 2026-11-01). */
+
+/* Header tail: range span + compact segmented control, after the hairline. */
+.us-head-tail {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  order: 3;
+}
+
+.us-span {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.us-body {
+  display: grid;
+  gap: var(--space-8);
+  min-width: 0;
+}
+
+/* Headline: the range's token total, then replies and the in/out split. */
+.us-headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3) var(--space-6);
+}
+
+.us-big {
+  color: var(--text-primary);
+  font-size: var(--font-size-3xl);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  letter-spacing: var(--tracking-tight);
+  line-height: 1.1;
+}
+
+.us-big small {
+  margin-inline-start: var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--font-size-body);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.us-split {
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Stat row: six label/value pairs. Wraps 4 + 2 at the default pane width. */
+.us-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--space-6) var(--space-8);
+  margin: 0;
+}
+
+.us-stat {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.us-stat dt {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.us-stat dd {
+  overflow: hidden;
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.us-stat dd span {
+  margin-inline-start: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+/* Heatmap: the inventory heatmap-calendar SVG scales to the column. */
+.us-heat {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.us-heat-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.us-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Read failure: one danger-toned line under the header (no box). */
+.us-error {
+  color: var(--state-danger);
+}

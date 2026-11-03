@@ -135,6 +135,7 @@ function makeService(options = {}) {
     getWorktreeEntries: options.getWorktreeEntries || (() => []),
     getExecutionEnvironment: options.getExecutionEnvironment || (() => 'local'),
     getWorkspaceTestSource: () => options.testSource || null,
+    getBackgroundJobTracker: () => options.backgroundJobTracker || null,
     isActivityEnabled: () => options.activityEnabled === true,
     changeSummary: changes,
     emit: (event) => events.push(event),

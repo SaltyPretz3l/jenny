@@ -24,7 +24,7 @@ Tools are grouped by family below. Jump to the relevant section when you need to
 | [Home](#home) | `home`, `task_board` | Writes are auto; `home` deletes need a `confirm` round-trip | On by default; gated by `tools_home_enabled` / `tools_task_board_enabled`; `home` covers the Home calendar, reminders, and a read-only scratchpad view; `task_board` adds durable, identity-addressed `add`/`update`/`complete`/`list` tasks into the same persisted Open Loops store, badged `agent_task`, and requires the model to complete a task when its tracked work is finished |
 | [Skills](#skills) | `load_skill` | Read-only | On by default; gated by `tools_load_skill_enabled`; reads a bundled/user/project skill's `SKILL.md` body, or one bounded `references/<file>.md` beside it, by name+scope — the only tool that can reach skill scope roots outside the tools workspace root |
 | [Workspace](#workspace) | `workspace_present`, `preview_test`, `verify`, `image_generate` | Mixed | `workspace_present` and `preview_test` are read-only and on by default; `workspace_present` asks the IDE to show a preview/File Map/change diff (request, not outcome); `preview_test` loads one workspace HTML file in a hidden network-isolated one-shot sandbox and reports render state and console/page errors; `verify` runs one of the user's own saved Test Runner configurations (side-effecting, default off) |
-| [Runtime interaction](#runtime) | `ask_user`, `exit_plan_mode`, `propose_git_action`, `propose_command`, `propose_session`, `complete_session_handoff`, `session_message`, `sessions_list`, `session_status`, `session_stop`, `jenny_help`, `operation_status`, `session_spawn`, `session_wait`, `session_result`, `delegate`, `automation_list`, `automation_read`, `recall_tool_output` | Mixed read-only interaction and runtime authority | Application-owned durable work and interaction; `delegate` is bounded synchronous research. See the runtime references below. |
+| [Runtime interaction](#runtime) | `ask_user`, `suggest_next_step`, `exit_plan_mode`, `propose_git_action`, `propose_command`, `propose_session`, `complete_session_handoff`, `session_message`, `sessions_list`, `session_status`, `session_stop`, `settings_get`, `settings_change`, `project_create`, `projects_list`, `app_view`, `session_export`, `terminal_read`, `terminal_run`, `chat_organize`, `chat_configure`, `schedule_list`, `schedule_change`, `away_digest`, `jenny_help`, `operation_status`, `session_spawn`, `session_wait`, `session_result`, `delegate`, `automation_list`, `automation_read`, `recall_tool_output` | Mixed read-only interaction and runtime authority | Application-owned durable work and interaction; `delegate` is bounded synchronous research. See the runtime references below. |
 | [Code intelligence and worktrees](#code-intelligence-and-worktrees) | `lsp`, `workspace_change_baseline`, `workspace_change_delta`, `worktree_list`, `worktree_create`, `worktree_select`, `worktree_delete` | Reads are read-only; worktree mutations require policy admission | Workspace-bound, with separate configuration gates for LSP and worktrees |
 
 ## How tool availability works
@@ -44,7 +44,7 @@ Every approval request carries an `ApprovalPlan` fingerprint covering the tool c
 
 For explicit read-only research sub-agents, approval plans extend with a ninth component (`parent_approval_plan_hash`) that anchors the child request to its parent. It does not authorize side effects; research children force `allow_side_effects=false`.
 
-**Saved decisions.** The approval card's *Always allow* persists through [`services/tools/tool-permission-store.js`](../services/tools/tool-permission-store.js): when the approved call names a path target (`path`, else `file_path`) it writes an `auto` rule scoped to that tool **and** that path prefix (`always-allow:<tool>:<hash>`); a call without a path target (`run_command`, `python_execute`, `fetch_url`, ...) flips the whole tool to `auto`. Both evaluators ([`tool-policy-evaluator.js`](../services/tools/tool-policy-evaluator.js) and [`sidecar/ai/tools/policy.py`](../sidecar/ai/tools/policy.py)) honour the `path_prefix` match. Every saved decision is listed under **Settings > Tools > Approval rules**, where *Remove* clears the per-tool policy or deletes the rule so Jenny asks again next time.
+**Saved decisions.** The approval card's *Always allow* persists through [`services/tools/tool-permission-store.js`](../services/tools/tool-permission-store.js): when the approved call names a path target (`path`, else `file_path`) it writes an `auto` rule scoped to that tool **and** that path prefix (`always-allow:<tool>:<hash>`); a `run_command` card saves only that program + subcommand with any arguments (`command_prefix`, e.g. `npm test`, `uv run pytest`) or, when the command has no safe prefix (a shell, an interpreter, a path, a flag as second word), that exact command (`command_exact`), and a chained, redirected or substituted command offers no *Always allow* at all ([`command-prefix.js`](../services/tools/command-prefix.js), mirrored by [`command_prefix.py`](../sidecar/ai/tools/command_prefix.py)); any other call without a path target (`python_execute`, `fetch_url`, ...) flips the whole tool to `auto`. Both evaluators ([`tool-policy-evaluator.js`](../services/tools/tool-policy-evaluator.js) and [`sidecar/ai/tools/policy.py`](../sidecar/ai/tools/policy.py)) honour the `path_prefix`, `command_prefix` and `command_exact` matches. Every saved decision is listed under **Settings > Tools > Approval rules**, where *Remove* clears the per-tool policy or deletes the rule so Jenny asks again next time.
 
 **Truncated arguments are never repaired into a side-effecting call.** The healing net ([`sidecar/ai/tools/tool_call_healing.py`](../sidecar/ai/tools/tool_call_healing.py)) can close an unterminated string or an unclosed object the model never finished. Spelling-only repairs (fences, smart quotes, trailing commas) still dispatch, but a call whose arguments needed `closed_string` or `closed_brace` runs only when the tool's declared action is read-only; otherwise [`tool_call_repair_policy.py`](../sidecar/ai/routing/tool_call_repair_policy.py) fails that one call with `CMP-LOOP-0002` and an explanation so the model re-sends complete JSON while its sibling calls still run. An unknown descriptor counts as side-effecting. The vLLM path never heals and is unchanged.
 
@@ -210,7 +210,7 @@ Find files matching a glob pattern.
 - **Approval:** none (read-only).
 - **Side-effecting:** no.
 - **Workspace required:** yes.
-- **Notes:** Gated by `tools_glob_enabled`. Returns up to 100 results sorted by modification time (newest first). The scan itself is bounded — at most 10,000 files or 2 seconds, whichever comes first — and the output states which limit truncated it (`result_limit`, `scan_limit`, or `time_budget`) so a partial listing is never mistaken for a complete one. Symlinks and Windows junctions are never followed (2026-10-19; a revisited directory is skipped as a backstop), and containment is resolved once per directory. Slash-free patterns match a file name at any depth; a pattern with `/` is anchored at the search root and `**` spans zero or more directories, with the matcher shared with `grep_search`'s `include_glob`.
+- **Notes:** Gated by `tools_glob_enabled`. Returns up to 100 results sorted by modification time (newest first). The scan itself is bounded — at most 10,000 files or 2 seconds, whichever comes first — and the output states which limit truncated it (`result_limit`, `scan_limit`, or `time_budget`) so a partial listing is never mistaken for a complete one. Symlinks and Windows junctions are never followed (2026-10-19; a revisited directory is skipped as a backstop), and containment is resolved once per directory. Slash-free patterns match a file name at any depth; a pattern with `/` is anchored at the search root and `**` spans zero or more directories, with the matcher shared with `grep_search`'s `include_glob`. Since 2026-11-01 a top-level comma splits the pattern (`"package.json, main.js"` reads like a brace list; each alternative keeps its own literal base directory) when every part has a `.`, `/` or glob character, so a literal name such as `Smith, John.docx` still matches itself, and paths git ignores are pruned like `grep_search` does (below); the 2-second budget starts after the git inventory is read.
 - **Parameters:** `pattern` (required), `path` (search root, defaults to workspace root).
 - **Source:** [`sidecar/ai/tools/builtins/glob_files.py`](../sidecar/ai/tools/builtins/glob_files.py).
 
@@ -233,7 +233,7 @@ Search file contents using a regular expression.
 - **Approval:** none (read-only).
 - **Side-effecting:** no.
 - **Workspace required:** yes.
-- **Notes:** Gated by `tools_grep_enabled`. Bounded by `max_results` (≤500), `context_lines` (≤10), and a total runtime budget. Matched lines longer than 500 characters are shown as a 500-character window around the first match (with `[col N]` and ` [truncated]` markers); context lines are trimmed to their first 500 characters. Incomplete scans return matches collected so far plus `scan_complete: false`, scanned/candidate counts, searched root, and a narrowing hint; an incomplete zero-match scan is never presented as “no matches.” Matching runs in a reusable subprocess worker with separate startup and per-file regex budgets. A `.pdf` candidate is searched through its page text instead of being skipped as binary (PDF reading add-on required; without it, or for a PDF PyMuPDF cannot open, it still counts under `skipped_binary_files`): pages come from the shared PDF page cache or are extracted like `read_file` does, PDFs use `read_file`'s 25 MiB media limit, and the pattern still runs in the worker, one bounded request per page. Matches render as `<path>:p<page>:L<line>:<text>` with `read_file`'s per-page line numbers (the page's common left margin is removed). Each PDF has a 12-second extraction budget: a scanned page that is not cached is OCR'd only while its estimated cost fits, and once the budget is spent every uncached page is left out; those pages are counted in `skipped_pdf_pages`, the scan is reported incomplete (`scan_complete: false` with a narrowing hint), and a retry covers more pages since extracted pages are cached. The OCR estimate counts recognition only, never the one-time engine load. A repeat grep over an unchanged PDF (same resolved path, size and modification time; up to 4,096 files remembered) skips re-reading and hashing it, and when every page is cached it does not open the document at all; `JENNY_ENABLE_PDF_PAGE_CACHE=0` turns this memo off with the cache. A grep never downloads Tesseract data. An encrypted or damaged PDF is skipped like a binary file; a page that fails to extract ends that PDF with the pages before it searched. Since 2026-10-19: a file that cannot be read is skipped and counted in `skipped_unreadable_files` (the result notes how many; 25 unreadable files in a row stop the scan with an error naming only the searched root, never a file); `include_glob` uses the same matcher as `glob_files` (slash-free patterns match the file name at any depth; a pattern with `/` is anchored at the search root and `**` spans zero or more directories); symlinks and junctions are never followed and containment is resolved once per directory; a pattern longer than 2,000 characters is refused before the regex-safety check; and the walk itself stops at the runtime budget even when `include_glob` rejects every file. Since 2026-10-25 the worker protocol also serves a match-summary request (`MATCH_SUMMARY_OP` in `grep_search_file.py`, re-exported by `grep_search.py`): the per-match snippet and distinct-term summary that `knowledge_search` ranks on are computed inside the worker subprocess under the same per-file regex budget, so a model-supplied pattern never runs in the sidecar process.
+- **Notes:** Gated by `tools_grep_enabled`. Bounded by `max_results` (≤500), `context_lines` (≤10), and a total runtime budget. Matched lines longer than 500 characters are shown as a 500-character window around the first match (with `[col N]` and ` [truncated]` markers); context lines are trimmed to their first 500 characters. Incomplete scans return matches collected so far plus `scan_complete: false`, scanned/candidate counts, searched root, and a narrowing hint; an incomplete zero-match scan is never presented as “no matches.” Matching runs in a reusable subprocess worker with separate startup and per-file regex budgets. A `.pdf` candidate is searched through its page text instead of being skipped as binary (PDF reading add-on required; without it, or for a PDF PyMuPDF cannot open, it still counts under `skipped_binary_files`): pages come from the shared PDF page cache or are extracted like `read_file` does, PDFs use `read_file`'s 25 MiB media limit, and the pattern still runs in the worker, one bounded request per page. Matches render as `<path>:p<page>:L<line>:<text>` with `read_file`'s per-page line numbers (the page's common left margin is removed). Each PDF has a 12-second extraction budget: a scanned page that is not cached is OCR'd only while its estimated cost fits, and once the budget is spent every uncached page is left out; those pages are counted in `skipped_pdf_pages`, the scan is reported incomplete (`scan_complete: false` with a narrowing hint), and a retry covers more pages since extracted pages are cached. The OCR estimate counts recognition only, never the one-time engine load. A repeat grep over an unchanged PDF (same resolved path, size and modification time; up to 4,096 files remembered) skips re-reading and hashing it, and when every page is cached it does not open the document at all; `JENNY_ENABLE_PDF_PAGE_CACHE=0` turns this memo off with the cache. A grep never downloads Tesseract data. An encrypted or damaged PDF is skipped like a binary file; a page that fails to extract ends that PDF with the pages before it searched. Since 2026-10-19: a file that cannot be read is skipped and counted in `skipped_unreadable_files` (the result notes how many; 25 unreadable files in a row stop the scan with an error naming only the searched root, never a file); `include_glob` uses the same matcher as `glob_files` (slash-free patterns match the file name at any depth; a pattern with `/` is anchored at the search root and `**` spans zero or more directories); symlinks and junctions are never followed and containment is resolved once per directory; a pattern longer than 2,000 characters is refused before the regex-safety check; and the walk itself stops at the runtime budget even when `include_glob` rejects every file. Since 2026-10-25 the worker protocol also serves a match-summary request (`MATCH_SUMMARY_OP` in `grep_search_file.py`, re-exported by `grep_search.py`): the per-match snippet and distinct-term summary that `knowledge_search` ranks on are computed inside the worker subprocess under the same per-file regex budget, so a model-supplied pattern never runs in the sidecar process. Since 2026-11-01 (session review): inside a git repository the walk skips what git ignores, using git's own bounded inventory of the search root (`git ls-files --cached --others --exclude-standard`, 1.5 s cap, counted against the runtime budget); no repository, a git failure or timeout, hosted mode, or a search root git does not index (an explicit `path` into an ignored folder) walks everything as before. Metadata reports `ignored_directories_skipped`, and when nothing matched or the result was truncated the output says how many gitignored directories were skipped and that a path inside one searches it. An `include_glob` whose every alternative starts with literal directories walks only those (`sidecar/**/*.py` starts at `sidecar/`); every file is still matched against the full pattern. A top-level comma in `include_glob` separates alternatives like a brace list, under the same rule as `glob_files`. An unscoped repo-root grep went from the 30 s cap with a partial scan to about 13 s complete. Source: [`search_ignore.py`](../sidecar/ai/tools/builtins/search_ignore.py).
 - **Parameters:** `pattern` (required), `path`, `include_glob`, `ignore_case`, `context_lines`, `max_results`.
 - **Source:** [`sidecar/ai/tools/builtins/grep_search.py`](../sidecar/ai/tools/builtins/grep_search.py) owns tool orchestration and the isolated worker protocol; [`grep_search_file.py`](../sidecar/ai/tools/builtins/grep_search_file.py) owns the candidate walk, the shared glob matcher, bounded file scanning and output rendering; [`grep_search_pdf.py`](../sidecar/ai/tools/builtins/grep_search_pdf.py) owns PDF page extraction and the OCR budget.
 
@@ -288,16 +288,19 @@ and [desktop sandbox](operations/DESKTOP_COMMAND_SANDBOX.md) for limits and reco
 
 Run a shell command from within the workspace root.
 
-- **Approval:** required (side-effecting).
+- **Approval:** required (side-effecting), except a read-only command (below).
+- **Read-only commands (2026-11-01, row 102):** a command the shell classifier returns ALLOWED for the request's root (allowlisted read-only executables and git read verbs, no write or launch arguments, no redirects, every path inside the project; see the classifier guards and workspace scope notes below) runs without a card in Ask, Auto, Plan and Propose, and in Jenny-started chats, when the policy decision is the built-in default. A saved `ask` or `deny` rule, a stored v1 per-tool `run_command` policy, paranoid safety mode, hosted mode and the Docker/desktop-bridge `run_command` keep their existing gates. Plan and Propose list `run_command` and refuse any other command with `CMP_MODE_TOOL_BLOCKED` and a "read-only commands only" message, never a card. The sidecar marks the runtime.operation check with `grant: "read_only_command"`; Electron admits it only for `run_command` under a tool-default `ask` and records it so the resource-lease re-check of the same call passes. Owners: [`read_only_command_grant.py`](../sidecar/ai/tools/read_only_command_grant.py) and [`read-only-command-grant.js`](../services/backend/read-only-command-grant.js). Kill switch `JENNY_ENABLE_READ_ONLY_COMMANDS=0`. Plan. The row's review closed allowlist holes that this widened: `uniq` with an output operand, `ag --pager`, `file -C`, and `date`/`hostname` arguments that set the clock or host name need approval, and `ack` left the allowlist (a project `.ackrc` can set its pager).
 - **Side-effecting:** yes.
 - **Workspace required:** yes.
 - **Gated by:** `tools_shell_enabled` (off by default).
-- **Notes:** Default timeout 10s, max 600s. `run_in_background: true` returns a `job_id` that `check_background_job` polls and `stop_background_job` can terminate. The tool result's metadata also carries the spawned PID (`background_job_pid`) over the trusted sidecar channel; Electron's background-job tracker binds its kill authority to that registration-time PID only — the workspace-writable `status.json` is display-only status and can never retarget a kill. Every foreground and background child is owned by the shared process service: POSIX process groups or Windows Job Objects contain descendants, timeout/abort/shutdown terminate the owned tree, stdout and stderr drain concurrently under a 4 MiB aggregate capture budget, and additive byte counters disclose discarded overflow. Windows termination also runs a PID-lineage tree-kill backstop before closing the Job Object so descendants that did not inherit Job membership are still reclaimed. At most three background jobs may be active or starting at once (one owned-process slot short of the service cap, so a full set of background jobs cannot starve a foreground command). The advertised command string is executed whole by the platform shell — `cmd.exe /d /s /c` on Windows, `/bin/sh -c` on POSIX — resolved through `PATH` before the owned process starts, so a missing interpreter fails closed with `CMP_TOOL_IO_FAILED` rather than at spawn time. Handing the shell the intact string is what makes pipes, redirection, and quoted executable paths with spaces (for example `"C:\Program Files\Python311\python.exe" script.py`) behave as written; it also means the classifier — not an argv split — is the layer that must see every command in a compound chain. On Windows the owned process also inherits a PATH guaranteed to contain `%SystemRoot%\System32\WindowsPowerShell1.0`: that directory is a PATH entry separate from `System32`, so a launcher that trims PATH could leave `cmd.exe` resolvable while `powershell` was not, failing an otherwise valid command on a Windows-first app. The entry is appended only when it is real and not already present, so a host with its own ordering is left untouched.
+- **Notes:** Default timeout 10s, max 600s. `run_in_background: true` returns a `job_id` at once; the model keeps working and is told when the job finishes (a mid-turn notice before its next step, else the post-turn wake), `check_background_job` reads its output and `stop_background_job` can terminate it. The tool result's metadata also carries the spawned PID (`background_job_pid`) over the trusted sidecar channel; Electron's background-job tracker binds its kill authority to that registration-time PID only — the workspace-writable `status.json` is display-only status and can never retarget a kill. Every foreground and background child is owned by the shared process service: POSIX process groups or Windows Job Objects contain descendants, timeout/abort/shutdown terminate the owned tree, stdout and stderr drain concurrently under a 4 MiB aggregate capture budget, and additive byte counters disclose discarded overflow. Windows termination also runs a PID-lineage tree-kill backstop before closing the Job Object so descendants that did not inherit Job membership are still reclaimed. At most three background jobs may be active or starting at once (one owned-process slot short of the service cap, so a full set of background jobs cannot starve a foreground command). The advertised command string is executed whole by the platform shell — `cmd.exe /d /s /c` on Windows, `/bin/sh -c` on POSIX — resolved through `PATH` before the owned process starts, so a missing interpreter fails closed with `CMP_TOOL_IO_FAILED` rather than at spawn time. Handing the shell the intact string is what makes pipes, redirection, and quoted executable paths with spaces (for example `"C:\Program Files\Python311\python.exe" script.py`) behave as written; it also means the classifier — not an argv split — is the layer that must see every command in a compound chain. On Windows the owned process also inherits a PATH guaranteed to contain `%SystemRoot%\System32\WindowsPowerShell1.0`: that directory is a PATH entry separate from `System32`, so a launcher that trims PATH could leave `cmd.exe` resolvable while `powershell` was not, failing an otherwise valid command on a Windows-first app. The entry is appended only when it is real and not already present, so a host with its own ordering is left untouched.
 - **Parameters:** `command` (required), `cwd`, `timeout_seconds`, `run_in_background`, `expected_exit_codes`.
+- **A sleep while a background job runs (2026-11-01):** a sleep-only command (`ping -n N 127.0.0.1`, `timeout /t N`, `sleep N`, `Start-Sleep N`, or `powershell -Command "Start-Sleep N"`, optionally redirected to `nul`/`/dev/null`) issued while a background job of the same workspace is running never spawns: it waits on those jobs for the requested time (capped by `timeout_seconds`) and returns as soon as every one has settled (one still running may be what the sleep is for), with `ended_early: true`, the last settled job's id, state and exit code, and a message pointing at `check_background_job` (`sidecar/ai/tools/builtins/shell_background_wait.py`). Anything else in the command, or no running job, runs the command as written. A model in the 2026-11-01 session slept 70 s past its finished test suite.
 - **Result metadata:** `exit_code` repeats the payload's exit status, so the tool row's status reads *exit N* for a command that ran and exited non-zero and the stored tool result carries it. That result keeps `CMP_TOOL_EXECUTION_FAILED`, but its metadata sets `failure_class: precondition_unmet` (retry `after_fix`) and a `remediation` saying the exit status is the command's own result, not a tool failure (the code's default class is *internal_error*, which made a model report a requested failing test as an internal error; dogfood HB-035). A command a guard refuses before it starts (`CMP-TOOL-0007`) shows as *Blocked*, not *Denied*. A command stopped at its time limit keeps `CMP_TOOL_IO_FAILED` with `timed_out: true`, but its metadata sets `failure_class: limit_exceeded` (retry `changed_args`) and a `remediation` naming the limit, so the model is told to raise `timeout_seconds` or use `run_in_background` instead of retrying unchanged (the code's default class is *transient*); the payload's `message` says the same, and the tool row reads *Timed out* (dogfood B11). Since 2026-10-19 the timed-out payload carries `exit_code: null` (the metadata has no `exit_code` key: the process was stopped, not exited), its partial capture is redacted and persisted like any large output so `full_output_*` fields and the middle-truncation marker name a recoverable file, and every stream is redacted exactly once per call (the persisted capture and the distiller share that pass).
 - **Single-line rule on Windows (2026-09-28, dogfood HB-013):** `cmd.exe /c` executes only the text before the first line break, whatever the quoting, and reports that line's exit code, so a multi-line command used to "succeed" with every later line silently dropped (a `python -c "` program split across lines ran as an empty program, exit 0). When the sidecar launches `cmd.exe`, a command that still contains CR or LF after trimming is refused with `CMP_TOOL_COMMAND_BLOCKED` telling the model to run one command per call (joining dependent steps with `&&`) or to use `run_temp_script`. The router refuses it with the schema prevalidation, before the approval prompt, runtime operation admission, or resource lease, so the refusal leaves nothing to settle and the next tool call in the turn is admitted normally; `run_command_tool` repeats the check before any process starts. Both refusals carry `failure_class: bad_arguments` and `effects: none` (2026-10-05, dogfood HB-039), so the result envelope tells the model to rewrite the call, not "denied, ask the user to change the relevant permission"; the error code stays `CMP_TOOL_COMMAND_BLOCKED`, so the row still reads Blocked. POSIX `/bin/sh -c` and the bridge-owned Linux sandbox/hosted worker run every line and are unchanged. Source: `cmd_exe_multiline_refusal` in [`shell_command_split.py`](../sidecar/ai/tools/builtins/shell_command_split.py), wired in [`tool_call_execution.py`](../sidecar/ai/routing/tool_call_execution.py).
 - **Failure contract:** a failing command carries `CMP_TOOL_EXECUTION_FAILED` (`CMP-TOOL-0008`) like every other tool failure, so the model and the error surfaces never see a failure without a code. When the shell's own stderr says the executable was not recognized (`'x' is not recognized...` on `cmd.exe`, `x: command not found` on POSIX), the payload gains a `hint` naming the resolved absolute path when one exists — and the canonical `powershell.exe` location as a special case — instead of leaving the model to guess a path and burn a turn announcing the retry.
 - **Executable spelling and classifier guards (2026-10-25, security boundary review):** an ALLOWED verdict admits a tool by bare name resolved from PATH only. A pathed or script spelling of an allowlisted tool (`./ls.exe`, `subdir/cat.bat`, bare `git.bat`, `grep.ps1`) needs approval unless it is an absolute path under a trusted system root (`_TRUSTED_EXECUTABLE_PREFIXES` in [`shell_security_tokens.py`](../sidecar/ai/tools/builtins/shell_security_tokens.py): `/bin`, `/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin`, `C:\Windows\System32`, both Program Files roots) and not itself a script. Every shell child, foreground or background, runs with `NoDefaultCurrentDirectoryInExePath=1` (`shell_harness.shell_environment`, which also strips any inherited case variant of the key), so `cmd.exe` never resolves a bare name from the workspace; a planted `git.cmd` next to the command is not found. `sed -i`/`--in-place`, Windows `sort /O`, and awk program or library files (`-f`, `-i`, `-l`, `-E`, `--file`, `--include`, `--load`, `--exec`, `@include`, `@load`) need approval like the other write-capable and code-loading arguments in `_safe_executable_argument_guard`. Interpreter lookups that the sidecar performs itself (shell hints, LSP server detection) go through [`executable_lookup.py`](../sidecar/ai/tools/builtins/executable_lookup.py), which searches absolute PATH entries only and never the current directory. Policy table and owner decisions: security boundary review.
+- **Live test-run progress (2026-11-01, row 96):** while a command runs, the sidecar reads the test runner's own output (pytest `-v`/`-q`/xdist, `node --test` TAP, and the `[run-node-tests-safe] files N` / `progress d/N` lines of `scripts/run-node-tests-safe.js`) without rewriting the command, and rides a bounded `test_progress` snapshot on the live output batches (at most every 250 ms, plus a final one) for the chat's progress bar, file grid and the taskbar. A foreground result adds `metadata.test_summary` (runner, totals, up to 20 failures, the finished grid); a background job writes `progress.json` beside `status.json` (at most once a second, plus a final write) and `check_background_job` returns `progress` while the job runs. Multi-stage commands follow one stage at a time: `npm run check:all` (`run_ci.py` prefixes each stage's lines; the biggest running stage is shown, then the next) and `npm run test:affected` (the node lane, then pytest). Nothing changes for other commands. Kill switch `JENNY_ENABLE_TEST_PROGRESS=0`. Owners: [`test_progress.py`](../sidecar/ai/tools/builtins/test_progress.py) with its runners, grid and manifest modules, [`test_progress_stages.py`](../sidecar/ai/tools/builtins/test_progress_stages.py) and [`shell_test_progress.py`](../sidecar/ai/tools/builtins/shell_test_progress.py).
 - **Workspace scope of arguments (2026-10-26, hardening H1):** an ALLOWED verdict becomes NEEDS_APPROVAL when an argument names a path outside the request's workspace root: `..`, absolute, drive or UNC paths, a relative name that resolves out through a junction or symlink, `%VAR%` (cmd.exe) or `$VAR`/`~` (sh, PowerShell) used as a path, and PowerShell provider drives (`Env:`, `HKLM:`). Redirect targets, `--opt=value` and `-Param:value` are checked; cmd.exe carets are dropped first; the pattern operand of grep/rg/sed/awk/findstr is not a path. UNC names are never resolved. Without a bound root every path-like argument asks. Owner: [`shell_path_scope.py`](../sidecar/ai/tools/builtins/shell_path_scope.py), called from `classify_run_command_for_approval`. A saved AUTO rule or a one-send auto-run grant still runs a NEEDS_APPROVAL command, as before.
 - **Source:** [`sidecar/ai/tools/builtins/shell.py`](../sidecar/ai/tools/builtins/shell.py); shared owner at [`owned_process.py`](../sidecar/ai/tools/builtins/owned_process.py) with Win32 containment in [`sidecar/runtime/process_job.py`](../sidecar/runtime/process_job.py) — re-exported through [`owned_process_windows.py`](../sidecar/ai/tools/builtins/owned_process_windows.py), which stays this transport's single import site — and the child-side bootstrap in [`_owned_process_bootstrap.py`](../sidecar/_owned_process_bootstrap.py); classifier at [`shell_security.py`](../sidecar/ai/tools/builtins/shell_security.py), its tokenization helpers (quote stripping, argv and PowerShell splitting, redirect and interpreter-payload detection) in [`shell_security_tokens.py`](../sidecar/ai/tools/builtins/shell_security_tokens.py), with platform separator grammar in [`shell_command_split.py`](../sidecar/ai/tools/builtins/shell_command_split.py).
 - **Windows spawn path:** each owned process is launched by first spawning a small bootstrap child into the Job Object and only then releasing the real target argv to it over stdin, so a target can never start outside its containment. That bootstrap child is re-entered as a fresh interpreter on every spawn, so it is deliberately kept stdlib-only in [`sidecar/_owned_process_bootstrap.py`](../sidecar/_owned_process_bootstrap.py) rather than living under `builtins/` — importing the tool package there charged every git subprocess a full tool-runtime import and silently starved the sub-second git budgets in `repo_delta` and `workspace_manifest`. Gated by `tests/sidecar/test_owned_process_bootstrap_import_cost.py`. The Job Object wrapper itself was moved to the dependency-free `sidecar/runtime/process_job.py` leaf when image-gen provisioning needed the same containment for its `pip`/`venv`/download trees — a second ctypes copy would have been a third implementation in this repo, and handle widths and assignment-failure handling are exactly where duplicates drift into correctness bugs. That leaf is now the repo's ONLY Job Object (2026-07-31): `sidecar/runtime/subprocess_manager.py` had kept a private `_WindowsJobObject` with UNPINNED `restype`s - the exact defect `process_job.py` exists to prevent, since an unpinned `restype` defaults to C `int` and truncates a 64-bit `HANDLE` into a job that reports success and contains nothing. That copy is deleted; the manager and its two other importers (the codex-CLI engine transport, the LSP transport in [`lsp/protocol.py`](../sidecar/ai/tools/builtins/lsp/protocol.py)) all take `WindowsJobObject` from `process_job.py` now.
@@ -310,6 +313,7 @@ Run multi-line platform shell content through the same approval, classifier, can
 - **Approval / side effects:** required; side-effecting.
 - **Runtime:** writes an exclusive `.cmd` (Windows) or `.sh` (POSIX) in an OS temporary directory outside the repository, invokes it with `cmd.exe` or `/bin/sh`, and removes the directory in `finally`.
 - **Privacy:** the temporary path is never returned. Cleanup failure emits bounded warning metadata without changing the completed process result.
+- **Scratch output:** the description asks the model to write scratch files (commit messages, path lists) to the OS temp directory, not into the project (2026-11-01).
 - **Parameters:** `script` (required), workspace-contained `cwd`, `timeout_seconds`, `expected_exit_codes`, optional `language` (`python`, `powershell`, `cmd`, `sh`, …). Background mode is intentionally unsupported. Since 2026-10-25 a call whose `language` is Python sits under the same mandatory Python approval as `python_execute` (`_runs_python` in [`tool_execution.py`](../sidecar/ai/routing/tool_execution.py)), so an `auto` policy on `run_temp_script` cannot run Python unprompted; the non-interactive `chat.send` route denies any call that would need a prompt instead of pre-granting it.
 - **Interpreter evidence:** JSON output and metadata report effective `language`, resolved `interpreter`, nullable `interpreter_version`, and `interpreter_version_probe`. The existing `shell` remains the outer wrapper. Successful version evidence is cached in a bounded 128-entry cache by interpreter invocation path, language and file identity/mtime. A cache miss runs a fixed version probe through the owned-process service after execution, with a two-second limit and at most 256 reported characters. It never runs the user script or a PowerShell profile. An unavailable or safely timed-out probe does not change the script exit result. `cmd`/`sh` report version unavailable with reason `unsupported`; an OS version is not presented as an interpreter version. Probe cleanup evidence is reported separately, and call-level cleanup remains authoritative.
 - **Unicode:** PowerShell scripts use UTF-8 with a BOM so Windows PowerShell 5.1 preserves non-ASCII literals.
@@ -332,7 +336,9 @@ Check status and output of a background shell job.
 - **Side-effecting:** no.
 - **Workspace required:** yes.
 - **Gated by:** `tools_shell_enabled`.
-- **Parameters:** `job_id` (returned by `run_command` with `run_in_background: true`).
+- **Parameters:** `job_id` (returned by `run_command` with `run_in_background: true`), `wait_ms` (optional, 0-600000, default 0).
+- **Waiting (2026-11-01):** with `wait_ms` the call blocks until the job leaves `running` or the wait runs out, polling its status every half second and returning the moment it settles; a turn's Stop (the builtin server's abort event) ends the wait. The transport deadline grows to `wait_ms` + 5 s so it never cuts the wait off. Use it instead of sleeping with another command, and only when nothing else can proceed without the result; the started message and the `run_in_background` description say so.
+- **Notices instead of polling (2026-11-01, row 71):** a job that finishes while its chat's turn is still working is announced before the model's next step: the background-job tracker sees the settle, `services/backend/background-job-mid-turn.js` pushes `session.job_settled` to the live turn, the tool loop appends one harness note (job id, command, state, exit code; never output) and acknowledges with `session.job_notice_consumed`, which marks the job read so no wake follows. An unacknowledged push changes nothing: the job stays unread and the post-turn wake delivers it. A settled status this turn already read through `check_background_job`/`stop_background_job` is acknowledged without a note. Flag `background_job_notices` (`JENNY_ENABLE_BACKGROUND_JOB_NOTICES=0`). The prompt's Tool Use Discipline gains a keep-working line when `run_command` offers `run_in_background`.
 - **Job-ID contract (2026-07-10, WIDE-011):** `job_id` must be exactly 12 lowercase hex characters (the format `run_command` mints); anything else is refused before any path is assembled, closing traversal/absolute/UNC/separator escapes. The job directory is revalidated against symlink/reparse redirection (a redirected directory reads as `not_found`), `status.json` reads are capped at 256 KiB, and a non-object or malformed status body is a typed "corrupt" result rather than a crash.
 - **Lifecycle contract (2026-07-11, WIDE-015/WIDE-041):** initial status-publication failure synchronously terminates and removes the spawned process before returning a typed refusal. Terminal status-publication failure preserves the validated result in a bounded 64-entry in-memory fallback, while an old unowned `running` record is reconciled to `failed` after restart rather than remaining permanently live.
 - **Restart handoff (2026-10-11, A20-F2):** a job handed off across a trusted Linux restart keeps reading `running` past the 15-minute pid-reuse window while the owned-process ledger records its exact live process identity and a live owner; the original host still publishes its genuine terminal status. A reused PID or dead owner still reconciles to `failed`; since 2026-10-12 (A20 review) the running `status.json` carries the job's own owned-process ledger receipt (`ledger_entry`, internal and stripped from tool output), only that exact entry can vouch for the job, and its original host (the terminal-status writer) must also be alive, so a later job on a recycled PID never keeps an earlier job's record `running` and a crashed host reconciles to `failed`; a legacy record without the binding reconciles conservatively.
@@ -394,7 +400,7 @@ Approval-required even with `tools_shell_enabled` on:
 - Output is bounded before response assembly; byte counters report captured and discarded totals, and any persisted overflow uses the guarded workspace store.
 - Process ownership is shared across shell and read-only Git calls. Active and queued work are capped, both pipes are drained incrementally, and cleanup owns descendants through `atexit`, timeout, abort, and shutdown.
 - On Linux and macOS each command runs under a supervisor process (`sidecar/_owned_process_supervisor.py`), and `resource_cleanup` is `confirmed` only on its report. Linux result metadata shows `containment: posix_subreaper_supervisor`: the kernel hands every orphaned descendant to the supervisor, so the confirmation is exact. macOS, and Linux when that kernel call is refused, shows `posix_lineage_supervisor` with reason `sampled_lineage_best_effort`: descendants are found by sampling the process table and by an inherited environment token, which misses a descendant that is orphaned between two samples and also scrubs its environment. A command killed by signal `n` returns exit code `128 + n`. Windows uses a Job Object as before.
-- A `run_command` or `run_temp_script` call that fails before launching anything (for example a `cwd` that fails validation) reports `resource_cleanup` `confirmed` with reason `no_native_process_started`, because every child registers with the call's cleanup observation before it spawns. Its workspace lease is released, so the next tool in the turn is admitted (dogfood HB-014). A call that launched a child keeps that child's own cleanup verdict.
+- A `run_command` or `run_temp_script` call that fails before launching anything (for example a `cwd` that fails validation) reports `resource_cleanup` `confirmed` with reason `no_native_process_started`, because every child registers with the call's cleanup observation before it spawns. Its workspace lease is released, so the next tool in the turn is admitted (dogfood HB-014). A call that launched a child keeps that child's own cleanup verdict. Work that outlives the call and is owned elsewhere runs under `detached_from_owned_process_invocation()` and never counts as the call's child: a `workspace_manifest_read` served from a stale cache entry refreshes it in the background and still reports `no_native_process_started` (2026-10-31; before, the pending refresh quarantined the lease and every later workspace tool in the turn was refused `tool_resource_own_cleanup_unconfirmed`).
 - Approval-plan fingerprint includes the full command string and `cwd`, so command edits between request and approval re-prompt.
 - Change evidence (TR-015, 2026-09-30): a foreground `run_command` or `run_temp_script` whose `cwd` sits in a git repository inside the workspace reports `metadata.workspace_changed` (true or false) from a `git status` diff taken around the call, ignoring `__pycache__`, `.pyc` and test/lint caches. Background jobs, workspaces without git, a live `workspace_change_baseline` (which reports `worktree_observation` instead) and probe errors carry no key. The write-progress streak counts the true case as a save and `verification_gate` as a mutation. `JENNY_ENABLE_SHELL_CHANGE_EVIDENCE=0` disables the probe. B6 (2026-09-30) adds `metadata.source_changed`: true only when content changed on a tracked path or on an untracked path with a source suffix, so `git add`, a commit or a stray output is not a save; the write-progress streak prefers it over `workspace_changed`. A call that leaves new untracked non-source files also reports `metadata.created_untracked_paths` (at most 5 entries; 2+ files under one top-level folder collapse to `folder/ (N files)`) and tells the model in the result: `new_untracked_files` in the JSON result, "New untracked files outside ignored folders: ..." otherwise.
 - Restore point (row 34 S5, 2026-10-05): the user-only `scripted_change_review` of `run_command`, `run_temp_script` and `python_execute` names the turn's restore point (`restore_point`: a Jenny checkpoint ref and time, `head` for a clean tree, or `none` with `not_git`/`disabled`/`failed`/`unavailable`), so the Changes view can put script-changed files back one by one. Routing passes it as the private `_jenny_restore_point` argument after approval freezing; the model never sees it. Source: [`scripted_restore_point.py`](../sidecar/ai/tools/builtins/scripted_restore_point.py), [`auto_checkpoint.py`](../sidecar/ai/routing/auto_checkpoint.py).
@@ -454,7 +460,7 @@ The Python runtime runs each invocation in a fresh subprocess with hard limits:
 
 - **Windows:** bounded execution in a Job Object: a per-process memory cap (`JOB_OBJECT_LIMIT_PROCESS_MEMORY`), at most 5 processes, and kill-on-close so the tree dies when the job ends. Breakaway is simply never enabled. This is a resource bound, not a CPU, filesystem or network boundary. See [`job_object.py`](../sidecar/ai/tools/builtins/python_runtime/job_object.py).
 - **POSIX:** `setsid()` for process-group isolation; `RLIMIT_AS` (memory), `RLIMIT_NOFILE` (file descriptors), `RLIMIT_CPU` (timeout + 5s grace), `RLIMIT_CORE = 0` (no core dumps). The ledger entry settles as confirmed only when the root exited on its own and its process group is empty.
-- **Filesystem:** the working directory is the bound workspace root when there is one, otherwise the per-run scratch directory; scratch is removed after execution (a cleanup failure is logged, never raised over the run's own error). Matplotlib's font cache persists in `<runtime venv>/.mplconfig` so it is not rebuilt per call. There is no broader filesystem jail — see threat model below.
+- **Filesystem:** every run has an explicit authority root: the bound workspace root when there is one, otherwise the per-run scratch directory, bound as the root itself (security review item 11, 2026-11-02). The runner refuses a null or missing root with `CMP-TOOL-0002` before launching, so no chat without a project runs Python against a null root; the tool stays offered there (`workspace_required: false`). The working directory is that root; scratch is removed after execution (a cleanup failure is logged, never raised over the run's own error). Matplotlib's font cache persists in `<runtime venv>/.mplconfig` so it is not rebuilt per call. There is no broader filesystem jail — see threat model below.
 - **Stdin and exit:** the child gets no stdin. `sys.exit()` in user code returns normally (`None`/0 is success; any other code is exit 1 with a `SystemExit` error; `KeyboardInterrupt` is exit 130), and the result file is always written.
 - **Output:** model-visible stdout, stderr, tracebacks and error messages redact absolute paths outside the workspace and the call's own arguments (`error_paths.redact_error_paths`); `http(s)` URLs are left intact. Only `figure_N.png` files inside the run directory that start with the PNG signature become chart attachments.
 - **Network:** no isolation. The Python sandbox does not block outbound network calls.
@@ -599,14 +605,15 @@ See [`safety_mode`](../sidecar/ai/config.py) for the active runtime knob.
 
 - Private network ranges (RFC 1918 + link-local + metadata services like `169.254.169.254`) are rejected before any DNS lookup.
 - IPv4-mapped IPv6 addresses (`::ffff:a.b.c.d`) are always treated as non-public — a classic SSRF-filter bypass shape, and their stdlib classification varies across Python 3.11.x patch versions.
-- IPv6 tunnel forms that wrap an IPv4 address — 6to4 (`2002::/16`), Teredo (`2001::/32`), and ISATAP (RFC 5214) — are additionally rejected when the IPv4 they embed is non-public. This is a veto on top of the wrapper's own range classification, not a replacement for it; IPv4-mapped addresses stay rejected outright without inspecting the embedded value. ISATAP carries no reserved prefix — its `0000:5efe` / `0200:5efe` interface identifier can appear under any `/64` — so that arm is a pattern match rather than a decode, and is deliberately gated on the embedded address: a public IPv6 host is only ever rejected if its identifier both matches a marker and trails a non-public IPv4. The NAT64 well-known prefix `64:ff9b::/96` and the CGNAT shared address space `100.64.0.0/10` are rejected by explicit membership; the stdlib does not classify the latter as private. This blocks tailnet and carrier-grade-NAT destinations by default — set `tools_web_allow_private_addresses` to opt back in. That setting also governs the MCP `sse` transport URL and OAuth `token_url`, so a self-hosted MCP endpoint on such an address is reachable under the same opt-in; it relaxes the address-class check only, never DNS pinning or the redirect refusal.
-- DNS resolution is pinned: the resolved IP at validation time is the IP used for the actual request, preventing DNS rebinding.
+- IPv6 tunnel forms that wrap an IPv4 address — 6to4 (`2002::/16`), Teredo (`2001::/32`), and ISATAP (RFC 5214) — are additionally rejected when the IPv4 they embed is non-public. This is a veto on top of the wrapper's own range classification, not a replacement for it; IPv4-mapped addresses stay rejected outright without inspecting the embedded value. ISATAP carries no reserved prefix — its `0000:5efe` / `0200:5efe` interface identifier can appear under any `/64` — so that arm is a pattern match rather than a decode, and is deliberately gated on the embedded address: a public IPv6 host is only ever rejected if its identifier both matches a marker and trails a non-public IPv4. The NAT64 well-known prefix `64:ff9b::/96` and the CGNAT shared address space `100.64.0.0/10` are rejected by explicit membership; the stdlib does not classify the latter as private. This blocks tailnet and carrier-grade-NAT destinations by default. The classification lives in [`web_url_policy.py`](../sidecar/ai/tools/builtins/web_url_policy.py) (pure decisions; `web_http.py` does the I/O).
+- Two opt-ins relax the address-class check, both off by default (2026-11-02, row 103). `tools_web_allow_loopback` opens only `127.0.0.0/8`, `::1` and `localhost`; the search providers (a SearXNG on this machine, including its redirect hops) and the MCP `sse` transport URL and OAuth `token_url` read it, `fetch_url` ignores it. `tools_web_allow_private_addresses` opens every non-public range (RFC 1918, ULA, link-local, CGNAT and loopback) for `fetch_url`, the search providers and the MCP `sse`/`token_url` checks; it implies the loopback opt-in, so a config that already sets it keeps reaching a localhost SearXNG or MCP server. Neither opens a cloud metadata address (`169.254.169.254`, `169.254.170.2`, `100.100.100.200`, `fd00:ec2::254`, also when wrapped in an IPv4-mapped, NAT64, 6to4, Teredo or ISATAP form). Under the private opt-in a hostname is resolved to screen out metadata answers, but the connection stays unpinned as before, so an answer that changes between the check and the connect is not caught there. A hostname that resolves under the loopback opt-in is pinned; the name `localhost` connects unpinned (the OS answers it locally). Neither opt-in relaxes the redirect rules or the no-credentials-in-URL rule. Electron's managed sidecar config sends neither key today; they apply to a sidecar config that sets them.
+- DNS resolution is pinned: the resolved IP at validation time is the IP used for the actual request, preventing DNS rebinding (except under the private-address opt-in, above).
 - DNS lookups run on a resolver thread because `getaddrinfo` cannot be cancelled; a lookup that outlives its deadline is abandoned to finish on its own. At most 8 lookups are in flight process-wide (a shared semaphore held until the resolver really returns), so a hung DNS server cannot pile up threads; with every slot held, a new lookup times out instead of spawning another thread.
-- Redirects revalidate the destination host; redirects into private networks are rejected. A hop whose destination fails the URL safety policy is reported as a settled, non-retryable policy block (the same classification as a rejected first hop), not as a retryable fetch failure, and the error message never echoes the redirect target — it comes from an attacker-controlled `Location` header.
+- Redirects revalidate the destination host; redirects into private networks are rejected. A hop whose destination fails the URL safety policy is reported as a settled, non-retryable policy block (the same classification as a rejected first hop), not as a retryable fetch failure, and the error message never echoes the redirect target — it comes from an attacker-controlled `Location` header. Each hop follows fetch's request rules (2026-11-02, row 103): a cross-origin hop (scheme, host or port differs) drops every caller-supplied header (`Authorization`, `Cookie`, `Proxy-Authorization`, API-key headers) and keeps only the module's own User-Agent/Accept headers, and dropped headers stay dropped for later hops; a 303 turns any method but GET/HEAD into a bodyless GET and a 301/302 does the same to a POST (request-body headers such as `Content-Type` go with the body); 307/308 keep the method and body only on the same origin, and any cross-origin hop that would still carry a body or a non-GET/HEAD method is refused as a redirect block. The hop limit is checked before the `Location` host is parsed or resolved, so a caller with `max_redirects=0` (every vendor search provider) never sends a DNS query for the redirect target.
 - Cached fetches honor the 15 min / 50 MB per-fetch cache cap.
 - An HTTP error surfaces as `CMP-WEB-0004` with the status in the message. Only 408, 425, 429 and 5xx are `retryable` (the MCP client then restarts `jenny_local_tools` and replays the read-only call once); every other 4xx is the site's answer and is reported as-is.
 - A search-provider base URL rejected by the URL safety policy returns a generic error payload; the specific reason (bad scheme, embedded credentials, non-public resolved address, DNS failure) is logged as a bounded, host-free WARN so a refused self-hosted instance stays diagnosable without echoing the configured host.
-- DuckDuckGo instant-answer citations and `source_url` metadata classify address literals with the same `_is_public_ip` the fetch path uses, so a citation can never display an address `fetch_url` would refuse. The check is unconditional — `tools_web_allow_private_addresses` widens what may be fetched, never what is rendered as a citation.
+- DuckDuckGo instant-answer citations and `source_url` metadata classify address literals with the same `_is_public_ip` the fetch path uses, so a citation can never display an address `fetch_url` would refuse. The check is unconditional — `tools_web_allow_private_addresses` and `tools_web_allow_loopback` widen what may be fetched, never what is rendered as a citation.
 - See [docs/SECURITY_MODEL.md](SECURITY_MODEL.md#prompt-injection-defense) for the sanitizer details.
 
 ### Implementation notes
@@ -628,6 +635,7 @@ Create a session-scoped scratch document or script under `.jenny/artifacts`.
 - **Workspace required:** yes.
 - **Notes:** Use this for plans, notes, helper scripts, or anything the user might want to reference later in the session. When the content is HTML (a `.html`/`.htm` file name/extension, or `language: "html"`), the artifact renders as a **live, network-isolated sandboxed in-app preview** — this is the supported way to display HTML/JS to the user in-app (there is no `file://` browsing or local HTTP server in this environment). See **HTML document artifacts** below. **Do not** use [`write_file`](#write_file-alias-write) for new files under `.jenny/artifacts` — that path is owned by the artifact service.
 - **Parameters:** `artifact_kind` (`document` or `script`), `title`, `content` required; `file_name`, `language`, `extension` optional.
+- **Revising an artifact (2026-11-01):** ordinary file tools refuse `.jenny`, so a model fixing its own artifact passes `replaces` (the display path an earlier call returned, `.jenny/artifacts/<this session>/<file>`, or the bare file name) with either full `content` or `edits` (1-20 exact `{old_string, new_string}` pairs, each matching exactly once, applied in order and all or nothing; CRLF files keep CRLF). `edits` needs `replaces`, never comes with `content`, and works on files up to the 512 KiB editable limit (the result too). The file keeps its name (on a case-insensitive filesystem `replaces` resolves to the file's own spelling): a different `file_name` or `extension` is refused, and another session's folder, a nested path or a missing file fails `CMP_TOOL_INVALID_PATH`. The write is atomic through the guarded store and skips the per-session capacity check (no new file). Each write gets a fresh `artifact_id`; the artifacts panel keeps one card per display path (`artifactDedupKey` in `renderer/features/renderer-artifacts-projection.js`). Source: [`artifact_replace.py`](../sidecar/ai/tools/builtins/artifact_replace.py).
 - **Cap:** at most 500 text artifacts per session (shared with `mermaid_generate`'s `.mmd` save); the 501st fails with `CMP_TOOL_CAP_EXCEEDED` (2026-10-19).
 - **Source:** [`sidecar/ai/tools/builtins/artifacts.py`](../sidecar/ai/tools/builtins/artifacts.py); Electron-side artifact service in [`services/backend/`](../services/backend/).
 
@@ -638,6 +646,7 @@ Plan Mode exposes a narrowed `create_artifact` schema that accepts only inert do
 - `artifact_kind` must be `document` and UTF-8 content must be at most 512 KiB.
 - Every supplied classifier must agree. Allowed final extensions are `.md`, `.markdown`, `.txt`, `.mmd`, `.mermaid`, `.json`, `.yaml`, `.yml`, and `.csv`; allowed language hints are Markdown, plain text, Mermaid, JSON, YAML, and CSV aliases.
 - HTML, SVG, XML, CSS, JavaScript, TypeScript, Python, shell content, and every `script` artifact remain approval-gated outside Plan Mode and are blocked by the automatic Plan Mode path.
+- A revision (`replaces`) is classified by the replaced file's own suffix as one more classifier: it must be present, inert and agree with the others, so revising `page.html` is never inert. An `edits` revision counts only with `replaces`, without `content`, and with well-formed edits whose `new_string` total is at most 512 KiB (Python `plan_artifact_policy.py` and Electron `plan-artifact-policy.js` match).
 - Explicit policy `ask` or `deny`, request-level tool disabling, tool preferences, and paranoid safety mode remain authoritative.
 
 The capability uses the existing guarded `.jenny/artifacts/<session-id>/` store. A sidecar-only reserved argument is frozen with an approval plan after validation, stripped at model/replay/MCP ingress, removed before handler dispatch, and never persisted or exposed as model input.
@@ -891,8 +900,10 @@ with `owner: "electron"`, reach the model through the managed sidecar's
 
 Requests that the workspace IDE presents a surface: `view="preview"` renders a
 supported file (markdown/mermaid/self-contained HTML), `view="file_map"` opens
-the dependency File Map with an optional reveal path, and `view="change_diff"`
-opens one recorded Jenny change for review.
+the dependency File Map with an optional reveal path, `view="change_diff"`
+opens one recorded Jenny change for review, and `view="file"` opens a text file
+in the IDE editor, optionally at a 1-based `line` (directories and binary files
+are refused; `line` is rejected on other views).
 
 - **Request, not outcome — the outcome follows.** The renderer may coalesce
   the request or hold it behind a non-stealing affordance while the user is
@@ -1012,6 +1023,16 @@ the project's tests.
   descriptor stays honest (`read_only: false`, `side_effecting: true`, since
   tests write snapshots and coverage), and a user policy rule still overrides
   the default in either direction.
+- **The first run after a workspace write asks** (security review item 7,
+  2026-11-02). After a write in the same turn, `verify` would run code the model
+  just wrote, so the tool loop escalates the untouched built-in default to an
+  ask for the first `run`/`gate` after each write
+  ([`verify_after_write.py`](../sidecar/ai/routing/verify_after_write.py)). Once
+  that run has executed, later runs stay `auto` until the next write; a typed
+  file write, a command with `workspace_changed` evidence, or a pending
+  write/command earlier in the same batch arms it. `list` never asks. A user
+  rule or a stored per-tool policy for `verify`, and a one-send auto-run grant,
+  keep their precedence, as for the shell classifier's escalation (H1).
 - **The turn always completes.** A refusal the turn should survive — most often
   `CMP-TESTRUNNER-0010` (`ALREADY_RUNNING`, i.e. the user's own run holds the
   single-run lock) or a runner rejection — comes back as a non-error `skipped`
@@ -1215,6 +1236,24 @@ is a successful result with `user_questions_declined`. Stream cancellation settl
 decline. The inline renderer card is delivered by W2-S2; W2-S1 owns only the manifest, waiter,
 bridge, and IPC response surface.
 
+### `suggest_next_step`
+
+`suggest_next_step` (row 97) is an optional, non-blocking end-of-turn card: a `recap` (300 characters),
+an optional one-line `question` (100) and up to three reply `actions` (`label` 24, `message` 300; the
+first is the recommended one). The model calls it at most once, as its last tool call, when real work
+finished and the next move is the user's call (commit, pick an approach, what to build next); a
+`question` needs at least one action. It is Electron-owned, `tool_family: runtime`, read-only, `auto`
+policy, network class none, always on in the composer and gated by `tools_next_step_enabled` (default
+on; `JENNY_ENABLE_TOOLS_NEXT_STEP=0` removes it). Hosted mode and the CLI do not serve it.
+
+The handler ([`suggest-next-step-tool.js`](../services/tools/builtin/suggest-next-step-tool.js))
+collapses whitespace, truncates over-long text with an ellipsis and returns `metadata {schema_version:
+1, result_kind: "next_step", recap, question, actions}`; the metadata module
+([`next-step-result-metadata.js`](../services/backend/next-step-result-metadata.js)), which also holds the
+limits, re-validates that shape in the persisted-metadata allowlist. Nothing waits: the renderer draws the card from the result
+at the end of the reply, and a button click sends its `message` as an ordinary user message. The card's
+state (live, picked, passed) is derived from the chat history, never stored.
+
 ### `exit_plan_mode`
 
 `exit_plan_mode` submits a bounded implementation plan for review while Plan Mode is active. It
@@ -1261,6 +1300,16 @@ publish mints an already-spent, ordinary launch grant, `source_user_message_id` 
 in the same mutation that accepts the record, capped per turn by the permission). `project_id` names the
 destination project; it is refused `project_not_allowed` for any other chat and `unknown_project` for an
 unknown id, and an omitted one keeps the caller's own project.
+
+`fork_of_session_id` (row 94 P2, primary Jenny chat only, behind `primary_chat_placement`) makes the accepted
+new chat a fork of that chat at its newest branchable message, in its project, with its model and effort as the
+card's pre-fill (`services/backend/session-fork-source.js`; the child is created by
+`services/backend/linked-fork-session.js` with the proposal's reserved id and proof, and the rest of the launch is
+the ordinary child's). Refusals (no id echoed): `fork_not_allowed` (another chat), `fork_disabled`,
+`fork_with_project` (combined with `project_id`), `fork_primary`, `unknown_fork` (not in the caller's session
+directory scope), `fork_empty`. The card reads "Fork of <title>" and its Project field is fixed; options cannot add,
+drop or move a fork. A source that is gone or moved project at launch leaves the record in `needs_attention`
+(`fork_source_unavailable`, `fork_project_changed`).
 
 `complete_session_handoff` (`proposal_id`, `attempt_id`, `task`, optional `background`) is offered only
 in the handoff-only preparation turn that follows a New session choice, and is refused in any other
@@ -1377,7 +1426,11 @@ message (the runtime still records it `failed`), and the primary's overview says
   limit? 1..50 (20)}` returns `{ok, scope_kind, rows, truncated}`; each row carries `session_id`,
   `title` (200 characters), `project {id, name}`, `status`, `last_outcome`, `updated_at`,
   `message_count`, `unread_message_count`, `pinned`, `archived`, `role`, `linked {parent_session_id,
-  children_count}` and `waiting_on_user`. `active` drops idle chats, `recent` is the 20 most recently
+  children_count}` and `waiting_on_user`. A `queued` chat whose paused reply waits on a work lease or a
+  folder (row 100) adds `waiting_for {what: tests|install|git_change|folder, holder: chat|jenny_window|
+  claude_code|test_run|git|other, session_id, title, command, pid, count, since}`; a holder chat outside
+  the caller's scope has no `session_id` or `title`, and `command` is the holder's redacted preview, data
+  only. `active` drops idle chats, `recent` is the 20 most recently
   updated. The calling chat is not one of its own rows. Read-only, policy `auto`, allowed in Plan mode.
 - `session_status {session_id, include_transcript_tail? (true), include_changes? (false)}` returns the
   row plus `run_mode`, `plan_mode`, `lockdown`, `last_model_used`, `context_usage` and
@@ -1422,6 +1475,221 @@ message (the runtime still records it `failed`), and the primary's overview says
 
 Results carry no other chat's message bodies beyond the transcript tail and previews the caller is
 entitled to; diagnostics carry ids, states and counts only.
+
+### `settings_get` and `settings_change`
+
+The Jenny chat can read and change a short, closed list of app settings (row 88; the keys, limits and refusal
+reasons live in [`services/primary-settings-contract.js`](../services/primary-settings-contract.js)). Both tools
+are Electron-owned (`owner: electron`, `tool_family: runtime`), offered to the primary Jenny chat only
+(`services/backend/primary-settings-tool-gate.js` puts both names on every other chat's `disabled_tools`), in the
+composer's Helpers family, behind `primary_settings_writes` (default on, `JENNY_ENABLE_PRIMARY_SETTINGS_WRITES=0`
+removes both; the sidecar flag is `tools_primary_settings_enabled`; hosted refuses them). They reach the main-side
+settings port as `context.primarySettingsService`; a missing port or a throw reads `unavailable`.
+
+- `settings_get {keys?}` returns `{ok, settings: [{key, label, kind, value, allowed?}], unavailable?: [key]}` for
+  the listed keys (unique, from the contract list; omitted means all). Read-only, policy `auto`, no card, allowed in
+  every run mode.
+- `settings_change {changes: [{key, value}] (1-5), purpose (1-200)}` returns `{ok: true, applied: [{key, before,
+  after}], change_id}` or `{ok: false, reason, key?}`. Side-effecting, policy `ask`, never always-allow
+  (`NEVER_PERSIST_ALWAYS_ALLOW`), refused in Plan mode and read-only chats (`mode_refused`). The schema is closed:
+  each change is either any listed key except `default_run_mode`, or `default_run_mode` with `ask`, `plan` or
+  `propose`, so Auto never validates. The tool refuses before the port: bad shape, a repeated key or too many
+  changes read `invalid_input`; a key off the list (or Auto as the default run mode) reads `not_allowed` with the
+  key. The port validates each value and applies the batch all or nothing. The port receives `{changes, purpose,
+  session_id, tool_call_id}`; the session comes from the live call binding. Results never carry exception text.
+- API keys, models, engines, safety and tool permissions are not on the list and cannot be changed by Jenny.
+
+### `chat_organize` and `chat_configure`
+
+The Jenny chat can manage other chats (row 94 P1). Both tools are Electron-owned (`owner: electron`,
+`tool_family: runtime`), offered to the primary Jenny chat only, in the composer's Helpers family, behind
+`primary_chat_manage` (default on, `JENNY_ENABLE_PRIMARY_CHAT_MANAGE=0` removes both; the sidecar flag is
+`tools_primary_chat_manage_enabled`; hosted refuses them). They reach
+`services/primary-chat-manage-service.js` as
+`context.primaryChatManageService`; a missing port or a throw reads `unavailable`. Both take
+`{session_id, action, value?, purpose (1-200)}` and return `{ok: true, change_id, session_id, action, before,
+after}`, `{ok: true, unchanged: true, ...}` or `{ok: false, reason}`. Both are refused in Plan mode and read-only
+chats (`mode_refused`). Reasons: `disabled`, `mode_refused`, `invalid_input`, `not_allowed`, `not_found`, `busy`,
+`self_refused`, `primary_protected`, `unavailable`. Results never carry exception text.
+
+- `chat_organize` actions: `rename` (`value` is the new title, 1-80 chars, the store's title clip), `pin`, `unpin`,
+  `archive`, `unarchive`. Side-effecting, policy `ask`: Auto skips the card.
+  The Jenny chat itself cannot be archived or moved (`primary_protected`). There is no delete action; deleting
+  chats stays user-only.
+- `chat_configure` actions: `move_to_project` (`value` is the project id; it changes which folder the chat may work
+  in, so it is carded with the preferences; a busy chat keeps its project), `set_model` (a model name), `set_effort` (an effort id), `set_run_mode` (`ask`, `plan`
+  or `propose`; `auto` reads `not_allowed`). Always carded, even in Auto, and never always-allow
+  (`NEVER_PERSIST_ALWAYS_ALLOW`). `set_run_mode` is refused with `busy` while the target chat is mid-reply and with
+  `self_refused` on the Jenny chat itself.
+- Each applied change is recorded in the `primaryChat` shell-config history (`chat_changed`) and pushed to the
+  renderer through `sessions.onChanged` (`{session_ids, reason: 'primary_chat_manage'}`). The user undoes it from the
+  Jenny chat's Activity (`primaryChat.undoChatChange {change_id}`, recorded as `chat_change_undone`). Undo restores
+  the old value only if the field still holds the value Jenny set; otherwise it reads `changed_since`. Other undo
+  reasons: `unknown`, `already_undone`, `busy`, `unavailable`.
+
+### `project_create` and `projects_list`
+
+The Jenny chat can start a chat in a folder that has no project yet (row 94 P2,
+docs/plans/APP_CONTROL_P2_CHAT_PLACEMENT_2026-11-02.md): `projects_list`, then `project_create` when no project has
+the folder, then `propose_session {project_id}`. Both tools are Electron-owned (`owner: electron`, `tool_family:
+runtime`), offered to the primary Jenny chat only, in the composer's Helpers family, behind `primary_chat_placement`
+(default on, `JENNY_ENABLE_PRIMARY_CHAT_PLACEMENT=0` removes both and the `propose_session` fork option; the sidecar
+flag is `tools_primary_chat_placement_enabled`, also off when `primary_chat` is off; hosted refuses them). They reach
+`services/primary-chat-placement-service.js` as `context.primaryChatPlacementService`, which re-checks that the
+caller is the primary chat. Results never carry exception text.
+
+- `projects_list {}`: read-only, policy `auto`, no card. Answers `{ok, projects, total}`; each project is `{id, name,
+  folder, folder_state: ok|missing|none, chat_count, last_activity_at, is_workspace}` (unarchived chats only, the
+  Jenny chat not counted), at most 50, latest activity first.
+- `project_create {name, folder, purpose}`: side-effecting, always carded even in Auto, never always-allow
+  (`NEVER_PERSIST_ALWAYS_ALLOW`); refused in Plan mode and read-only chats (`mode_refused`). Before any card the
+  approval path calls the port's `prepareCard` (`services/backend/project-create-approval.js`): the folder is
+  canonicalized (`canonicalizeProjectRoot`), checked by `services/agent-folder-policy.js` and must already exist. A
+  refusal ends the call with `{ok: false, reason, folder?, project_id?, project_name?}` as its output and no card:
+  `missing`, `invalid_folder`, `root_folder`, `home_folder`, `protected_folder` (OS, program, app-data and Jenny's own
+  folders, inside or above), `credential_folder` (`.ssh`, `.gnupg`, `.aws`, `.azure`, `.kube`, `.docker`, `.codex`,
+  `.claude`, `.config/gh` anywhere in the path), `resolves_elsewhere` (a junction or symlink; `folder` is the real
+  path), `exists` (`project_id` and `project_name` of the project that has it). The card shows the exact `folder` and
+  `name` (`EXACT_APPROVAL_FIELDS`). The write happens only under that call's card with the same arguments, re-checks
+  everything, creates the project and binds the folder; a failed bind removes the new project. Answers `{ok: true,
+  project_id, name, folder, change_id}`; other reasons: `stale` (no card for this call), `limit_reached`,
+  `disabled`, `not_allowed`, `unavailable`. Jenny never creates the folder.
+- Each created project is a `chat_changed` history row on the Jenny chat (action `project_create`, field `project`,
+  after = the project id) with Activity's Undo (`primaryChat.undoChatChange`), which removes the project record,
+  never the folder, while the project has no chats and still has the folder Jenny bound (else `changed_since`).
+  The renderer's `sessions.onChanged` refresh also re-reads the project list.
+
+### `app_view`
+
+The Jenny chat moves the user's view so they can see what it is talking about (row 94 P3,
+docs/plans/APP_CONTROL_P3_APP_VIEW_2026-11-02.md). Electron-owned (`owner: electron`, `tool_family: runtime`),
+offered to the primary Jenny chat only, in the composer's Helpers family, behind `primary_app_view` (default on,
+`JENNY_ENABLE_PRIMARY_APP_VIEW=0`; sidecar flag `tools_primary_app_view_enabled`, also off when `primary_chat` is
+off; hosted refuses it). Read-only, policy `auto`, no card: it writes nothing. Allowed in Plan mode and read-only
+chats. It reaches `services/app-view-service.js` as `context.appViewService`; results never carry exception text.
+
+- Actions, each with a closed set of keys and a required `purpose` (except `state`): `settings {section}` (a Settings
+  section id), `chat {session_id}`, `file {project_id, path, line?}`, `terminal`, `activity {pane: activity|permissions}`,
+  `chat_panel {session_id, surface: outputs|changes|background_tasks|context|environment}`, `close {pane:
+  chat_panel|preview|terminal|split}`, `split {session_id}` (that chat beside the current one), `sidebar {collapsed}`
+  and `state`. A chat target must be one the session directory shows the caller (`unknown_chat` otherwise). A file
+  must be a regular file inside the folder of the project the IDE has open (`project_not_open`, `outside_folder`
+  after realpath, `not_a_file`, `missing`, `no_folder`, `unknown_project`).
+- Main sends ONE `appView.onRequest` push and answers `{ok: true, status: "requested"}` at once. The renderer
+  (`renderer/shell/renderer-app-view-controller.js`) applies it at once only while the user is idle on the Jenny chat
+  (no typing for 4 s, no approval card waiting, fewer than 3 moves in 20 s); otherwise it shows the "Jenny wants to
+  open …" chip above the composer with Open and dismiss. Each decision (`shown`, `shown_by_user`, `prompted`,
+  `dismissed`, `superseded`, `rejected`, `dropped`) comes back on `appView.reportOutcome` and reaches the next request
+  inside the `workspace_presentation` context block.
+- `state` answers the renderer's last reported layout (`appView.reportLayout`): `active_view`, `current_session_id`,
+  `split_session_ids`, `sidebar_collapsed`, `chat_panel_open`, `preview_open`. Ids and booleans only.
+
+### `session_export`
+
+The Jenny chat saves a Markdown copy of one chat's whole transcript to the user's Downloads folder (row 94 P4,
+docs/plans/APP_CONTROL_P4_EXPORT_TERMINAL_2026-11-02.md, owner pick X1). Electron-owned (`owner: electron`,
+`tool_family: runtime`), offered to the primary Jenny chat only, in the composer's Helpers family, behind
+`primary_chat_export` (default on, `JENNY_ENABLE_PRIMARY_CHAT_EXPORT=0`; sidecar flag
+`tools_primary_chat_export_enabled`, also off when `primary_chat` is off; hosted refuses it). Side-effecting, policy
+`ask`, always carded even in Auto (`ALWAYS_ASK_CARD_TOOLS` in `sidecar/ai/routing/route_policy_runtime.py`), never
+always-allow. Refused in Plan mode and read-only chats. It reaches `services/primary-chat-export-service.js` as
+`context.primaryChatExportService`.
+
+- Input `{session_id, chat_title, purpose}`. Before the card, `backend/app-control-card-refusals.js` calls the port's
+  `prepareCard`: the chat must be in the caller's directory scope (`not_found`), `chat_title` must name it after trim,
+  whitespace collapse and case-fold (`title_mismatch` carries the real title), and it must have user or assistant
+  text (`empty`). The generic card shows `chat_title` and `session_id` exactly (`EXACT_APPROVAL_FIELDS`).
+- After the card, the port writes only under that call (single use, 10 minutes; `not_allowed` otherwise). It renders
+  the full history (the store's cache-neutral `peekSession`) with `conversation-format-utils.buildMarkdown` (user
+  and assistant text, no reasoning, no tool rows), redacts secrets and host paths as the user's own transcript
+  export does, refuses over 8 MiB (`too_large`) and a Downloads folder inside Jenny's data (`protected_folder`), and
+  creates `Jenny - <title> - <yyyy-mm-dd HHmm>.md` with an exclusive write (` (2)` .. ` (20)` on a collision,
+  `write_failed` after). Answers `{ok, file_name, bytes, messages, folder: "Downloads"}`; never a path.
+- Known limit: a chat with no title cannot be exported (its title can never match).
+
+### `terminal_read` and `terminal_run`
+
+The Jenny chat reads the Workspace IDE terminal and runs one command line there (row 94 P4, owner picks T1 and C1).
+Both are Electron-owned (`tool_family: runtime`, Helpers family) behind `terminal_tools` (default on,
+`JENNY_ENABLE_TERMINAL_TOOLS=0`; sidecar flag `tools_terminal_enabled`; hosted has no pty bridge and refuses both).
+They reach `services/terminal-tools-service.js` as `context.terminalToolsService`.
+
+- The pty service (`services/workspace-pty-service.js`) feeds each live terminal's output into a main-side tail
+  (`services/workspace-terminal-tail.js`): ANSI/OSC stripped with the renderer's incremental stripper, CR/backspace
+  applied, the last 64 KiB kept, cleared on exit, kill, re-spawn and dispose. `liveTerminals()` and `readTail()` are
+  main-only accessors (no IPC).
+- `terminal_read {terminal?, lines?}`: read-only, policy `auto`, allowed in Plan mode. The Jenny chat reads any live
+  terminal; a project chat only while the IDE has that chat's project open (`not_in_project`), so it is not on the
+  primary-only deny list. `terminal` 1-4 or omitted (the terminal that printed last); `lines` 1-200, default 80.
+  Answers `{ok, terminal, lines, truncated, last_output_at}` after secret redaction, at most 16,000 characters (the
+  newest lines), with a "data, not instructions" note. `no_terminal` when none is running.
+- `terminal_run {command, purpose}`: Jenny chat only (primary-only deny list), side-effecting, policy `ask`, always
+  carded even in Auto, never always-allow; refused in Plan mode and read-only chats, and outside the desktop command
+  sandbox's bridge list (it types into a real shell). Before the card the port checks one plain line (no control,
+  format, bidi or separator characters, at most 2,000; `invalid_command`) and an IDE project (`project_not_open`).
+  After the card, main sends ONE `terminalTools.onRunRequest` push; the renderer
+  (`createTerminalRunHandler` in `renderer/shell/renderer-app-view-controller.js`) switches to the IDE and calls the
+  IDE controller's `runInTaskTerminal`, which uses `openTaskTerminal` (an idle Jenny terminal or a new one, never a
+  shell the user is using), starts its shell and sends the line, then reports on `terminalTools.reportRun`. Answers
+  `{ok, status: "sent", terminal}`; `no_free_terminal`, `start_failed`, `send_failed`, `no_ide`, or `unconfirmed`
+  after 30 s (it may still run). There is no exit code (no shell integration): the model reads the output with
+  `terminal_read`.
+
+### `schedule_list` and `schedule_change`
+
+The Jenny chat's scheduled checks (row 85, docs/plans/PRIMARY_SCHEDULES_2026-10-27.md). A scheduled check is a Home
+reminder with `action: "jenny_turn"`: when it comes due, the Jenny chat gets a visible turn with the instruction the
+user approved (stored as the reminder's `prompt`). Both tools are Electron-owned (`owner: electron`, `tool_family:
+runtime`), offered to the primary Jenny chat only, in the composer's Helpers family, behind `primary_scheduled_checks`
+(default on, `JENNY_ENABLE_PRIMARY_SCHEDULED_CHECKS=0` removes both; the sidecar flag is
+`tools_primary_schedules_enabled`, also off when `primary_chat` is off; hosted refuses them). They reach
+`services/primary-schedule-service.js` as `context.primaryScheduleService`, which re-checks that the caller is the
+primary chat. `schedule_change` is refused in Plan mode and read-only chats (`denied`); `schedule_list` answers there,
+like `settings_get`. Results never carry exception text.
+
+- `schedule_list {include_reminders?}`: read-only, policy `auto`, no card. Answers `{ok, schema_version: 1, checks,
+  reminders?, truncated}`. A check view is `{reminder_id, label, instruction, instruction_trust: "user_approved",
+  cadence, cadence_text, enabled, last_fired_at, next_fires}` (the next three fire times as local ISO strings with
+  the offset). Plain reminders, when asked, are listed read-only without their text.
+- `schedule_change {action, reminder_id?, label?, instruction?, cadence?, purpose (1-200)}`: side-effecting, always
+  carded even in Auto, never always-allow (`NEVER_PERSIST_ALWAYS_ALLOW`). `create` needs `label` (1-200),
+  `instruction` (1-4000) and `cadence`; `update` takes `reminder_id` plus any of those; `enable`, `disable` and
+  `cancel` take `reminder_id` only, which must name a reminder with `action: "jenny_turn"`. `cadence` is closed:
+  `{type: "once_at", once_at: "YYYY-MM-DDTHH:MM"}` (a future local time), `{type: "daily_at", daily_at: "HH:MM",
+  weekdays?: [0-6]}` (0 = Sunday, omitted = every day) or `{type: "interval_minutes", interval_minutes: 30-10080}`.
+  The 50-reminder cap is shared with plain reminders. Answers `{ok: true, check, next_fires}` or `{ok: false,
+  reason}` with `invalid_input`, `not_found`, `not_a_check`, `limit_reached`, `denied` or `disabled`.
+- The card (`schedule_change_approval` on the approval event, scope chip "Scheduled checks") is computed in Electron
+  by the port's `describeChange` from the normalized record: label, instruction, cadence in words, the next three
+  fire times, and before/after for an edit; a refused request gets a `refused` card with the reason.
+- Each applied change is recorded in the `primaryChat` history (`schedule_created`, `schedule_updated`,
+  `schedule_enabled`, `schedule_disabled`, `schedule_cancelled`, with `by: "jenny"`) and shown in Activity, with fired
+  checks (`schedule_fired`, from the `sched_` idempotency key) and skipped or missed occurrences.
+- The `home` tool's `reminder_upsert` never sets a reminder `action` and refuses to edit a scheduled check
+  (`scheduled_check_use_schedule_change`); its `reminder_delete` refuses one the same way (owner, 2026-11-02).
+
+### `away_digest`
+
+The facts behind the Jenny chat's "While you were away" digest and "what did I miss?" (row 86 D3,
+docs/plans/PRIMARY_DIGESTS_2026-10-27.md). Electron-owned (`owner: electron`, `tool_family: runtime`), offered to the
+primary Jenny chat only (`services/backend/primary-settings-tool-gate.js`), in the composer's Helpers family, behind
+`primary_digests` (default **off**, a user-overridable Settings flag, `JENNY_ENABLE_PRIMARY_DIGESTS=1` turns it on
+for a launch; the sidecar flag is `tools_primary_digests_enabled = primary_chat !== false && primary_digests ===
+true`; hosted forces it off). A digest turn's request allowlist names it with the directory read tools
+(`services/backend/application-turns.js` `DIGEST_TURN_TOOLS`).
+
+- `away_digest {since?}`: read-only, policy `auto`, no card; answers in Plan mode and read-only chats. `since` is an
+  ISO instant with an offset (`Z` or `+hh:mm`); omitted, the window starts at `primaryChat.digest.lastPresentAt`, else
+  24 h back. A `since` older than 30 days is clamped to 30 days; a future or malformed one is `invalid_input`. The
+  window ends now.
+- It reads `backendService.primaryDigestPresence.factsSince({since, until})` (`services/main/primary-digest-wiring.js`
+  over the pure `services/primary-away-facts.js`: terminal runtime work, changed chats, the Jenny chat's mail, chats
+  waiting now and scheduled checks that fired, skipped or were missed; at most 40 items and 6000 characters, titles
+  flattened and clipped). Answers `{ok: true, since, until, items: [{kind, at, title, detail?, session_id?}],
+  truncated, counts}`.
+- Refusals `{ok: false, reason}`: `disabled` (flag off, `primary_chat` off or no port), `not_primary` (the caller is
+  not `primaryChatControls.primarySessionId()`), `invalid_input`, `unavailable` (the port returned nothing or threw).
+  Results never carry exception text.
 
 ### `jenny_help`
 

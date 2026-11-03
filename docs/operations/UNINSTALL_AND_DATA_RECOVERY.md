@@ -14,6 +14,15 @@ driven: unknown files, shared models, and ordinary workspace files are retained.
 - **Permanently remove everything** requires the exact phrase `REMOVE JENNY`
   and removes only known Jenny-owned paths. Workspace `.jenny` data is a
   separate, default-off choice.
+- **Also remove my skills** appears on both the archive and the permanent
+  review and is off by default. Your own skills live in `~/.companion/skills`
+  (`%USERPROFILE%\.companion\skills` on Windows); they are not part of any
+  archive, so removal keeps that folder unless you check this option. A checked
+  option removes the folder with the same link checks as other cleanup targets:
+  if the folder is itself a link, or anything inside it is a symlink or
+  junction, the folder is retained and the receipt reports it. The terminal
+  fallback (`npm run uninstall -- --terminal`) does not offer the option and
+  always keeps the folder.
 
 Silent Windows uninstall always means app-only. Dragging the macOS app to Trash
 also removes only the app. Clone dependency cleanup and clone deletion are
@@ -141,6 +150,7 @@ The cleanup service revalidates each target immediately before mutation,
 refuses links/reparse traversal, is safe to retry, and reports per-target
 receipts. Profile and runtime cleanup use exact child-name allowlists. Unknown
 profile children and unknown `.companion` children are retained and reported;
+`skills` is one of them unless **Also remove my skills** was checked;
 `models` and `python-runtime` are intentionally outside those allowlists.
 `image-gen`, left by the archived image plugin, is also retained; remove it by
 hand as described above. A leftover `<userData>/plugins/` folder from an older

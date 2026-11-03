@@ -33,6 +33,7 @@ def inspect_server(  # noqa: PLR0911 -- explicit bounded validation/failure cont
     params: Any,
     *,
     allow_private_addresses: bool = False,
+    allow_loopback: bool = False,
     cancel_handle: Any = None,
 ) -> dict[str, Any]:
     started = perf_counter()
@@ -62,6 +63,7 @@ def inspect_server(  # noqa: PLR0911 -- explicit bounded validation/failure cont
         inspect_timeout = parsed[0].inspect_timeout_seconds
         client = MCPClient(request_timeout_seconds=inspect_timeout)
         client._allow_private_addresses = bool(allow_private_addresses)
+        client._allow_loopback = bool(allow_loopback)
         config = replace(
             parsed[0],
             request_timeout_seconds=min(parsed[0].request_timeout_seconds, inspect_timeout),

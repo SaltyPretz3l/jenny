@@ -267,6 +267,21 @@
     }
   }
 
+  // Row 88 D6: folds a preferences object committed in main by another writer into the ide
+  // slice; returns the keys that actually differed (empty on an echo). Never writes back.
+  function adoptExternalPreferences(state, persisted) {
+    if (!state || !persisted || typeof persisted !== 'object') { return []; }
+    const ide = ensureIdeSlice(state);
+    const keys = fieldModules().descriptors.listSettingDescriptors({ adapterId: 'workspaceIde' }).map((d) => d.key);
+    const changed = [];
+    for (const key of [...keys, 'eol']) {
+      if (!(key in persisted) || JSON.stringify(ide[key]) === JSON.stringify(persisted[key])) { continue; }
+      ide[key] = persisted[key];
+      changed.push(key);
+    }
+    return changed;
+  }
+
   function notSavedText() {
     return jt('settings.editor.settingNotSaved', 'That editor preference could not be saved. Your previous setting is still active.');
   }
@@ -387,6 +402,7 @@
   // Public surface: the two wired entry points + the helper covered by unit
   // tests. The rest stay module-private (no consumer binds to them).
   return {
+    adoptExternalPreferences,
     bindEditorSection,
     clampFontSize,
     renderEditorSection,

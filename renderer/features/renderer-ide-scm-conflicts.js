@@ -22,10 +22,24 @@
   // space or EOL. A block counts by whichever end survived a half-edit.
   const START_RE = /^<{7}(?: |\r?$)/gm;
   const END_RE = /^>{7}(?: |\r?$)/gm;
+  // The workspace read cap (READ_MAX_BYTES_DEFAULT in services/workspace-ide-service.js):
+  // a larger file is refused (CMP-WORKSPACEFS-0011), so its markers cannot be checked.
+  const READ_CAP_BYTES = 5 * 1024 * 1024;
+  const TOO_LARGE_CODE = 'CMP-WORKSPACEFS-0011';
 
   function conflictKindOf(file) {
     const pair = `${(file && file.index) || ''}${(file && file.worktree) || ''}`;
     return KINDS.has(pair) ? pair : 'UU';
+  }
+
+  // During a rebase git swaps the sides: "us" is the branch being rebased
+  // onto and "them" is your commit being replayed, so a deletion conflict
+  // reads the other way round for the user. Keep / Delete stay the same.
+  function displayKindOf(kind, rebasing) {
+    if (!rebasing) return kind;
+    if (kind === 'UD') return 'DU';
+    if (kind === 'DU') return 'UD';
+    return kind;
   }
 
   function countConflictBlocks(text) {
@@ -68,12 +82,13 @@
 
   // deps: { escapeHtml, actionButton, actionBtn } (actionBtn is the panel's
   // own row-action builder); confirmCount > 0 renders the markers confirm
-  // line under the row.
-  function buildConflictRowMarkup(file, deps, confirmCount) {
+  // line under the row; rebasing flips the deletion-conflict wording;
+  // tooLarge adds a muted note that the markers could not be checked.
+  function buildConflictRowMarkup(file, deps, confirmCount, rebasing, tooLarge) {
     const { escapeHtml, actionButton, actionBtn: act } = deps;
     if (!actionButton) return '';
     const path = String(file.path || '');
-    const kind = conflictKindOf(file);
+    const kind = displayKindOf(conflictKindOf(file), rebasing === true);
     const dir = parentDirOf(path);
     const label = kindLabel(kind);
     // A both-deleted file has nothing on disk to open: the button stays a
@@ -96,6 +111,11 @@
     let markup = `<div class="ide-scm-row" data-ide-scm-path="${escapeHtml(path)}" title="${escapeHtml(path)}">`
       + fileButton
       + `<span class="ide-scm-row-actions">${actions}</span></div>`;
+    if (tooLarge === true && !(confirmCount > 0)) {
+      markup += '<div class="ide-scm-row-confirm" data-ide-scm-conflict-note>'
+        + escapeHtml(jt('ide.sourceControl.conflictTooLargeToCheck', 'Too large to check for conflict markers.'))
+        + '</div>';
+    }
     if (confirmCount > 0) {
       const blocks = jtn('ide.sourceControl.conflictBlockCount', confirmCount, { count: confirmCount }, '{count} conflict block', '{count} conflict blocks');
       const rest = jt('ide.sourceControl.conflictMarkersLeft', 'still in this file.');
@@ -113,9 +133,10 @@
   const OWN_REASONS = new Set(['not_conflicted', 'directory_unsupported', 'trash_unavailable', 'trash_failed']);
 
   // The git-feature side: Mark resolved checks the file for leftover markers
-  // first (an unreadable or binary file skips the guard: the click was
-  // explicit), and Delete resolves through the confirm-gated resolveDelete
-  // (recycle bin, then the deletion is staged).
+  // first (an unreadable, binary or over-cap file skips the guard: the click
+  // was explicit; an over-cap row says so beforehand through probeSizes), and
+  // Delete resolves through the confirm-gated resolveDelete (recycle bin, then
+  // the deletion is staged).
   function createConflictResolver(deps) {
     const options = deps || {};
     const store = options.store || null;
@@ -125,6 +146,43 @@
     const editorHost = options.editorHost || null;
     const stage = typeof options.stage === 'function' ? options.stage : async () => ({ ok: false });
     const toast = typeof options.toast === 'function' ? options.toast : noop;
+    // Conflicted paths too large to read for the markers check, and the size
+    // probes in flight (one per path).
+    const tooLarge = new Set();
+    const probing = new Set();
+    // Last probe time per path: a panel render re-probes a path at most every PROBE_EVERY_MS.
+    const probedAt = new Map();
+    const PROBE_EVERY_MS = 30000;
+
+    function setTooLarge(path, value) {
+      if (value === tooLarge.has(path)) return false;
+      if (value) tooLarge.add(path);
+      else tooLarge.delete(path);
+      return true;
+    }
+
+    // Stats each conflicted path; onChange runs when a path's over-cap state flips.
+    function probeSizes(paths, onChange) {
+      const api = getWorkspaceFsApi();
+      if (!api || typeof api.stat !== 'function') return;
+      const current = new Set(Array.isArray(paths) ? paths : []);
+      for (const known of [...probedAt.keys()]) {
+        if (!current.has(known)) { probedAt.delete(known); tooLarge.delete(known); }
+      }
+      const now = Date.now();
+      for (const path of current) {
+        if (!path || probing.has(path) || now - (probedAt.get(path) ?? -Infinity) < PROBE_EVERY_MS) continue;
+        probing.add(path);
+        probedAt.set(path, now);
+        Promise.resolve()
+          .then(() => api.stat({ path }))
+          .then((info) => {
+            const over = Boolean(info && info.exists === true && info.kind === 'file' && Number(info.size) > READ_CAP_BYTES);
+            if (setTooLarge(path, over) && typeof onChange === 'function') onChange();
+          }, noop)
+          .finally(() => probing.delete(path));
+      }
+    }
 
     async function resolve(path) {
       const api = getWorkspaceFsApi();
@@ -132,8 +190,9 @@
       try {
         const payload = api && typeof api.readFile === 'function' ? await api.readFile({ path }) : null;
         count = countConflictBlocks(payload && payload.content);
-      } catch (_error) {
-        /* unreadable or binary: skip the guard (count stays 0) */
+      } catch (error) {
+        /* unreadable, binary or over the read cap: skip the guard (count stays 0) */
+        if (String((error && error.code) || '') === TOO_LARGE_CODE) setTooLarge(path, true);
       }
       if (count > 0) {
         return { needsConfirm: true, count };
@@ -146,10 +205,14 @@
         return false;
       }
       const file = fileNameOf(path);
+      // Unsaved edits in an open tab are named in the confirm and discarded with the file.
+      const dirtyTab = editorHost?.hasDocument?.(path) === true && editorHost?.isDirty?.(path) === true;
+      const message = jt('ide.git.resolveDeleteConfirmMessage', 'This moves {file} to the recycle bin and marks the conflict resolved.', { file })
+        + (dirtyTab ? ` ${jt('ide.git.resolveDeleteUnsavedTab', '{file} has unsaved changes in an open tab; they will be discarded.', { file })}` : '');
       const approved = confirmDialog && typeof confirmDialog.confirm === 'function'
         ? await confirmDialog.confirm({
           title: jt('ide.git.resolveDeleteConfirmTitle', 'Delete {file}?', { file }),
-          message: jt('ide.git.resolveDeleteConfirmMessage', 'This moves {file} to the recycle bin and marks the conflict resolved.', { file }),
+          message,
           confirmLabel: jt('ide.git.resolveDeleteConfirm', 'Delete'),
           cancelLabel: jt('ide.git.resolveDeleteCancel', 'Cancel'),
           variant: 'danger',
@@ -164,14 +227,16 @@
         toast(specific || jt('ide.git.resolveDeleteFailed', 'Could not delete {file} to resolve the conflict.', { file }), `ide:resolve-delete:${path}`);
         return false;
       }
-      // The file is gone: close a clean open tab; unsaved work stays open.
-      if (editorHost?.hasDocument?.(path) === true && editorHost?.isDirty?.(path) !== true) {
+      // The file is gone: close its open tab when it is clean or the confirm
+      // named its unsaved edits (closeTab never prompts); edits made after the
+      // confirm stay open.
+      if (editorHost?.hasDocument?.(path) === true && (dirtyTab || editorHost?.isDirty?.(path) !== true)) {
         getFileLifecycle()?.closeTab?.(path);
       }
       return true;
     }
 
-    return { resolve, resolveDelete };
+    return { resolve, resolveDelete, probeSizes, isTooLargeToCheck: (path) => tooLarge.has(path) };
   }
 
   return {

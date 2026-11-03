@@ -91,6 +91,9 @@
     const openPreview = typeof d.openPreview === 'function' ? d.openPreview : noop;
     const openFileMap = typeof d.openFileMap === 'function' ? d.openFileMap : noop;
     const revealInMap = typeof d.revealInMap === 'function' ? d.revealInMap : noop;
+    // file → the IDE's open-file-at-line seam; returns true only when the IDE
+    // took the open (absent → the request is rejected, never silently lost).
+    const openFileAtLine = typeof d.openFileAtLine === 'function' ? d.openFileAtLine : null;
     const getSessionId = typeof d.getSessionId === 'function' ? d.getSessionId : () => '';
     const getWorkspaceId = typeof d.getWorkspaceId === 'function' ? d.getWorkspaceId : () => '';
     const getChangeLedger = typeof d.getChangeLedger === 'function' ? d.getChangeLedger : () => ({ changes: [] });
@@ -120,7 +123,8 @@
       lastEditAt = now();
     }
 
-    function surfaceLabel(view) {
+    function surfaceLabel(view, path) {
+      if (view === 'file') return jt('workspace.presentation.file', 'the file {path}', { path });
       return view === 'preview' ? jt('workspace.presentation.preview', 'Preview') : view === 'change_diff' ? jt('workspace.presentation.changeDiff', 'change diff') : jt('workspace.presentation.fileMap', 'File Map');
     }
 
@@ -248,6 +252,9 @@
         });
       } else if (request.view === 'change_diff') {
         report(request, { decision: applyChangeDiff(request) ? decision : 'rejected' });
+      } else if (request.view === 'file') {
+        const opened = openFileAtLine ? openFileAtLine(request.path, request.line) === true : false;
+        report(request, { decision: opened ? decision : 'rejected' });
       } else {
         report(request, { decision });
         openFileMap();
@@ -309,13 +316,15 @@
         ? request.path ? jt('workspace.presentation.previewTarget', 'a preview of {path}', { path: request.path }) : jt('workspace.presentation.previewTargetFallback', 'a preview of a file')
         : request.view === 'change_diff'
           ? jt('workspace.presentation.changeTarget', 'the change to {path}', { path: request.path })
-          : request.path ? jt('workspace.presentation.fileMapTargetForPath', 'the File Map for {path}', { path: request.path }) : jt('workspace.presentation.fileMapTarget', 'the File Map');
+          : request.view === 'file'
+            ? request.line ? jt('workspace.presentation.fileTargetAtLine', 'the file {path} at line {line}', { path: request.path, line: request.line }) : surfaceLabel('file', request.path)
+            : request.path ? jt('workspace.presentation.fileMapTargetForPath', 'the File Map for {path}', { path: request.path }) : jt('workspace.presentation.fileMapTarget', 'the File Map');
       chipEl.innerHTML = `<span class="ide-presentation-chip-copy">${escapeHtml(jt('workspace.presentation.wantsToShow', 'Jenny wants to show {what}', { what }))}</span>`
         + actionButton({
           plain: true,
           className: 'ide-presentation-chip-show',
           label: jt('workspace.presentation.show', 'Show'),
-          title: jt('workspace.presentation.showSurface', 'Show {surface}', { surface: surfaceLabel(request.view) }),
+          title: jt('workspace.presentation.showSurface', 'Show {surface}', { surface: surfaceLabel(request.view, request.path) }),
           dataset: { 'presentation-show': '1' },
         })
         + actionButton({
@@ -373,11 +382,7 @@
         return;
       }
       const requestId = normalizeOpaqueId(payload.request_id);
-      const view = payload.view === 'preview'
-        ? 'preview'
-        : payload.view === 'file_map'
-          ? 'file_map'
-          : payload.view === 'change_diff' ? 'change_diff' : '';
+      const view = ['preview', 'file_map', 'change_diff', 'file'].includes(payload.view) ? payload.view : '';
       if (!view || isSurfaceEnabled(view) !== true) {
         appendClientLog('WARN', 'workspace_presentation.request_rejected', {
           view: String(payload.view || ''),
@@ -392,6 +397,15 @@
       const changeId = payload.change_id ? normalizeOpaqueId(payload.change_id) : '';
       const scoped = Object.prototype.hasOwnProperty.call(payload, 'session_id')
         || Object.prototype.hasOwnProperty.call(payload, 'workspace_id');
+      // Defensive re-gate of main's file payload: a path, and a line (when
+      // present) that is a bounded 1-based integer.
+      const hasLine = payload.line !== undefined && payload.line !== null;
+      const line = hasLine && Number.isInteger(payload.line) && payload.line >= 1 && payload.line <= 1_000_000 ? payload.line : null;
+      if (view === 'file' && (!path || (hasLine && line === null))) {
+        appendClientLog('WARN', 'workspace_presentation.request_rejected', { view, reason: 'invalid_file' });
+        report({ requestId }, { decision: 'rejected' });
+        return;
+      }
       if ((scoped && (!sessionId || !/^root_[0-9a-f]{24}$/.test(workspaceId)))
         || (view === 'change_diff' && (!path || !sessionId
         || !/^root_[0-9a-f]{24}$/.test(workspaceId)
@@ -403,7 +417,7 @@
         report({ requestId }, { decision: 'rejected' });
         return;
       }
-      const request = { view, path, sessionId, workspaceId, changeId, scoped, requestId };
+      const request = { view, path, line, sessionId, workspaceId, changeId, scoped, requestId };
       if (!matchesCurrentContext(request)) {
         appendClientLog('INFO', 'workspace_presentation.change_dropped', {
           reason: 'context_changed',

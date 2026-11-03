@@ -315,12 +315,12 @@
         : nextWidth;
       recordArtifactReviewWidth(prefs, getActiveSessionIdForReview(), bounded);
     }
-    // One persisted wrap state per body kind ('output' | 'code'), never carried by
+    // One persisted wrap state per body kind ('output' | 'code' | 'diff'), never carried by
     // the body: the panel class flips text bodies, Monaco flips through its API.
     function applyArtifactTextWrap(kind) {
       const wrapped = resolveArtifactReviewTextWrap(getArtifactReviewState(), kind);
       artifactReviewPanel?.classList?.toggle('artifact-panel-nowrap', !wrapped);
-      if (kind !== 'output') getExistingEditor('split')?.setWordWrap?.(wrapped);
+      if (kind === 'code') getExistingEditor('split')?.setWordWrap?.(wrapped);
       return wrapped;
     }
     function toggleArtifactTextWrap(kind) {

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "description": "Path normalization after realpath. platform is 'win32' or 'posix'.",
+  "cases": [
+    {"name": "windows path is case-folded with forward slashes", "platform": "win32", "path": "G:\\Work\\Jenny", "expect": "g:/work/jenny"},
+    {"name": "windows trailing separator is removed", "platform": "win32", "path": "G:\\Work\\Jenny\\", "expect": "g:/work/jenny"},
+    {"name": "windows drive root keeps its slash", "platform": "win32", "path": "C:\\", "expect": "c:/"},
+    {"name": "windows mixed separators", "platform": "win32", "path": "G:/scratch\\jenny-wt/Work-Leases", "expect": "g:/scratch/jenny-wt/work-leases"},
+    {"name": "posix trailing slash is removed", "platform": "posix", "path": "/home/u/Repo/", "expect": "/home/u/Repo"},
+    {"name": "posix keeps case", "platform": "posix", "path": "/Users/U/Code/Jenny", "expect": "/Users/U/Code/Jenny"},
+    {"name": "posix root stays root", "platform": "posix", "path": "/", "expect": "/"}
+  ]
+}

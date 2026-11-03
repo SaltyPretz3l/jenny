@@ -555,6 +555,39 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         raw_config.get("tools_session_directory_enabled"),
         default=False,
     )
+    tools_primary_settings_enabled = _as_bool(
+        raw_config.get("tools_primary_settings_enabled"),
+        default=False,
+    )
+    tools_primary_chat_manage_enabled = _as_bool(
+        raw_config.get("tools_primary_chat_manage_enabled"),
+        default=False,
+    )
+    tools_primary_chat_placement_enabled = _as_bool(
+        raw_config.get("tools_primary_chat_placement_enabled"),
+        default=False,
+    )
+    tools_primary_app_view_enabled = _as_bool(
+        raw_config.get("tools_primary_app_view_enabled"),
+        default=False,
+    )
+    tools_primary_chat_export_enabled = _as_bool(
+        raw_config.get("tools_primary_chat_export_enabled"),
+        default=False,
+    )
+    tools_terminal_enabled = _as_bool(raw_config.get("tools_terminal_enabled"), default=False)
+    tools_primary_schedules_enabled = _as_bool(
+        raw_config.get("tools_primary_schedules_enabled"),
+        default=False,
+    )
+    tools_primary_digests_enabled = _as_bool(
+        raw_config.get("tools_primary_digests_enabled"),
+        default=False,
+    )
+    tools_next_step_enabled = _as_bool(
+        raw_config.get("tools_next_step_enabled"),
+        default=False,
+    )
     tools_memory_enabled = _as_bool(raw_config.get("tools_memory_enabled"), default=True)
     tools_conversations_enabled = _as_bool(
         raw_config.get("tools_conversations_enabled"), default=True,
@@ -683,6 +716,7 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         raw_config.get("tools_web_allow_private_addresses"),
         default=False,
     )
+    tools_web_allow_loopback = _as_bool(raw_config.get("tools_web_allow_loopback"), default=False)
     tools_max_search_file_bytes = _as_bounded_int(
         raw_config.get("tools_max_search_file_bytes"),
         default=2_097_152,
@@ -857,6 +891,15 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         tools_task_board_enabled=tools_task_board_enabled,
         tools_project_notes_enabled=tools_project_notes_enabled,
         tools_session_directory_enabled=tools_session_directory_enabled,
+        tools_primary_settings_enabled=tools_primary_settings_enabled,
+        tools_primary_chat_manage_enabled=tools_primary_chat_manage_enabled,
+        tools_primary_chat_placement_enabled=tools_primary_chat_placement_enabled,
+        tools_primary_app_view_enabled=tools_primary_app_view_enabled,
+        tools_primary_chat_export_enabled=tools_primary_chat_export_enabled,
+        tools_terminal_enabled=tools_terminal_enabled,
+        tools_primary_schedules_enabled=tools_primary_schedules_enabled,
+        tools_primary_digests_enabled=tools_primary_digests_enabled,
+        tools_next_step_enabled=tools_next_step_enabled,
         tools_memory_enabled=tools_memory_enabled,
         tools_conversations_enabled=tools_conversations_enabled,
         tools_rich_files_enabled=tools_rich_files_enabled,
@@ -892,6 +935,7 @@ def parse_runtime_config(raw_config: Any) -> RuntimeConfig:  # noqa: PLR0915
         tools_web_rate_limit_per_min=tools_web_rate_limit_per_min,
         tools_web_max_fetch_bytes=tools_web_max_fetch_bytes,
         tools_web_allow_private_addresses=tools_web_allow_private_addresses,
+        tools_web_allow_loopback=tools_web_allow_loopback,
         tools_max_search_file_bytes=tools_max_search_file_bytes,
         tools_max_edit_file_bytes=tools_max_edit_file_bytes,
         tools_workspace_root=tools_workspace_root,

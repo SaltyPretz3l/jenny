@@ -87,7 +87,7 @@ const {
   summarizePromptMessages,
 } = require('./managed-sidecar-chat-helpers');
 const { resolveConfiguredLocalMaxLoopWallSeconds } = require('./chat-stream-admission');
-const { APPLICATION_TURN_HANDOFF_PREPARATION } = require('./session-handoff-context');
+const { APPLICATION_TURN_HANDOFF_PREPARATION } = require('./session-handoff-context'); const { APPLICATION_TURN_DIGEST } = require('./application-turns');
 const { computeInterruptedTurnReceipts, acknowledgeInterruptedTurnReceipts } = require('./interrupted-turn-receipts');
 const { buildManagedStartResult, retainManagedRuntimeController } = require('./chat-lifecycle-contracts');
 const { ensureSessionTurnActorRegistry } = require('./session-turn-actor');
@@ -118,7 +118,7 @@ async function startManagedSidecarChatStream(service, {
   approvalMode,
   debugOptions,
   clientTiming,
-  skillInvocation,
+  skillInvocation, imagePromptPin,
   editedMessageId,
   failureRetry,
   turnLease = null,
@@ -222,7 +222,7 @@ async function startManagedSidecarChatStream(service, {
       normalizedInteractiveResponse,
       normalizedAttachments,
       transcriptPrompt,
-      userMessageId, skillInvocation, applicationTurn: sessionHandoffPreparation ? APPLICATION_TURN_HANDOFF_PREPARATION : applicationTurn,
+      userMessageId, skillInvocation, imagePromptPin, applicationTurn: sessionHandoffPreparation ? APPLICATION_TURN_HANDOFF_PREPARATION : applicationTurn,
       reuseExistingUserMessage: Boolean(editedAnchorMessageId), failureRetry,
       turnLease: activeTurnLease, runtimeAdmission,
       getSuspendedDecision: () => controller._runtimeDecisionControl?.suspendedDecision(),
@@ -390,7 +390,7 @@ async function startManagedSidecarChatStream(service, {
       const requestedEngine = String(runtimePreferredEngineType || '').trim().toLowerCase();
       const lockdownRequest = resolveSessionLockdownRequest(service, sessionSummary,
         { requestedEngine, requestedModel }, managedToolPreferenceInput(toolPreferences, { service, sessionId: resolvedSessionId,
-          session: sessionSummary, catalog: service.currentStatus?.tools_status, handoffPreparation: sessionHandoffPreparation }));
+          session: sessionSummary, catalog: service.currentStatus?.tools_status, handoffPreparation: sessionHandoffPreparation, applicationTurn }));
       const requestToolPreferences = lockdownRequest.toolPreferences;
       const modelTimingStartedAt = Date.now();
       runtimeAssertCurrent?.();
@@ -419,7 +419,8 @@ async function startManagedSidecarChatStream(service, {
         requestId, signal: controller.signal,
         mode: normalizedPreferences.plan_mode === true ? 'plan' : effectiveMode,
         toolPreferences: requestToolPreferences, handoffPreparation: sessionHandoffPreparation,
-        readOnly: isProposeRunMode(sessionSummary), approvalMode: isProposeRunMode(sessionSummary) ? 'prompt' : approvalMode,
+        readOnly: isProposeRunMode(sessionSummary) || applicationTurn === APPLICATION_TURN_DIGEST, // row 86 digests: read-only
+        approvalMode: isProposeRunMode(sessionSummary) ? 'prompt' : approvalMode,
       });
       // Cloud engines get wider stream ceilings (mirrors the sidecar's cloud loop profile); re-arm both timers now that the engine is known.
       streamWatchdog.applyEngineType(engineType);
@@ -440,7 +441,7 @@ async function startManagedSidecarChatStream(service, {
 
       const turnHistoryInput = {
         sessionId: resolvedSessionId, userMessageId, sessionSummary, checkpointHistory, prompt, textAttachments, skillInvocation,
-        contextPreferences,
+        imagePromptPin, contextPreferences,
       };
       let wireKinds = wireContextKinds(service.sidecarClient);
       let { compactedHistory, preparedHistoryMessages, preparedMessages } = deriveManagedTurnHistory(service, {
@@ -693,7 +694,7 @@ async function startManagedSidecarChatStream(service, {
       // Frame fitting trims canonical history first, then whole history rounds.
       const frameFit = fitChatSendParamsToFrameBudgetWithOutcome(chatSendParams, {
         rebuildMessages: checkpointHistory ? undefined : (historyScope) => buildPreparedMessages(preparedHistoryMessages, prompt, {
-          attachments: textAttachments, skillInvocation, ...wireKinds,
+          attachments: textAttachments, skillInvocation, imagePromptPin, ...wireKinds,
           contextPreferences: { ...contextPreferences, history_scope: historyScope },
         }),
         // The helper reports an irreducible frame at ERROR.

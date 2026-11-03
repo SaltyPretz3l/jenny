@@ -52,7 +52,13 @@ test('removal payload normalization rejects arbitrary choices and paths', () => 
     confirmation: 'REMOVE JENNY',
     archive: null,
     removeWorkspaceData: true,
+    removeSkills: false,
   });
+  // Row 103: only an explicit boolean true selects ~/.companion/skills.
+  for (const value of [true, 'true', 1, undefined]) {
+    assert.equal(normalizeRemovalOptions({ choice: REMOVAL_CHOICES.PERMANENT, removeSkills: value }).removeSkills,
+      value === true);
+  }
   assert.equal(normalizeRemovalOptions({
     choice: REMOVAL_CHOICES.ARCHIVE_AND_REMOVE,
     archive: { encrypted: true, passphrase: 'long enough pass', passphraseConfirmation: '' },

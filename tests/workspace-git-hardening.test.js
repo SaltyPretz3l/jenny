@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { WorkspaceGitService } = require('../services/workspace-git-service');
+const { plainGitReads } = require('./helpers/workspace-git-plain-exec');
 const { buildPathspecCommand } = require('../services/workspace-git-executor');
 
 const ROOT = 'C:/repo';
@@ -12,7 +13,7 @@ function createService(exec) {
   return new WorkspaceGitService({
     configService: { getToolsWorkspaceRoot: () => ROOT },
     featureFlagProvider: () => ({ workspace_git: true }),
-    exec,
+    exec: plainGitReads(exec),
     fs: { realpath: async (value) => value },
     logger() {},
   });

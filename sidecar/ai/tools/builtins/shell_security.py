@@ -179,7 +179,6 @@ SAFE_EXECUTABLES: frozenset[str] = frozenset(
         "grep",
         "rg",
         "ag",
-        "ack",
         "sed",
         "awk",
         "tr",
@@ -613,6 +612,25 @@ def _safe_executable_argument_guard(executable: str, argv: list[str]) -> str | N
             for token in arguments
         ):
             return "sed command can execute or write a file"
+    return _state_guard(executable, arguments, lowered)
+
+
+def _state_guard(executable: str, arguments: list[str], lowered: list[str]) -> str | None:
+    """Allowlisted names whose arguments write, launch or set state (row 102 review). ack is
+    off the allowlist: a project .ackrc can set its pager and launch a program."""
+    positional = [t for t in arguments if not t.startswith("-")]
+    if executable == "uniq" and len(positional) > 1:
+        return "uniq writes its second file operand"
+    if executable == "ag" and any(t.startswith("--pager") for t in lowered):
+        return "ag pager runs a program"
+    compile_flag = any(t[:1] == "-" and t[1:2] != "-" and "C" in t for t in arguments)
+    if executable == "file" and (compile_flag or "--compile" in lowered):
+        return "file -C writes a compiled magic file"
+    sets = any(t.split("=")[0] in {"-s", "-f", "-b", "--set", "--file", "--boot"} for t in lowered)
+    if executable == "hostname" and (positional or sets):
+        return "hostname argument sets the host name"
+    if executable == "date" and (sets or any(re.fullmatch(r"\d[\d.:/-]*", t) for t in positional)):
+        return "date argument sets the system date"
     return None
 
 

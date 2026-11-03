@@ -14,6 +14,7 @@ const {
   createRemovalPreparation,
   launchOfficialRemovalEntry,
   normalizeArchiveOptions,
+  normalizeStorageRequest,
   normalizeWorkspaceRestoreOptions,
   registerDataLifecycleIpcHandlers,
   registerDataLifecycleRuntime,
@@ -305,6 +306,182 @@ test('runtime removal cleans the runtime folder under the home it is given', asy
       confirmation: 'REMOVE JENNY',
     });
     assert.equal(fs.existsSync(runtimeLog), false);
+    registration.dispose();
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function storageUsageFake(calls) {
+  return {
+    getStorageUsage: async () => ({ ok: true, status: 'ok', categories: [] }),
+    previewClear: async (request) => { calls.push(['previewClear', request]); return { ok: true, status: 'ok' }; },
+    clearCategory: async (request) => { calls.push(['clearCategory', request]); return { ok: true, status: 'ok' }; },
+    revealCategory: async (request) => { calls.push(['revealCategory', request]); return { ok: true, status: 'ok' }; },
+  };
+}
+
+function registerStorage(options = {}) {
+  const registrations = new Map();
+  const trusted = trustedSender();
+  const calls = [];
+  registerDataLifecycleIpcHandlers({ handle: (channel, handler) => registrations.set(channel, handler) }, {
+    service: createService(),
+    dialog: {},
+    getMainWindow: () => trusted.window,
+    storageUsage: storageUsageFake(calls),
+    ...options,
+  });
+  const invoke = (methodPath, event, ...args) => registrations.get(getBridgeChannel(methodPath, 'invoke'))(event, ...args);
+  return { invoke, trusted, calls };
+}
+
+test('Your data channels refuse foreign senders and never reach the service', async () => {
+  const { invoke, calls } = registerStorage();
+  for (const methodPath of [
+    'dataLifecycle.getStorageUsage', 'dataLifecycle.previewClear', 'dataLifecycle.clearCategory', 'dataLifecycle.revealCategory',
+  ]) {
+    const result = await invoke(methodPath, { sender: {}, senderFrame: {} }, { categoryId: 'logs', previewToken: 'x' });
+    assert.equal(result.authorized, false, methodPath);
+    assert.equal(result.ok, false, methodPath);
+  }
+  assert.deepEqual(calls, []);
+});
+
+test('Your data channels validate payload shapes strictly', async () => {
+  const { invoke, trusted, calls } = registerStorage();
+  const rejected = [
+    ['dataLifecycle.previewClear', undefined],
+    ['dataLifecycle.previewClear', null],
+    ['dataLifecycle.previewClear', []],
+    ['dataLifecycle.previewClear', 'logs'],
+    ['dataLifecycle.previewClear', {}],
+    ['dataLifecycle.previewClear', { categoryId: 'unknown' }],
+    ['dataLifecycle.previewClear', { categoryId: ['logs'] }],
+    ['dataLifecycle.previewClear', { categoryId: 'logs', path: 'C:\\Windows' }],
+    ['dataLifecycle.revealCategory', { categoryId: 'logs', path: 'C:\\Windows' }],
+    ['dataLifecycle.revealCategory', { categoryId: '../logs' }],
+    ['dataLifecycle.clearCategory', { categoryId: 'logs' }],
+    ['dataLifecycle.clearCategory', { categoryId: 'logs', previewToken: '' }],
+    ['dataLifecycle.clearCategory', { categoryId: 'logs', previewToken: 'x'.repeat(129) }],
+    ['dataLifecycle.clearCategory', { categoryId: 'logs', previewToken: 7 }],
+    ['dataLifecycle.clearCategory', { categoryId: 'chats', previewToken: 'x', confirmCount: '2' }],
+    ['dataLifecycle.clearCategory', { categoryId: 'chats', previewToken: 'x', confirmCount: 1.5 }],
+    ['dataLifecycle.clearCategory', { categoryId: 'chats', previewToken: 'x', confirmCount: -1 }],
+    ['dataLifecycle.clearCategory', { categoryId: 'chats', previewToken: 'x', confirmCount: 1_000_001 }],
+    ['dataLifecycle.clearCategory', { categoryId: 'logs', previewToken: 'x', target: 'C:\\' }],
+  ];
+  for (const [methodPath, payload] of rejected) {
+    const result = await invoke(methodPath, trusted.event, payload);
+    assert.equal(result.ok, false, `${methodPath} ${JSON.stringify(payload)}`);
+    assert.equal(result.error.code, 'CMP-DATA-0001');
+  }
+  assert.deepEqual(calls, []);
+  assert.equal((await invoke('dataLifecycle.getStorageUsage', trusted.event)).ok, true);
+  assert.equal((await invoke('dataLifecycle.previewClear', trusted.event, { categoryId: 'logs' })).ok, true);
+  assert.equal((await invoke('dataLifecycle.revealCategory', trusted.event, { categoryId: 'caches' })).ok, true);
+  assert.equal((await invoke('dataLifecycle.clearCategory', trusted.event, {
+    categoryId: 'chats', previewToken: 'token', confirmCount: 2,
+  })).ok, true);
+  assert.deepEqual(calls, [
+    ['previewClear', { categoryId: 'logs' }],
+    ['revealCategory', { categoryId: 'caches' }],
+    ['clearCategory', { categoryId: 'chats', previewToken: 'token', confirmCount: 2 }],
+  ]);
+});
+
+test('getStorageUsage takes no payload or a closed categoryIds list and nothing else', async () => {
+  const seen = [];
+  const storageUsage = {
+    ...storageUsageFake([]),
+    getStorageUsage: async (request) => { seen.push(request); return { ok: true, status: 'ok', categories: [] }; },
+  };
+  const { invoke, trusted } = registerStorage({ storageUsage });
+  for (const payload of [undefined, null, {}, { categoryIds: undefined }, { categoryIds: ['logs', 'chats', 'logs'] }]) {
+    assert.equal((await invoke('dataLifecycle.getStorageUsage', trusted.event, payload)).ok, true, JSON.stringify(payload));
+  }
+  assert.deepEqual(seen, [{}, {}, {}, {}, { categoryIds: ['logs', 'chats'] }]);
+  const rejected = [
+    [], 'logs', ['logs'], { categoryIds: [] }, { categoryIds: ['nope'] }, { categoryIds: 'logs' }, { categoryIds: null },
+    { categoryIds: Array(8).fill('logs') }, { categoryIds: ['logs'], path: '/etc' }, { path: '/etc' },
+  ];
+  for (const payload of rejected) {
+    const result = await invoke('dataLifecycle.getStorageUsage', trusted.event, payload);
+    assert.equal(result.ok, false, JSON.stringify(payload));
+    assert.equal(result.error.code, 'CMP-DATA-0001');
+  }
+  assert.equal(seen.length, 5);
+});
+
+test('Your data channels are inert without a service and when the kill switch is off', async () => {
+  const noService = registerStorage({ storageUsage: null });
+  const missing = await noService.invoke('dataLifecycle.getStorageUsage', noService.trusted.event);
+  assert.equal(missing.ok, false);
+  assert.equal(missing.error.reason, 'storage_usage_unavailable');
+  const off = registerStorage({ storageUsageEnabled: () => false });
+  const disabled = await off.invoke('dataLifecycle.previewClear', off.trusted.event, { categoryId: 'logs' });
+  assert.equal(disabled.ok, false);
+  assert.equal(disabled.error.reason, 'feature_disabled');
+  assert.deepEqual(off.calls, []);
+});
+
+test('Your data channels turn a thrown service error into the common failure envelope', async () => {
+  const { invoke, trusted } = registerStorage({
+    storageUsage: {
+      ...storageUsageFake([]),
+      previewClear: async () => { throw Object.assign(new Error('C:\\leak'), { reason: 'boom' }); },
+    },
+  });
+  const result = await invoke('dataLifecycle.previewClear', trusted.event, { categoryId: 'logs' });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.error.reason, 'boom');
+  assert.equal(JSON.stringify(result).includes('leak'), false);
+});
+
+test('normalizeStorageRequest keeps only the closed request keys', () => {
+  assert.deepEqual(normalizeStorageRequest({ categoryId: 'chats' }, 'preview'), { categoryId: 'chats' });
+  assert.deepEqual(
+    normalizeStorageRequest({ categoryId: 'chats', previewToken: 'abc', confirmCount: 0 }, 'clear'),
+    { categoryId: 'chats', previewToken: 'abc', confirmCount: 0 },
+  );
+  assert.equal(normalizeStorageRequest({ categoryId: 'chats', previewToken: 'abc' }, 'preview'), null);
+});
+
+test('runtime registration wires the Your data service to the profile, home and workspace it was given', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jenny-data-ipc-storage-'));
+  try {
+    const handlers = new Map();
+    const userData = path.join(root, 'userData');
+    const homeDir = path.join(root, 'home');
+    fs.mkdirSync(path.join(userData, 'logs'), { recursive: true });
+    fs.writeFileSync(path.join(userData, 'logs', 'shell.log.1'), 'x'.repeat(20));
+    const trusted = trustedSender();
+    const registration = registerDataLifecycleRuntime({
+      handle: (channel, handler) => handlers.set(channel, handler),
+    }, {
+      app: {
+        getPath: (name) => (name === 'userData' ? userData : path.join(root, name)),
+        getVersion: () => '1.0.0',
+        isPackaged: false,
+      },
+      backendService: {
+        sessionStore: { listSessions: () => [], flushAsync: async () => {} },
+        featureFlags: { data_usage_page: true },
+        stop: async () => {},
+      },
+      attachmentStore: null,
+      shellConfigService: { getState: () => ({}) },
+      dialog: {},
+      getMainWindow: () => trusted.window,
+      sendBridgeEvent: () => {},
+      log: () => {},
+      homeDir,
+    });
+    const usage = await handlers.get(getBridgeChannel('dataLifecycle.getStorageUsage', 'invoke'))(trusted.event);
+    assert.equal(usage.ok, true);
+    assert.equal(usage.categories.find((entry) => entry.id === 'logs').bytes, 20);
+    assert.equal(usage.categories.find((entry) => entry.id === 'artifacts').available, false);
     registration.dispose();
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

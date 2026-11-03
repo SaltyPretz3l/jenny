@@ -12,6 +12,10 @@
  *
  * Reads go through the EXISTING versioned workspaceFs bridge
  * (workspaceFs.readText / readImage). No new IPC channel, no preload change.
+ * A target with a `projectId` is a file of another registered project (a chat link from the
+ * primary chat): it reads through workspaceFs.readProjectText / readProjectImage, stays read-only
+ * (this surface has no edit or save at all), and a missing folder is a failure card, never the
+ * silent hand-back below.
  * Those calls never throw across the seam — they resolve
  * { ok:true, ... } or { ok:false, code, error_code, message } — so every
  * failure lands in a bounded in-panel state card instead of a crash, and the
@@ -20,11 +24,11 @@
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./renderer-artifact-file-preview-render'));
+    module.exports = factory(require('./renderer-artifact-file-preview-render'), require('./renderer-artifact-file-preview-actions'));
     return;
   }
-  root.rendererArtifactFilePreview = factory(root.rendererArtifactFilePreviewRender);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (filePreviewRender) {
+  root.rendererArtifactFilePreview = factory(root.rendererArtifactFilePreviewRender, root.rendererArtifactFilePreviewActions);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (filePreviewRender, filePreviewActions) {
   'use strict';
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
 
@@ -75,6 +79,7 @@
     let renderToken = 0;
     let frameHandle = null;
     let frameSignature = '';  // "<path>::<payload.signature>" of the LIVE frame
+    let renderedBody = { html: '', first: null }; // the markup last written and its first node
 
     function disposeFrame() {
       try { frameHandle?.dispose?.(); } catch (_error) { /* already torn down */ }
@@ -87,11 +92,11 @@
     // renderer-chat-path-open routes it straight to the IDE instead of
     // bouncing back into this panel. Unclaimed (IDE wiring absent) degrades to
     // the OS default app, matching the chat fallback ladder.
-    function defaultOpenInIde(path, line, column) {
+    function defaultOpenInIde(path, line, column, projectId) {
       try {
         if (typeof windowRef.CustomEvent === 'function' && typeof windowRef.dispatchEvent === 'function') {
           const event = new windowRef.CustomEvent('ide:open-file-at-line', {
-            detail: { path, line, column, preferIde: true },
+            detail: projectId ? { projectId, path, line, column, preferIde: true } : { path, line, column, preferIde: true },
             bubbles: true,
             cancelable: true,
           });
@@ -100,6 +105,7 @@
       } catch (_error) {
         /* fall through to the default-app degradation */
       }
+      if (projectId) return false; // a project-relative path must never reach the OS default app
       const api = getWorkspaceFsApi();
       if (api && typeof api.openInDefaultApp === 'function') {
         Promise.resolve(api.openInDefaultApp({ path })).catch(() => {});
@@ -109,6 +115,12 @@
     }
 
     const openInIde = typeof d.openInIde === 'function' ? d.openInIde : defaultOpenInIde;
+    // Text actions (copy, Ask Jenny, find) live in their own module, built on first use.
+    let actions = null;
+    const getActions = () => actions || (actions = filePreviewActions?.createFilePreviewActions({
+      windowRef, appendClientLog, showToast: d.showToastMessage,
+      openInIde: (slot, line) => openInIde(slot.path, line, null, slot.projectId), reload: () => openFilePreviewTarget(getFilePreviewTarget()),
+    }));
 
     function isOpenableRelPath(value) {
       if (pathOpenUtils && typeof pathOpenUtils.isOpenableRelPath === 'function') {
@@ -129,7 +141,7 @@
       if (!state.ui || typeof state.ui !== 'object') state.ui = {};
       if (!state.ui.filePreview || typeof state.ui.filePreview !== 'object') {
         state.ui.filePreview = {
-          path: '', line: null, column: null, status: 'idle', error: null, payload: null, view: 'read',
+          path: '', projectId: '', display: '', line: null, column: null, status: 'idle', error: null, payload: null, view: 'read',
           frameFailed: false, renderBlocked: '',
         };
       }
@@ -152,11 +164,12 @@
       return String(render.fileExtensionOf ? render.fileExtensionOf(path) : '');
     }
 
-    function buildTextPayload(result, path, line) {
+    // A project read carries no root id or generation: its signature is the project and file version.
+    function buildTextPayload(result, path, line, projectId) {
       if (typeof result.content !== 'string'
-        || typeof result.rootId !== 'string' || !result.rootId
-        || !Number.isSafeInteger(result.generation)
-        || typeof result.fileVersion !== 'string' || !result.fileVersion) {
+        || (!projectId && (typeof result.rootId !== 'string' || !result.rootId
+          || !Number.isSafeInteger(result.generation)
+          || typeof result.fileVersion !== 'string' || !result.fileVersion))) {
         return null;
       }
       const text = result.content;
@@ -167,17 +180,18 @@
         lines: windowed.lines,
         startLine: windowed.startLine,
         truncated: windowed.truncated === true || result.truncated === true,
+        byteTruncated: result.truncated === true,
         totalLines: windowed.totalLines,
         languageId: resolveLanguageId(path),
-        signature: `${result.rootId}:${result.generation}:${result.fileVersion}`,
+        signature: projectId ? `project:${projectId}:${result.fileVersion || result.size}` : `${result.rootId}:${result.generation}:${result.fileVersion}`,
       };
     }
 
-    function buildImagePayload(result, path) {
+    function buildImagePayload(result, path, projectId) {
       const mime = String(result.mime || '') || String(render.imageMimeForPath?.(path) || '');
       if (typeof result.base64 !== 'string' || !result.base64 || !mime
-        || typeof result.rootId !== 'string' || !result.rootId
-        || !Number.isSafeInteger(result.generation)) {
+        || (!projectId && (typeof result.rootId !== 'string' || !result.rootId
+          || !Number.isSafeInteger(result.generation)))) {
         return null;
       }
       return { kind: 'image', mime, base64: result.base64, truncated: false, totalLines: 0 };
@@ -194,6 +208,8 @@
       disposeFrame();
       const slot = ensureSlot();
       slot.path = '';
+      slot.projectId = '';
+      slot.display = '';
       slot.line = null;
       slot.column = null;
       slot.status = 'idle';
@@ -218,12 +234,21 @@
     }
 
     function handleWorkspaceRootCommitted() {
-      if (disposed) return;
+      if (disposed || ensureSlot().projectId) return; // a project file's bytes do not belong to the Workspace root
       resetToArtifactMode();
     }
 
-    async function readTarget(api, kind, path) {
+    async function readTarget(api, kind, path, projectId) {
       try {
+        if (projectId) {
+          // A bridge without the project reads (hosted browser mode) fails soft into a card.
+          if (typeof api?.[kind === 'image' ? 'readProjectImage' : 'readProjectText'] !== 'function') {
+            return { ok: false, code: 'bridge_unavailable', message: '' };
+          }
+          return kind === 'image'
+            ? await api.readProjectImage({ projectId, path })
+            : await api.readProjectText({ projectId, path, intent: 'preview', maxBytes: MAX_FILE_PREVIEW_BYTES });
+        }
         if (kind === 'image') {
           return await api.readImage({ path });
         }
@@ -241,10 +266,14 @@
         ? render.normalizePreviewPath(target?.path)
         : String(target?.path || '').trim().replace(/\\/g, '/');
       if (!path || !isOpenableRelPath(path)) return false;
+      // A present projectId must be a non-empty string: never fall back to reading the Workspace.
+      const rawProject = target?.projectId;
+      const projectId = typeof rawProject === 'string' ? rawProject.trim() : '';
+      if (rawProject != null && !projectId) return false;
       const kind = render.resolveFilePreviewKind(path);
       const api = getWorkspaceFsApi();
       const reader = kind === 'image' ? api?.readImage : api?.readText;
-      if (typeof reader !== 'function') return false;
+      if (!projectId && typeof reader !== 'function') return false;
 
       const token = ++renderToken;
       disposeFrame();
@@ -252,6 +281,8 @@
       const column = positiveInt(target?.column);
       const slot = ensureSlot();
       slot.path = path;
+      slot.projectId = projectId;
+      slot.display = projectId && typeof target.display === 'string' ? target.display.slice(0, 1024) : '';
       slot.line = line;
       slot.column = column;
       slot.status = 'loading';
@@ -264,18 +295,21 @@
       openArtifactRail('file_preview');
       renderArtifactReviewPanel();
 
-      const result = await readTarget(api, kind, path);
+      const result = await readTarget(api, kind, path, projectId);
       if (disposed || token !== renderToken) return true;
 
       if (!result || result.ok !== true) {
-        const failure = render.describeFilePreviewFailure(result);
+        let failure = render.describeFilePreviewFailure(result);
+        if (projectId && failure.stateKind === 'root-missing') {
+          failure = { stateKind: 'root-missing', message: jt('projects.application.folderMissing', 'The project folder is missing. Locate it first.'), retryInIde: false };
+        }
         // Codes only — never the raw path (redaction contract).
         appendClientLog('WARN', 'artifact_file_preview.read_failed', {
           code: String((result && (result.error_code || result.code)) || 'unknown'),
           kind,
           state: failure.stateKind,
         });
-        if (failure.stateKind === 'root-missing' || failure.stateKind === 'root-transitioning') {
+        if (!projectId && (failure.stateKind === 'root-missing' || failure.stateKind === 'root-transitioning')) {
           resetToArtifactMode();
           return false;
         }
@@ -295,8 +329,8 @@
       }
 
       const payload = kind === 'image'
-        ? buildImagePayload(result, path)
-        : buildTextPayload(result, path, line);
+        ? buildImagePayload(result, path, projectId)
+        : buildTextPayload(result, path, line, projectId);
       if (!payload) {
         appendClientLog('WARN', 'artifact_file_preview.read_failed', { code: 'invalid_payload', kind, state: 'failed' });
         setFailure(slot, render.describeFilePreviewFailure(null));
@@ -318,7 +352,10 @@
 
     function getFilePreviewTarget() {
       const slot = ensureSlot();
-      return slot.path ? { path: slot.path, line: slot.line, column: slot.column } : null;
+      if (!slot.path) return null;
+      return slot.projectId
+        ? Object.assign({ path: slot.path, line: slot.line, column: slot.column, projectId: slot.projectId }, slot.display ? { display: slot.display } : {})
+        : { path: slot.path, line: slot.line, column: slot.column };
     }
 
     function truncationNoteHtml(slot) {
@@ -514,11 +551,17 @@
         // and degrades a healthy document to "failed" from churn alone.
         return;
       }
+      // Hold an unchanged body too: a rebuild per repaint dropped the reader's scroll,
+      // selection and open find field whenever anything else re-rendered (a streaming reply).
+      const bodyHtml = buildBodyHtml(slot);
+      if (!nextSignature && bodyHtml === renderedBody.html && host.firstElementChild === renderedBody.first) return;
       disposeFrame();
-      host.innerHTML = buildBodyHtml(slot);
+      host.innerHTML = bodyHtml;
+      renderedBody = { html: bodyHtml, first: host.firstElementChild };
       markdownUtils?.pruneDetachedMermaidObservations?.();
       frameSignature = nextSignature;
       hydrate(host, slot);
+      getActions()?.hydrate(host, slot);
       scrollToCitedRow(host);
     }
 
@@ -535,6 +578,7 @@
       if (disposed || !isFilePreviewMode()) return;
       const target = event?.target;
       if (!target || typeof target.closest !== 'function') return;
+      if (target.closest('[data-artifact-panel-v2-copy]')) return void getActions()?.copyContents(ensureSlot());
       const viewButton = target.closest('[data-file-preview-view]');
       if (viewButton) {
         event.preventDefault?.();
@@ -554,7 +598,7 @@
         const current = getFilePreviewTarget();
         if (!current) return;
         try {
-          openInIde(current.path, current.line, current.column);
+          openInIde(current.path, current.line, current.column, current.projectId);
         } catch (error) {
           appendClientLog('WARN', 'artifact_file_preview.open_in_ide_failed', {
             message: String(error?.message || error || ''),
@@ -586,6 +630,7 @@
       renderToken += 1;
       disposeFrame();
       markdownUtils?.pruneDetachedMermaidObservations?.();
+      actions?.dispose();
       if (bound && panelEl && typeof panelEl.removeEventListener === 'function') {
         panelEl.removeEventListener('click', handleRailClick);
         panelEl.removeEventListener('keydown', handleRailKeydown);

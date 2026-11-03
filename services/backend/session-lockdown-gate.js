@@ -72,6 +72,7 @@ const TOOL_NETWORK_CLASSIFICATION = Object.freeze({
   lsp: NETWORK_POSSIBLE,
   exit_plan_mode: NETWORK_NONE,
   ask_user: NETWORK_NONE,
+  suggest_next_step: NETWORK_NONE,
   propose_git_action: NETWORK_NONE,
   propose_command: NETWORK_NONE,
   propose_session: NETWORK_NONE,
@@ -82,6 +83,27 @@ const TOOL_NETWORK_CLASSIFICATION = Object.freeze({
   session_status: NETWORK_NONE,
   session_transcript: NETWORK_NONE,
   session_stop: NETWORK_NONE,
+  // Row 88: shell config, the local appearance relay and the history store; no network.
+  settings_get: NETWORK_NONE,
+  settings_change: NETWORK_NONE,
+  // Row 94 P1: session store, project service and the history store; no network.
+  chat_organize: NETWORK_NONE,
+  chat_configure: NETWORK_NONE,
+  // Row 94 P2: the project store, a local folder probe and the history store; no network.
+  project_create: NETWORK_NONE,
+  projects_list: NETWORK_NONE,
+  // Row 94 P3: moves the app's own view; no network.
+  app_view: NETWORK_NONE,
+  // Row 94 P4: a file in Downloads and the main-side terminal tail; no network. terminal_run types a command
+  // into the user's shell, which may reach the network like run_command, so it is a command.
+  session_export: NETWORK_NONE,
+  terminal_read: NETWORK_NONE,
+  terminal_run: NETWORK_POSSIBLE,
+  // Row 85: Home reminders in shell config and the history store; no network.
+  schedule_list: NETWORK_NONE,
+  schedule_change: NETWORK_NONE,
+  // Row 86: facts main already holds (runtime snapshot, session directory, mail, history); no network.
+  away_digest: NETWORK_NONE,
   // Bundled app guide (row 69 W4b): reads config/app-guide only.
   jenny_help: NETWORK_NONE,
   jenny_status: NETWORK_NONE,

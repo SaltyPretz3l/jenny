@@ -24,6 +24,7 @@ _INPUTS: dict[str, bool] = {
     "sse_enabled": False,
     "resources_enabled": False,
     "allow_private_addresses": False,
+    "allow_loopback": False,
 }
 
 _STUB_SERVER = """\
@@ -154,6 +155,7 @@ def test_identical_row_and_inputs_reuse_the_live_transport(
             {},
         ),
         (_config(), _config(), {"allow_private_addresses": True}),
+        (_config(), _config(), {"allow_loopback": True}),
         (_config(), _config(), {"resources_enabled": True}),
         (_config(), _config(), {"sse_enabled": True}),
     ],

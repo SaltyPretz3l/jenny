@@ -11,7 +11,12 @@ from typing import Any, Callable, Iterator
 
 from sidecar.ai.error_codes import CMP_TOOL_EXECUTION_FAILED, CMP_TOOL_POLICY_DENIED
 from sidecar.ai.mcp.exceptions import MCPError
-from sidecar.protocol import API_VERSION, JSONRPC_VERSION, RUNTIME_OPERATION_METHOD
+from sidecar.protocol import (
+    API_VERSION,
+    JSONRPC_VERSION,
+    RUNTIME_OPERATION_METHOD,
+    RUNTIME_OPERATION_READ_ONLY_COMMAND_GRANT,
+)
 from sidecar.runtime.execution_context import ExecutionContext
 from sidecar.runtime.multiplexer import ApprovalResponseCancelledError
 from sidecar.runtime.tool_resource_admission import (
@@ -41,6 +46,8 @@ class RuntimeOperationRequest:
     response_reader_factory: Callable[..., Callable[[float], dict[str, Any]]] | None
     cancel_handle: Any = None
     timeout_seconds: float = 30.0
+    # Row 102: the only value Electron accepts is "read_only_command"; None omits the key.
+    grant: str | None = None
 
 
 def _token(value: Any, field: str, limit: int) -> str:
@@ -54,6 +61,19 @@ def _token(value: Any, field: str, limit: int) -> str:
             retryable=False,
         )
     return token
+
+
+def _grant_params(grant: str | None) -> dict[str, str]:
+    """The optional ``grant`` key: absent unless it is exactly the read-only-command grant."""
+    if grant is None:
+        return {}
+    if grant != RUNTIME_OPERATION_READ_ONLY_COMMAND_GRANT:
+        raise MCPError(
+            code=CMP_TOOL_EXECUTION_FAILED,
+            message="runtime operation grant is invalid",
+            retryable=False,
+        )
+    return {"grant": grant}
 
 
 @contextmanager
@@ -104,6 +124,7 @@ def admit_runtime_operation(request: RuntimeOperationRequest) -> None:  # noqa: 
         "phase": "check",
         "tool_name": tool_name,
         "arguments": dict(request.arguments),
+        **_grant_params(request.grant),
     }
     rpc_id = next(_RPC_IDS)
     message = {
@@ -206,7 +227,7 @@ def build_operation_admission_callback(  # noqa: PLR0913
 
     def _admit(
         *, operation_id: str, tool_name: str, arguments: dict[str, Any],
-        timeout_seconds: float | None = None,
+        timeout_seconds: float | None = None, grant: str | None = None,
     ) -> dict[str, Any]:
         admit_runtime_operation(RuntimeOperationRequest(
             request_id=request_id,
@@ -219,6 +240,7 @@ def build_operation_admission_callback(  # noqa: PLR0913
             response_reader_factory=response_reader_factory,
             cancel_handle=cancel_handle,
             timeout_seconds=timeout_seconds or 30.0,
+            grant=grant,
         ))
         return execution_context.to_wire()
 

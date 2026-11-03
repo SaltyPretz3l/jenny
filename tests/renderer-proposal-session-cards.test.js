@@ -407,3 +407,32 @@ test('F3b: the receipt shows the facts the child really got, Retry carries the f
   plain.actions = failed.actions;
   assert.equal(render(lookup(plain)).doc.querySelector('.proposal-session-meta'), null, 'no child view, no facts line');
 });
+
+// ---------- row 94 P2: a fork of another chat ----------
+
+const FORK_OPTIONS = { ...OPTIONS, fork_of_session_id: CHILD };
+
+test('a fork offer reads "Fork of <title>" from capabilities, escaped, and a neutral line before they load', () => {
+  const caps = { ...CAPS, fork_source: { title: 'Parser <b>work</b>' } };
+  const ready = render(lookup(sessionProposal({ options: FORK_OPTIONS }), { capabilities: { status: 'ready', value: caps } }));
+  const line = ready.doc.querySelector('[data-proposal-fork]');
+  assert.equal(line.textContent, 'Fork of Parser <b>work</b>');
+  assert.equal(line.querySelector('b'), null);
+  const loading = render(lookup(sessionProposal({ options: FORK_OPTIONS })));
+  assert.equal(loading.doc.querySelector('[data-proposal-fork]').textContent, 'Fork of another chat');
+  const gone = render(lookup(sessionProposal({ options: FORK_OPTIONS }), { capabilities: { status: 'ready', value: { ...CAPS, fork_source: { title: '' } } } }));
+  assert.equal(gone.doc.querySelector('[data-proposal-fork]').textContent, 'Fork of another chat');
+  assert.equal(render(lookup(sessionProposal())).doc.querySelector('[data-proposal-fork]'), null, 'an ordinary offer has no fork line');
+  assert.equal(render(lookup(accepted('new_session', 'preparing', { options: FORK_OPTIONS }))).doc.querySelector('[data-proposal-fork]'), null);
+});
+
+test('a fork offer locks the Project field to the source chat\'s project; model, effort and mode stay editable', () => {
+  const { doc } = render(lookup(sessionProposal({ options: FORK_OPTIONS }), { optionsOpen: true, capabilities: { status: 'ready', value: CAPS } }));
+  const pop = doc.querySelector('.proposal-options-popover');
+  assert.equal(pop.querySelector('select[data-proposal-option="destination"]'), null, 'no project picker');
+  assert.equal(pop.querySelector('[data-proposal-locked="destination"]').textContent, 'jenny');
+  assert.match(pop.textContent, /A fork stays in the project of the chat it copies\./u);
+  assert.ok(pop.querySelector('select[data-proposal-option="model"]'));
+  assert.ok(pop.querySelector('select[data-proposal-option="effort"]'));
+  assert.ok(pop.querySelector('[data-proposal-option="run_mode"]'));
+});

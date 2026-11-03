@@ -581,3 +581,16 @@ test('session.mail_consumed is a known method that marks reserved mid-turn mail 
   assert.equal(callsOf(ctx, 'emitChatStream').length, 0);
   assert.equal(callsOf(ctx, 'touchActiveTurn').length, 0);
 });
+
+test('session.job_notice_consumed is a known method that marks each valid job id read (row 71)', () => {
+  const ctx = makeCtx();
+  const options = { toolContext: {}, handleToolNotification: makeHandleToolNotification(ctx) };
+  const emitted = () => callsOf(ctx, 'serviceEmit').filter((call) => call.eventName === 'background-job-read').map((call) => call.payload.jobId);
+  handleNotification(ctx, { method: 'session.job_notice_consumed', params: { request_id: 'stream-1', job_ids: ['3869b0f37a73', 'junk', 4], iteration: 3 } }, options);
+  assert.deepEqual(emitted(), ['3869b0f37a73']);
+  handleNotification(ctx, { method: 'session.job_notice_consumed', params: { job_ids: '3869b0f37a73' } }, options);
+  assert.deepEqual(emitted(), ['3869b0f37a73'], 'a malformed acknowledgement changes nothing');
+  assert.equal(callsOf(ctx, 'serviceLog').filter((l) => l.code === 'chat.unknown_notification_method').length, 0);
+  assert.equal(callsOf(ctx, 'emitChatStream').length, 0);
+  assert.equal(callsOf(ctx, 'touchActiveTurn').length, 0);
+});

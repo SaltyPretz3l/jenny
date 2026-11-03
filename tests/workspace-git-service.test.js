@@ -12,6 +12,7 @@ const {
   assertWriteVerb,
 } = require('../services/workspace-git-service');
 const { runWorkspaceGit } = require('../services/workspace-git-executor');
+const { plainGitReads } = require('./helpers/workspace-git-plain-exec');
 const {
   cleanupTrackedResources,
   createTrackedTempDir,
@@ -44,7 +45,7 @@ function createService(root, { flag = true, exec, rootContextProvider = null, tr
   return new WorkspaceGitService({
     configService: { getToolsWorkspaceRoot: () => root },
     featureFlagProvider: () => ({ workspace_git: flag }),
-    ...(exec ? { exec } : {}),
+    ...(exec ? { exec: plainGitReads(exec) } : {}),
     rootContextProvider,
     trashItemImpl,
     logger() {},
@@ -86,6 +87,29 @@ describe('WorkspaceGitService — write methods (real repo)', () => {
     assert.equal(res.committed, true);
     const head = (await git(repo, ['rev-parse', '--short', 'HEAD'])).stdout.trim();
     assert.ok(res.shortSha.startsWith(head) || head.startsWith(res.shortSha));
+  });
+
+  test('a merge resolved to HEAD reports operation "merge" and commits with nothing staged', async () => {
+    const repo = await createGitRepo();
+    await git(repo, ['checkout', '-q', '-b', 'other']);
+    await fs.writeFile(path.join(repo, 'README.md'), 'theirs\n', 'utf8');
+    await git(repo, ['commit', '-qam', 'theirs']);
+    await git(repo, ['checkout', '-q', 'main']);
+    await fs.writeFile(path.join(repo, 'README.md'), 'ours\n', 'utf8');
+    await git(repo, ['commit', '-qam', 'ours']);
+    await assert.rejects(() => git(repo, ['merge', 'other']), 'the merge stops on a conflict');
+    const svc = createService(repo);
+    assert.equal((await svc.getStatus()).operation, 'merge');
+    await git(repo, ['checkout', '--ours', 'README.md']);
+    await svc.stage({ paths: ['README.md'] });
+    let status = await svc.getStatus();
+    assert.deepEqual(status.files, [], 'nothing left to stage');
+    assert.equal(status.operation, 'merge');
+    const res = await svc.commit({ message: 'merge other' });
+    assert.equal(res.committed, true);
+    assert.equal((await git(repo, ['rev-list', '--parents', '-n', '1', 'HEAD'])).stdout.trim().split(' ').length, 3, 'a two-parent merge commit');
+    status = await svc.getStatus();
+    assert.equal(status.operation, '');
   });
 
   test('commit with an empty message throws COMMIT_MESSAGE_EMPTY', async () => {

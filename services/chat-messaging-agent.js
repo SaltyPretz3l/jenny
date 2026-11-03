@@ -7,8 +7,9 @@
  *   agentPrepare      an immutable `prepared` agent_message operation, idempotent by (incarnation, turn,
  *                     tool call), at most 8 new sends per source turn, 16 KiB body;
  *   agentSend         ONE mutation that re-reads the source and the authorization, spends a grant or
- *                     records a one-off approval, moves the operation to `pending` with a coordination
- *                     receipt, then delivers through the existing delivery transaction;
+ *                     records a one-off approval (or a Jenny-chat allow rule, row 87), moves the operation
+ *                     to `pending` with a coordination receipt, then delivers through the existing delivery
+ *                     transaction;
  *   agentCancel       cancels a still-prepared operation (the deny / timeout path);
  *   agentRead         an included inbox message of this chat (never queued, excluded or reserved mail);
  *   agentListInbox    this chat's own inbox, newest first, with 280-character previews (row 69); it never
@@ -26,23 +27,29 @@ const { appendReceipt, buildReceipt } = require('./backend/coordination-receipts
 const contract = require('./chat-messaging-contract');
 const { agentOnceAuthorization, bestLiveGrant, modelGrant } = require('./chat-messaging-grants');
 const { projectSessionRef } = require('./chat-messaging-recipients');
+const { PRIMARY_CHAT_LIMITS, isRuleId } = require('./shell-config-primary-chat');
 const { sortedInbox } = require('./chat-messaging-projection');
 
 const { fail, succeed } = contract;
 const SEND_METHOD = 'session_message.send';
 const PREVIEW_CHARS = 280;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const INBOX_STATES = Object.freeze({ queued: 'queued', reserved: 'queued', included: 'included',
   excluded_by_user: 'discarded', discarded: 'discarded' });
 const hasKeys = (value, keys) => contract.isPlainObject(value) && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 
+// A one-off consent never uses the rule namespace, so only a rule send can spend (or count toward) a rule.
 function validAuthorization(value) {
   if (hasKeys(value, ['kind', 'grant_id'])) return value.kind === 'grant' && contract.validUuid(value.grant_id);
-  return hasKeys(value, ['kind', 'consent_event_id']) && value.kind === 'once' && E.isId(value.consent_event_id);
+  if (hasKeys(value, ['kind', 'rule_id'])) return value.kind === 'rule' && isRuleId(value.rule_id);
+  return hasKeys(value, ['kind', 'consent_event_id']) && value.kind === 'once' && E.isId(value.consent_event_id)
+    && contract.ruleIdFromConsent(value.consent_event_id) === null;
 }
 
 function createAgentOps({
   mail, getSessionSummary = () => null, getProjectName = () => null, isContinuable = () => true, now = () => new Date(),
   createId, notify = () => {}, storeFailure, runDelivery, projectOperation, projectInboxPage = () => [], track = () => {},
+  isRuleLive = () => false, // row 87: the Jenny chat's allow rule is still live (fail closed)
 }) {
   const continuable = (sessionId) => {
     const summary = getSessionSummary(sessionId);
@@ -226,6 +233,25 @@ function createAgentOps({
     return op.state === 'failed' && op.last_error?.reason === 'authorization_revoked' ? null : 'stale_operation';
   }
 
+  // Row 87 D5: the rule-authorized sends of this source in the rolling day, counted inside the accept mutation.
+  function ruleSendsToday(current, consentEventId, sourceSessionId, at) {
+    const since = at.getTime() - DAY_MS;
+    return current.authorizations.filter((auth) => auth.kind === 'agent_once' && auth.consent_event_id === consentEventId
+      && auth.source_session_id === sourceSessionId && Date.parse(auth.created_at) > since).length;
+  }
+
+  // A rule send: the rule is live and under its daily cap -> {authorizations} | {reason}.
+  function spendRule(current, op, ruleId, authorizationId, at) {
+    let live;
+    try { live = isRuleLive(ruleId) === true; } catch { live = false; }
+    if (!live) return { reason: 'rule_not_live' };
+    const consentEventId = contract.RULE_CONSENT_PREFIX + ruleId;
+    if (ruleSendsToday(current, consentEventId, op.envelope.source_session_id, at) >= PRIMARY_CHAT_LIMITS.rule_message_sends_per_day) {
+      return { reason: 'rule_cap_reached' };
+    }
+    return { authorizations: [...current.authorizations, agentOnceAuthorization(op, authorizationId, consentEventId, at)] };
+  }
+
   function acceptSend({ mail: current, session, coordination_revision: revision, coordination_receipts: receipts },
     { operationId, authorization, at }) {
     const index = current.outbox.findIndex((record) => record.operation_id === operationId);
@@ -245,6 +271,10 @@ function createAgentOps({
       const spent = spendGrant(current, authorization.grant_id, envelope, session, at);
       if (spent.reason) return { abort: { reason: spent.reason } };
       ({ authorizations, authorizationId } = spent);
+    } else if (authorization.kind === 'rule') {
+      const spent = spendRule(current, op, authorization.rule_id, authorizationId, at);
+      if (spent.reason) return { abort: { reason: spent.reason } };
+      ({ authorizations } = spent);
     } else {
       authorizations = [...authorizations, agentOnceAuthorization(op, authorizationId, authorization.consent_event_id, at)];
     }

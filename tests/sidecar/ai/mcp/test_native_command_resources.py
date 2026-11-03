@@ -29,7 +29,8 @@ def test_only_native_desktop_omits_inherited_memory_limit(
     )
     builtin = _default_mcp_servers(config, tmp_path)[0]
     assert builtin.memory_limit_mb == expected
-    assert builtin.max_processes == 16
+    native_desktop = host_mode == "desktop" and policy is None
+    assert builtin.max_processes == (128 if native_desktop else 16)
     assert builtin.cooperative_cancel is True
 
 

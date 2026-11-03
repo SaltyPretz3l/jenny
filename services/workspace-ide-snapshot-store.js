@@ -19,6 +19,10 @@ const SNAPSHOT_DEFAULTS = Object.freeze({
 });
 const SNAPSHOT_HASH_PATTERN = /^sha256:[0-9a-f]{64}$/;
 const SNAPSHOT_FILE_EXTENSION = '.snap';
+// `<hash>.snap.tmp-<pid>-<8 hex>`: a capture's temp before its rename. One
+// left by a killed process (another pid, a day old) is removed by prune.
+const SNAPSHOT_TEMP_NAME = /^[0-9a-f]{64}\.snap\.tmp-(\d+)-[0-9a-f]{8}$/;
+const ORPHANED_TEMP_MIN_AGE_MS = 24 * 60 * 60 * 1000;
 
 function buildPathLogHint(pathHint) {
   const normalized = String(pathHint || '');
@@ -77,11 +81,35 @@ function createWorkspaceIdeSnapshotStore({
     return ensureDirPromise;
   }
 
+  // A killed capture's temp sits outside the caps below; it goes once it is
+  // a day old and not this process's (pids are reused, the age is the guard).
+  async function removeOrphanedTemps(allNames) {
+    const now = Date.now();
+    let removed = 0;
+    for (const name of allNames) {
+      const match = SNAPSHOT_TEMP_NAME.exec(name);
+      if (!match || Number(match[1]) === process.pid) continue;
+      try {
+        const filePath = path.join(storeDir, name);
+        const stats = await fs.lstat(filePath);
+        if (!stats.isFile() || !(now - stats.mtimeMs >= ORPHANED_TEMP_MIN_AGE_MS)) continue;
+        await fs.unlink(filePath);
+        removed += 1;
+      } catch (_error) {
+        /* raced with another delete */
+      }
+    }
+    if (removed) {
+      log('INFO', 'workspace_snapshot.orphaned_temps_removed', { removed });
+    }
+  }
+
   // Oldest-first eviction once either cap is exceeded. Runs after each new
   // write; failures are logged and swallowed (a fat store is not a fault).
   async function prune() {
-    const names = (await fs.readdir(storeDir))
-      .filter((name) => name.endsWith(SNAPSHOT_FILE_EXTENSION));
+    const allNames = await fs.readdir(storeDir);
+    await removeOrphanedTemps(allNames);
+    const names = allNames.filter((name) => name.endsWith(SNAPSHOT_FILE_EXTENSION));
     const entries = [];
     for (const name of names) {
       try {

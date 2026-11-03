@@ -94,6 +94,12 @@
   height: 14px;
 }
 
+/* Row 91: the /image size and seed chips are settings of the image chip, so they stay quiet. */
+.composer-image-prompt-option {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
 .slash-autocomplete-popover {
   display: flex;
   flex-direction: column;

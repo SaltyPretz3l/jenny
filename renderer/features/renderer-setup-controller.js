@@ -307,14 +307,17 @@
       try {
         var fetched = await setupService.getState();
         if (disposed || generation !== lifecycleGeneration) return state.setup;
-        if (fetched) {
-          applySnapshot(fetched);
-        } else {
-          state.setup.loaded = true;
+        // An unknown profile is not a fresh install: stay unloaded so the
+        // first-run flow waits for the next successful refresh.
+        if (!fetched) {
+          appendClientLog('WARN', 'setup.init_failed', { message: 'Setup state unavailable.' });
+          return state.setup;
         }
-      } catch (_error) {
+        applySnapshot(fetched);
+      } catch (error) {
         if (disposed || generation !== lifecycleGeneration) return state.setup;
-        state.setup.loaded = true;
+        appendClientLog('WARN', 'setup.init_failed', { message: error && error.message ? error.message : String(error) });
+        return state.setup;
       }
       maybeStartFirstRunFlow();
       return state.setup;
@@ -327,7 +330,9 @@
         var fetched = await setupService.getState();
         if (disposed || generation !== lifecycleGeneration) return state.setup;
         if (fetched) {
+          var firstLoad = state.setup.loaded !== true;
           applySnapshot(fetched);
+          if (firstLoad && state.setup.loaded === true) maybeStartFirstRunFlow();
         }
       } catch (error) {
         if (disposed || generation !== lifecycleGeneration) return state.setup;
@@ -642,7 +647,11 @@
             await completeSetup();
             if (disposed || generation !== lifecycleGeneration) return state.setup;
             if (state.setup.setupComplete !== true) {
-              showToastMessage(jt('setup.controller.incompleteModelMessage', "Setup isn't finished yet — Jenny still can't reach a model. Finish from Settings once the engine is up."));
+              var finishReadiness = state.setup.readiness || {};
+              var folderReady = finishReadiness.workspaceRoot && finishReadiness.workspaceRoot.ready === true;
+              showToastMessage(folderReady
+                ? jt('setup.controller.incompleteModelMessage', "Setup isn't finished yet — Jenny still can't reach a model. Finish from Settings once the engine is up.")
+                : jt('setup.hub.noWorkspaceRoot', 'No workspace root set — file tools will be off until you set one.'));
             }
           } catch (_error) { /* already toasted */ }
         }

@@ -1,0 +1,121 @@
+/* styles/artifact-panel-text.css — text behaviour of the side panel's read-only bodies (row 99):
+   selection, the sticky file bar, horizontal scroll with Wrap off, Wrap for Changes diffs, the
+   Ask Jenny chip and the find field. Loaded after artifact-panel.css (at its line ceiling) and
+   chat-panes.css, which keeps its place right after it. */
+
+/* The app root is user-select: none; the panel's text bodies opt back in like the chat and IDE do.
+   Gutters, markers and hunk headers stay unselectable so a copy carries code only. */
+.artifact-review-panel .artifact-file-preview-row > code,
+.artifact-review-panel .artifact-file-preview-doc,
+.artifact-review-panel .artifact-preview-pre,
+.artifact-review-panel .diff-content {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+.artifact-review-panel .diff-line-meta .diff-content { -webkit-user-select: none; user-select: none; cursor: default; }
+
+/* Changes owns a page beside the artifact body (renderer-code-review-rail.js); the panel's
+   code-review-mode class picks which one shows. */
+.artifact-review-panel.code-review-mode .artifact-review-detail-panel > :not(.changes-detail-page):not(.panel-code-find):not(.panel-code-ask) { display: none; }
+.artifact-review-panel:not(.code-review-mode) .changes-detail-page,
+.artifact-review-panel:not(.code-review-mode) .panel-code-find:has(+ .changes-detail-page) { display: none; }
+
+/* The file bar stays in view while a cited line scrolls the body, and stays put sideways. */
+#artifactReviewPanel[data-artifact-review-mode="file_preview"] .artifact-file-preview-bar {
+  position: sticky;
+  top: 0;
+  left: 0; /* rtl:physical */
+  z-index: 1;
+  padding-top: var(--space-2);
+  background: var(--side-panel-bg);
+}
+
+/* Wrap off: the scroller scrolls sideways (its bar is always at the panel bottom), not the list,
+   whose own bar sat after the last row. The gutter stays pinned. */
+#artifactReviewPanel[data-artifact-review-mode="file_preview"].artifact-panel-nowrap .artifact-review-scroll { overflow-x: auto; }
+.artifact-review-panel.artifact-panel-nowrap .artifact-file-preview-code {
+  overflow-x: visible;
+  width: max-content;
+  min-width: 100%;
+}
+.artifact-review-panel.artifact-panel-nowrap .artifact-file-preview-gutter {
+  position: sticky;
+  left: 0; /* rtl:physical */
+  background: var(--side-panel-bg);
+}
+
+/* Wrap for Changes diffs: wrapped by default like every other text body; the header Wrap adds
+   .artifact-panel-nowrap. Continuation lines hang under the code, not under the gutter. */
+.artifact-review-panel.code-review-mode:not(.artifact-panel-nowrap) .diff-line { min-width: 0; }
+.artifact-review-panel.code-review-mode:not(.artifact-panel-nowrap) .diff-content {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Ask Jenny chip at the end of a selection (renderer-panel-code-actions.js). */
+.panel-code-ask {
+  position: absolute;
+  z-index: 3;
+}
+.panel-code-ask[hidden] { display: none; }
+.panel-code-ask-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: var(--tl-font-meta);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--bg-base) 40%, transparent);
+  cursor: pointer;
+}
+.panel-code-ask-button:hover { border-color: var(--accent); }
+.panel-code-ask-button:focus-visible { outline: 2px solid var(--focus-outline); outline-offset: 2px; }
+
+/* Find field (renderer-panel-code-find.js), pinned above the body it searches. */
+.panel-code-find {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border-default);
+  background: var(--side-panel-bg);
+}
+#artifactReviewPanel[data-artifact-review-mode="file_preview"] .panel-code-find { top: var(--panel-code-find-offset, 0); }
+.panel-code-find-input {
+  flex: 1 1 auto;
+  min-width: 8ch;
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--tl-radius-control, 6px);
+  background: var(--surface-input-background);
+  color: var(--text-primary);
+  font-size: var(--tl-font-ui);
+}
+.panel-code-find-count {
+  flex: none;
+  min-width: 7ch;
+  color: var(--text-muted);
+  font-size: var(--tl-font-meta);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+::highlight(panel-code-find) { background-color: color-mix(in srgb, var(--accent) 28%, transparent); }
+::highlight(panel-code-find-current) { background-color: color-mix(in srgb, var(--accent) 60%, transparent); color: var(--text-primary); }
+.artifact-review-panel .is-find-current { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+
+/* Previous / Next file around "Change i of n" on the Changes detail page. */
+.changes-detail-step {
+  min-width: 2.5ch;
+  padding-inline: var(--space-1);
+  font-size: var(--font-size-body);
+  line-height: 1;
+}
+.changes-detail-step:disabled { color: var(--text-decorative); cursor: default; }

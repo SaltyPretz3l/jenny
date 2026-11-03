@@ -22,11 +22,11 @@
    and the bridge subscription is released by dispose(). */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
-    module.exports = factory(require('./renderer-session-rail-model'), require('./renderer-session-rail-render'), require('./renderer-session-rail-performance'), require('./renderer-context-preview'));
+    module.exports = factory(require('./renderer-session-rail-model'), require('./renderer-session-rail-render'), require('./renderer-session-rail-performance'), require('./renderer-context-preview'), require('./renderer-session-rail-jobs'));
     return;
   }
-  root.rendererSessionRail = factory(root.rendererSessionRailModel, root.rendererSessionRailRender, root.rendererSessionRailPerformance, root.rendererContextPreview);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (model, render, performanceRail, contextPreview) {
+  root.rendererSessionRail = factory(root.rendererSessionRailModel, root.rendererSessionRailRender, root.rendererSessionRailPerformance, root.rendererContextPreview, root.rendererSessionRailJobs);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (model, render, performanceRail, contextPreview, railJobs) {
   'use strict';
 
   const REFETCH_DELAY_MS = 120;
@@ -129,6 +129,7 @@
       sheet.remove();
       return null;
     }
+    const jobs = railJobs?.createRailJobs({ tray, toggle, win, jt, getSessionId: () => sessionId, trayShown: () => visible(), getBackgroundJobs: () => win.jennyShell?.backgroundJobs, getJobWaiters: o.getJobWaiters }); if (jobs) disposers.push(jobs.dispose); // background-job rows + toggle readout
     // Row 59 cp6: the Performance section and the toggle readout (own bridge; absent = nothing renders).
     const perf = performanceRail ? performanceRail.createRailPerformance({ win, doc, jt, getSessionId, idPrefix, bridge: o.performance, onChange: () => syncToggle(currentMode()) }) : null;
 
@@ -415,11 +416,10 @@
       return writeChain;
     }
 
-    function toggleSection(key) {
-      if (!model.SECTION_KEYS.includes(key)) return;
+    function toggleSection(key) { // a section head, or Background tasks' finished divider
+      if (!model.DISCLOSURE_KEYS.includes(key)) return;
       const vm = model.buildRailViewModel({ summary: summaryWithDraft(), status, sessionId, workspaceView: view, overrides, jt });
-      const section = vm.sections.find((entry) => entry.key === key);
-      const next = !(section && section.open);
+      const next = !model.isDisclosureOpen(vm, key);
       overrides = { ...overrides, [key]: next };
       paint();
       void writeView({ disclosures: { [key]: next } }, {
@@ -500,7 +500,7 @@
 
     listen(tray, 'click', (event) => {
       const target = event.target && event.target.closest ? event.target : null;
-      if (!target) return;
+      if (!target || jobs?.handleClick(event)) return;
       const header = target.closest('[data-rail-section]');
       if (header && tray.contains(header)) {
         event.preventDefault();
@@ -519,8 +519,7 @@
       const detail = o.detail || win.rendererChatWorkspaceDetail;
       if (!detail || typeof detail.open !== 'function') return;
       const request = { surface: row.getAttribute('data-rail-surface'), ownerSessionId: sessionId, opener: row };
-      const resource = row.getAttribute('data-rail-resource');
-      if (resource) request.resourceRef = resource;
+      if (row.getAttribute('data-rail-resource')) request.resourceRef = row.getAttribute('data-rail-resource');
       if (sheetOpen) closeSheet({ restoreFocus: false });
       detail.open(request);
     });

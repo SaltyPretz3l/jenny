@@ -39,6 +39,8 @@ function initializeSessionExecutionAuthority(service) {
     knowledgeService,
     skillsService: service.skillsService,
     resolveProjectWorkspaceServices: service.resolveProjectWorkspaceServices,
+    // Row 102: live read of the host flag; the same key reaches the sidecar as feature_flags.read_only_commands.
+    isReadOnlyCommandsEnabled: () => service.featureFlags?.read_only_commands !== false,
     resolveSessionDisabledTools: (sessionId) => resolveSessionToolDenyList(
       typeof service.sessionStore.getSessionSummary === 'function'
         ? service.sessionStore.getSessionSummary(sessionId)

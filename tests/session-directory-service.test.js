@@ -25,7 +25,7 @@ function workRow(sessionId, status, extra = {}) {
 
 function fixture({ sessions, activeTurns = {}, work = {}, approvals = [], details = {}, messages = {},
   childIds = [], followUps = [], notes = {}, workspace = null, cancelStream = () => true, primaryChatEnabled = true,
-  cancelWork = null } = {}) {
+  cancelWork = null, waits = {} } = {}) {
   const calls = { cancelStream: [], cancel: [], getSummary: [], snapshots: [], peeks: [] };
   const runtimeStore = {
     getStatus: () => ({ revision: 1 }),
@@ -58,7 +58,7 @@ function fixture({ sessions, activeTurns = {}, work = {}, approvals = [], detail
   const pending = new Map(approvals.map((sessionId, index) => [`approval_${index}`, { sessionId, streamId: 's' }]));
   const directory = createSessionDirectoryService({
     sessionStore: () => sessionStore,
-    projectService: () => ({ get: (id) => ({ id, name: `Project ${id}` }) }),
+    projectService: () => ({ get: (id) => ({ id, name: `Project ${id}`, root_path: id === 'project_general' ? null : `G:/work/${id}` }) }),
     runtime: () => runtime,
     configService: () => ({ getState: () => ({ followUps }) }),
     projectNotesService: () => ({ get: (id) => (notes[id] ? { ok: true, note: notes[id] } : { ok: false }) }),
@@ -68,6 +68,7 @@ function fixture({ sessions, activeTurns = {}, work = {}, approvals = [], detail
     visibleChat: () => visibleChatPredicate(backend),
     cancelChatStream: (streamId, reason) => { calls.cancelStream.push([streamId, reason]); return cancelStream(streamId); },
     stopSettleMs: 80,
+    waitNotices: () => ({ waitFor: (workId) => waits[workId] || null }),
   });
   return { directory, calls };
 }
@@ -129,8 +130,25 @@ test('the primary caller sees the profile; an ordinary caller its project plus l
   // The caller is not its own row; lockdown, plugin, diagnostic and runtime-child chats never appear.
   assert.deepEqual(rows.rows.map((row) => row.session_id).sort(), ['A2', 'B2', 'B3', 'L']);
   const relative = await directory.digest({ callerSessionId: 'A1', sessionId: 'L' });
-  assert.deepEqual(relative.project, { id: 'project_c', name: 'Project project_c', open_tasks: [], note: null },
-    "a linked relative's digest names its project but keeps that project's tasks and note");
+  assert.deepEqual(relative.project, { id: 'project_c', name: 'Project project_c', folder: null, open_tasks: [], note: null },
+    "a linked relative's digest names its project but keeps that project's folder, tasks and note");
+  const own = await directory.digest({ callerSessionId: 'A1', sessionId: 'A2' });
+  assert.equal(own.project.folder, 'G:/work/project_a', "the caller's own project names its folder");
+  assert.equal(rows.rows.find((row) => row.session_id === 'L').project.folder, null);
+  assert.equal(rows.rows.find((row) => row.session_id === 'A2').project.folder, 'G:/work/project_a');
+  const fromPrimary = directory.list({ callerSessionId: 'P', scope: 'all' }).rows;
+  assert.equal(fromPrimary.find((row) => row.session_id === 'L').project.folder, 'G:/work/project_c',
+    'the primary sees every project folder');
+  assert.equal(fromPrimary.find((row) => row.session_id === 'G').project.folder, null, 'General has no folder');
+});
+
+test('title reads a chat title in the digest scope without peeking its transcript (row 94 P4)', () => {
+  const { directory, calls } = fixture({ sessions: scopeSessions() });
+  const peeks = calls.peeks.length;
+  assert.deepEqual(directory.title({ callerSessionId: 'P', sessionId: 'B1' }), { ok: true, session_id: 'B1', title: 'Chat B1' });
+  assert.equal(directory.title({ callerSessionId: 'A1', sessionId: 'B1' }).ok, false, 'outside the caller scope');
+  assert.deepEqual(directory.title({ callerSessionId: 'LK', sessionId: 'A1' }), { ok: false, reason: 'lockdown' });
+  assert.equal(calls.peeks.length, peeks);
 });
 
 test('a caller in lockdown is refused and an unknown caller is unavailable', () => {
@@ -282,7 +300,7 @@ test('rows are closed, archived chats need include_archived, and limit truncates
   assert.deepEqual(Object.keys(row).sort(), ['archived', 'last_outcome', 'linked', 'message_count', 'pinned', 'preferred_model', 'project',
     'role', 'session_id', 'status', 'title', 'unread_message_count', 'updated_at', 'waiting_on_user']);
   assert.equal(row.title.length, 200);
-  assert.deepEqual(row.project, { id: 'project_a', name: 'Project project_a' });
+  assert.deepEqual(row.project, { id: 'project_a', name: 'Project project_a', folder: 'G:/work/project_a' });
   assert.deepEqual(row.linked, { parent_session_id: null, children_count: 0 });
   assert.equal(directory.list({ callerSessionId: 'P', scope: 'all' }).rows.some((entry) => entry.session_id === 'old'), false);
   const archived = directory.list({ callerSessionId: 'P', scope: 'all', include_archived: true });
@@ -456,4 +474,26 @@ test('a failed chat\'s digest says why its last turn failed, bounded and only fo
   assert.equal(Object.hasOwn(ok, 'last_error_code'), false);
   const stale = (await directory.digest({ callerSessionId: 'P', sessionId: 'stale' })).session;
   assert.equal(Object.hasOwn(stale, 'last_error'), false, 'an older turn\'s error is not this failure');
+});
+
+test('row 100 P2: a chat queued behind a work lease says what it waits on; an unseen holder chat stays unnamed', async () => {
+  const since = '2026-10-20T11:30:00.000Z';
+  const wait = (fields) => ({ what: 'tests', holder: 'chat', command: 'npm test', pid: 4242, count: 1, since, ...fields });
+  const { directory } = fixture({
+    sessions: scopeSessions(),
+    work: { A2: [workRow('A2', 'paused')], A1: [workRow('A1', 'paused')], RC: [workRow('RC', 'pending')] },
+    waits: { w_A2_paused: wait({ session_id: 'B1' }), w_A1_paused: wait({ holder: 'test_run', session_id: null, command: null }),
+      w_RC_pending: wait({ session_id: 'A2' }) },
+  });
+  const primary = Object.fromEntries(directory.list({ callerSessionId: 'P', scope: 'all' }).rows.map((row) => [row.session_id, row]));
+  assert.deepEqual(primary.A2.waiting_for, { what: 'tests', holder: 'chat', session_id: 'B1', title: 'Chat B1',
+    command: 'npm test', pid: 4242, count: 1, since });
+  assert.equal(primary.A1.waiting_for.holder, 'test_run');
+  assert.equal('waiting_for' in primary.RC, false, 'only paused work waits on a lease');
+  assert.equal('waiting_for' in primary.A1 && primary.A1.status, 'queued');
+  // A1 sees its own project (A2) but not project_b's B1: the holder chat is not named to it.
+  const ordinary = directory.list({ callerSessionId: 'A1', scope: 'all' }).rows.find((row) => row.session_id === 'A2');
+  assert.deepEqual([ordinary.waiting_for.holder, ordinary.waiting_for.session_id, ordinary.waiting_for.title,
+    ordinary.waiting_for.command, ordinary.waiting_for.pid], ['chat', null, null, null, null], 'nor its command');
+  assert.equal((await directory.digest({ callerSessionId: 'P', sessionId: 'A2' })).session.waiting_for.title, 'Chat B1');
 });

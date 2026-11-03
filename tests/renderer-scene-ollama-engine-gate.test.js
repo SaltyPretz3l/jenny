@@ -193,6 +193,27 @@ test('install failure surfaces its summary and manual fallback URL', async (t) =
   assert.match(h.rootEl.textContent, /https:\/\/ollama\.com\/download\/windows/);
 });
 
+test('install failure with an empty summary surfaces the bounded error detail (B5)', async (t) => {
+  const h = mountGate(t, {
+    setupService: {
+      getOllamaInstallPlan: async () => ({ available: true, url: 'https://example.test/OllamaSetup.exe', sha256: 'abc' }),
+      installOllama: async () => ({
+        status: 'failed',
+        code: 'request_failed',
+        error: 'disk full ' + 'x'.repeat(400),
+        manualFallbackUrl: 'https://ollama.com/download/windows',
+      }),
+    },
+  });
+  await settle();
+  optInAndInstall(h);
+  await settle();
+
+  assert.match(h.rootEl.textContent, /disk full/);
+  assert.doesNotMatch(h.rootEl.textContent, /x{241}/, 'the error detail is bounded to 240 characters');
+  assert.match(h.rootEl.textContent, /https:\/\/ollama\.com\/download\/windows/);
+});
+
 test('structured cancel failure remains visibly in progress with the honest termination message', async (t) => {
   const h = mountGate(t, {
     setupService: {

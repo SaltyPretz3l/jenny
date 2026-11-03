@@ -250,7 +250,8 @@
   :root {
     --context-panel-width: 360px;
     /* Ultra-wide card cap for NARROW mode only. At (0,1,0) this loses to
-       :root[data-chat-width="standard"] in foundation.css, so Standard keeps 1100px. */
+       :root[data-chat-width="standard"|"full"] in foundation.css, so Standard keeps
+       1100px and Wide keeps 100%. */
     --chat-card-max-width: 820px;
   }
 

@@ -4,6 +4,7 @@ const { createHash } = require('node:crypto');
 const { isDeepStrictEqual } = require('node:util');
 const { normalizeProjectId } = require('../projects/project-schema');
 const { normalizePolicySnapshot } = require('./tool-policy-evaluator');
+const { normalizeCommandMatchKeys } = require('./command-prefix');
 
 const TOOL_PERMISSION_SCHEMA_VERSION = 2;
 const MAX_POLICY_VERSION = 1_000_000;
@@ -46,11 +47,12 @@ const TOP_LEVEL_KEYS = Object.freeze([
 ]);
 const RULE_KEYS = Object.freeze(['decision', 'id', 'match', 'reason']);
 const MATCH_KEYS = Object.freeze([
-  'action', 'mcp_server', 'mode', 'path_prefix', 'source_kind', 'tool_family', 'tool_id',
+  'action', 'command_exact', 'command_prefix', 'mcp_server', 'mode', 'path_prefix',
+  'source_kind', 'tool_family', 'tool_id',
 ]);
 // Tools whose consent is a one-off by contract: a persisted always-allow
 // grant for them is refused by the store and rejected on read.
-const NEVER_PERSIST_ALWAYS_ALLOW = Object.freeze(new Set(['exit_plan_mode', 'propose_change']));
+const NEVER_PERSIST_ALWAYS_ALLOW = Object.freeze(new Set(['exit_plan_mode', 'propose_change', 'settings_change', 'chat_configure', 'schedule_change', 'project_create', 'session_export', 'terminal_run']));
 const AUTHORITY_KEYS = Object.freeze([
   'device_id', 'inode', 'project_id', 'root_id', 'root_path', 'root_revision',
 ]);
@@ -177,6 +179,13 @@ function canonicalRule(value) {
     match.tool_id = split.tool_id;
     if (split.action) match.action = split.action;
   }
+  // Row 103: a run_command grant scoped to one program + subcommand or one
+  // exact command (services/tools/command-prefix.js).
+  const commandKeys = normalizeCommandMatchKeys(matchInput, {
+    toolId: match.tool_id, action: match.action, pathPrefix: match.path_prefix,
+  });
+  if (!commandKeys) return null;
+  Object.assign(match, commandKeys);
   if (Object.hasOwn(matchInput, 'mode')) {
     const mode = canonicalMode(matchInput.mode);
     if (mode === undefined) return null;

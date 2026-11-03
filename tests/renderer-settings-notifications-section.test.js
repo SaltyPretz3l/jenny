@@ -41,7 +41,7 @@ function settingsWith(overrides = {}) {
 test('normalizeNotificationSettings is total, fills partial input and drops unknown keys', () => {
   assert.deepEqual(section.normalizeNotificationSettings(undefined), {
     enabled: true, onlyWhenUnfocused: true, sound: true, replyPreview: false,
-    categories: { replies: true, failures: true, permissions: true, questions: true, reminders: true },
+    categories: { replies: true, failures: true, permissions: true, questions: true, reminders: true, jenny: true },
   });
   const partial = section.normalizeNotificationSettings({ enabled: 'no', sound: false, categories: { replies: false, bogus: true }, extra: 1 });
   assert.equal(partial.enabled, true);
@@ -64,7 +64,8 @@ test('render lists every switch with its persisted value and disables dependents
     assert.equal(toggle(container, 'notificationsCategoryRepliesToggle').getAttribute('aria-checked'), 'true');
     assert.equal(toggle(container, 'notificationsReplyPreviewToggle').getAttribute('aria-checked'), 'false');
     assert.equal(toggle(container, 'notificationsCategoryRepliesToggle').hasAttribute('disabled'), false);
-    assert.equal(container.querySelectorAll('[data-inv-toggle]').length, 9);
+    assert.equal(container.querySelectorAll('[data-inv-toggle]').length, 10);
+    assert.equal(toggle(container, 'notificationsCategoryJennyToggle').getAttribute('aria-checked'), 'true');
     // Every row carries its help line.
     assert.ok(container.querySelector('#notificationsSoundToggleDescription').textContent.length > 0);
 
@@ -75,8 +76,11 @@ test('render lists every switch with its persisted value and disables dependents
     assert.equal(toggle(container, 'notificationsCategoryQuestionsToggle').hasAttribute('disabled'), true);
     assert.equal(toggle(container, 'notificationsReplyPreviewToggle').hasAttribute('disabled'), true);
 
-    // The reply preview only matters while reply notifications are on.
+    // The reply preview matters while reply or Jenny-turn notifications are on (row 89).
     state.ui.notifications = settingsWith({ categories: { ...section.DEFAULT_NOTIFICATION_SETTINGS.categories, replies: false } });
+    section.renderNotificationsSection({ container, state });
+    assert.equal(toggle(container, 'notificationsReplyPreviewToggle').hasAttribute('disabled'), false);
+    state.ui.notifications = settingsWith({ categories: { ...section.DEFAULT_NOTIFICATION_SETTINGS.categories, replies: false, jenny: false } });
     section.renderNotificationsSection({ container, state });
     assert.equal(toggle(container, 'notificationsReplyPreviewToggle').hasAttribute('disabled'), true);
     assert.equal(toggle(container, 'notificationsCategoryFailuresToggle').hasAttribute('disabled'), false);

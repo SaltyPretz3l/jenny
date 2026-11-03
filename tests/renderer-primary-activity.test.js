@@ -1,95 +1,13 @@
 'use strict';
 
 // The Jenny chat's Activity dialog (row 76): an Activity pane and a Permissions pane over
-// window.jennyShell.primaryChat, with revoke rows and a grant form.
+// window.jennyShell.primaryChat. Row 87's rules list and add form are in renderer-primary-rules.test.js.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { JSDOM } = require('jsdom');
 
-const { createPrimaryActivity, getDefaultPrimaryActivity, statusFor } = require('../renderer/chat/renderer-primary-activity');
-const stepModal = require('../renderer/inventory/step-modal');
-const actionButton = require('../renderer/inventory/action-button');
-const checkbox = require('../renderer/inventory/checkbox');
-const selectField = require('../renderer/inventory/select-field');
-const segmentedControl = require('../renderer/inventory/segmented-control');
-
-const SID = 'primary-1';
-const flush = () => new Promise((resolve) => setImmediate(resolve));
-
-function entry(overrides) {
-  return {
-    id: 'e', kind: 'message_sent', at: '2026-10-25T09:00:00.000Z', status: null, title: null, detail: null,
-    session_id: null, project: null, authorization: null, permission_id: null, ...overrides,
-  };
-}
-
-function entries() {
-  return [
-    entry({ id: '1', kind: 'paused', at: '2026-10-25T09:05:00.000Z' }),
-    entry({ id: '2', kind: 'report_received', title: 'Website <b>redesign</b>', detail: 'Finished <i>hero</i> copy', status: 'queued', project: { id: 'p1', name: 'Website' } }),
-    entry({ id: '3', kind: 'proposal', title: 'Hero copy', detail: 'Draft three variants', status: 'accepted/start', authorization: 'permission', project: { id: 'p1', name: 'Website' } }),
-    entry({ id: '4', kind: 'proposal', title: 'Other', status: 'declined/start', authorization: 'offer' }),
-    entry({ id: '5', kind: 'message_sent', title: 'Release notes', detail: 'Mention the API bump', status: 'delivered', authorization: 'approval' }),
-    entry({ id: '6', kind: 'stop', title: 'Sweep', status: 'denied' }),
-    entry({ id: '7', kind: 'woken', title: 'by a report', status: 'running' }),
-    entry({ id: '8', kind: 'reset' }),
-  ];
-}
-
-function fixtures() {
-  return {
-    paused: false,
-    activity: { entries: entries(), truncated: true },
-    permissions: {
-      launch: [
-        { permission_id: 'perm-1', project_id: 'p1', run_modes: null, max_children_per_turn: 1, created_at: '2026-10-24T09:00:00.000Z', revoked_at: null, project: { id: 'p1', name: 'Website <b>x</b>' } },
-        { permission_id: 'perm-2', project_id: '*', run_modes: ['auto'], max_children_per_turn: 3, created_at: '2026-10-22T09:00:00.000Z', revoked_at: null, project: null },
-        { permission_id: 'perm-3', project_id: 'p2', run_modes: null, max_children_per_turn: 1, created_at: '2026-10-20T09:00:00.000Z', revoked_at: '2026-10-21T09:00:00.000Z', project: { id: 'p2', name: 'Gone' } },
-      ],
-      message_grants: [
-        { grant_id: 'g-1', destination: { session_id: 'd1', title: 'Release notes' }, purpose: 'Keep notes in step', created_at: '2026-10-24T09:00:00.000Z', expires_at: '2026-10-31T09:00:00.000Z', remaining_sends: 97, revoked_at: null, live: true },
-        { grant_id: 'g-2', destination: { session_id: 'd2', title: 'Dead' }, purpose: 'old', created_at: '2026-10-01T09:00:00.000Z', expires_at: '2026-10-02T09:00:00.000Z', remaining_sends: 0, revoked_at: null, live: false },
-      ],
-      turn_grants: [],
-    },
-    flags: { controls: true, launch_permission: true, activity_log: true },
-  };
-}
-
-function harness(t, options = {}) {
-  const dom = new JSDOM('<!doctype html><html><body><main id="appShell"><button id="trigger">open</button></main></body></html>');
-  const doc = dom.window.document;
-  const data = options.data || fixtures();
-  const calls = [];
-  const listeners = new Set();
-  const bridge = options.noBridge ? null : {
-    getState: async (request) => { calls.push({ method: 'getState', request }); return { schema_version: 1, ok: true, session_id: SID, paused: data.paused, paused_at: null, permissions: [], history: [], flags: data.flags }; },
-    activity: async (request) => { calls.push({ method: 'activity', request }); if (options.failActivity) return { schema_version: 1, ok: false, reason: 'unavailable' }; return { schema_version: 1, ok: true, session_id: SID, ...data.activity }; },
-    permissions: async (request) => { calls.push({ method: 'permissions', request }); return { schema_version: 1, ok: true, ...data.permissions }; },
-    grantLaunch: async (request) => { calls.push({ method: 'grantLaunch', request }); return options.grantAnswer || { schema_version: 1, ok: true, created: true, permission: {} }; },
-    revokeLaunch: async (request) => { calls.push({ method: 'revokeLaunch', request }); return { schema_version: 1, ok: true, permission: {} }; },
-    onChanged: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
-  };
-  const messages = { revokeGrant: async (request) => { calls.push({ method: 'revokeGrant', request }); return { schema_version: 1, ok: true }; } };
-  dom.window.jennyShell = { chatMessages: messages };
-  const savedWindow = globalThis.window;
-  globalThis.window = dom.window;
-  const activity = createPrimaryActivity({
-    documentRef: doc, stepModal, actionButton, checkbox, selectField, segmentedControl,
-    getBridge: () => bridge, state: {}, appendClientLog: () => {},
-    listProjects: () => options.projects || [{ id: 'p1', name: 'Website' }, { id: 'p2', name: 'Perf' }],
-  });
-  t.after(() => { activity.dispose(); dom.window.close(); globalThis.window = savedWindow; });
-  const $ = (selector) => doc.querySelector(selector);
-  return {
-    doc, data, calls, listeners, activity, $,
-    all: (selector) => Array.from(doc.querySelectorAll(selector)),
-    open: (args) => activity.open({ sessionId: SID, trigger: doc.getElementById('trigger'), ...(args || {}) }),
-    calledWith: (method) => calls.filter((call) => call.method === method),
-    showPermissions: () => $('[data-inv-segmented="primary-activity-tabs"] [data-value="permissions"]').click(),
-  };
-}
+const { getDefaultPrimaryActivity, statusFor } = require('../renderer/chat/renderer-primary-activity');
+const { flush, entry, entries, fixtures, harness } = require('./primary-activity-fixtures');
 
 test('open paints one row per entry in order, with kind labels, status tones and history text', async (t) => {
   const h = harness(t);
@@ -139,99 +57,6 @@ test('an empty log reads Nothing yet and a paused chat shows the Paused status w
   await flush();
   assert.equal(h.$('[data-primary-pane="activity"] .chat-review__note').textContent, 'Nothing yet.');
   assert.equal(h.$('.inv-step-modal-status').textContent, 'Paused');
-});
-
-test('the Permissions tab lists live launch permissions with modes and children, hides revoked ones and escapes names', async (t) => {
-  const h = harness(t);
-  h.open();
-  await flush();
-  assert.equal(h.$('[data-primary-pane="permissions"]').hidden, true);
-  h.showPermissions();
-  assert.equal(h.$('[data-primary-pane="permissions"]').hidden, false);
-  assert.equal(h.$('[data-primary-pane="activity"]').hidden, true);
-  const rows = h.all('[data-primary-pane="permissions"] .primary-activity__perm');
-  assert.deepEqual(rows.map((row) => row.getAttribute('data-permission-id')), ['perm-1', 'perm-2', 'g-1']);
-  assert.equal(rows[0].querySelector('.primary-activity__perm-title').textContent, 'Website <b>x</b>');
-  assert.equal(h.$('[data-primary-pane="permissions"] b'), null);
-  assert.match(rows[0].querySelector('.primary-activity__perm-meta').textContent, /^Any run mode · 1 chat per request · granted /u);
-  assert.equal(rows[1].querySelector('.primary-activity__perm-title').textContent, 'Every project');
-  assert.match(rows[1].querySelector('.primary-activity__perm-meta').textContent, /^Only while Jenny is in Auto · 3 chats per request · granted /u);
-  assert.equal(rows[0].querySelector('[data-primary-permission-revoke]').textContent, 'Revoke');
-  assert.match(rows[2].querySelector('.primary-activity__perm-title').textContent, /Release notes/u);
-  assert.match(rows[2].querySelector('.primary-activity__perm-meta').textContent, /^"Keep notes in step" · 97 sends left · expires /u);
-  const notes = h.all('[data-primary-pane="permissions"] .chat-review__note').map((node) => node.textContent);
-  assert.deepEqual(notes, ['None live. A /linked request grants one for an hour.']);
-  const kickers = h.all('.primary-activity__kicker').map((node) => node.textContent);
-  assert.deepEqual(kickers, ['Jenny may start chats in', 'Message grants', 'One-turn grants']);
-});
-
-test('no live permission reads None and the grant form is hidden when the launch_permission flag is off', async (t) => {
-  const data = fixtures();
-  data.permissions = { launch: [], message_grants: [], turn_grants: [{ authorization_ref: 'ref-1', created_at: '2026-10-25T08:00:00.000Z', expires_at: '2026-10-25T09:30:00.000Z', remaining: 1, revoked_at: null, live: true }] };
-  data.flags.launch_permission = false;
-  const h = harness(t, { data });
-  h.open({ pane: 'permissions' });
-  await flush();
-  assert.equal(h.$('[data-primary-pane="permissions"]').hidden, false);
-  assert.equal(h.$('.primary-activity__form'), null);
-  const notes = h.all('[data-primary-pane="permissions"] .chat-review__note').map((node) => node.textContent);
-  assert.deepEqual(notes, ['None. Jenny shows you a choice before starting a chat.', 'None live.']);
-  const turn = h.$('[data-permission-id="ref-1"]');
-  assert.equal(turn.querySelector('.primary-activity__perm-title').textContent, 'A /linked request');
-  assert.equal(turn.querySelector('[data-primary-permission-revoke]'), null);
-});
-
-test('Allow sends grantLaunch with run_modes ["auto"] when checked, null otherwise, then refetches', async (t) => {
-  const h = harness(t);
-  h.open({ pane: 'permissions' });
-  await flush();
-  const select = h.$('[data-primary-grant-project]');
-  assert.deepEqual(Array.from(select.options).map((option) => [option.value, option.textContent]), [['p1', 'Website'], ['p2', 'Perf'], ['*', 'Every project']]);
-  select.value = 'p2';
-  const before = h.calledWith('activity').length;
-  h.$('[data-primary-grant-submit]').click();
-  await flush();
-  await flush();
-  assert.deepEqual(h.calledWith('grantLaunch')[0].request, { schema_version: 1, project_id: 'p2', run_modes: null });
-  assert.equal(h.calledWith('activity').length, before + 1, 'refetched');
-  assert.equal(h.$('[data-primary-grant-project]').value, 'p2', 'the form keeps its choice across the repaint');
-  h.$('[data-primary-grant-auto]').click();
-  h.$('[data-primary-grant-submit]').click();
-  await flush();
-  await flush();
-  assert.deepEqual(h.calledWith('grantLaunch')[1].request, { schema_version: 1, project_id: 'p2', run_modes: ['auto'] });
-});
-
-test('a refused grant paints a notice, and a full list says to revoke one first', async (t) => {
-  const h = harness(t, { grantAnswer: { schema_version: 1, ok: false, code: 'CMP-PRIMARY-0007', reason: 'capacity', retryable: false } });
-  h.open({ pane: 'permissions' });
-  await flush();
-  h.$('[data-primary-grant-submit]').click();
-  await flush();
-  await flush();
-  assert.equal(h.$('.chat-review__notice').textContent, 'The permission list is full; revoke one first.');
-  const other = harness(t, { grantAnswer: { schema_version: 1, ok: false, reason: 'unknown_project' } });
-  other.open({ pane: 'permissions' });
-  await flush();
-  other.$('[data-primary-grant-submit]').click();
-  await flush();
-  await flush();
-  assert.equal(other.$('.chat-review__notice').textContent, 'Could not grant that permission.');
-});
-
-test('Revoke sends revokeLaunch with the id, then refetches; a message grant goes through chatMessages.revokeGrant', async (t) => {
-  const h = harness(t);
-  h.open({ pane: 'permissions' });
-  await flush();
-  const before = h.calledWith('permissions').length;
-  h.$('[data-primary-permission-revoke="perm-2"]').click();
-  await flush();
-  await flush();
-  assert.deepEqual(h.calledWith('revokeLaunch')[0].request, { schema_version: 1, permission_id: 'perm-2' });
-  assert.equal(h.calledWith('permissions').length, before + 1);
-  h.$('[data-primary-message-grant-revoke="g-1"]').click();
-  await flush();
-  assert.deepEqual(h.calledWith('revokeGrant')[0].request, { schema_version: 1, source_session_id: SID, grant_id: 'g-1' });
 });
 
 test('a bridge change while open refetches once, however many events arrive together', async (t) => {
@@ -291,4 +116,310 @@ test('statusFor maps words to tones and appends the authorization', () => {
 test('getDefaultPrimaryActivity is a singleton', () => {
   const a = getDefaultPrimaryActivity({ getBridge: () => null });
   assert.equal(getDefaultPrimaryActivity({}), a);
+});
+
+const CID = 'sc_0123456789abcdef0123456789abcdef';
+const CID2 = 'sc_fedcba9876543210fedcba9876543210';
+
+function settingEntry(overrides) {
+  return {
+    id: `set:${CID}`, kind: 'setting_changed', at: '2026-10-25T09:00:00.000Z', change_id: CID, undone_at: null,
+    changes: [
+      { key: 'time_format_24h', before: false, after: true },
+      { key: 'palette', before: 'ember', after: 'tide', before_label: 'Ember', after_label: 'Tide' },
+      { key: 'app_zoom_percent', before: 100, after: 125 },
+      { key: 'not_a_setting', before: 'a', after: 'b' },
+    ],
+    ...overrides,
+  };
+}
+
+function settingHarness(t, entriesList, options) {
+  const data = fixtures();
+  data.activity = { entries: entriesList, truncated: false };
+  return harness(t, { data, ...(options || {}) });
+}
+
+test('a setting_changed entry lists each change with names, values and a screen-reader "to"; unknown keys are skipped', async (t) => {
+  const h = settingHarness(t, [settingEntry()]);
+  h.open();
+  await flush();
+  const row = h.$('[data-activity-kind="setting_changed"]');
+  assert.equal(row.getAttribute('data-change-id'), CID);
+  assert.equal(row.querySelector('.primary-activity__kind').textContent, 'Settings changed');
+  const changes = Array.from(row.querySelectorAll('.primary-activity__change'));
+  assert.deepEqual(changes.map((li) => [
+    li.querySelector('.primary-activity__setting-name').textContent,
+    li.querySelector('.primary-activity__setting-before').textContent,
+    li.querySelector('.primary-activity__setting-after').textContent,
+  ]), [['24-hour time', 'Off', 'On'], ['Palette', 'Ember', 'Tide'], ['App zoom', '100%', '125%']]);
+  assert.equal(changes[0].querySelector('.sr-only').textContent, ' to ');
+  assert.equal(changes[0].querySelector('.primary-activity__setting-arrow').getAttribute('aria-hidden'), 'true');
+});
+
+test('a setting_changed entry with no readable change omits the list', async (t) => {
+  const h = settingHarness(t, [settingEntry({ changes: [{ key: 'nope', before: 1, after: 2 }] })]);
+  h.open();
+  await flush();
+  assert.equal(h.$('.primary-activity__changes'), null);
+  assert.ok(h.$('[data-primary-setting-undo]'));
+});
+
+test('an approved setting change shows Approved by you with an Undo; an undone one shows when and no Undo', async (t) => {
+  const h = settingHarness(t, [settingEntry(), settingEntry({ id: `set:${CID2}`, change_id: CID2, undone_at: '2026-10-25T09:30:00.000Z' })]);
+  h.open();
+  await flush();
+  const [open, undone] = h.all('[data-activity-kind="setting_changed"]');
+  assert.equal(open.querySelector('.chat-review__state').textContent, 'Approved by you');
+  assert.equal(open.querySelector('.chat-review__status').getAttribute('data-tone'), 'ok');
+  assert.equal(open.querySelector('.status-dot').className, 'status-dot status-dot--ok');
+  assert.equal(open.querySelector('[data-primary-setting-undo]').getAttribute('data-primary-setting-undo'), CID);
+  assert.equal(open.querySelector('[data-primary-setting-undo]').textContent, 'Undo');
+  assert.match(undone.querySelector('.chat-review__state').textContent, /^Undone by you · \S/u);
+  assert.equal(undone.querySelector('.chat-review__status').getAttribute('data-tone'), 'muted');
+  assert.equal(undone.querySelector('.status-dot').className, 'status-dot status-dot--muted');
+  assert.equal(undone.querySelector('[data-primary-setting-undo]'), null);
+});
+
+test('Undo calls undoSettingChange once even on a double click, then reloads the activity', async (t) => {
+  let release;
+  const undoGate = new Promise((resolve) => { release = resolve; });
+  const h = settingHarness(t, [settingEntry()], { undoGate });
+  h.open();
+  await flush();
+  const before = h.calledWith('activity').length;
+  const button = h.$('[data-primary-setting-undo]');
+  button.click();
+  assert.equal(h.$('.chat-review__state').textContent, 'Undoing…');
+  assert.equal(h.$('[data-primary-setting-undo]'), null);
+  button.click(); // the detached button no longer reaches the dialog
+  h.$('.chat-review__item').click();
+  release();
+  await flush();
+  await flush();
+  assert.equal(h.calledWith('undoSettingChange').length, 1);
+  assert.deepEqual(h.calledWith('undoSettingChange')[0].request, { schema_version: 1, change_id: CID });
+  assert.equal(h.calledWith('activity').length, before + 1, 'reloaded');
+  assert.equal(h.$('.chat-review__state').textContent, 'Approved by you');
+});
+
+test('Undo answered changed_since says so and keeps the Undo', async (t) => {
+  const h = settingHarness(t, [settingEntry()], { undoAnswer: { schema_version: 1, ok: false, reason: 'changed_since' } });
+  h.open();
+  await flush();
+  h.$('[data-primary-setting-undo]').click();
+  await flush();
+  await flush();
+  assert.equal(h.$('.chat-review__state').textContent, 'Changed since; not undone');
+  assert.equal(h.$('.chat-review__status').getAttribute('data-tone'), 'pending');
+  assert.ok(h.$('[data-primary-setting-undo]'));
+  assert.equal(h.$('.chat-review__notice'), null);
+});
+
+test('a failed Undo shows a notice and restores the Undo; already_undone shows no notice', async (t) => {
+  const h = settingHarness(t, [settingEntry()], { undoAnswer: { schema_version: 1, ok: false, reason: 'apply_failed' } });
+  h.open();
+  await flush();
+  h.$('[data-primary-setting-undo]').click();
+  await flush();
+  await flush();
+  assert.equal(h.$('.chat-review__notice').textContent, 'Could not undo that change.');
+  assert.equal(h.$('.chat-review__state').textContent, 'Approved by you');
+  assert.ok(h.$('[data-primary-setting-undo]'));
+  const again = settingHarness(t, [settingEntry()], { undoAnswer: { schema_version: 1, ok: false, reason: 'already_undone' } });
+  again.open();
+  await flush();
+  again.$('[data-primary-setting-undo]').click();
+  await flush();
+  await flush();
+  assert.equal(again.$('.chat-review__notice'), null);
+});
+
+test('a malformed change id renders no Undo and no data-change-id', async (t) => {
+  const h = settingHarness(t, [settingEntry({ change_id: 'sc_<img src=x>' }), settingEntry({ id: 'x', change_id: undefined })]);
+  h.open();
+  await flush();
+  const rows = h.all('[data-activity-kind="setting_changed"]');
+  assert.equal(rows.length, 2);
+  for (const row of rows) {
+    assert.equal(row.hasAttribute('data-change-id'), false);
+    assert.equal(row.querySelector('[data-primary-setting-undo]'), null);
+    assert.equal(row.querySelector('.chat-review__state').textContent, 'Approved by you');
+  }
+});
+
+test('a hostile carried label is escaped', async (t) => {
+  const h = settingHarness(t, [settingEntry({ changes: [{ key: 'palette', before: 'a', after: 'b', before_label: '<b>Bold</b>', after_label: '<img src=x onerror=alert(1)>' }] })]);
+  h.open();
+  await flush();
+  assert.equal(h.$('[data-primary-pane="activity"] b'), null);
+  assert.equal(h.$('[data-primary-pane="activity"] img'), null);
+  assert.equal(h.$('.primary-activity__setting-before').textContent, '<b>Bold</b>');
+});
+
+// Row 94: a Jenny-made change to another chat.
+function chatEntry(overrides) {
+  return {
+    id: `chat:${CID}`, kind: 'chat_changed', at: '2026-11-01T09:00:00.000Z', change_id: CID, undone_at: null, title: 'Target chat',
+    session_id: 'sess_t', action: 'rename', field: 'title', before: 'Old name', after: 'New name', project: null, ...overrides,
+  };
+}
+
+async function chatRows(t, list, options) {
+  const h = settingHarness(t, list, options);
+  h.open();
+  await flush();
+  return h;
+}
+
+test('a chat_changed entry names the target chat, says what changed and offers Undo (row 94)', async (t) => {
+  const h = await chatRows(t, [chatEntry()]);
+  const row = h.$('[data-activity-kind="chat_changed"]');
+  assert.equal(row.getAttribute('data-change-id'), CID);
+  assert.equal(row.querySelector('.primary-activity__kind').textContent, 'Chat changed');
+  assert.equal(row.querySelector('strong').textContent, 'Target chat');
+  assert.equal(row.querySelector('.chat-review__body').textContent, 'Renamed "Old name" to "New name"');
+  assert.equal(row.querySelector('.chat-review__state').textContent, 'Done by Jenny');
+  assert.equal(row.querySelector('[data-primary-chat-undo]').getAttribute('data-primary-chat-undo'), CID);
+  assert.equal(row.querySelector('[data-primary-chat-undo]').textContent, 'Undo');
+  assert.equal(row.querySelector('[data-primary-setting-undo]'), null, 'its own Undo hook, not the settings one');
+});
+
+test('each chat action reads as one plain line (row 94)', async (t) => {
+  const cases = [
+    [{ action: 'rename', before: null }, 'Renamed to "New name"'],
+    [{ action: 'pin', field: 'pinned', before: false, after: true }, 'Pinned'],
+    [{ action: 'unpin', field: 'pinned', before: true, after: false }, 'Unpinned'],
+    [{ action: 'archive', field: 'archived_at', before: null, after: '2026-11-01T09:00:00.000Z' }, 'Archived'],
+    [{ action: 'unarchive', field: 'archived_at', before: '2026-11-01T09:00:00.000Z', after: null }, 'Unarchived'],
+    [{ action: 'move_to_project', field: 'project_id', before: 'p2', after: 'p1', project: { id: 'p1', name: 'Website' } }, 'Moved to Website'],
+    [{ action: 'move_to_project', field: 'project_id', before: 'p2', after: 'p9', project: null }, 'Moved to another project'],
+    [{ action: 'set_model', field: 'preferred_model', before: null, after: 'qwen3' }, 'Model: default → qwen3'],
+    [{ action: 'set_effort', field: 'reasoning_effort', before: 'low', after: 'high' }, 'Effort: low → high'],
+    [{ action: 'set_run_mode', field: 'run_mode', before: 'ask', after: 'plan' }, 'Run mode: Ask → Plan'],
+    [{ action: 'set_run_mode', field: 'run_mode', before: 'propose', after: 'weird' }, 'Run mode: Propose → weird'],
+  ];
+  const h = await chatRows(t, cases.map(([overrides], index) => chatEntry({ id: `chat:${index}`, change_id: `sc_${String(index).padStart(32, '0')}`, ...overrides })));
+  const lines = h.all('[data-activity-kind="chat_changed"] .chat-review__body').map((p) => p.textContent);
+  assert.deepEqual(lines, cases.map(([, line]) => line));
+});
+
+test('a created project reads as its own kind with no chat title, and still after the project is gone (row 94 P2)', async (t) => {
+  const h = await chatRows(t, [
+    chatEntry({ action: 'project_create', field: 'project', title: null, before: null, after: 'pr_1', project: { id: 'pr_1', name: 'Website' } }),
+    chatEntry({ id: 'chat:2', change_id: `sc_${'2'.repeat(32)}`, action: 'project_create', field: 'project', title: null, before: null, after: 'pr_1' }),
+  ]);
+  const [named, gone] = h.all('[data-activity-kind="chat_changed"]');
+  assert.equal(named.querySelector('.primary-activity__kind').textContent, 'Project created');
+  assert.equal(named.querySelector('strong'), null);
+  assert.equal(named.querySelector('.chat-review__body').textContent, 'Created the project Website');
+  assert.ok(named.querySelector('[data-primary-chat-undo]'));
+  assert.equal(gone.querySelector('.chat-review__body').textContent, 'Created a project');
+});
+
+test('an undone chat change shows when and no Undo; a malformed id shows no Undo (row 94)', async (t) => {
+  const h = await chatRows(t, [
+    chatEntry({ undone_at: '2026-11-01T09:30:00.000Z' }),
+    chatEntry({ id: 'x', change_id: 'sc_<img src=x>' }),
+  ]);
+  const [undone, bad] = h.all('[data-activity-kind="chat_changed"]');
+  assert.match(undone.querySelector('.chat-review__state').textContent, /^Undone by you · \S/u);
+  assert.equal(undone.querySelector('[data-primary-chat-undo]'), null);
+  assert.equal(bad.hasAttribute('data-change-id'), false);
+  assert.equal(bad.querySelector('[data-primary-chat-undo]'), null);
+});
+
+test('chat Undo calls undoChatChange once with the change id, then reloads the activity (row 94)', async (t) => {
+  const h = await chatRows(t, [chatEntry()]);
+  const before = h.calledWith('activity').length;
+  const button = h.$('[data-primary-chat-undo]');
+  button.click();
+  button.click();
+  await flush();
+  await flush();
+  assert.equal(h.calledWith('undoChatChange').length, 1);
+  assert.deepEqual(h.calledWith('undoChatChange')[0].request, { schema_version: 1, change_id: CID });
+  assert.equal(h.calledWith('undoSettingChange').length, 0);
+  assert.equal(h.calledWith('activity').length, before + 1, 'reloaded');
+});
+
+test('a refused chat Undo says why (row 94)', async (t) => {
+  const refuse = (reason) => ({ schema_version: 1, ok: false, reason });
+  const changed = await chatRows(t, [chatEntry()], { chatUndoAnswer: refuse('changed_since') });
+  changed.$('[data-primary-chat-undo]').click();
+  await flush();
+  await flush();
+  assert.equal(changed.$('.chat-review__state').textContent, 'Changed since; not undone');
+  assert.ok(changed.$('[data-primary-chat-undo]'));
+  assert.equal(changed.$('.chat-review__notice'), null);
+  for (const [reason, text] of [
+    ['session_busy', 'That chat is busy right now; try again when it is idle.'],
+    ['not_found', 'That change can no longer be undone.'],
+    ['unavailable', 'Could not undo that change.'],
+  ]) {
+    const h = await chatRows(t, [chatEntry()], { chatUndoAnswer: refuse(reason) });
+    h.$('[data-primary-chat-undo]').click();
+    await flush();
+    await flush();
+    assert.equal(h.$('.chat-review__notice').textContent, text, reason);
+    assert.ok(h.$('[data-primary-chat-undo]'), reason);
+  }
+  const again = await chatRows(t, [chatEntry()], { chatUndoAnswer: refuse('already_undone') });
+  again.$('[data-primary-chat-undo]').click();
+  await flush();
+  await flush();
+  assert.equal(again.$('.chat-review__notice'), null);
+});
+
+test('hostile chat titles, values and project names are escaped (row 94)', async (t) => {
+  const evil = '<img src=x onerror=alert(1)>';
+  const h = await chatRows(t, [
+    chatEntry({ title: evil, before: '<b>old</b>', after: evil }),
+    chatEntry({ id: 'm', change_id: CID2, action: 'move_to_project', field: 'project_id', after: 'p1', project: { id: 'p1', name: evil } }),
+  ]);
+  assert.equal(h.$('[data-primary-pane="activity"] img'), null);
+  assert.equal(h.$('[data-primary-pane="activity"] b'), null);
+  assert.match(h.$('[data-activity-kind="chat_changed"] .chat-review__body').textContent, /<b>old<\/b>/u);
+});
+
+test('scheduled-check entries name the check and say why it was skipped or who changed it (row 85)', async (t) => {
+  const data = fixtures();
+  data.activity = { truncated: false, entries: [
+    entry({ id: 's1', kind: 'schedule_fired', title: 'Scheduled check: Morning review', status: 'running' }),
+    entry({ id: 's2', kind: 'schedule_skipped', title: 'Morning review', reason: 'paused' }),
+    entry({ id: 's3', kind: 'schedule_missed', title: 'Morning review', reason: 'late' }),
+    entry({ id: 's4', kind: 'schedule_skipped', title: 'Morning review', reason: 'runtime_submission_refused' }),
+    entry({ id: 's5', kind: 'schedule_created', title: 'Morning review', by: 'jenny' }),
+    entry({ id: 's6', kind: 'schedule_disabled', title: 'Morning review', by: 'user' }),
+  ] };
+  const h = harness(t, { data });
+  h.open();
+  await flush();
+  const rows = h.all('[data-primary-pane="activity"] li.chat-review__item');
+  assert.deepEqual(rows.map((li) => li.querySelector('.primary-activity__kind').textContent),
+    ['Check ran', 'Check skipped', 'Check missed', 'Check skipped', 'Check created', 'Check turned off']);
+  assert.deepEqual(rows.map((li) => li.querySelector('.chat-review__body')?.textContent ?? ''),
+    ['', 'Jenny was paused.', 'Jenny was not running when it was due.', 'Jenny could not start the turn.',
+      'Jenny asked and you approved.', 'You made this change.']);
+  assert.equal(rows[0].querySelector('.chat-review__status').getAttribute('data-tone'), 'pending');
+  assert.equal(rows[1].querySelector('.chat-review__status'), null);
+});
+
+test('digest entries: Digest with its prompt and a work tone; Digest held back says why in one line (row 86)', async (t) => {
+  const data = fixtures();
+  const held = (id, reason) => entry({ id, kind: 'digest_skipped', reason });
+  data.activity = { truncated: false, entries: [entry({ id: 'd1', kind: 'digest', title: 'While you were away', status: 'running' }),
+    entry({ id: 'd2', kind: 'digest', title: 'While you were away', status: 'completed' }),
+    held('h1', 'quiet_hours'), held('h2', 'engine_cold'), held('h3', 'cap'), held('h4', 'paused'), held('h5', 'busy')] };
+  const h = harness(t, { data });
+  h.open();
+  await flush();
+  const rows = h.all('[data-primary-pane="activity"] li.chat-review__item');
+  assert.deepEqual(rows.map((li) => li.querySelector('.primary-activity__kind').textContent), ['Digest', 'Digest', ...Array(5).fill('Digest held back')]);
+  assert.equal(rows[0].querySelector('strong').textContent, 'While you were away');
+  assert.deepEqual(rows.slice(0, 2).map((li) => li.querySelector('.chat-review__status').getAttribute('data-tone')), ['pending', 'ok']);
+  assert.deepEqual(rows.slice(2).map((li) => li.querySelector('.chat-review__body').textContent), ['Quiet hours. It runs when they end if you are here.',
+    'Waiting for the model to load. It runs after your next message.', 'One digest every 6 hours at most.', 'Jenny was paused.', 'It could not start.']);
+  assert.deepEqual(rows.slice(2).map((li) => [li.querySelector('strong'), li.querySelector('.chat-review__status')]), Array(5).fill([null, null]));
+  assert.deepEqual(statusFor(entry({ kind: 'digest', status: 'started' })), { tone: 'pending', label: 'Started' });
 });

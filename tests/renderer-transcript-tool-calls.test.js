@@ -686,7 +686,8 @@ test('legacy fallback defers collapsed payload DOM and bounds first materializat
     sessionId: 'session-a', turnId: 'turn-a', rowId: 'row-a',
   });
   assert.match(collapsed, /data-tool-details-materialized="false"/);
-  assert.doesNotMatch(collapsed, /inv-codeblock|tool-call-input|x{100}/);
+  // The header label carries at most 500 characters of the command (row 92).
+  assert.doesNotMatch(collapsed, /inv-codeblock|tool-call-input|x{500}/);
   assert.ok(collapsed.length < 10_000);
 
   const materialized = renderer.renderToolCallBlock(message, [message], {

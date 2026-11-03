@@ -850,13 +850,13 @@ class ElectronSessionStore {
         id: targetMessage.id,
         timestamp: targetMessage.timestamp,
       };
-      if (typeof replaceContent === 'string') {
-        patch.content = replaceContent;
-      }
+      if (typeof replaceContent === 'string') patch.content = replaceContent;
       if (Array.isArray(replaceAttachments)) {
         patch.attachments = replaceAttachments;
       }
       if (replaceSkillInvocation !== undefined) patch.skill_invocation = replaceSkillInvocation;
+      // Row 91: undefined keeps the stored image pin; null clears it (normalizeMessage drops a null pin).
+      if (options.replaceMessageImagePromptPin !== undefined) patch.image_prompt_pin = options.replaceMessageImagePromptPin;
       if (typeof options.replaceMessageTurnId === 'string') patch.turn_id = options.replaceMessageTurnId;
       const normalized = normalizeMessage(patch, session.last_model_used || '');
       survivingTarget = normalized || targetMessage;

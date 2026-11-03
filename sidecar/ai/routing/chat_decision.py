@@ -575,8 +575,7 @@ def _build_runtime_overlay_messages(
 ) -> list[str]:
     runtime_system_messages: list[str] = []
     append_mode_runtime_system_messages(
-        runtime_system_messages,
-        request_context=request_context,
+        runtime_system_messages, request_context=request_context, config=kernel._config
     )
     if not bool(getattr(request_context, "plan_mode", False)):
         append_approved_plan_runtime_system_message(
@@ -898,6 +897,7 @@ def build_chat_decision(
         history=semantic_history,
         turn_context_row=build_turn_context_row_for_statuses(budget_filter_context, tool_statuses),
         execution_context=request_context.execution_context,
+        latest_user_content=latest_user_content,
     )
     read_snapshot_cache = kernel._rebuild_read_snapshot_cache(
         canonical_session_messages,

@@ -2,6 +2,10 @@ const { normalizeString: normalizeToken } = require('../shared/normalize');
 
 const MAX_PENDING_APPROVAL_SUMMARY_CHARS = 500;
 
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
 function hasActiveStreamRegistry(service) {
   return Boolean(service?.activeStreams && typeof service.activeStreams.has === 'function');
 }
@@ -38,6 +42,10 @@ function findPendingApproval(service, sessionId, streamId) {
       policyConsequence: normalizeToken(pending?.policyConsequence),
       reason: normalizeToken(pending?.reason),
       summary: normalizeToken(pending?.summary),
+      oneOffOnly: pending?.oneOffOnly === true,
+      exactApproval: isPlainObject(pending?.exactApproval) ? pending.exactApproval : null,
+      alwaysAllowScope: isPlainObject(pending?.alwaysAllowScope) ? pending.alwaysAllowScope : null,
+      rememberOffer: pending?.rememberOffer === 'linked_children' ? 'linked_children' : '',
     };
   }
   return null;
@@ -125,6 +133,13 @@ function getManagedActiveTurnState(service, sessionId) {
         ...(pending.policyConsequence ? { policy_consequence: pending.policyConsequence } : {}),
         ...(pending.oneOffOnly === true ? { one_off_only: true } : {}),
         ...(pending.reason ? { reason: pending.reason } : {}),
+        // A command or write is approvable only against its exact presentation; without it a
+        // reopened chat's card can only Deny.
+        ...(pending.exactApproval ? { exact_approval: pending.exactApproval } : {}),
+        // What a command card's Always allow covers (row 103).
+        ...(pending.alwaysAllowScope ? { always_allow_scope: pending.alwaysAllowScope } : {}),
+        // The message card's "Always allow for chats Jenny started" (row 87 C1).
+        ...(pending.rememberOffer === 'linked_children' ? { remember_offer: 'linked_children' } : {}),
         summary: (pending.summary || readPendingApprovalSummary(
           service,
           normalizedSessionId,

@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "resources": {
+    "tests": { "scope": "tree", "capacity": 1 },
+    "deps": { "scope": "tree", "capacity": null },
+    "git-write": { "scope": "repo", "capacity": 1 }
+  },
+  "take_sets": {
+    "test-run": [
+      { "kind": "tests", "units": "all" },
+      { "kind": "deps", "units": 1 }
+    ],
+    "install": [{ "kind": "deps", "units": "all" }],
+    "git-write": [{ "kind": "git-write", "units": "all" }]
+  },
+  "npm_script_name_globs": ["test", "test:*", "tests"],
+  "script_take_set": "test-run",
+  "directory_commands": ["cd", "chdir", "set-location", "sl"],
+  "directory_push_commands": ["pushd", "push-location"],
+  "directory_pop_commands": ["popd", "pop-location"],
+  "shells": {
+    "cmd": ["cmd"],
+    "powershell": ["powershell", "pwsh"],
+    "posix": ["bash", "sh", "zsh", "dash", "ksh"]
+  },
+  "wrappers": [
+    { "exe": ["env"], "flags_with_value": ["-u", "-C", "-S"] },
+    { "exe": ["time", "nohup", "exec"] },
+    { "exe": ["nice"], "flags_with_value": ["-n"] },
+    { "exe": ["command"], "stop_flags": ["-v", "-V"] },
+    { "exe": ["npx"], "flags_with_value": ["-p", "--package", "--call"] },
+    { "exe": ["npm"], "subcommand": ["exec"], "flags_with_value": ["-p", "--package"] },
+    { "exe": ["pnpm", "yarn"], "subcommand": ["dlx", "exec"], "flags_with_value": ["-p", "--package"] },
+    {
+      "exe": ["uv"],
+      "subcommand": ["run"],
+      "flags_with_value": [
+        "--with", "--python", "-p", "--project", "--directory", "--env-file", "--group",
+        "--extra", "--with-requirements", "--index", "--index-url"
+      ]
+    },
+    { "exe": ["poetry", "pipenv"], "subcommand": ["run"] }
+  ],
+  "dir_flags": [
+    { "exe": ["npm"], "flags": ["--prefix"], "stop": ["exec", "--"] },
+    { "exe": ["pnpm"], "flags": ["-C", "--dir", "--prefix"], "stop": ["exec", "dlx", "--"] },
+    { "exe": ["yarn"], "flags": ["--cwd"], "stop": ["exec", "dlx", "--"] },
+    { "exe": ["make", "gmake"], "flags": ["-C", "--directory"], "stop": ["--"] }
+  ],
+  "interpreters": {
+    "python": {
+      "module_flag": "-m",
+      "code_flags": ["-c"],
+      "flags_with_value": ["-X", "-W", "--check-hash-based-pycs"]
+    },
+    "node": {
+      "module_flag": null,
+      "code_flags": ["-e", "--eval", "-p", "--print"],
+      "flags_with_value": [
+        "-r", "--require", "--import", "--loader", "--experimental-loader", "--env-file"
+      ]
+    }
+  },
+  "git": {
+    "exe": ["git"],
+    "take_set": "git-write",
+    "global_flags_with_value": [
+      "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--super-prefix", "--attr-source"
+    ],
+    "write_subcommands": [
+      "add", "am", "cherry-pick", "clean", "commit", "fetch", "gc", "merge", "mv", "pull", "push",
+      "rebase", "reset", "restore", "revert", "rm", "switch", "checkout", "update-index",
+      "update-ref", "submodule"
+    ],
+    "conditional": {
+      "stash": { "read_args": ["list", "show"] },
+      "branch": {
+        "write_flags": [
+          "-d", "-D", "--delete", "-m", "-M", "--move", "-c", "-C", "--copy", "-f", "--force", "-u",
+          "--set-upstream-to", "--unset-upstream", "--edit-description", "-t", "--track"
+        ],
+        "read_flags": [
+          "--list", "-l", "-a", "--all", "-r", "--remotes", "-v", "--verbose", "--contains",
+          "--no-contains", "--merged", "--no-merged", "--points-at", "--show-current", "--format"
+        ],
+        "positional_writes": true
+      },
+      "tag": {
+        "write_flags": [
+          "-d", "--delete", "-a", "--annotate", "-s", "--sign", "-u", "--local-user", "-f", "--force",
+          "-m", "--message", "-F", "--file"
+        ],
+        "read_flags": [
+          "--list", "-l", "-n", "-v", "--verify", "--contains", "--no-contains", "--merged",
+          "--no-merged", "--points-at", "--format"
+        ],
+        "positional_writes": true
+      },
+      "worktree": {
+        "write_args": ["add", "remove", "move", "prune", "repair", "lock", "unlock"]
+      },
+      "remote": {
+        "write_args": ["add", "remove", "rm", "rename", "set-url", "set-head", "prune"]
+      },
+      "notes": { "read_args": ["list", "show"], "empty": "read" },
+      "apply": { "write_flags": ["--index", "--cached", "-3", "--3way"] }
+    }
+  },
+  "rules": [
+    { "id": "pytest", "exe": ["pytest", "py.test"], "takes": "test-run" },
+    { "id": "python-test-module", "exe": ["python"], "module": ["pytest", "unittest"], "takes": "test-run" },
+    { "id": "tox-nox", "exe": ["tox", "nox"], "takes": "test-run" },
+    { "id": "node-test", "exe": ["node"], "flag": ["--test"], "takes": "test-run" },
+    { "id": "safe-runner", "exe": ["node"], "script": ["run-node-tests-safe.js"], "takes": "test-run" },
+    { "id": "run-ci", "exe": ["python"], "script": ["run_ci.py"], "takes": "test-run" },
+    { "id": "js-test-runner", "exe": ["jest", "vitest", "mocha", "ava"], "takes": "test-run" },
+    { "id": "playwright-test", "exe": ["playwright"], "subcommand": ["test"], "takes": "test-run" },
+    { "id": "cargo-test", "exe": ["cargo"], "subcommand": ["test", "nextest"], "takes": "test-run" },
+    { "id": "go-test", "exe": ["go"], "subcommand": ["test"], "takes": "test-run" },
+    { "id": "dotnet-test", "exe": ["dotnet"], "subcommand": ["test"], "takes": "test-run" },
+    {
+      "id": "make-test",
+      "exe": ["make", "gmake"],
+      "subcommand_glob": ["test*", "check*"],
+      "match": "any",
+      "takes": "test-run"
+    },
+    {
+      "id": "js-install",
+      "exe": ["npm", "pnpm", "yarn"],
+      "subcommand": ["ci", "install", "i", "add", "remove", "uninstall", "update", "rebuild"],
+      "takes": "install"
+    },
+    { "id": "pip-install", "exe": ["pip", "pip3"], "subcommand": ["install", "uninstall"], "takes": "install" },
+    {
+      "id": "python-pip",
+      "exe": ["python"],
+      "module": ["pip"],
+      "subcommand": ["install", "uninstall"],
+      "takes": "install"
+    },
+    { "id": "uv-sync", "exe": ["uv"], "subcommand": ["sync", "add", "remove"], "takes": "install" },
+    {
+      "id": "uv-pip",
+      "exe": ["uv"],
+      "subcommand": ["pip install", "pip uninstall"],
+      "takes": "install"
+    },
+    { "id": "npm-test", "exe": ["npm"], "subcommand": ["test", "t", "tst"], "runs_script": "test" },
+    { "id": "pnpm-yarn-test", "exe": ["pnpm", "yarn"], "subcommand": ["test"], "runs_script": "test" },
+    {
+      "id": "run-script",
+      "exe": ["npm", "pnpm", "yarn"],
+      "subcommand": ["run", "run-script"],
+      "runs_script": "$arg"
+    },
+    { "id": "yarn-script", "exe": ["yarn"], "runs_script": "$subcommand" }
+  ]
+}

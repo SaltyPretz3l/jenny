@@ -22,6 +22,7 @@ const projectNotesTool = require('./builtin/project-notes-tool');
 const { conversationsRecentTool, conversationOpenTool, conversationsSearchTool } = require('./builtin/conversations-tool');
 const exitPlanModeTool = require('./builtin/exit-plan-mode-tool');
 const askUserTool = require('./builtin/ask-user-tool');
+const suggestNextStepTool = require('./builtin/suggest-next-step-tool');
 const proposeGitActionTool = require('./builtin/propose-git-action-tool');
 const proposeCommandTool = require('./builtin/propose-command-tool');
 const proposeSessionTool = require('./builtin/propose-session-tool');
@@ -31,6 +32,19 @@ const sessionsListTool = require('./builtin/sessions-list-tool');
 const sessionStatusTool = require('./builtin/session-status-tool');
 const sessionTranscriptTool = require('./builtin/session-transcript-tool');
 const sessionStopTool = require('./builtin/session-stop-tool');
+const settingsGetTool = require('./builtin/settings-get-tool');
+const settingsChangeTool = require('./builtin/settings-change-tool');
+const chatOrganizeTool = require('./builtin/chat-organize-tool');
+const projectCreateTool = require('./builtin/project-create-tool');
+const projectsListTool = require('./builtin/projects-list-tool');
+const appViewTool = require('./builtin/app-view-tool');
+const sessionExportTool = require('./builtin/session-export-tool');
+const terminalReadTool = require('./builtin/terminal-read-tool');
+const terminalRunTool = require('./builtin/terminal-run-tool');
+const chatConfigureTool = require('./builtin/chat-configure-tool');
+const scheduleListTool = require('./builtin/schedule-list-tool');
+const scheduleChangeTool = require('./builtin/schedule-change-tool');
+const awayDigestTool = require('./builtin/away-digest-tool');
 const jennyHelpTool = require('./builtin/jenny-help-tool');
 
 function createDefaultRegistry(options = {}) {
@@ -71,6 +85,9 @@ function createDefaultRegistry(options = {}) {
   if (options.toolsHomeEnabled === true) {
     registry.registerTool(withManifestSchema(homeTool));
   }
+  if (options.toolsNextStepEnabled === true) {
+    registry.registerTool(withManifestSchema(suggestNextStepTool));
+  }
   if (options.toolsTaskBoardEnabled === true) {
     registry.registerTool(withManifestSchema(taskBoardTool));
   }
@@ -85,6 +102,28 @@ function createDefaultRegistry(options = {}) {
   if (options.toolsSessionDirectoryEnabled === true) {
     for (const tool of [sessionsListTool, sessionStatusTool, sessionTranscriptTool, sessionStopTool]) registry.registerTool(withManifestSchema(tool));
   }
+  if (options.toolsPrimarySettingsEnabled === true) {
+    for (const tool of [settingsGetTool, settingsChangeTool]) registry.registerTool(withManifestSchema(tool));
+  }
+  if (options.toolsPrimaryChatManageEnabled === true) {
+    for (const tool of [chatOrganizeTool, chatConfigureTool]) registry.registerTool(withManifestSchema(tool));
+  }
+  // Row 94 P2: the caller passes `primary_chat !== false && primary_chat_placement !== false`.
+  if (options.toolsPrimaryChatPlacementEnabled === true) {
+    for (const tool of [projectCreateTool, projectsListTool]) registry.registerTool(withManifestSchema(tool));
+  }
+  // Row 94 P3: the caller passes `primary_chat !== false && primary_app_view !== false`.
+  if (options.toolsPrimaryAppViewEnabled === true) registry.registerTool(withManifestSchema(appViewTool));
+  // Row 94 P4: `primary_chat !== false && primary_chat_export !== false`; the terminal pair needs `terminal_tools !== false`,
+  // and terminal_run also the Jenny chat (primary-settings-tool-gate.js denies it to every other chat).
+  if (options.toolsPrimaryChatExportEnabled === true) registry.registerTool(withManifestSchema(sessionExportTool));
+  if (options.toolsTerminalEnabled === true) registry.registerTool(withManifestSchema(terminalReadTool));
+  if (options.toolsTerminalRunEnabled === true) registry.registerTool(withManifestSchema(terminalRunTool));
+  if (options.toolsPrimarySchedulesEnabled === true) {
+    for (const tool of [scheduleListTool, scheduleChangeTool]) registry.registerTool(withManifestSchema(tool));
+  }
+  // Row 86: default off; the caller passes `primary_chat !== false && primary_digests === true`.
+  if (options.toolsPrimaryDigestsEnabled === true) registry.registerTool(withManifestSchema(awayDigestTool));
   return registry;
 }
 

@@ -396,7 +396,13 @@
   bool('notificationsSoundToggle', 'notifications', 'windowUi.notifications', 'sound', true);
   // Dictation (row 84): the feature flag, through the features adapter like spell check.
   bool('dictationEnabledToggle', 'dictation', 'features', 'featureFlags.dictation', true);
-  ['replies', 'failures', 'permissions', 'questions', 'reminders'].forEach((category) => {
+  // Jenny chat (row 86, pick S1): digests are the primary_digests flag (features adapter, default off); quiet
+  // hours are chatUi scalars on the half hour, drawn together on one row (renderer-settings-utils.js).
+  bool('primaryDigestsToggle', 'jennyChat', 'features', 'featureFlags.primary_digests', false);
+  const HALF_HOURS = Array.from({ length: 48 }, (_, i) => String(Math.floor(i / 2)).padStart(2, '0') + (i % 2 ? ':30' : ':00')).map((value) => ({ value, label: value }));
+  def({ id: 'digestQuietStartSelect', sectionId: 'jennyChat', kind: 'enum', default: '22:00', adapterId: 'chatUi', key: 'digestQuietStart', options: HALF_HOURS });
+  def({ id: 'digestQuietEndSelect', sectionId: 'jennyChat', kind: 'enum', default: '07:00', adapterId: 'chatUi', key: 'digestQuietEnd', options: HALF_HOURS });
+  ['replies', 'failures', 'permissions', 'questions', 'reminders', 'jenny'].forEach((category) => {
     bool('notificationsCategory' + category[0].toUpperCase() + category.slice(1) + 'Toggle', 'notifications', 'windowUi.notifications', 'categories.' + category, true);
   });
   bool('notificationsReplyPreviewToggle', 'notifications', 'windowUi.notifications', 'replyPreview', false);

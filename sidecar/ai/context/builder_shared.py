@@ -45,6 +45,33 @@ KNOWLEDGE_SCOPE_GUIDANCE = (
     "source with knowledge_view and its expected_source_hash when provided."
 )
 
+BACKGROUND_WORK_GUIDANCE = (
+    "- Long-running commands (test suites, builds, installs, servers): start them "
+    "with run_command run_in_background=true and keep working on steps that do not "
+    "depend on them. You are told when a job finishes, so do not poll it or sleep; "
+    "block with check_background_job wait_ms only when nothing else can proceed "
+    "without its result."
+)
+# Row 102 follow-up: a model that wraps `git log` in a Python script gets an approval
+# card for work a single read-only command runs without one.
+READ_ONLY_INSPECTION_GUIDANCE = (
+    "- For read-only inspection (git log, git diff, listing or searching files) use a "
+    "typed read tool or one run_command; do not wrap it in a Python or temp script, "
+    "which always needs the user's approval."
+)
+
+
+def shell_work_guidance(available: Iterable[RuntimeToolStatus]) -> str:
+    """The Tool Use Discipline lines for run_command: read-only inspection, background jobs."""
+    for status in available:
+        if status.name == "run_command":
+            properties = (status.input_schema or {}).get("properties") or {}
+            background = "run_in_background" in properties
+            return "\n" + READ_ONLY_INSPECTION_GUIDANCE + (
+                "\n" + BACKGROUND_WORK_GUIDANCE if background else "")
+    return ""
+
+
 BOOTSTRAP_DIRNAME = "BOOTSTRAP"
 BOOTSTRAP_FILES = ("IDENTITY.md", "SOUL.md", "USER.md")
 WORKSPACE_INSTRUCTION_FILENAME = "agentj.md"

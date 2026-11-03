@@ -408,6 +408,10 @@
         appendClientLog: (...a) => appendClientLog(...a),
       })
     : null); chatScrollCoordinator?.setWayfinderController?.(chatWayfinderController);
+  // Chat links into another registered project (primary chat): the folder list and the open-in-IDE-after-switching route.
+  const projectLinkHooks = window.jennyWorkspacePathResolve?.createProjectLinkHooks?.({
+    getProjectSwitcher: (...a) => ctx.getProjectSwitcher?.(...a), openIdeFileAtLine: (...a) => openIdeFileAtLineSafe(...a), setActiveView: (...a) => setActiveView(...a),
+  }) || {};
   const shellRuntimeController = (window.rendererShellRuntimeUtils || {}).createShellRuntimeController?.({
     state,
     windowRef: window,
@@ -445,7 +449,8 @@
       applyWorkspaceSnapshot: (...a) => applyWorkspaceSnapshot(...a),
       renderSessions: (...a) => renderSessions(...a),
       activateWorkspaceSession: (...a) => activateWorkspaceSession(...a), focusComposer: () => ctx.getPaneComposition?.()?.focusComposer?.() || chatInput?.focus?.(),
-      openArtifactTarget: (...a) => openArtifactTarget(...a), openIdeFileAtLine: (...a) => openIdeFileAtLineSafe(...a), openFilePreviewTarget: (...a) => openFilePreviewTarget(...a),
+      openArtifactTarget: (...a) => openArtifactTarget(...a), openIdeFileAtLine: (...a) => openIdeFileAtLineSafe(...a), revealIdePath: (...a) => revealIdePathSafe(...a), openFilePreviewTarget: (...a) => openFilePreviewTarget(...a),
+      openProjectFileInIde: projectLinkHooks.openProjectFileInIde, getProjectRoots: projectLinkHooks.getProjectRoots,
     },
   }) || {};
   const {

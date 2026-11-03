@@ -50,6 +50,14 @@
       ? `<li>${escapeHtml(jtn('chat.primary.forget.memories', memories, { count: memories }, '{count} memory (recoverable from the Forgotten list)', '{count} memories (recoverable from the Forgotten list)'))}</li>`
         + `<li>${escapeHtml(jtn('chat.primary.forget.pending', pending, { count: pending }, '{count} pending memory suggestion', '{count} pending memory suggestions'))}</li>`
       : `<li>${escapeHtml(jt('chat.primary.forget.unknownCounts', 'its memories and pending suggestions'))}</li>`;
+    // Row 85 D11 (Q6): Jenny's scheduled checks go with Forget unless unticked; shown only when there are some.
+    const checks = known ? count(preview.scheduled_checks) : 0;
+    const deleteChecks = checks ? checkbox({
+      id: 'primary-forget-delete-checks',
+      label: jtn('chat.primary.forget.deleteChecks', checks, { count: checks }, "Also delete Jenny's scheduled check ({count})", "Also delete Jenny's scheduled checks ({count})"),
+      checked: true,
+      dataset: { 'primary-forget-delete-checks': '1' },
+    }) : '';
     const optOut = checkbox({
       id: 'primary-forget-opt-out',
       label: jt('chat.primary.forget.optOut', 'Also stop taking notes from the Jenny chat'),
@@ -58,6 +66,7 @@
     return '<div class="primary-reset" data-primary-reset-body>'
       + `<p class="primary-reset__message">${escapeHtml(jt('chat.primary.forget.message', 'Resets the Jenny chat and removes what memory took from it:'))}</p>`
       + `<ul class="primary-reset__list">${counts}<li>${escapeHtml(jt('chat.primary.forget.index', 'Its chat search index'))}</li></ul>`
+      + (deleteChecks ? `<div class="primary-reset__opt">${deleteChecks}</div>` : '')
       + `<div class="primary-reset__opt">${optOut}</div></div>`;
   }
 
@@ -111,6 +120,8 @@
       if (s.forget) {
         const box = s.handle.mountRoot.querySelector('[data-primary-forget-opt-out]');
         request.memory_opt_out = Boolean(box && box.checked);
+        const checksBox = s.handle.mountRoot.querySelector('[data-primary-forget-delete-checks]');
+        if (checksBox) request.delete_scheduled_checks = Boolean(checksBox.checked);
       }
       setBusy(s, true);
       log('INFO', 'primary_chat.reset_requested', { forget: s.forget });
@@ -200,8 +211,10 @@
   }
 
   let defaultDialog = null;
+  // Called without deps (the row 90 slash commands) it returns the instance
+  // the shell built, or null: a bare instance would skip the after-reset reload.
   function getDefaultPrimaryResetDialog(deps) {
-    if (!defaultDialog) defaultDialog = createPrimaryResetDialog(deps);
+    if (!defaultDialog && deps) defaultDialog = createPrimaryResetDialog(deps);
     return defaultDialog;
   }
 

@@ -224,7 +224,7 @@ test('Background tasks: rows are deduplicated by operation id and capped', () =>
   const section = model.buildSection('background_tasks', wrapper({ counts: { active: 0, waiting: 4, failed: 0, completed: 3 }, coverage: 'complete', unsupported_sources: [], items }), (k, d, p) => (p ? d.replace(/\{(\w+)\}/g, (m, n) => p[n]) : d));
   const taskRows = section.rows.filter((row) => row.key.startsWith('task:'));
   assert.equal(new Set(taskRows.map((row) => row.key)).size, taskRows.length, 'no operation twice');
-  assert.ok(taskRows.length <= model.MAX_BACKGROUND_ROWS);
+  assert.ok(taskRows.filter((row) => row.group !== 'finished').length <= model.MAX_BACKGROUND_ROWS);
   assert.equal(section.valueText, '4 waiting');
 });
 

@@ -46,7 +46,7 @@ const PRE_W1_CHAT_VIEW_IDS = Object.freeze([
   'artifactReviewPreviewShell', 'artifactReviewProvenanceTimeline', 'artifactReviewResizer',
   'artifactReviewRevealButton', 'artifactReviewRevertButton', 'artifactReviewSaveButton',
   'artifactReviewStatus', 'artifactSplitViewToggle', 'attachmentNotice', 'attachmentTray',
-  'backgroundJobsStrip', 'chatAssistantSprite', 'chatContextPanel', 'chatInput', 'chatOriginChip',
+  'chatAssistantSprite', 'chatContextPanel', 'chatInput', 'chatOriginChip',
   'chatOriginLabel', 'chatScrollSentinel', 'chatSearchOverlayHost', 'chatSelectionOverlayHost',
   'chatSpriteLayer', 'chatSurface', 'chatSurfaceEffectLeft', 'chatSurfaceEffects',
   'chatThreadColumn', 'chatThreadScroll', 'chatThreadStage', 'chatTimeline',
@@ -94,7 +94,7 @@ const W1_ADDED_IDS = Object.freeze(['chatPane0', 'chatPaneKicker', 'chatPaneResi
 // Row 59 checkpoint 4 (2026-10-15) adds pane 0's addressed-message strip host.
 const W3_ADDED_IDS = Object.freeze(['composerSettingsGroup', 'composerMessageStrip']);
 const CHAT_PANEL_IDS = ['composerChatChipHost', 'composerChatPanel', 'composerChatPanelTitle',
-  'composerChatPanelChips', 'composerChatPanelList', 'composerChatPosture', 'composerChatPostureDot', 'composerChatPostureText'];
+  'composerChatPanelList', 'composerChatPosture', 'composerChatPostureDot', 'composerChatPostureText'];
 const REMOVED_GEAR_IDS = ['composerSettingsButton', 'composerSettingsDisabledReason', 'composerGearPostureDot', 'composerRunModeHint'];
 
 // The three resolution groups for a clone of #chatPaneTemplate. 20 + 8 + 3 = 31
@@ -172,7 +172,7 @@ test('one-pane identity: #chatView ids are the pre-W1 set plus exactly the four 
   const chatView = documentRef.getElementById('chatView');
   const ids = [...chatView.querySelectorAll('[id]')].map((node) => node.id).sort();
 
-  assert.equal(PRE_W1_CHAT_VIEW_IDS.length, 94); // 107 less the two Session Pulse ids (2026-09-27), less timelineCollapseExpandToggle (transcript views, 2026-09-29), less the four remote banner ids (Remote Control removed, 2026-10-02), less chatSpriteHolo (sprite holo retired, 2026-10-02), less pluginSessionFallbackAction (plugin platform retired, 2026-10-05), less contextArtifactCount/Expand/List (the context panel's Artifacts list retired, row 59 checkpoint 2, 2026-10-15), less composerTerminalShortcut (the Commands button folded into the + menu, row 63, 2026-10-19)
+  assert.equal(PRE_W1_CHAT_VIEW_IDS.length, 93); // 107 less backgroundJobsStrip (background jobs moved to the session rail, 2026-11-01), less the two Session Pulse ids (2026-09-27), less timelineCollapseExpandToggle (transcript views, 2026-09-29), less the four remote banner ids (Remote Control removed, 2026-10-02), less chatSpriteHolo (sprite holo retired, 2026-10-02), less pluginSessionFallbackAction (plugin platform retired, 2026-10-05), less contextArtifactCount/Expand/List (the context panel's Artifacts list retired, row 59 checkpoint 2, 2026-10-15), less composerTerminalShortcut (the Commands button folded into the + menu, row 63, 2026-10-19)
   assert.deepEqual(
     ids,
     [...PRE_W1_CHAT_VIEW_IDS.filter((id) => !REMOVED_LEGACY_ARTIFACT_PANEL_IDS.includes(id) && !REMOVED_GEAR_IDS.includes(id)), ...W1_ADDED_IDS, ...W3_ADDED_IDS, ...CHAT_PANEL_IDS].sort(),

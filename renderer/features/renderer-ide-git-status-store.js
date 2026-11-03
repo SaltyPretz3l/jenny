@@ -68,6 +68,8 @@
       detached: false,
       ahead: 0,
       behind: 0,
+      // '' | 'merge' | 'rebase' | 'cherry-pick' | 'revert' (getStatus's state-file read).
+      operation: '',
       files: [],
       panelFiles: [],
       panelFilesOmitted: 0,
@@ -124,6 +126,7 @@
       detached: result.detached === true,
       ahead: Number(result.ahead) || 0,
       behind: Number(result.behind) || 0,
+      operation: typeof result.operation === 'string' ? result.operation : '',
       files,
       panelFiles,
       panelFilesOmitted: Math.max(0, files.length - panelFiles.length),
@@ -154,7 +157,7 @@
       .join('|');
     const summary = [
       snapshot.available ? 1 : 0, snapshot.isRepo ? 1 : 0, snapshot.unborn ? 1 : 0,
-      snapshot.branch, snapshot.detached ? 1 : 0, snapshot.ahead, snapshot.behind,
+      snapshot.branch, snapshot.detached ? 1 : 0, snapshot.ahead, snapshot.behind, snapshot.operation,
       snapshot.dirtyCount, snapshot.stagedCount, snapshot.panelFilesOmitted,
       snapshot.truncated ? 1 : 0, snapshot.droppedBytes,
     ].join('/');

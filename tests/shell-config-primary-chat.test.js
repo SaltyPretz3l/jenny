@@ -40,16 +40,37 @@ test('constants and defaults', () => {
   assert.equal(SCHEMA_VERSION, 1);
   assert.deepEqual([...PRIMARY_LAUNCH_RUN_MODES], ['ask', 'auto', 'plan', 'propose']);
   assert.deepEqual([...PRIMARY_CHAT_HISTORY_KINDS],
-    ['paused', 'resumed', 'reset', 'forgot', 'permission_granted', 'permission_revoked']);
+    ['paused', 'resumed', 'reset', 'forgot', 'permission_granted', 'permission_revoked', 'setting_changed', 'setting_undone',
+      'chat_changed', 'chat_change_undone', 'schedule_created', 'schedule_updated', 'schedule_enabled', 'schedule_disabled',
+      'schedule_cancelled', 'schedule_skipped', 'schedule_missed', 'digest_skipped', 'rule_added', 'rule_revoked', 'rule_denied']);
   assert.deepEqual({ ...PRIMARY_CHAT_LIMITS }, {
-    permissions_max: 32, history_max: 50, revoked_retention_ms: 30 * 24 * 60 * 60 * 1000,
-    project_id_chars: 128, max_children_per_turn_max: 3,
+    permissions_max: 32, history_max: 200, revoked_retention_ms: 30 * 24 * 60 * 60 * 1000,
+    project_id_chars: 128, max_children_per_turn_max: 3, action_rules_max: 64, rule_message_sends_per_day: 60,
   });
-  assert.deepEqual(DEFAULT_PRIMARY_CHAT, { schemaVersion: 1, pausedAt: null, launchPermissions: [], history: [] });
+  assert.deepEqual(DEFAULT_PRIMARY_CHAT, {
+    schemaVersion: 1, pausedAt: null, launchPermissions: [], actionRules: [], history: [],
+    digest: { lastPresentAt: null, lastDigestAt: null, lastDigestUntil: null },
+  });
   for (const value of [undefined, null, 7, 'x', [], {}, { schemaVersion: 1 }]) {
     assert.deepEqual(normalizePrimaryChat(value), DEFAULT_PRIMARY_CHAT, JSON.stringify(value));
   }
   assert.notEqual(normalizePrimaryChat({}).launchPermissions, DEFAULT_PRIMARY_CHAT.launchPermissions, 'fresh arrays');
+});
+
+test('row 86 digest record: valid cursors kept, each invalid cursor falls back alone', () => {
+  const at = '2026-11-02T10:00:00.000Z';
+  assert.deepEqual(normalizePrimaryChat({ digest: { lastPresentAt: at, lastDigestAt: at, lastDigestUntil: at, quietStart: '23:30' } }).digest,
+    { lastPresentAt: at, lastDigestAt: at, lastDigestUntil: at });
+  assert.deepEqual(normalizePrimaryChat({ digest: {
+    lastPresentAt: 'yesterday', lastDigestAt: 5, lastDigestUntil: '2026-13-45T00:00:00.000Z',
+  } }).digest, DEFAULT_PRIMARY_CHAT.digest);
+  assert.deepEqual(applyPrimaryChatPatch({}, { digest: { lastPresentAt: at } }).digest.lastPresentAt, at);
+  const history = normalizePrimaryChat({ history: [
+    { kind: 'digest_skipped', at, reason: 'quiet_hours' },
+    { kind: 'digest_skipped', at, reason: 'Not A Token' },
+    { kind: 'digest_skipped', at },
+  ] }).history;
+  assert.deepEqual(history, [{ kind: 'digest_skipped', at, reason: 'quiet_hours' }]);
 });
 
 test('a valid permission keeps its canonical key order and run modes are sorted and unique', () => {
@@ -94,7 +115,7 @@ test('duplicates by permission_id keep the first; more than 32 keep the 32 newes
   assert.equal(kept.some((entry) => entry.permission_id === PID(40)), true);
 });
 
-test('history: invalid dropped, optional permission_id validated, capped at 50 newest, oldest first', () => {
+test('history: invalid dropped, optional permission_id validated, capped at 200 newest, oldest first', () => {
   const history = [
     { kind: 'paused', at: AT(1) },
     { kind: 'permission_granted', at: AT(2), permission_id: PID(1) },
@@ -107,11 +128,94 @@ test('history: invalid dropped, optional permission_id validated, capped at 50 n
     { kind: 'paused', at: AT(1) },
     { kind: 'permission_granted', at: AT(2), permission_id: PID(1) },
   ]);
-  const many = Array.from({ length: 60 }, (_unused, i) => ({ kind: 'paused', at: AT(i) }));
+  const many = Array.from({ length: 210 }, (_unused, i) => ({ kind: 'paused', at: AT(i) }));
   const kept = normalizePrimaryChat({ history: many }).history;
-  assert.equal(kept.length, 50);
+  assert.equal(kept.length, 200);
   assert.equal(kept[0].at, AT(10));
-  assert.equal(kept[49].at, AT(59));
+  assert.equal(kept[199].at, AT(209));
+});
+
+test('history: setting_changed / setting_undone carry a change id and bounded allowlisted changes (row 88)', () => {
+  const CID = (n) => `sc_${n.toString(16).padStart(32, '0')}`;
+  const change = (key, before, after) => ({ key, before, after });
+  const good = { kind: 'setting_changed', at: AT(1), change_id: CID(1), extra: 'dropped',
+    changes: [change('time_format_24h', false, true), change('default_run_mode', 'ask', 'plan'), change('app_zoom_percent', 110, 125)] };
+  const labelled = { kind: 'setting_changed', at: AT(4), change_id: CID(2), changes: [
+    { ...change('palette', 'slate', 'jenny-night'), before_label: '  Slate ', after_label: 'Jenny\n night' },
+    { ...change('chat_width', 'standard', 'wide'), before_label: 'x'.repeat(121), after_label: 7 },
+  ] };
+  const undone = { kind: 'setting_undone', at: AT(2), change_id: CID(1), changes: 'ignored' };
+  const bad = [
+    { ...good, change_id: 'sc_nope' },
+    { ...good, change_id: undefined },
+    { ...good, changes: [] },
+    { ...good, changes: Array.from({ length: 6 }, () => change('time_format_24h', false, true)) },
+    { ...good, changes: [change('time_format_24h', false, true), change('time_format_24h', true, false)] },
+    { ...good, changes: [change('safety_mode', 'normal', 'off')] },
+    { ...good, changes: [change('palette', 'slate', 'has space')] },
+    { ...good, changes: [change('palette', 'slate', { id: 'x' })] },
+    { ...good, changes: [change('app_zoom_percent', 110, Number.NaN)] },
+    { ...good, changes: [{ key: 'palette', before: 'slate' }] },
+    { kind: 'setting_undone', at: AT(3) },
+  ];
+  assert.deepEqual(normalizePrimaryChat({ history: [good, undone, labelled, ...bad] }).history, [
+    { kind: 'setting_changed', at: AT(1), change_id: CID(1), changes: good.changes },
+    { kind: 'setting_undone', at: AT(2), change_id: CID(1) },
+    { kind: 'setting_changed', at: AT(4), change_id: CID(2), changes: [
+      { key: 'palette', before: 'slate', after: 'jenny-night', before_label: 'Slate', after_label: 'Jenny night' },
+      { key: 'chat_width', before: 'standard', after: 'wide' },
+    ] },
+  ], 'labels are collapsed and bounded; an unreadable label is dropped, never the entry');
+});
+
+test('history: chat_changed / chat_change_undone carry a change id, a closed action and field and bounded values (row 94)', () => {
+  const CID = (n) => `sc_${n.toString(16).padStart(32, '0')}`;
+  const change = (n, extra = {}) => ({
+    kind: 'chat_changed', at: AT(n), change_id: CID(n), session_id: 'sess_other', action: 'rename', field: 'title',
+    before: 'Old', after: 'New', ...extra,
+  });
+  const good = [
+    change(1, { extra: 'dropped' }),
+    change(2, { action: 'pin', field: 'pinned', before: false, after: true }),
+    change(3, { action: 'move_to_project', field: 'project_id', before: null, after: 'project_a' }),
+    change(4, { action: 'set_run_mode', field: 'run_mode', before: 'ask', after: 'plan' }),
+    change(22, { action: 'project_create', field: 'project', before: null, after: 'pr_new' }), // row 94 P2
+  ];
+  const undone = { kind: 'chat_change_undone', at: AT(5), change_id: CID(1), session_id: 'ignored' };
+  const bad = [
+    change(6, { change_id: 'sc_nope' }), change(7, { change_id: undefined }),
+    change(8, { session_id: '' }), change(9, { session_id: 7 }), change(10, { session_id: 'x'.repeat(129) }),
+    change(11, { action: 'delete' }), change(12, { action: undefined }),
+    change(13, { field: 'session_role' }), change(14, { field: undefined }),
+    change(15, { before: undefined }), change(16, { after: undefined }),
+    change(17, { before: 7 }), change(18, { after: { id: 'x' } }), change(19, { after: ['x'] }),
+    change(20, { after: 'x'.repeat(201) }),
+    { kind: 'chat_change_undone', at: AT(21) },
+  ];
+  const kept = normalizePrimaryChat({ history: [...good, undone, ...bad] }).history;
+  const { extra: _dropped, ...first } = good[0];
+  assert.deepEqual(kept, [first, ...good.slice(1, 4), { kind: 'chat_change_undone', at: AT(5), change_id: CID(1) }, good[4]]);
+  assert.equal(normalizePrimaryChat({ history: [change(1, { after: 'x'.repeat(200) })] }).history.length, 1, 'the bound is inclusive');
+});
+
+test('history: schedule entries carry a bounded reminder id and label, an optional reason token and by (row 85)', () => {
+  const entry = (n, extra = {}) => ({ kind: 'schedule_created', at: AT(n), reminder_id: 'rem_1', label: 'Morning', ...extra });
+  const good = [
+    entry(1, { by: 'jenny', extra: 'dropped' }),
+    entry(2, { kind: 'schedule_updated', by: 'user' }),
+    entry(3, { kind: 'schedule_skipped', reason: 'rate_limited' }),
+    entry(4, { kind: 'schedule_missed', reason: 'closed', label: '' }),
+    entry(5, { kind: 'schedule_cancelled', reminder_id: 'r'.repeat(128), label: 'x'.repeat(200) }),
+  ];
+  const bad = [
+    entry(6, { reminder_id: '' }), entry(7, { reminder_id: 7 }), entry(8, { reminder_id: 'r'.repeat(129) }),
+    entry(9, { label: undefined }), entry(10, { label: 'x'.repeat(201) }), entry(11, { label: 7 }),
+    entry(12, { reason: 'Rate limited' }), entry(13, { reason: 'x'.repeat(33) }), entry(14, { reason: 7 }),
+    entry(15, { by: 'model' }), entry(16, { by: null }), entry(17, { kind: 'schedule_fired' }),
+  ];
+  const kept = normalizePrimaryChat({ history: [...good, ...bad] }).history;
+  const { extra: _dropped, ...first } = good[0];
+  assert.deepEqual(kept, [first, ...good.slice(1)]);
 });
 
 test('pausedAt is null or an ISO string', () => {

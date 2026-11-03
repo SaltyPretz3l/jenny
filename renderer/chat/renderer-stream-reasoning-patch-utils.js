@@ -25,6 +25,8 @@
   const streamPatchTargetUtils = resolveSibling('rendererStreamPatchTargetUtils', './renderer-stream-patch-target-utils');
   const thinkingPanelSettleUtils = resolveSibling('rendererThinkingPanelSettleUtils', '../shell/renderer-thinking-panel-settle-utils');
   const autocollapseUtils = resolveSibling('rendererReasoningAutocollapseUtils', './renderer-reasoning-autocollapse-utils');
+  // Lazy: the row 101 live-box module may load after this one.
+  const liveBoxFollow = () => resolveSibling('rendererReasoningLiveBoxFollow', './renderer-reasoning-live-box-follow');
   const { morphElementChildren, reconcileStreamUnits, setInnerHtmlPreservingCodeScroll } = streamDomPatchUtils;
   // Every write below lands inside a reasoning row the reconcile may have
   // stamped: flag it so its live-descendant check runs (see dom-patch utils).
@@ -34,8 +36,10 @@
 
   // `deps`: the controller-scoped pieces -- getRuntime (the controller's
   // runtime record: lastThinkingMarkup/-Key, streamingArticleMessageId,
-  // streamingMessageId), isStreamPaintV2Enabled, noteHeaderPatch(kind) and
-  // buildAutoCollapseOptions(doc).
+  // streamingMessageId), isStreamPaintV2Enabled, noteHeaderPatch(kind),
+  // buildAutoCollapseOptions(doc) and getReasoningTailWriter(blockKey) (a
+  // `(el, html, index)` writer for that block's tail unit, or null for the
+  // plain innerHTML path).
   function createReasoningStackPatcher(deps) {
     const settings = deps || {};
     const getRuntime = typeof settings.getRuntime === 'function' ? settings.getRuntime : () => ({});
@@ -46,6 +50,10 @@
     const buildAutoCollapseOptions = typeof settings.buildAutoCollapseOptions === 'function'
       ? settings.buildAutoCollapseOptions
       : () => ({});
+
+    const getReasoningTailWriter = typeof settings.getReasoningTailWriter === 'function'
+      ? settings.getReasoningTailWriter
+      : () => null;
 
     function parseReasoningStack(markup, doc) {
       const source = String(markup || '').trim();
@@ -80,7 +88,7 @@
 
     const getReasoningBlockKey = streamPatchTargetUtils.getReasoningBlockKey;
 
-    function patchReasoningBlock(existingBlock, nextBlock) {
+    function patchReasoningBlock(existingBlock, nextBlock, blockIndex) {
       const existingHeader = existingBlock?.querySelector?.('.reasoning-row-header');
       const nextHeader = nextBlock?.querySelector?.('.reasoning-row-header');
       const existingPanel = existingBlock?.querySelector?.('.reasoning-row-panel');
@@ -119,6 +127,9 @@
 
       const existingBody = existingPanel.querySelector('.reasoning-row-panel-body');
       const nextBody = nextPanel.querySelector('.reasoning-row-panel-body');
+      // Row 101 live box: the fresh attributes below drop the box marker and
+      // its top fade; carry them across so the cap holds into the collapse.
+      const liveBoxState = existingBody ? liveBoxFollow().capturePatchState?.(existingBody) : null;
       if (existingBody && nextBody) {
         copyElementAttributes(existingBody, nextBody);
         // Per-unit soft-landing reveal: update changed units in place and reveal
@@ -130,6 +141,8 @@
             unitClassName: 'reasoning-stream-unit',
             revealCap: 2,
             staggerMs: 90,
+            quickRevealWithinMs: 1200,
+            writeTailUnit: getReasoningTailWriter(getReasoningBlockKey(existingBlock, blockIndex)),
           });
         } else if (existingBody.innerHTML !== nextBody.innerHTML) {
           setInnerHtmlPreservingCodeScroll(existingBody, nextBody.innerHTML);
@@ -141,8 +154,16 @@
       }
       // Runs AFTER the body swap so the collapse starts from the settled
       // body's height, not the taller live one (no mid-collapse jump).
+      if (liveBoxState && existingBody.isConnected) {
+        liveBoxFollow().restorePatchState?.(existingBody, liveBoxState, { settled: false });
+      }
       if (shouldAnimateCollapse) {
         autocollapseUtils.runReasoningPanelAutoCollapse(existingPanel, buildAutoCollapseOptions(existingBlock.ownerDocument));
+      }
+      // At the flip the settled body holds the full text: show its end, the
+      // part the reader was on, once the collapsing cap is in force.
+      if (liveBoxState && existingBlock.getAttribute('data-reasoning-status') !== 'streaming') {
+        liveBoxFollow().restorePatchState?.(existingBody, liveBoxState, { settled: true });
       }
       return true;
     }
@@ -208,7 +229,7 @@
       noteRowSubtreeWrite(existingStack);
       copyElementAttributes(existingStack, nextStack);
       for (let index = 0; index < existingBlocks.length; index += 1) {
-        if (!patchReasoningBlock(existingBlocks[index], nextBlocks[index])) {
+        if (!patchReasoningBlock(existingBlocks[index], nextBlocks[index], index)) {
           return fallback('block_shape_mismatch');
         }
       }

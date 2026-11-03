@@ -198,7 +198,7 @@ def test_main_defaults_shell_security_and_git_tracking_off(
 
 @pytest.mark.parametrize(
     "flag",
-    ["shell_noninteractive_env", "shell_head_tail_output", "edit_match_fallbacks"],
+    ["shell_noninteractive_env", "shell_head_tail_output", "edit_match_fallbacks", "test_progress"],
 )
 def test_main_threads_row60_default_on_flags(
     monkeypatch: pytest.MonkeyPatch,

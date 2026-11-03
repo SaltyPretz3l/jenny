@@ -1,0 +1,152 @@
+/* Row 96: live test-run progress under a run_command row (renderer-stream-test-progress.js)
+   and the finished record beside a settled one (renderer-tool-test-summary.js). Option B of
+   the 2026-11-01 review: the inv-progress bar with failure ticks, one counts line, the
+   per-file grid and the failures by name. No card, no side bar: it sits on the row's own
+   surface, indented to the summary text (toggle padding + status dot + column gap). */
+
+.tool-test-progress {
+  display: grid;
+  gap: var(--space-2);
+  padding-block: 0 var(--space-1);
+  padding-inline: calc(var(--space-3) * 2 + 6px) var(--space-3);
+  min-width: 0;
+}
+
+.tool-test-progress-bar .inv-progress-track {
+  position: relative;
+  overflow: visible;
+}
+
+.tool-test-progress-tick {
+  position: absolute;
+  inset-block: -2px;
+  inline-size: 2px;
+  margin-inline-start: -1px;
+  border-radius: 1px;
+  background: var(--text-danger-emphasis);
+}
+
+.tool-test-progress-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--space-3);
+  font-size: var(--tl-font-meta);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-test-progress-bad {
+  color: var(--text-danger-emphasis);
+}
+
+.tool-test-progress-links {
+  display: inline-flex;
+  gap: var(--space-3);
+  margin-inline-start: auto;
+}
+
+/* One cell per test file (or block of tests): 6 px up to 1,000 cells, 4 px up to 2,500. */
+.tool-test-progress-grid {
+  --tool-test-cell: 6px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, var(--tool-test-cell));
+  gap: 2px;
+}
+
+.tool-test-progress-grid[data-px="4"] {
+  --tool-test-cell: 4px;
+  gap: 1px;
+}
+
+.tool-test-progress-cell {
+  display: inline-block;
+  inline-size: var(--tool-test-cell, 6px);
+  block-size: var(--tool-test-cell, 6px);
+  border-radius: 1.5px;
+  background: color-mix(in srgb, var(--widget-action-bg) 82%, transparent);
+}
+
+.tool-test-progress-cell[data-s="run"] { background: color-mix(in srgb, var(--accent-cyan) 55%, transparent); }
+.tool-test-progress-cell[data-s="ok"] { background: color-mix(in srgb, var(--widget-tool-success-color) 62%, transparent); }
+.tool-test-progress-cell[data-s="skip"] { background: color-mix(in srgb, var(--text-muted) 55%, transparent); }
+.tool-test-progress-cell[data-s="bad"] { background: var(--text-danger-emphasis); }
+
+.tool-test-progress-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  font-size: var(--font-size-caption);
+  color: var(--text-muted);
+}
+
+.tool-test-progress-legend .tool-test-progress-cell {
+  margin-inline-end: var(--space-1);
+  vertical-align: 1px;
+}
+
+.tool-test-progress-unit {
+  margin-inline-start: auto;
+}
+
+.tool-test-progress-grid-wrap {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.tool-test-progress[data-grid-open="false"] .tool-test-progress-grid-wrap {
+  display: none;
+}
+
+.tool-test-progress-fails {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tool-test-progress-fail {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--tl-font-meta);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.tool-test-progress-fail:hover .tool-test-progress-fail-name,
+.tool-test-progress-fail:focus-visible .tool-test-progress-fail-name {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.tool-test-progress-fail:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.tool-test-progress-fail-name {
+  overflow: hidden;
+  font-family: var(--font-family-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-test-progress-fail-file {
+  flex: none;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.tool-test-progress-more {
+  padding-inline-start: calc(6px + var(--space-2));
+  font-size: var(--tl-font-meta);
+  color: var(--text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-test-progress-bar .inv-progress-fill { transition: none; }
+}

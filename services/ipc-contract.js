@@ -65,6 +65,8 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'sessionRuntime.getResult': invokeMethod('session-runtime:get-result'),
   'sessionRuntime.getWork': invokeMethod('session-runtime:get-work'),
   'sessions.exportSession': invokeMethod('sessions:export'),
+  // Row 94: invalidation `{session_ids, reason}` after an agent changed other chats; the renderer refetches the list.
+  'sessions.onChanged': subscribeMethod('sessions:changed'),
   'sessions.forkSession': invokeMethod('sessions:fork'),
   'models.list': invokeMethod('models:list'),
   // Raw installed Ollama tags (engine-scoped to ollama), independent of the chat
@@ -117,6 +119,17 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   // external_scripts?, external_stylesheets? }). Main accepts it only for
   // request ids it issued, behind the trusted-sender authorizer.
   'workspacePresentation.reportOutcome': invokeMethod('workspace-presentation:report-outcome'),
+  // appView.* (row 94 P3): the `app_view` tool's ONE-SHOT main->renderer push ({ request_id, caller_session_id, action,
+  // ...target }, services/app-view-service.js), the renderer's decision for it, and the renderer's current layout
+  // (ids and booleans only) for app_view's `state`. Live events, never transcript metadata.
+  'appView.onRequest': subscribeMethod('app-view:request'),
+  'appView.reportOutcome': invokeMethod('app-view:report-outcome'),
+  'appView.reportLayout': invokeMethod('app-view:report-layout'),
+  // terminalTools.* (row 94 P4): `terminal_run`'s ONE-SHOT main->renderer push ({ request_id, command }, sent only
+  // after the user approved that exact command, services/terminal-tools-service.js) and the renderer's report of the
+  // terminal it used ({ request_id, ok, session_id?, reason? }).
+  'terminalTools.onRunRequest': subscribeMethod('terminal-tools:run-request'),
+  'terminalTools.reportRun': invokeMethod('terminal-tools:report-run'),
   // Fire-and-forget renderer→main log batches mirrored into shell.log.
   'logs.clientAppend': sendMethod('logs:client-append'),
   'diagnostics.logs.getSnapshot': invokeMethod('diagnostics:logs:snapshot'),
@@ -170,6 +183,16 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'chatUi.updateSettings': invokeMethod('chat-ui:update-settings'),
   'windowUi.getState': invokeMethod('window-ui:get-state'),
   'windowUi.updateSettings': invokeMethod('window-ui:update-settings'),
+  // Row 88 D6: a chatUi / windowUi / workspaceIde preferences commit from any writer (Settings,
+  // the Jenny chat's settings_change, undo) pushes the new state, so an open Settings page and
+  // the shell repaint at once instead of on the 15 s poll. Renderer handlers are idempotent.
+  'chatUi.onChanged': subscribeMethod('chat-ui:changed'),
+  'windowUi.onChanged': subscribeMethod('window-ui:changed'),
+  // Row 88 D8: the appearance relay. Palette, typography, font scale and chat width live in the
+  // renderer's localStorage; main reads and applies them only through this one-shot request and
+  // the renderer's reply (wire in services/primary-settings-contract.js). Main fails closed.
+  'appearance.onRelayRequest': subscribeMethod('appearance:relay-request'),
+  'appearance.respondRelay': invokeMethod('appearance:relay-respond'),
   'modelTuning.getState': invokeMethod('model-tuning:get-state'),
   'modelTuning.update': invokeMethod('model-tuning:update'),
   'engineTuning.getState': invokeMethod('engine-tuning:get-state'),
@@ -193,6 +216,8 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'workspaceFs.writeFile': invokeMethod('workspace-fs:write-file'),
   'workspaceFs.readText': invokeMethod('workspace-fs:read-text'),
   'workspaceFs.readImage': invokeMethod('workspace-fs:read-image'),
+  'workspaceFs.readProjectText': invokeMethod('workspace-fs:read-project-text'),
+  'workspaceFs.readProjectImage': invokeMethod('workspace-fs:read-project-image'),
   'workspaceFs.readDocument': invokeMethod('workspace-fs:read-document'),
   'workspaceFs.writeText': invokeMethod('workspace-fs:write-text'),
   'workspaceFs.writeDocument': invokeMethod('workspace-fs:write-document'),
@@ -264,6 +289,7 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'workspaceIde.getState': invokeMethod('workspace-ide:get-state'),
   'workspaceIde.updateSettings': invokeMethod('workspace-ide:update-settings'),
   'workspaceIde.updateState': invokeMethod('workspace-ide:update-state'),
+  'workspaceIde.onPreferencesChanged': subscribeMethod('workspace-ide:preferences-changed'), // row 88 D6
   // Row 82 E3 hot exit backups
   'workspaceBackup.write': invokeMethod('workspace-backup:write'),
   'workspaceBackup.remove': invokeMethod('workspace-backup:remove'),
@@ -516,12 +542,13 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'clipboard.writeText': invokeMethod('clipboard:write-text'),
   // F4/F5/F6: save-file IPC for renderer-built content
   'dialog.saveFile': invokeMethod('dialog:save-file'),
-  // backgroundJobs.*: chip visibility + kill for backgrounded run_command
-  // jobs (W2-2). Snapshots push over the bridge-event bus (main-workspace
-  // window only); kill is trusted-sender-authorized in
-  // services/main/ipc-handler-registration.js.
+  // backgroundJobs.*: visibility, kill and the finished-job output tail for
+  // backgrounded run_command jobs (W2-2). Snapshots push over the bridge-event
+  // bus (main-workspace window only); kill and readOutput are
+  // trusted-sender-authorized in services/main/ipc-handler-registration.js.
   'backgroundJobs.getState': invokeMethod('background-jobs:get-state'),
   'backgroundJobs.kill': invokeMethod('background-jobs:kill'),
+  'backgroundJobs.readOutput': invokeMethod('background-jobs:read-output'),
   'backgroundJobs.onChanged': subscribeMethod('background-jobs:changed'),
   // suggestedChanges.*: Propose-mode suggestions (row 35). Electron owns the
   // record; accept applies through the sidecar journal. Trusted-sender
@@ -594,8 +621,12 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'primaryChat.resume': invokeMethod('primary-chat:resume'),
   'primaryChat.grantLaunch': invokeMethod('primary-chat:grant-launch'),
   'primaryChat.revokeLaunch': invokeMethod('primary-chat:revoke-launch'),
+  'primaryChat.addRule': invokeMethod('primary-chat:add-rule'), // row 87 D6
+  'primaryChat.revokeRule': invokeMethod('primary-chat:revoke-rule'),
   'primaryChat.reset': invokeMethod('primary-chat:reset'),
   'primaryChat.forgetPreview': invokeMethod('primary-chat:forget-preview'),
+  'primaryChat.undoSettingChange': invokeMethod('primary-chat:undo-setting-change'), // row 88 D5
+  'primaryChat.undoChatChange': invokeMethod('primary-chat:undo-chat-change'), // row 94 P1
   'primaryChat.onChanged': subscribeMethod('primary-chat:changed'),
   // performance.*: live inference metrics, GPU-pressure warnings and their two
   // settings (row 59 checkpoint 6). Closed `{schema_version:1, ...}` requests answered
@@ -680,6 +711,7 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'templates.delete': invokeMethod('templates:delete'),
   'templates.apply': invokeMethod('templates:apply'),
   'usage.getSnapshot': invokeMethod('usage:get-snapshot'),
+  'usage.getStats': invokeMethod('usage:get-stats'),
   'usage.clearHistory': invokeMethod('usage:clear-history'),
   'window.getState': invokeMethod('window:get-state'),
   'window.onStateChanged': subscribeMethod('window:state-changed'),
@@ -698,6 +730,11 @@ const JENNY_SHELL_BRIDGE_DESCRIPTORS = Object.freeze({
   'dataLifecycle.restoreWorkspace': invokeMethod('data-lifecycle:restore-workspace'),
   'dataLifecycle.launchUninstallAssistant': invokeMethod('data-lifecycle:launch-uninstall-assistant'),
   'dataLifecycle.syncPortablePreferences': invokeMethod('data-lifecycle:sync-portable-preferences'),
+  // Row 95 "Your data": category ids and a preview token only; main resolves every path.
+  'dataLifecycle.getStorageUsage': invokeMethod('data-lifecycle:get-storage-usage'),
+  'dataLifecycle.previewClear': invokeMethod('data-lifecycle:preview-clear'),
+  'dataLifecycle.clearCategory': invokeMethod('data-lifecycle:clear-category'),
+  'dataLifecycle.revealCategory': invokeMethod('data-lifecycle:reveal-category'),
   'dataLifecycle.onProgress': subscribeMethod('data-lifecycle:progress'),
   // chatgptPlanUsage.*: composer footer plan-usage ring for the ChatGPT
   // subscription provider (host-owned engine, not the plugin package).

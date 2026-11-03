@@ -57,6 +57,11 @@ _TOOL_CAP_CLEAN_FOOTER = (
 _DIMINISHING_RETURNS_FOOTER = (
     "Stopped after 3 tool calls in a row made no progress. Reply 'resume' to continue."
 )
+# Every call in the window failed with the stub's one code: the footer names it.
+_SHARED_FAILURE_FOOTER = (
+    "Stopped after 3 tool calls in a row failed with CMP-TOOL-0008 (no_progress_three "
+    "failed). Reply 'resume' to continue."
+)
 
 
 def _budget_stop_loop() -> SimpleNamespace:
@@ -349,7 +354,7 @@ def test_diminishing_returns_regenerates_without_reusing_pre_tool_text(
 
     assert not decision.response_text.startswith("Let me check the file.")
     assert decision.response_text.count("Let me check the file.") == 0
-    assert decision.response_text.endswith(_DIMINISHING_RETURNS_FOOTER)
+    assert decision.response_text.endswith(_SHARED_FAILURE_FOOTER)
     assert engine.call_count == 4
     assert engine.requests[-1]["tools"] == []
     wind_down_notes = [
@@ -362,7 +367,7 @@ def test_diminishing_returns_regenerates_without_reusing_pre_tool_text(
     assert any(
         isinstance(event, ThinkingEvent)
         and event.kind == CHAT_THINKING_KIND_STATUS
-        and event.delta == _DIMINISHING_RETURNS_FOOTER
+        and event.delta == _SHARED_FAILURE_FOOTER
         for event in events
     )
     stop_records = [
@@ -375,6 +380,7 @@ def test_diminishing_returns_regenerates_without_reusing_pre_tool_text(
     assert stop_records[0].__dict__["data"] == {
         "consecutive_no_progress_window_size": 3,
         "tool_calls_used": 3,
+        "error_code": "CMP-TOOL-0008",
     }
 
 

@@ -14,6 +14,7 @@ from sidecar.ai.error_codes import CMP_PROTO_VERSION_MISMATCH
 from sidecar.protocol import (
     CHAT_CANCEL_METHOD,
     ENGINE_ACTIVITY_METHOD,
+    SESSION_JOB_SETTLED_METHOD,
     SESSION_MAIL_ARRIVED_METHOD,
     SESSION_RUN_MODE_UPDATED_METHOD,
 )
@@ -29,6 +30,7 @@ from sidecar.runtime.rpc import (
     validate_jsonrpc_envelope,
     validate_method_version,
 )
+from sidecar.runtime.turn_job_notices import PendingJobNoticeQueue, admit_job_settled
 from sidecar.runtime.turn_state import (
     CANCELLED_TERMINAL_SUBCODES,
     TURN_STATE_CANCELLED,
@@ -60,6 +62,7 @@ _AUXILIARY_CANCEL_REASONS = CANCELLED_TERMINAL_SUBCODES | {"preempted"}
 _SESSION_TURN_NOTIFICATIONS = {
     SESSION_RUN_MODE_UPDATED_METHOD: apply_run_mode_update,
     SESSION_MAIL_ARRIVED_METHOD: admit_mail_arrived,
+    SESSION_JOB_SETTLED_METHOD: admit_job_settled,
 }
 
 
@@ -100,6 +103,7 @@ class TurnCancellationHandle:
     generation: int | None = None
     live_run_mode: LiveRunModeState = field(default_factory=LiveRunModeState)
     pending_mail: PendingMailQueue = field(default_factory=PendingMailQueue)
+    pending_job_notices: PendingJobNoticeQueue = field(default_factory=PendingJobNoticeQueue)
     reason: str = "chat_cancelled"
     cancel_reasons: frozenset[str] = CANCELLED_TERMINAL_SUBCODES
     _event: threading.Event = field(default_factory=threading.Event)

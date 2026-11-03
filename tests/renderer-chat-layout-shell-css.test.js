@@ -698,6 +698,13 @@ test('chat width tokens are a line-length cap resolved once; the measure is pane
   assert.match(wideRule, /--chat-user-bubble-max-width:\s*clamp\(410px,\s*49vw,\s*810px\);/);
   assert.doesNotMatch(strip(foundationCss), /:root\[data-chat-width="standard"\]\s+\.chat-view/);
 
+  // Row 92: Wide (`full`) lifts the cap so the pane formula below resolves to the pane minus its
+  // gutter; cards fill the column and user bubbles stay a share of it.
+  const fullRule = readCssRuleBlock(foundationCss, ':root[data-chat-width="full"]');
+  assert.match(fullRule, /--chat-measure-cap-ch:\s*100000;/);
+  assert.match(fullRule, /--chat-card-max-width:\s*100%;/);
+  assert.match(fullRule, /--chat-user-bubble-max-width:\s*min\(72%,\s*1200px\);/);
+
   // The per-pane measure: min(cap, pane - 2 * gutter), gutter = 3% of the pane (16..40px), never
   // narrower than the avatar rail, and (one pane) wide enough to clear the floating utilities while
   // the measure keeps the 320px reading floor; --chat-measure-lock replaces both tokens. The

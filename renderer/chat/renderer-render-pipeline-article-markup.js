@@ -644,7 +644,11 @@
 
     function buildApplicationTurnNoteArticle(message) {
       const time = formatNoteTime(message.timestamp);
-      const text = jt('chat.applicationTurn.autoResumed', 'Resumed automatically after a turn-budget stop');
+      const actions = globalThis.chatBubbleActionUtils
+        || (typeof require === 'function' ? require('./chat-bubble-action-utils') : null);
+      const text = actions?.applicationTurnNoteText
+        ? actions.applicationTurnNoteText(message)
+        : jt('chat.applicationTurn.autoResumed', 'Resumed automatically after a turn-budget stop');
       return buildMessageShellArticle({
         className: 'app-turn-note-entry',
         messageId: message.id,

@@ -79,12 +79,14 @@ describe('ToolPermissionStore scoped always-allow grants', () => {
     const pathGrant = store.grantAlwaysAllow(
       'write_file', { file_path: 'src/x.js' }, AUTHORITY
     );
-    const toolGrant = store.grantAlwaysAllow('run_command', { command: 'ls' }, AUTHORITY);
+    // A run_command card grant is command-scoped (row 103); a call with no
+    // path target keeps the whole-tool grant.
+    const toolGrant = store.grantAlwaysAllow('create_artifact', {}, AUTHORITY);
 
     assert.equal(pathGrant.scope, 'path');
     assert.equal(pathGrant.pathPrefix, 'src/x.js');
     assert.equal(toolGrant.scope, 'tool');
-    assert.equal(store.getPolicy('run_command'), undefined);
+    assert.equal(store.getPolicy('create_artifact'), undefined);
     assert.notEqual(evaluateWrite(store, 'src/y.js').decision, 'auto');
     assert.equal(evaluateWrite(store, 'src/x.js').decision, 'auto');
   });

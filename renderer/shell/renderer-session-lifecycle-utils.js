@@ -182,6 +182,16 @@
         ...(rehydratedReason ? { reason: rehydratedReason } : {}),
         oneOffOnly: pendingApproval.one_off_only === true || pendingApproval.oneOffOnly === true
           || toolUseMessage.tool_call?.one_off_only === true || toolUseMessage.tool_call?.oneOffOnly === true,
+        // The exact command/write presentation the live waiter still holds; the persisted row only
+        // has the clipped snapshot, so without this a reopened chat's card could only Deny.
+        ...(pendingApproval.exact_approval && typeof pendingApproval.exact_approval === 'object'
+          && !Array.isArray(pendingApproval.exact_approval)
+          ? { exactApproval: pendingApproval.exact_approval } : {}),
+        // And what a command card's Always allow covers (row 103).
+        ...(pendingApproval.always_allow_scope && typeof pendingApproval.always_allow_scope === 'object'
+          && !Array.isArray(pendingApproval.always_allow_scope)
+          ? { alwaysAllowScope: pendingApproval.always_allow_scope } : {}),
+        ...(pendingApproval.remember_offer === 'linked_children' ? { rememberOffer: 'linked_children' } : {}), // row 87 C1
       });
       const multiStreamController = getMultiStreamController();
       if (streamId) {

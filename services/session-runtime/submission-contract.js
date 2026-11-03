@@ -9,7 +9,7 @@ const FIELDS = Object.freeze({
   attachments: 'attachments', plan_mode: 'planMode', context_preferences: 'contextPreferences',
   active_file_context: 'activeFileContext', mention_contents: 'mentionContents',
   tool_preferences: 'toolPreferences', approval_mode: 'approvalMode', debug_options: 'debugOptions',
-  skill_invocation: 'skillInvocation',
+  skill_invocation: 'skillInvocation', image_prompt_pin: 'imagePromptPin',
   client_timing: 'clientTiming',
 });
 const CLIENT_TIMING_KEYS = Object.freeze(['send_started_at_ms', 'optimistic_rendered_at_ms', 'local_render_latency_ms']);

@@ -11,6 +11,8 @@
   ]);
 
   const SEARCH_VERBS = new Set(['read', 'list', 'search', 'web', 'fetch']);
+  // Tool plumbing rows: never the prose anchor the rail sprite sits beside.
+  const SPRITE_NON_CONTENT_KINDS = new Set(['tool_use', 'tool_result']);
   // An artifact is a made file too; its tool has no run verb of its own.
   const MAKE_TOOLS = new Set(['create_artifact']);
   const EXECUTING_STATUSES = new Set(['running', 'executing']);
@@ -271,6 +273,69 @@
     };
   }
 
+  function hasRenderableAssistantContent(message) {
+    const kind = String(message?.kind || '').trim();
+    if (String(message?.role || '').trim() !== 'assistant' || SPRITE_NON_CONTENT_KINDS.has(kind)) {
+      return false;
+    }
+    return Boolean(
+      String(message?.content || '').trim()
+      || (
+        Array.isArray(message?.reasoning?.entries)
+        && message.reasoning.entries.length
+      )
+    );
+  }
+
+  function resolveAssistantSpriteAnchor(messages, latestAssistantMessageId, idToIndex) {
+    const latestAssistantId = String(latestAssistantMessageId || '').trim();
+    if (!latestAssistantId) {
+      return { message: null, hasCurrentTurnAssistant: false, fallbacks: [] };
+    }
+    const indexedAssistantPosition = idToIndex?.has?.(latestAssistantId)
+      ? Number(idToIndex.get(latestAssistantId))
+      : -1;
+    const latestAssistantPosition = Number.isInteger(indexedAssistantPosition)
+      && indexedAssistantPosition >= 0
+      ? indexedAssistantPosition
+      : messages.findIndex((message) => String(message?.id || '').trim() === latestAssistantId);
+    if (latestAssistantPosition < 0) {
+      return { message: null, hasCurrentTurnAssistant: false, fallbacks: [] };
+    }
+
+    let latestUserPosition = -1;
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (String(messages[index]?.role || '').trim() === 'user') {
+        latestUserPosition = index;
+        break;
+      }
+    }
+    const latestAssistantMessage = messages[latestAssistantPosition] || null;
+    const hasCurrentTurnAssistant = latestAssistantPosition > latestUserPosition;
+    if (!hasCurrentTurnAssistant) {
+      return { message: latestAssistantMessage, hasCurrentTurnAssistant: false, fallbacks: [] };
+    }
+
+    // Tool-loop plumbing may become the newest assistant message even though
+    // its visual rows belong to the same active turn. Keep the rail sprite on
+    // the newest prose/reasoning anchor in that turn instead of bouncing to
+    // the prompt or between transient tool rows. A tool-only first phase still
+    // anchors to its assistant article until prose exists.
+    for (let index = latestAssistantPosition; index > latestUserPosition; index -= 1) {
+      if (hasRenderableAssistantContent(messages[index])) {
+        return { message: messages[index], hasCurrentTurnAssistant: true, fallbacks: [] };
+      }
+    }
+    // No prose yet. The newest assistant message is often the blank segment the
+    // stream opens after each tool boundary, which the projector renders no node
+    // for: the turn's earlier tool rows, newest first, stand in until it fills.
+    const fallbacks = [];
+    for (let index = latestAssistantPosition - 1; index > latestUserPosition; index -= 1) {
+      if (String(messages[index]?.role || '').trim() === 'assistant') fallbacks.push(messages[index]);
+    }
+    return { message: latestAssistantMessage, hasCurrentTurnAssistant: true, fallbacks };
+  }
+
   function createSpriteViewApplier({
     chatSpriteLayer,
     chatAssistantSprite,
@@ -369,7 +434,10 @@
     gatherSpriteActivityInput,
     findPaneAdmissionWait,
     createSpriteViewApplier,
+    hasRenderableAssistantContent,
+    resolveAssistantSpriteAnchor,
     SPRITE_ACTIVITIES,
+    SPRITE_NON_CONTENT_KINDS,
     JUST_RAN_MS,
   };
 });

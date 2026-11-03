@@ -47,7 +47,7 @@ const {
 const {
   noteBackgroundJobFromToolResult,
 } = require('./chat-stream-background-jobs');
-const { acceptMailConsumedNotification } = require('./session-mail-mid-turn');
+const { MID_TURN_ACKS } = require('./background-job-mid-turn');
 const {
   commitMidTurnCompactionSnapshot,
   persistAutomaticCompactionSnapshot,
@@ -83,6 +83,7 @@ const KNOWN_NOTIFICATION_METHODS = new Set([
   'chat.error',
   'runtime.gap_candidate',
   'session.mail_consumed',
+  'session.job_notice_consumed',
 ]);
 
 function canonicalToolNotification(ctx, event) {
@@ -925,8 +926,8 @@ function handleNotification(ctx, notification, {
   }
   // Ephemeral live metrics (row 59 cp6): the intake validates ownership; the stream never waits on it.
   if (notification.method === 'inference.performance') return void service.inferenceIntake?.accept(ctx, params);
-  // Mid-turn mail acknowledgement (row 70 W2a): ids only; the rows persist at the terminal settle.
-  if (notification.method === 'session.mail_consumed') return void acceptMailConsumedNotification(ctx, params);
+  const midTurnAck = MID_TURN_ACKS.get(notification.method); // mail / job notice acks (background-job-mid-turn.js)
+  if (midTurnAck) return void midTurnAck(ctx, params);
   if (notification.method === 'context.usage') {
     // Ephemeral mid-turn meter snapshot.
     emitChatStream({

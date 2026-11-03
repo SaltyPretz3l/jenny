@@ -118,3 +118,64 @@ test('re-bounds oversized payloads at the trust boundary', () => {
     assert.equal(line.text.length, MAX_CHUNK_LINE_CHARS);
   }
 });
+
+// Row 96: a batch may carry an optional `test_progress`, split into its own event.
+const TEST_PROGRESS = {
+  runner: 'tap', unit: 'none', total: null, total_unit: 'tests', done: 12, tests: 12,
+  passed: 11, failed: 1, skipped: 0, percent: null, elapsed_ms: 900, eta_ms: null,
+  failures: [{ file: 'a.test.js', name: 'boom', at: 0.5 }], grid: null, final: false,
+};
+
+test('a progress-only batch emits only tool_test_progress', () => {
+  const service = makeService();
+  const claimed = handleToolOutputChunkNotification(service, CONTEXT, {
+    method: 'tool.output_chunk',
+    params: {
+      tool_call_id: 'call-5', tool_name: 'run_command', sequence: 7, lines: [], partial: '',
+      test_progress: TEST_PROGRESS,
+    },
+  });
+  assert.equal(claimed, true);
+  assert.equal(service.events.length, 1);
+  const { channel, payload } = service.events[0];
+  assert.equal(channel, 'chat-stream');
+  assert.equal(payload.type, 'tool_test_progress');
+  assert.equal(payload.sessionId, 'session-1');
+  assert.equal(payload.streamId, 'stream-1');
+  assert.equal(payload.callId, 'call-5');
+  assert.equal(payload.toolName, 'run_command');
+  assert.equal(payload.sequence, 7);
+  assert.equal(payload.runner, 'tap');
+  assert.equal(payload.failed, 1);
+  assert.equal(payload.elapsedMs, 900);
+  assert.equal(payload.grid, null);
+  assert.equal(payload.final, false);
+  assert.deepEqual(payload.failures, [{ file: 'a.test.js', name: 'boom', at: 0.5 }]);
+});
+
+test('lines plus progress emit both events, output chunk first', () => {
+  const service = makeService();
+  handleToolOutputChunkNotification(service, CONTEXT, {
+    method: 'tool.output_chunk',
+    params: {
+      tool_call_id: 'call-6', lines: [{ stream: 'stdout', text: 'ok 1' }], test_progress: TEST_PROGRESS,
+    },
+  });
+  assert.deepEqual(service.events.map((entry) => entry.payload.type), ['tool_output_chunk', 'tool_test_progress']);
+  assert.equal(service.events[0].payload.lines.length, 1);
+  assert.equal('runner' in service.events[0].payload, false);
+});
+
+test('an invalid test_progress is dropped and the output chunk is unaffected', () => {
+  const service = makeService();
+  handleToolOutputChunkNotification(service, CONTEXT, {
+    method: 'tool.output_chunk',
+    params: { tool_call_id: 'call-7', lines: [{ stream: 'stdout', text: 'x' }], test_progress: { ...TEST_PROGRESS, runner: 'jest' } },
+  });
+  assert.deepEqual(service.events.map((entry) => entry.payload.type), ['tool_output_chunk']);
+  handleToolOutputChunkNotification(service, CONTEXT, {
+    method: 'tool.output_chunk',
+    params: { tool_call_id: 'call-7', lines: [], test_progress: { ...TEST_PROGRESS, unit: 'suite' } },
+  });
+  assert.equal(service.events.length, 1);
+});

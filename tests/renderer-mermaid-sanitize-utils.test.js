@@ -142,3 +142,69 @@ test('renderMermaidDirect shows fallback source without inline SVG when DOMPurif
     windowRef.DOMPurify = { sanitize() { throw new Error('purifier failed'); } };
   });
 });
+
+// Security review item 15: an SVG <image>/<feImage> href is fetched on render and a
+// <use> href can pull in an external document, so only inline raster images and
+// in-document fragments survive the Mermaid/SVG sanitizer.
+function sanitizeSvgWith(t, body, { policyHook = false } = {}) {
+  const dom = new JSDOM('');
+  t.after(() => dom.window.close());
+  dom.window.DOMPurify = createDOMPurify(dom.window);
+  if (policyHook) {
+    dom.window.DOMPurify.addHook('afterSanitizeAttributes',
+      require('../renderer/shared/markdown-sanitize-policy').hardenAttributes);
+  }
+  const sanitized = sanitizeMermaidSvgMarkup(
+    '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">' + body + '</svg>',
+    dom.window);
+  return { sanitized, dom };
+}
+
+const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+const B = '\\';
+
+test('Mermaid SVG image hrefs other than inline raster data URLs are removed', (t) => {
+  for (const href of [
+    'https://example.com/x.png', 'http://example.com/x.png', '//203.0.113.7/share/x.png',
+    `${B}${B}host${B}share${B}x.png`, 'file://host/share/x.png', 'file:///C:/x.png',
+    'javascript:alert(1)', 'data:image/svg+xml;base64,PHN2Zy8+', 'data:text/html;base64,PGI+',
+    'x.png',
+  ]) {
+    for (const attr of ['href', 'xlink:href']) {
+      const { sanitized } = sanitizeSvgWith(t,
+        `<image ${attr}="${href}" width="4" height="4"></image><filter id="f"><feImage ${attr}="${href}"></feImage></filter>`);
+      assert.doesNotMatch(sanitized, /href=/i, `${attr}=${href} removed: ${sanitized}`);
+      assert.match(sanitized, /<image\b/, 'the element itself stays');
+    }
+  }
+});
+
+test('Mermaid SVG image hrefs keep inline png, jpeg, gif and webp data URLs', (t) => {
+  for (const href of [PNG, 'data:image/jpeg;base64,/9j/4AAQ', 'data:image/gif;base64,R0lGODlh',
+    'data:image/webp;base64,UklGRg==']) {
+    for (const attr of ['href', 'xlink:href']) {
+      const { sanitized } = sanitizeSvgWith(t, `<image ${attr}="${href}" width="4" height="4"></image>`,
+        { policyHook: true });
+      assert.ok(sanitized.includes(`${attr}="${href}"`), `${attr}=${href} kept: ${sanitized}`);
+    }
+  }
+});
+
+// DOMPurify's svg profile does not allow <use> at all, so no href (external or a
+// fragment) can pull a document in through it; pinned so a profile widening shows.
+test('Mermaid SVG use elements are dropped whatever their href', (t) => {
+  for (const href of ['https://example.com/s.svg#a', '//203.0.113.7/s.svg#a', 'file://host/s.svg#a',
+    'sprites.svg#a', 'data:image/svg+xml;base64,PHN2Zy8+#a', '#a']) {
+    for (const attr of ['href', 'xlink:href']) {
+      const { sanitized } = sanitizeSvgWith(t, `<defs><path id="a" d="M0 0"></path></defs><use ${attr}="${href}"></use>`);
+      assert.doesNotMatch(sanitized, /<use\b|href=/i, `${attr}=${href} dropped: ${sanitized}`);
+      assert.match(sanitized, /<path id="a"/);
+    }
+  }
+});
+
+test('the image href rule does not outlive one Mermaid SVG sanitize call', (t) => {
+  const { dom } = sanitizeSvgWith(t, '<image href="https://example.com/x.png"></image>');
+  const html = dom.window.DOMPurify.sanitize('<svg><image href="https://example.com/x.png"></image></svg>');
+  assert.match(html, /href="https:\/\/example\.com\/x\.png"/);
+});

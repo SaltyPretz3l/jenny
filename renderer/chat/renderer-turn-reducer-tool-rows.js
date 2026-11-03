@@ -235,10 +235,12 @@
         // terminal, so the resolution that followed was dropped entirely and the
         // row could not say HOW it resolved.
         const approvalScope = normalizeId(event && event.payload && event.payload.approval_scope);
+        const alwaysAllowPrefix = normalizeId(event && event.payload && event.payload.always_allow_prefix);
         payload.approval_resolutions.push({
           status,
           approval_state: normalizeToolStatus(event && event.payload && event.payload.approval_state),
           ...(approvalScope ? { approval_scope: approvalScope } : {}),
+          ...(alwaysAllowPrefix ? { always_allow_prefix: alwaysAllowPrefix } : {}),
         });
         if (isTerminalState) {
           return;

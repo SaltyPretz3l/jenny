@@ -209,6 +209,33 @@ test('row identity and disclosure controls are isolated from repeated provider c
   assert.match(first, /data-chat-path-open="README\.md"/);
 });
 
+test('directory-target tool rows stamp data-chat-path-kind=dir on the row and the chip', () => {
+  const renderer = createToolRenderer();
+  const render = (tool_name, input) => renderer.buildToolCallRowMarkup({
+    turn_id: 'turn-a', row_id: `row-${tool_name}`,
+    payload: { tool_call_id: `call-${tool_name}`, tool_name, state: 'completed', input },
+  }, [], { sessionId: 'session-a' });
+
+  const listed = render('list_dir', { path: 'src/utils' });
+  assert.match(listed, /data-chat-path="src\/utils"/);
+  assert.match(listed, /class="tool-path-chip"[^>]*data-chat-path-kind="dir"/);
+  assert.match(listed, /tool-call-row[^>]*data-chat-path-kind="dir"/);
+
+  const globbed = render('glob_files', { pattern: '**/*.js', path: 'renderer' });
+  assert.match(globbed, /class="tool-path-chip"[^>]*data-chat-path-open="renderer"[^>]*data-chat-path-kind="dir"/);
+  assert.doesNotMatch(globbed, /data-chat-path-open="[^"]*\*/, 'the pattern must never become the chip path');
+
+  const grepFile = render('grep_search', { pattern: 'TODO', path: 'src/app.js' });
+  assert.match(grepFile, /data-chat-path-open="src\/app\.js"/);
+  assert.doesNotMatch(grepFile, /data-chat-path-kind/);
+
+  const noPath = render('glob_files', { pattern: '**/*.js' });
+  assert.doesNotMatch(noPath, /tool-path-chip|data-chat-path/);
+
+  const read = render('read_file', { path: 'README.md' });
+  assert.doesNotMatch(read, /data-chat-path-kind/);
+});
+
 test('only a call still waiting on the user auto-expands; every settled state stays collapsed', () => {
   const renderer = createToolRenderer();
   const byStatus = (state) => renderer.buildToolCallRowMarkup({

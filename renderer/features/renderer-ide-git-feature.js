@@ -388,6 +388,8 @@
       onOpenDiff: (path, opts) => (actions ? actions.openForRow(path, opts) : openHeadCompare(path, opts)),
       onResolve: (path) => conflictResolver?.resolve(relPathOf(path)) || null,
       onResolveDelete: (path) => conflictResolver?.resolveDelete(relPathOf(path)) || false,
+      onProbeConflicts: (paths, onChange) => conflictResolver?.probeSizes?.(paths.map(relPathOf), onChange),
+      isConflictTooLarge: (path) => conflictResolver?.isTooLargeToCheck?.(relPathOf(path)) === true,
       onOpenFile: (path) => openFile(relPathOf(path)),
       // Jenny marker on rows (row 40 W6): both optional, supplied by the controller.
       getJennyChange: options.getJennyChange,

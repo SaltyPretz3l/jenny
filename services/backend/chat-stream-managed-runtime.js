@@ -54,6 +54,8 @@ const {
 } = require('./chat-stream-managed-runtime-failure');
 const { CanonicalTurnMetrics } = require('./canonical-turn-metrics');
 const { attachMidTurnMail } = require('./session-mail-mid-turn');
+const { undrawnImagePromptFields } = require('./image-prompt-pin');
+const { applicationTurnEventFields } = require('./application-turns');
 const {
   settleManagedAssistantCompletion,
   settleManagedFailureTerminal,
@@ -77,7 +79,7 @@ function createManagedChatStreamRuntime({
   normalizedAttachments,
   transcriptPrompt,
   userMessageId,
-  skillInvocation = null, applicationTurn = '',
+  skillInvocation = null, imagePromptPin = undefined, applicationTurn = '',
   reuseExistingUserMessage = false,
   failureRetry,
   exchangeTitle = '',
@@ -94,14 +96,13 @@ function createManagedChatStreamRuntime({
   const turnId = turnLease?.identity?.turnId || streamId;
   const transcriptCollector = new TranscriptPhaseCollector({ streamId });
   let model = '';
+  const trace = String(traceId || '').trim() || streamId;
+  // Every renderer event of this stream spreads it; an app-started turn names its kind for the row 89 toasts.
   let eventBase = {
-    streamId,
-    sessionId: resolvedSessionId,
-    model,
-    requestId: streamId, turnId,
+    streamId, sessionId: resolvedSessionId, model, requestId: streamId, turnId,
     ...(runtimeAdmission ? { runtimeAdmission } : {}),
-    traceId: String(traceId || '').trim() || streamId,
-    trace_id: String(traceId || '').trim() || streamId,
+    ...applicationTurnEventFields(applicationTurn, transcriptPrompt),
+    traceId: trace, trace_id: trace,
   };
   let assistantText = '';
   let refusedTextSegments = [];
@@ -310,15 +311,7 @@ function createManagedChatStreamRuntime({
 
   function setModel(nextModel) {
     model = String(nextModel || '').trim();
-    eventBase = {
-      streamId,
-      sessionId: resolvedSessionId,
-      model,
-      requestId: streamId, turnId,
-    ...(runtimeAdmission ? { runtimeAdmission } : {}),
-      traceId: String(traceId || '').trim() || streamId,
-      trace_id: String(traceId || '').trim() || streamId,
-    };
+    eventBase = { ...eventBase, model };
   }
 
   function getEventBase() {
@@ -406,7 +399,7 @@ function createManagedChatStreamRuntime({
       messageId: userMessageId,
       content: transcriptPrompt,
       attachments: normalizedAttachments,
-      skill_invocation: skillInvocation, ...(applicationTurn ? { application_turn: applicationTurn } : {}),
+      skill_invocation: skillInvocation, image_prompt_pin: imagePromptPin || null, ...(applicationTurn ? { application_turn: applicationTurn } : {}),
       model,
     };
     const persistEditedTurn = () => service.sessionStore.truncateAfterMessage(
@@ -415,7 +408,7 @@ function createManagedChatStreamRuntime({
       {
             replaceMessageContent: transcriptPrompt,
             replaceMessageAttachments: normalizedAttachments,
-            replaceMessageSkillInvocation: skillInvocation,
+            replaceMessageSkillInvocation: skillInvocation, replaceMessageImagePromptPin: imagePromptPin,
             replaceMessageTurnId: turnId,
             preserveActiveTurn: true,
             ...(failureRetry === true ? { preserveSupersededTurn: true } : {}),
@@ -521,8 +514,7 @@ function createManagedChatStreamRuntime({
       content: rendererCompleteContent(ctx),
       ...(turnUsage ? { usage: turnUsage } : {}),
       ...(resumableStop ? { resumableStop } : {}), ...completionEventFields(ctx.completion),
-      ...(discardedDrafts ? { discardedDrafts } : {}),
-      ...eventBase,
+      ...(discardedDrafts ? { discardedDrafts } : {}), ...undrawnImagePromptFields(service, resolvedSessionId, turnLease?.identity), ...eventBase,
     }, { channel: 'control', phase: null });
 
     if (typeof onVisibleCompletion === 'function') {

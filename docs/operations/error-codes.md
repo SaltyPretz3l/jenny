@@ -641,6 +641,9 @@ Primary Jenny chat controls (`primaryChat.*`, row 76: launch permission, activit
 | `PRIMARY_ERROR_CODES.CAPACITY` | `CMP-PRIMARY-0006` | The launch-permission list holds its maximum of 32 live permissions (`capacity`) | No | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/primary-chat-contract.js](../../services/primary-chat-contract.js) |
 | `PRIMARY_ERROR_CODES.UNKNOWN_PROJECT` | `CMP-PRIMARY-0007` | A launch permission named a project that does not exist (`unknown_project`) | No | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/primary-chat-contract.js](../../services/primary-chat-contract.js) |
 | `PRIMARY_ERROR_CODES.COPY_FAILED` | `CMP-PRIMARY-0008` | Reset could not write the transcript copy under `exports/`, so nothing was cleared (`copy_failed`); the renderer may offer a reset without a copy | No | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/backend/primary-chat-reset.js](../../services/backend/primary-chat-reset.js) |
+| `PRIMARY_ERROR_CODES.ALREADY_UNDONE` | `CMP-PRIMARY-0009` | Undo of a Jenny-made settings batch that was already undone (`already_undone`, row 88) | No | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/primary-settings-service.js](../../services/primary-settings-service.js) |
+| `PRIMARY_ERROR_CODES.CHANGED_SINCE` | `CMP-PRIMARY-0010` | Undo refused because a setting in the batch no longer holds the value Jenny set; nothing was written (`changed_since`) | No | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/primary-settings-service.js](../../services/primary-settings-service.js) |
+| `PRIMARY_ERROR_CODES.APPLY_FAILED` | `CMP-PRIMARY-0011` | Undo could not write a setting; the batch's earlier writes were put back (`apply_failed`) | Yes | `ipc_result` | internal-only (the renderer words it from `reason`) | [services/primary-settings-service.js](../../services/primary-settings-service.js) |
 
 ## MESSAGE - `CMP-MESSAGE-NNNN` (12 Node codes, 0 dead)
 
@@ -872,6 +875,7 @@ This test catches the drift classes that affect runtime contracts: undocumented 
 
 ## Change log
 
+- **2026-10-28** - Added `CMP-PRIMARY-0009` to `0011` for Activity's Undo of a Jenny-made settings batch (row 88).
 - **2026-10-25** - Added the `PRIMARY` domain (`CMP-PRIMARY-0001` to `0007`) for the primary Jenny chat controls bridge (row 76).
 - **2026-10-15** - Added the `PERFORMANCE` domain (`CMP-PERFORMANCE-0001` to `0004`) for the live inference metrics and GPU-pressure bridge (row 59 checkpoint 6).
 - **2026-10-15** - Added the `MESSAGE` domain (`CMP-MESSAGE-0001` to `0012`) for the addressed session messaging bridge (row 59 checkpoint 4).

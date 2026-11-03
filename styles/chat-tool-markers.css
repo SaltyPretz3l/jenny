@@ -69,7 +69,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 360px;
+  /* 360px at Standard; grows with a Wide chat width row. */
+  max-width: max(360px, 40%);
 }
 
 /* ── Orphan carry stripe (system_notice subkind=orphan_carry) ── */

@@ -8,6 +8,7 @@
     reasoningEffort: 'reasoning_effort', attachments: 'attachments', planMode: 'plan_mode',
     contextPreferences: 'context_preferences', activeFileContext: 'active_file_context', mentionContents: 'mention_contents',
     toolPreferences: 'tool_preferences', approvalMode: 'approval_mode', skillInvocation: 'skill_invocation',
+    imagePromptPin: 'image_prompt_pin',
     clientTiming: 'client_timing' };
   function eligible(state, shell, settings, prompt, interactive) {
     return state.features?.featureFlags?.session_runtime === true && typeof shell?.sessionRuntime?.submit === 'function'
@@ -456,7 +457,8 @@
         attachments: helpers.buildOptimisticAttachmentMetadata(acceptedAttachments),
         // The skill pill shows from Send, as on the direct path, not only once
         // the persisted message hydrates at the end of the turn.
-        ...(context.skillInvocation?.id ? { skill_invocation: context.skillInvocation } : {}) });
+        ...(context.skillInvocation?.id ? { skill_invocation: context.skillInvocation } : {}),
+        ...(context.imagePromptPin ? { image_prompt_pin: context.imagePromptPin } : {}) });
       entry.message = c.getSessionMessages(optimisticSessionId).find(row => row.id === entry.userId);
       if (!context.preserveComposerDraft) c.syncComposerInputHeight();
       render(entry.sessionId);
@@ -471,7 +473,8 @@
         ...context.runtimePreferences, planMode: context.runModeProjection.planMode,
         attachments: context.acceptedAttachments, toolPreferences: context.toolPreferences, approvalMode: context.approvalMode,
         activeFileContext, mentionContents, clientTiming: context.clientTiming,
-        ...(context.skillInvocation?.id ? { skillInvocation: { id: context.skillInvocation.id } } : {}) };
+        ...(context.skillInvocation?.id ? { skillInvocation: { id: context.skillInvocation.id } } : {}),
+        ...(context.imagePromptPin ? { imagePromptPin: context.imagePromptPin } : {}) };
       const payload = { session_id: entry.sessionId, idempotency_key: entry.key };
       for (const [key, wire] of Object.entries(FIELDS)) if (source[key] !== undefined) payload[wire] = source[key];
       return JSON.parse(JSON.stringify(payload));

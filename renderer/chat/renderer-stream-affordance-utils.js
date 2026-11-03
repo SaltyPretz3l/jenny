@@ -93,6 +93,7 @@
       // settled or re-opened turn never re-animates.
       collectSelfAndDescendants(rootNode, '.reasoning-stream-unit').forEach((unit) => {
         cleared = removeClass(unit, 'is-revealed') || cleared;
+        cleared = removeClass(unit, 'is-revealed-quick') || cleared;
         cleared = removeAttr(unit, 'data-stream-unit-index') || cleared;
         if (unit.style && unit.style.animationDelay) {
           unit.style.animationDelay = '';

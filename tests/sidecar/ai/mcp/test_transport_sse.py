@@ -184,7 +184,7 @@ def allow_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         transport_sse,
         "validate_public_url",
-        lambda url, *, allow_private=False: ValidatedUrl(url=url, pinned_ip="127.0.0.1"),
+        lambda url, **_kwargs: ValidatedUrl(url=url, pinned_ip="127.0.0.1"),
     )
 
 
@@ -348,6 +348,41 @@ def test_cgnat_url_rejected_by_default_but_accepted_with_opt_in(
     transport.close()
 
 
+def test_loopback_url_allowed_with_the_loopback_flag_alone(
+    monkeypatch: pytest.MonkeyPatch,
+    make_server: Any,
+) -> None:
+    # Row 103: an MCP server on this machine needs only tools_web_allow_loopback,
+    # which does not open LAN/CGNAT/metadata addresses. Real validator.
+    server = make_server()
+    monkeypatch.undo()
+    transport = SSEMCPTransport(_config(server.url), allow_loopback=True)
+    try:
+        assert transport.list_tools() == [{"name": "echo", "description": "echo"}]
+    finally:
+        transport.close()
+    for url in ("http://100.64.0.1:9/", "http://192.168.1.5:9/", "http://169.254.169.254/"):
+        with pytest.raises(MCPError) as excinfo:
+            SSEMCPTransport(_config(url), allow_loopback=True)
+        assert excinfo.value.code == CMP_MCP_CONFIG_INVALID
+
+
+def test_oauth_token_source_inherits_allow_loopback() -> None:
+    auth = MCPServerAuth(
+        kind="oauth_client_credentials",
+        token_url="http://127.0.0.1:9/token",
+        client_id="client-abc",
+        client_secret="secret",
+    )
+    transport = SSEMCPTransport(_config("http://127.0.0.1:9/", auth=auth), allow_loopback=True)
+    try:
+        assert transport._token_source is not None
+        assert transport._token_source._allow_loopback is True
+        assert transport._token_source._allow_private_addresses is False
+    finally:
+        transport.close()
+
+
 def test_oauth_token_source_inherits_allow_private_addresses() -> None:
     # The opt-in must reach the OAuth token mint too; a transport that allowed a
     # private server URL but hard-failed on its private token_url would be a
@@ -432,7 +467,7 @@ def test_requests_connect_to_the_pinned_ip(
     monkeypatch.setattr(
         transport_sse,
         "validate_public_url",
-        lambda u, *, allow_private=False: ValidatedUrl(url=u, pinned_ip="127.0.0.1"),
+        lambda u, **_kwargs: ValidatedUrl(url=u, pinned_ip="127.0.0.1"),
     )
     transport = SSEMCPTransport(_config(url))
     try:

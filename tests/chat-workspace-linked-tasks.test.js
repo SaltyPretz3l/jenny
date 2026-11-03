@@ -98,7 +98,7 @@ test('linked children: statuses map to the rail buckets and rows carry the close
   const tasks = await tasksOf(service);
   assert.deepEqual(tasks.data.counts, { active: 1, waiting: 2, failed: 2, completed: 2 });
   assert.equal(tasks.data.coverage, 'partial');
-  assert.deepEqual(tasks.data.unsupported_sources, ['workspace_test', 'session_runtime']);
+  assert.deepEqual(tasks.data.unsupported_sources, ['workspace_test', 'session_runtime', 'background_job']);
   assert.deepEqual(listCalls.map((call) => call.sessionId), [CHILD_A], 'only direct children are read');
   assert.equal(tasks.data.items.some((item) => item.operation_id === 'w_stranger'), false);
   const running = tasks.data.items.find((item) => item.operation_id === 'w_run');
@@ -133,7 +133,7 @@ test('linked chat turns stay unsupported without a runtime store, a listing or o
   const sessions = [sessionEntry(SESSION), sessionEntry(CHILD_A, SESSION)];
   const works = [work('w_run', CHILD_A, 'running')];
   const noRuntime = await tasksOf(build({ sessions, works, runtime: false }).service);
-  assert.deepEqual(noRuntime.data.unsupported_sources, ['workspace_test', 'session_runtime', 'linked_chat_turn']);
+  assert.deepEqual(noRuntime.data.unsupported_sources, ['workspace_test', 'session_runtime', 'linked_chat_turn', 'background_job']);
   assert.deepEqual(noRuntime.data.counts, { active: null, waiting: null, failed: null, completed: null });
   assert.deepEqual(noRuntime.data.items, []);
 
@@ -167,16 +167,18 @@ test('linked rows are deduplicated by operation id across sources and capped lik
   assert.equal(section.data.counts.active, 1);
   assert.equal(section.data.counts.failed, null);
 
-  const many = Array.from({ length: 15 }, (_, index) => ({
+  const many = Array.from({ length: 35 }, (_, index) => ({
     work_id: `w${index}`, status: 'running', created_at: '2026-10-15T10:00:00.000Z', updated_at: `2026-10-15T10:00:${String(index).padStart(2, '0')}.000Z`, child_session_id: CHILD_B, title: 'x',
   }));
-  const capped = buildBackgroundTasksSection({ sampledAt: 's', sessionId: SESSION, rows: [], workspaceTestSupported: true, sessionRuntimeSupported: true, linkedRows: many });
-  assert.equal(MAX_TASK_ITEMS, 10);
-  assert.equal(capped.data.items.length, 10);
-  assert.equal(capped.data.counts.active, 15);
+  const capped = buildBackgroundTasksSection({
+    sampledAt: 's', sessionId: SESSION, rows: [], workspaceTestSupported: true, sessionRuntimeSupported: true, linkedRows: many, jobRows: [],
+  });
+  assert.equal(MAX_TASK_ITEMS, 30);
+  assert.equal(capped.data.items.length, 30);
+  assert.equal(capped.data.counts.active, 35);
   assert.equal(capped.data.coverage, 'complete');
   assert.deepEqual(capped.data.unsupported_sources, []);
-  assert.equal(capped.data.items[0].operation_id, 'w14', 'most recently updated first');
+  assert.equal(capped.data.items[0].operation_id, 'w34', 'most recently updated first');
 });
 
 test('the service dedupes a linked work that also appears as a workspace test run', async () => {
@@ -187,7 +189,7 @@ test('the service dedupes a linked work that also appears as a workspace test ru
   });
   const tasks = await tasksOf(service);
   assert.deepEqual(tasks.data.items.map((item) => [item.source_kind, item.operation_id]).sort(), [['linked_chat_turn', 'w2'], ['workspace_test', 'shared']]);
-  assert.deepEqual(tasks.data.unsupported_sources, ['session_runtime']);
+  assert.deepEqual(tasks.data.unsupported_sources, ['session_runtime', 'background_job']);
 });
 
 test('titles are bounded to 512 UTF-8 bytes on a code point boundary and stripped of control characters', () => {

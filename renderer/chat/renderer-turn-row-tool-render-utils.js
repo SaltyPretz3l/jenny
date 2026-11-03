@@ -88,6 +88,8 @@
     || (typeof require === 'function' ? require('./renderer-review-findings') : null);
   const messageStrip = () => (typeof globalThis !== 'undefined' && globalThis.rendererComposerMessageStrip)
     || (typeof require === 'function' ? require('./renderer-composer-message-strip') : null);
+  const testSummary = () => (typeof globalThis !== 'undefined' && globalThis.rendererToolTestSummary)
+    || (typeof require === 'function' ? require('./renderer-tool-test-summary') : null);
 
   function getToolStatusSeverity(status) {
     return sharedToolCallUtils().getToolStatusSeverity(status);
@@ -238,15 +240,18 @@
     // the summary doesn't literally contain the path (e.g. truncated), the
     // summary renders unchipped — the row-level data-chat-path context menu
     // still covers those.
-    function buildSummaryParts(rowSummary, primaryPath, chipPath) {
+    function buildSummaryParts(rowSummary, primaryPath, chipPath, pathTarget) {
       const summary = String(rowSummary || '');
       const path = String(primaryPath || '');
+      const kindAttr = pathTarget && pathTarget.kind ? ` data-chat-path-kind="${escapeHtml(pathTarget.kind)}"` : '';
+      const chipMarkup = `<span class="tool-path-chip" role="link" tabindex="0" data-chat-path-open="${escapeHtml(chipPath)}"${kindAttr} title="${escapeHtml(jt('chat.toolRow.openInIde', 'Open {path} in the IDE', { path: chipPath }))}">${escapeHtml(path)}</span>`;
       if (!path || !chipPath) {
         return { summaryText: summary, summaryMarkup: escapeHtml(summary), pathMarkup: '' };
       }
       const index = summary.indexOf(path);
       if (index === -1) {
-        return { summaryText: summary, summaryMarkup: escapeHtml(summary), pathMarkup: '' };
+        // Glob/grep summaries name the pattern, not the directory: the chip follows the summary.
+        return { summaryText: summary, summaryMarkup: escapeHtml(summary), pathMarkup: pathTarget && pathTarget.appendChip ? chipMarkup : '' };
       }
       const surroundingSummary = `${summary.slice(0, index)} ${summary.slice(index + path.length)}`
         .replace(/\s+/g, ' ')
@@ -254,7 +259,7 @@
       return {
         summaryText: surroundingSummary,
         summaryMarkup: escapeHtml(surroundingSummary),
-        pathMarkup: `<span class="tool-path-chip" role="link" tabindex="0" data-chat-path-open="${escapeHtml(chipPath)}" title="${escapeHtml(jt('chat.toolRow.openInIde', 'Open {path} in the IDE', { path: chipPath }))}">${escapeHtml(path)}</span>`,
+        pathMarkup: chipMarkup,
       };
     }
 
@@ -355,12 +360,14 @@
       // W1-4 clickable paths: file-target tools stamp their path on the row
       // (context-menu hook) and render the path portion of the summary as a
       // chip that dispatches ide:open-file-at-line (renderer-chat-path-open).
-      const primaryPath = toolCallUtils && typeof toolCallUtils.getToolPrimaryPath === 'function'
-        ? String(toolCallUtils.getToolPrimaryPath(toolName, summaryInput) || '')
-        : '';
+      const pathTarget = toolCallUtils && typeof toolCallUtils.getToolPathTarget === 'function'
+        ? toolCallUtils.getToolPathTarget(toolName, summaryInput)
+        : null;
+      const primaryPath = pathTarget ? String(pathTarget.path || '') : '';
       const chipPath = primaryPath.replace(/\\/g, '/');
-      const chatPathAttr = chipPath ? ` data-chat-path="${escapeHtml(chipPath)}"` : '';
-      const summaryParts = buildSummaryParts(rowSummary, primaryPath, chipPath);
+      // data-chat-path-kind="dir" is the interface with renderer-chat-path-open (omitted when the kind is unknown).
+      const chatPathAttr = chipPath ? ` data-chat-path="${escapeHtml(chipPath)}"${pathTarget.kind ? ` data-chat-path-kind="${escapeHtml(pathTarget.kind)}"` : ''}` : '';
+      const summaryParts = buildSummaryParts(rowSummary, primaryPath, chipPath, pathTarget);
       let markerBannerMarkup = '';
       let resultBodyIsError = false;
       let durationLabel = '';
@@ -481,6 +488,7 @@
           seed: detailModel.metadata?.provenance?.seed,
           prompt: detailModel.metadata?.provenance?.image_prompt,
           negativePrompt: detailModel.metadata?.provenance?.image_negative_prompt,
+          promptSource: detailModel.metadata?.provenance?.prompt_source,
           sessionId: detailModel.sessionId,
         })
         : '';
@@ -516,6 +524,8 @@
       const pendingImageFigureMarkup = isRunning && !resultPayload && normalizeId(toolName) === 'image_generate'
         ? (resolveArtifactCardUtils()?.renderImagePendingFigure?.(toolCallId, summaryInput) || '')
         : '';
+      // Row 96: a finished test command keeps its record (skipped, the folded grid, failures) beside the header.
+      const testSummaryMarkup = resultPayload ? (testSummary()?.renderFinished?.(toolName, detailModel.metadata) || '') : '';
       const fileOperationClass = isFileOperation
         ? ` tool-call-file-operation${isRunning ? ' tool-call-file-composing' : (toolCallUtils.isFileOperationSettledStatus(status) ? ' tool-call-file-settled' : '')}`
         : '';
@@ -552,7 +562,7 @@
             })
           : '',
         durationLabel: liveElapsedAttrs ? liveElapsedSeedLabel : durationLabel,
-        secondaryMeta: toolCallUtils.formatToolResultMeta(toolName, detailModel.metadata),
+        secondaryMeta: testSummary()?.headerMeta?.(toolName, detailModel.metadata) || toolCallUtils.formatToolResultMeta(toolName, detailModel.metadata),
       }, {
         escapeHtml,
         renderReviewChangesAffordance(change) {
@@ -596,7 +606,7 @@
       // A row that shows content beside its header (banner, action link, chip,
       // calendar block, diagram, artifact) never folds into an Answers tool run.
       const runFoldableAttr = renderOptions.transcriptView === 'answers' && [markerBannerMarkup, pdfAddonLinkMarkup, sessionBudgetLinkMarkup,
-        calendarBlockMarkup, notesBlockMarkup, reviewFindingsMarkup, mermaidFallbackMarkup, artifactTeasersMarkup, pendingImageFigureMarkup].some((part) => String(part || '').trim())
+        calendarBlockMarkup, notesBlockMarkup, reviewFindingsMarkup, mermaidFallbackMarkup, artifactTeasersMarkup, pendingImageFigureMarkup, testSummaryMarkup].some((part) => String(part || '').trim())
         ? ' data-run-foldable="false"' : '';
       return `
         ${markerBannerMarkup}
@@ -618,7 +628,7 @@
           </div>
           ${pdfAddonLinkMarkup}${sessionBudgetLinkMarkup}${calendarBlockMarkup}${notesBlockMarkup}${reviewFindingsMarkup}
           ${mermaidFallbackMarkup}
-          ${artifactTeasersMarkup}${pendingImageFigureMarkup}
+          ${artifactTeasersMarkup}${pendingImageFigureMarkup}${testSummaryMarkup}
           <div class="tool-call-row-body" id="${escapeHtml(bodyId)}"${expanded ? '' : ' inert'}>
             ${detailBodyMarkup}
           </div>
@@ -939,14 +949,20 @@
         commandText,
         sessionMessageApproval: sendsMessage ? payload.session_message_approval : undefined,
         sessionStopApproval: toolName === 'session_stop' ? payload.session_stop_approval : undefined,
+        settingsChangeApproval: toolName === 'settings_change' ? payload.settings_change_approval : undefined,
+        scheduleChangeApproval: toolName === 'schedule_change' ? payload.schedule_change_approval : undefined,
         // Always passed (even undefined): a command or write without its live exact presentation fails closed.
         exactApproval: cardState.exactApproval,
+        // What a command's Always allow covers (live only), and what a resolved one saved (row 103).
+        alwaysAllowScope: cardState.alwaysAllowScope,
+        rememberOffer: cardState.rememberOffer,
         mode: 'inline',
         cardState: cardState.state,
         resumeKey: cardState.resumeKey,
         variant: normalizeId(payload.approval_variant),
         decision: resolved ? normalizeId(payload.decision) : '',
         approvalScope: resolved ? normalizeId(payload.approval_scope) : '',
+        alwaysAllowPrefix: resolved ? String(payload.always_allow_prefix || '') : '',
       }, { escapeHtml });
     }
 

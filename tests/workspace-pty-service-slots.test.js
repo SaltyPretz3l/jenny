@@ -4,7 +4,8 @@
  * per renderer terminal-tab slot. Covers slot defaults/clamping, same-slot
  * reattach, the 4-session cap, sessionId routing of write/resize/kill, slot on
  * onData/onExit, slot reuse after exit, parallel dispose, kill-all on the
- * workspace root switch (kill with no sessionId), and the rootless pin.
+ * workspace root switch (kill with no sessionId), the rootless pin, and the
+ * per-slot output tail (readTail / liveTerminals, row 94 P4).
  * Uses a fake pty module - no native ConPTY is launched. */
 
 const { test } = require('node:test');
@@ -281,4 +282,98 @@ test('a spawn into a slot whose session is being killed waits it out and starts 
   assert.equal(second.alreadyRunning, false, 'not reattached to the dead session');
   assert.notEqual(second.sessionId, first.sessionId);
   assert.equal(ptys.length, 2);
+});
+// Output tail (row 94 P4 terminal_read): a main-side, ANSI-stripped tail per live slot.
+test('output reaches both the bridge queue and readTail, ANSI-stripped', async () => {
+  const { service, events, ptys } = createFixture();
+  const a = await service.spawn({ cols: 80, rows: 24, slot: 2 });
+  ptys[0]._fireData('\u001b[32mok\u001b[0m 3 passed\r\n');
+  await Promise.resolve();
+  const data = events.filter((e) => e.key === 'workspacePty.onData').map((e) => e.payload);
+  assert.deepEqual(data, [{ sessionId: a.sessionId, slot: 2, data: '\u001b[32mok\u001b[0m 3 passed\r\n' }], 'the queue still gets raw bytes');
+  const read = service.readTail({ slot: 2 });
+  assert.equal(read.ok, true);
+  assert.equal(read.slot, 2);
+  assert.equal(read.session_id, a.sessionId);
+  assert.deepEqual(read.lines, ['ok 3 passed']);
+  assert.equal(read.truncated, false);
+  assert.equal(read.running, true);
+  assert.equal(typeof read.last_output_at, 'number');
+  assert.deepEqual(service.liveTerminals(), [{ slot: 2, session_id: a.sessionId, last_output_at: read.last_output_at }]);
+});
+
+test('readTail without a slot picks the most recent writer; liveTerminals sorts by slot', async () => {
+  const { service, ptys } = createFixture();
+  await service.spawn({ cols: 80, rows: 24, slot: 3 });
+  await service.spawn({ cols: 80, rows: 24, slot: 1 });
+  await service.spawn({ cols: 80, rows: 24, slot: 2 });
+  assert.equal(service.readTail().slot, 1, 'no output anywhere: the lowest live slot');
+  ptys[1]._fireData('slot one\n');
+  ptys[0]._fireData('slot three\n');
+  assert.equal(service.readTail().slot, 3);
+  assert.deepEqual(service.readTail({ slot: null }).lines, ['slot three']);
+  ptys[1]._fireData('again\n');
+  assert.equal(service.readTail().slot, 1);
+  assert.deepEqual(service.liveTerminals().map((t) => t.slot), [1, 2, 3]);
+  assert.equal(service.liveTerminals()[1].last_output_at, null, 'a silent slot has no last output time');
+});
+
+test('readTail refuses bad slots and empty slots', async () => {
+  const { service } = createFixture();
+  assert.deepEqual(service.readTail(), { ok: false, reason: 'no_terminal' });
+  await service.spawn({ cols: 80, rows: 24, slot: 1 });
+  assert.deepEqual(service.readTail({ slot: 2 }), { ok: false, reason: 'no_terminal' });
+  for (const slot of [0, 5, 1.5, '1', NaN, -1]) {
+    assert.deepEqual(service.readTail({ slot }), { ok: false, reason: 'invalid_input' }, `slot ${String(slot)}`);
+  }
+});
+
+test('kill and exit clear the tail; a re-spawned slot starts empty', async () => {
+  const { service, ptys } = createFixture();
+  const a = await service.spawn({ cols: 80, rows: 24, slot: 1 });
+  await service.spawn({ cols: 80, rows: 24, slot: 2 });
+  ptys[0]._fireData('one\n');
+  ptys[1]._fireData('two\n');
+  const tailA = service._sessions.get(1).tail;
+  await service.kill({ sessionId: a.sessionId });
+  assert.deepEqual(service.readTail({ slot: 1 }), { ok: false, reason: 'no_terminal' });
+  assert.equal(tailA.size, 0, 'the killed tail was cleared');
+  ptys[1]._fireExit({ exitCode: 1, signal: null });
+  assert.deepEqual(service.readTail(), { ok: false, reason: 'no_terminal' });
+  assert.deepEqual(service.liveTerminals(), []);
+
+  await service.spawn({ cols: 80, rows: 24, slot: 1 });
+  const fresh = service.readTail({ slot: 1 });
+  assert.equal(fresh.ok, true);
+  assert.deepEqual(fresh.lines, []);
+  assert.equal(fresh.last_output_at, null);
+});
+
+test('dispose clears every tail', async () => {
+  const { service, ptys } = createFixture({ autoExit: false, terminationTimeoutMs: 5_000 });
+  await service.spawn({ cols: 80, rows: 24, slot: 1 });
+  ptys[0]._fireData('secret-ish output\n');
+  const tail = service._sessions.get(1).tail;
+  const pending = service.dispose();
+  assert.equal(tail.size, 0);
+  assert.deepEqual(service.liveTerminals(), [], 'a dying session is not live');
+  ptys[0]._fireExit({ exitCode: 0, signal: null });
+  await pending;
+  assert.deepEqual(service.readTail(), { ok: false, reason: 'no_terminal' });
+});
+
+test('a throwing tail never breaks the output queue path', async () => {
+  const { service, events, ptys } = createFixture();
+  const a = await service.spawn({ cols: 80, rows: 24, slot: 1 });
+  service._sessions.get(1).tail.push = () => { throw new Error('tail boom'); };
+  assert.doesNotThrow(() => ptys[0]._fireData('still flows'));
+  ptys[0]._fireData(' twice');
+  await Promise.resolve();
+  const data = events.filter((e) => e.key === 'workspacePty.onData').map((e) => e.payload.data).join('');
+  assert.equal(data, 'still flows twice');
+  const read = service.readTail({ slot: 1 });
+  assert.equal(read.ok, true);
+  assert.equal(read.session_id, a.sessionId);
+  assert.deepEqual(read.lines, []);
+  assert.equal(read.truncated, true, 'a failed tail reports lost output');
 });

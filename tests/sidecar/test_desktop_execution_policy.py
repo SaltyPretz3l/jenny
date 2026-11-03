@@ -86,6 +86,7 @@ def test_sandbox_tool_allowlist_matches_typed_files_and_bridge() -> None:
         "mermaid_generate",
         "report_findings",
         "ask_user",
+        "suggest_next_step",
         "exit_plan_mode",
         "propose_command",
         "propose_session",
@@ -96,6 +97,7 @@ def test_sandbox_tool_allowlist_matches_typed_files_and_bridge() -> None:
 
     electron_owned = {
         "ask_user",
+        "suggest_next_step",
         "exit_plan_mode",
         "propose_command",
         "propose_session",

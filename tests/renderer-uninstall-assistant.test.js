@@ -146,3 +146,53 @@ test('a failed archive that left an unfinished copy names the folder in the erro
   assert.equal(host.querySelector('.data-lifecycle-result--error .data-lifecycle-warning'), null,
     'a later failure without a leftover copy does not repeat the notice');
 });
+
+// Row 103: ~/.companion/skills holds the user's own skills. Both removal reviews
+// offer "Also remove my skills", off by default; only a checked toggle sends it.
+test('the skills option is unchecked by default and sent only when checked', async (t) => {
+  const payloads = [];
+  const { dom, host, restore } = await bootAssistant({
+    previewWorkspaceArchive: async () => ({ ok: true }),
+    prepareRemoval: async (options) => { payloads.push(options); return { ok: false, error: { reason: 'stop' } }; },
+  });
+  t.after(restore);
+  const skillsSwitch = () => host.querySelector('[data-inv-toggle="remove-skills"]');
+  const toggleSkills = (checked) => host.dispatchEvent(new dom.window.CustomEvent('inv-toggle-change', {
+    detail: { id: 'remove-skills', checked },
+  }));
+
+  click(host, dom, 'review-permanent');
+  assert.ok(skillsSwitch(), 'the permanent review offers the skills option');
+  assert.equal(skillsSwitch().getAttribute('aria-checked'), 'false');
+  assert.match(host.textContent, /Also remove my skills/);
+  click(host, dom, 'permanent-remove');
+  await settle();
+  assert.equal(payloads.at(-1).removeSkills, false);
+
+  click(host, dom, 'back');
+  click(host, dom, 'review-permanent');
+  toggleSkills(true);
+  click(host, dom, 'permanent-remove');
+  await settle();
+  assert.equal(payloads.at(-1).removeSkills, true);
+
+  click(host, dom, 'back');
+  click(host, dom, 'review-archive');
+  assert.equal(skillsSwitch().getAttribute('aria-checked'), 'false', 'a new review starts unchecked again');
+  click(host, dom, 'plain');
+  click(host, dom, 'archive-remove');
+  await settle();
+  assert.equal(payloads.at(-1).choice, 'archive_and_remove');
+  assert.equal(payloads.at(-1).removeSkills, false);
+
+  click(host, dom, 'retry-archive');
+  toggleSkills(true);
+  click(host, dom, 'archive-remove');
+  await settle();
+  assert.equal(payloads.at(-1).removeSkills, true);
+
+  click(host, dom, 'app-only');
+  await settle();
+  assert.equal(payloads.at(-1).choice, 'app_only');
+  assert.equal(Object.hasOwn(payloads.at(-1), 'removeSkills'), false);
+});

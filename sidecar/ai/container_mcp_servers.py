@@ -34,6 +34,7 @@ from sidecar.ai.host_policy import host_policy_is_enforced
 # two scanned pages) with headroom for a three-page request.
 BUILTIN_MEMORY_LIMIT_MB = 512
 BUILTIN_MEDIA_MEMORY_LIMIT_MB = 2048
+BUILTIN_NATIVE_DESKTOP_MAX_PROCESSES = 128
 
 
 def _argv_safe_url(raw_url: str | None) -> str:
@@ -253,6 +254,7 @@ def _default_mcp_servers(
             "1" if config.tools_web_allow_private_addresses else "0",
         ]
     )
+    args.extend(["--web-allow-loopback", "1" if config.tools_web_allow_loopback else "0"])
     args.extend(["--web-search-provider", config.tools_web_search_provider])
     # Forward the searxng endpoint so the subprocess provider can reach it, but
     # strip any embedded basic-auth userinfo first: argv is world-readable, so a
@@ -317,6 +319,11 @@ def _default_mcp_servers(
         command_args = ["--mcp-builtin-server", *args]
     else:
         command_args = ["-m", "sidecar.ai.mcp.builtin_server", *args]
+    native_desktop = (
+        config.host_mode == "desktop"
+        and config.desktop_execution_policy_version is None
+        and config.host_execution_policy_version is None
+    )
     builtin_servers = (
         MCPServerConfig(
             name=BUILTIN_MCP_SERVER_NAME,
@@ -329,8 +336,13 @@ def _default_mcp_servers(
             # target, and Git for Windows may add a helper process.  The generic
             # five-process MCP ceiling therefore rejects valid Git calls with
             # ERROR_NOT_ENOUGH_QUOTA.  Keep the server bounded while accounting
-            # for its documented nested-process topology.
-            max_processes=16,
+            # for its documented nested-process topology. Native desktop
+            # coding commands (test runners, builds) also inherit this job and
+            # fan out many children; 16 broke a 12-worker test runner with
+            # spawn UNKNOWN, so native desktop gets a larger bound.
+            max_processes=(
+                BUILTIN_NATIVE_DESKTOP_MAX_PROCESSES if native_desktop else 16
+            ),
             # Native coding commands inherit this outer job. A server-sized
             # 512 MiB budget also caps compilers/editors and their children;
             # rich-file reads need the media budget because a RapidOCR page
@@ -339,9 +351,7 @@ def _default_mcp_servers(
             # Use OS memory availability for native desktop execution only;
             # managed Python retains its own inner resource limits.
             memory_limit_mb=(
-                None if config.host_mode == "desktop"
-                and config.desktop_execution_policy_version is None
-                and config.host_execution_policy_version is None
+                None if native_desktop
                 else BUILTIN_MEDIA_MEMORY_LIMIT_MB
                 if config.tools_rich_files_enabled or config.tools_image_read_enabled
                 else BUILTIN_MEMORY_LIMIT_MB

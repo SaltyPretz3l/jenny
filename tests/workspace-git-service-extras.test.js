@@ -12,6 +12,7 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 
 const { WorkspaceGitService, WRITE_VERBS, assertWriteVerb } = require('../services/workspace-git-service');
+const { plainGitReads } = require('./helpers/workspace-git-plain-exec');
 const { validateSingleFilePatch } = require('../services/workspace-git-service-extras');
 const { runWorkspaceGit } = require('../services/workspace-git-executor');
 const { cleanupTrackedResources, createTrackedTempDir } = require('./helpers/resource-cleanup');
@@ -41,7 +42,7 @@ function createService(root, { flag = true, exec, trashItemImpl = null } = {}) {
   return new WorkspaceGitService({
     configService: { getToolsWorkspaceRoot: () => root },
     featureFlagProvider: () => ({ workspace_git: flag }),
-    ...(exec ? { exec } : {}),
+    ...(exec ? { exec: plainGitReads(exec) } : {}),
     trashItemImpl,
     logger() {},
   });

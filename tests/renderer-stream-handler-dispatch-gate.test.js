@@ -55,6 +55,7 @@ function buildRouterHarness({
     handleContextCompacted: record('handleContextCompacted'),
     handleContextUsage: record('handleContextUsage'),
     handleToolProgress: record('handleToolProgress'),
+    handleToolTestProgress: record('handleToolTestProgress'),
     handleDelta: record('handleDelta'),
     handleQuestionBatch: record('handleQuestionBatch'),
     handleMessageUpdated: record('handleMessageUpdated'),
@@ -408,4 +409,19 @@ test('tool_progress routes to handleToolProgress and is dropped, never buffered,
   assert.equal(dropped.buffered, false);
   assert.equal(buffering.buffered.length, 0);
   assert.equal(buffering.invocationsOf('handleToolProgress').length, 0);
+});
+
+// Row 96 tool_test_progress: the live test-run bar. Ephemeral like the tool tail.
+test('tool_test_progress routes to handleToolTestProgress, and is dropped, never buffered, when the pipeline would buffer', async () => {
+  const live = buildRouterHarness();
+  const progress = { type: 'tool_test_progress', sessionId: 'session-1', streamId: 'stream-tests', callId: 'call-1', percent: 40 };
+  const routed = await live.router.handleStreamPayload(progress);
+  assert.equal(live.invocationsOf('handleToolTestProgress').length, 1);
+  assert.deepEqual({ terminal: routed.terminal, buffered: routed.buffered }, { terminal: false, buffered: false });
+
+  const buffering = buildRouterHarness({ shouldBufferStreamEvent: () => true });
+  const dropped = await buffering.router.handleStreamPayload(progress);
+  assert.equal(dropped.buffered, false);
+  assert.equal(buffering.buffered.length, 0);
+  assert.equal(buffering.invocationsOf('handleToolTestProgress').length, 0);
 });

@@ -67,12 +67,16 @@ const FIRST_TURN_DISPATCH_KEY = (proposalId) => `proposal:${proposalId}:first_tu
 const validProjectId = (value) => typeof value === 'string' && value.length >= 1 && value.length <= 128
   && !/\p{Cc}/u.test(value) && !INVISIBLE_RE.test(value);
 
+// The chat a primary-chat proposal forks (row 94 P2): a session id, one short token with no control or invisible characters.
+const validForkId = (value) => typeof value === 'string' && value.length >= 1 && value.length <= 256
+  && !/\p{Cc}/u.test(value) && !INVISIBLE_RE.test(value);
+
 // The model the offer card is pre-filled with: one trimmed line, no control or invisible characters.
 const validModelName = (value) => validText(value, SESSION_LIMITS.model_chars) && !/\p{Cc}/u.test(value) && !INVISIBLE_RE.test(value);
 
 const SESSION_INPUT_KEYS = Object.freeze([
   'schema_version', 'initiation', 'title', 'description', 'group_key', 'authorization_ref', 'project_id',
-  'preferred_model', 'reasoning_effort',
+  'preferred_model', 'reasoning_effort', 'fork_of_session_id',
 ]);
 
 function normalizeSessionProposalInput(args) {
@@ -93,17 +97,20 @@ function normalizeSessionProposalInput(args) {
   if (ref !== null && (initiation !== 'user_asked' || !isUuid(ref))) return fail('field_authorization_ref');
   const projectId = absent(args.project_id) ? null : args.project_id;
   if (projectId !== null && !validProjectId(projectId)) return fail('field_project_id');
+  const forkId = absent(args.fork_of_session_id) ? null : args.fork_of_session_id;
+  if (forkId !== null && !validForkId(forkId)) return fail('field_fork_of_session_id');
   // A blank model keeps the source chat's seeding; an invalid effort is ignored ('default' reads as no pre-fill).
   const model = typeof args.preferred_model === 'string' && !args.preferred_model.trim() ? null : args.preferred_model;
   if (!absent(model) && !validModelName(model)) return fail('field_preferred_model');
   const preferredModel = absent(model) ? null : model.trim();
   const effort = typeof args.reasoning_effort === 'string' ? normalizeReasoningEffort(args.reasoning_effort) : 'default';
-  // project_id and the pre-fills are carried only when set, so inputs stored before them normalize to themselves.
+  // project_id, the fork and the pre-fills are carried only when set, so inputs stored before them normalize to themselves.
   return {
     ok: true,
     value: {
       schema_version: 1, initiation, title, description, group_key: groupKey, authorization_ref: ref,
       ...(projectId === null ? {} : { project_id: projectId }),
+      ...(forkId === null ? {} : { fork_of_session_id: forkId }),
       ...(preferredModel === null ? {} : { preferred_model: preferredModel }),
       ...(effort === 'default' ? {} : { reasoning_effort: effort }),
     },
@@ -112,18 +119,26 @@ function normalizeSessionProposalInput(args) {
 
 const blankToNull = (value) => (typeof value === 'string' && value.trim() ? value : null);
 
-// Publish default: the source's project, model and effort; Plan only when the source is in Plan.
-function defaultOptions({ sourceProjectId = null, model = null, effort = null, planMode = false } = {}) {
+// Publish default: the source's project, model and effort; Plan only when the source is in Plan. A fork
+// (row 94 P2) names its source chat, and the caller passes that chat's project, model and effort.
+function defaultOptions({ sourceProjectId = null, model = null, effort = null, planMode = false, forkOfSessionId = null } = {}) {
   return {
     destination_project_id: blankToNull(sourceProjectId),
     preferred_model: blankToNull(model),
     reasoning_effort: blankToNull(effort),
     run_mode: planMode === true ? 'plan' : 'agent',
+    ...(validForkId(forkOfSessionId) ? { fork_of_session_id: forkOfSessionId } : {}),
   };
 }
 
+const OPTION_KEYS = Object.freeze(['destination_project_id', 'preferred_model', 'reasoning_effort', 'run_mode']);
+const forkOf = (value) => value?.fork_of_session_id ?? null;
+
+// The key set is closed; fork_of_session_id is present only on a fork, so options stored before it stay valid.
 function validOptions(options) {
-  return hasKeys(options, ['destination_project_id', 'preferred_model', 'reasoning_effort', 'run_mode'])
+  const fork = isPlainObject(options) && Object.hasOwn(options, 'fork_of_session_id');
+  return hasKeys(options, fork ? [...OPTION_KEYS, 'fork_of_session_id'] : OPTION_KEYS)
+    && (!fork || validForkId(options.fork_of_session_id))
     && nullOr(options.destination_project_id, (v) => isNonEmptyString(v, 256))
     && nullOr(options.preferred_model, (v) => isNonEmptyString(v, 256))
     && nullOr(options.reasoning_effort, (v) => isNonEmptyString(v, 64))
@@ -220,6 +235,7 @@ function validAcceptedProgress(raw) {
 function validSessionRecord(raw) {
   const { normalized_input: input, binding } = raw;
   if (!validOptions(raw.options) || !validInitiationBinding(input, binding.session)) return false;
+  if (forkOf(raw.options) !== forkOf(input)) return false;
   const grouped = input.initiation === 'own_initiative' && input.group_key !== null;
   const expectedGroup = grouped ? computeGroupId(raw.source_session_incarnation, raw.source_turn_id, input.group_key) : null;
   if (raw.group_id !== expectedGroup || !nullOr(raw.group_id, (v) => GROUP_ID_RE.test(v))) return false;
@@ -401,9 +417,12 @@ function prepareSessionRetry(record, { attemptId = crypto.randomUUID() } = {}) {
   });
 }
 
-// Options are editable only while pending; the caller validates against the live capabilities.
+// Options are editable only while pending; the caller validates against the live capabilities. A fork
+// stays the same fork, in its source chat's project.
 function setSessionOptions(record, options) {
   if (!isSession(record) || record.decision_state !== 'pending' || !validOptions(options)) return null;
+  if (forkOf(options) !== forkOf(record.options)) return null;
+  if (forkOf(options) !== null && options.destination_project_id !== record.options.destination_project_id) return null;
   return next(record, { options: structuredClone(options) });
 }
 

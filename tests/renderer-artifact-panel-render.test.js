@@ -332,8 +332,8 @@ describe('artifact panel v2 version stepper', () => {
     const h = makeHarness(t);
     h.state.messagesBySession = new Map([['s1', [
       toolMessage('a1', 'chart.html', '2026-01-01T00:00:00.000Z'),
-      toolMessage('a2', 'chart.html', '2026-01-02T00:00:00.000Z'),
-      toolMessage('a3', 'chart.html', '2026-01-03T00:00:00.000Z'),
+      toolMessage('a2', 'chart-2.html', '2026-01-02T00:00:00.000Z'),
+      toolMessage('a3', 'chart-3.html', '2026-01-03T00:00:00.000Z'),
     ]]]);
     let selected = null;
     const v2 = createArtifactPanelV2({
@@ -360,7 +360,7 @@ describe('artifact panel v2 version stepper', () => {
     const h = makeHarness(t);
     h.state.messagesBySession = new Map([['s1', [
       toolMessage('a1', 'chart.html', '2026-01-01T00:00:00.000Z'),
-      toolMessage('a2', 'chart.html', '2026-01-02T00:00:00.000Z'),
+      toolMessage('a2', 'chart-2.html', '2026-01-02T00:00:00.000Z'),
     ]]]);
     const v2 = createArtifactPanelV2({
       panelEl: h.panelEl, state: h.state, windowRef: h.doc.defaultView, escapeHtml, appendClientLog: h.appendClientLog,

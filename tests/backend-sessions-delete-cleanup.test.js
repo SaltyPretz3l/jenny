@@ -10,6 +10,7 @@ const path = require('node:path');
 const { AttachmentAssetStore } = require('../services/attachment-asset-store');
 const { ElectronSessionStore } = require('../services/backend/electron-session-store');
 const { deleteSession } = require('../services/backend/backend-sessions');
+const { drainTurnDiagnosticsPurges } = require('../services/backend/session-delete-purges');
 
 // Deleting a chat reports what it could not remove. Real stores in temp
 // directories drive the production deleteSession; only the injected failure
@@ -172,4 +173,89 @@ test('chat delete stays complete when every recovery copy was purged', async (t)
 
   assert.equal(result.cleanup_status, 'complete');
   assert.deepEqual(result.cleanup_errors, []);
+});
+
+test('chat delete reports what it freed: the image, the todo list and the sidecar repo anchor', async (t) => {
+  const fixture = createFixture(t);
+  const assetPath = seedImageChat(fixture, 'sess_freed');
+  const todoFile = expectedTodoFile(fixture.userDataPath, 'sess_freed');
+  fs.mkdirSync(path.dirname(todoFile), { recursive: true });
+  fs.writeFileSync(todoFile, '{"items":[]}');
+  const anchorDir = path.join(fixture.userDataPath, 'background-memory', 'repo-anchors', 'sess_freed');
+  fs.mkdirSync(anchorDir, { recursive: true });
+  fs.writeFileSync(path.join(anchorDir, 'anchor.json'), '{"a":1}');
+  const keptAnchor = path.join(fixture.userDataPath, 'background-memory', 'repo-anchors', 'sess_other', 'anchor.json');
+  fs.mkdirSync(path.dirname(keptAnchor), { recursive: true });
+  fs.writeFileSync(keptAnchor, 'keep');
+  const expectedBytes = fs.statSync(assetPath).size + fs.statSync(todoFile).size + fs.statSync(path.join(anchorDir, 'anchor.json')).size;
+
+  const result = await deleteSession(fixture.service, 'sess_freed');
+
+  assert.equal(result.cleanup_status, 'complete');
+  assert.deepEqual(result.freed, { files: 3, bytes: expectedBytes });
+  assert.equal(fs.existsSync(anchorDir), false);
+  assert.equal(fs.existsSync(keptAnchor), true);
+});
+
+test('chat delete with nothing to free reports zero and stays complete', async (t) => {
+  const fixture = createFixture(t);
+  assert.ok(fixture.sessionStore.createSessionWithId('sess_nothing', { title: 'Empty' }));
+
+  const result = await deleteSession(fixture.service, 'sess_nothing');
+
+  assert.equal(result.cleanup_status, 'complete');
+  assert.deepEqual(result.freed, { files: 0, bytes: 0 });
+});
+
+test('a file that could not be removed is not counted as freed', async (t) => {
+  const fixture = createFixture(t);
+  const assetPath = seedImageChat(fixture, 'sess_not_freed');
+  denyUnlink(t, assetPath);
+
+  const result = await deleteSession(fixture.service, 'sess_not_freed');
+
+  assert.equal(result.cleanup_status, 'degraded');
+  assert.deepEqual(result.freed, { files: 0, bytes: 0 });
+});
+
+test('chat delete counts purged recovery copies and degrades when a new purge step fails', async (t) => {
+  const fixture = createFixture(t);
+  fixture.sessionStore.purgeSessionRecoveryCopies = () => ({ removed: 2, failed: 0 });
+  // A workspace root that is a file, not a directory: the job-output purge refuses it.
+  const notADirectory = path.join(fixture.userDataPath, 'a-file');
+  fs.writeFileSync(notADirectory, 'x');
+  fixture.service.backgroundJobTracker = {
+    getSessionJobRoots: () => [{ jobId: 'aaaaaaaaaaaa', workspaceRoot: notADirectory }],
+  };
+  assert.ok(fixture.sessionStore.createSessionWithId('sess_recovery_count', { title: 'Counted' }));
+
+  const result = await deleteSession(fixture.service, 'sess_recovery_count');
+
+  assert.deepEqual(result.cleanup_errors, [{ step: 'job_outputs', code: 'cleanup_failed' }]);
+  assert.deepEqual(result.freed, { files: 2, bytes: 0 });
+});
+
+test('chat delete leaves turn diagnostics to one deferred sweep and never degrades on them', async (t) => {
+  const fixture = createFixture(t);
+  const diagnostics = path.join(fixture.userDataPath, 'diagnostics', '2026-11-01');
+  fs.mkdirSync(diagnostics, { recursive: true });
+  const header = (sessionId) => JSON.stringify({ session_id: sessionId });
+  fs.writeFileSync(path.join(diagnostics, 'mine.json'), header('sess_diag'));
+  fs.writeFileSync(path.join(diagnostics, 'theirs.json'), header('sess_other_chat'));
+  fs.writeFileSync(path.join(diagnostics, 'broken.json'), '{ not json');
+  assert.ok(fixture.sessionStore.createSessionWithId('sess_diag', { title: 'Diag' }));
+  const realOpen = fs.promises.open;
+  t.mock.method(fs.promises, 'open', (target, ...rest) => {
+    if (path.basename(String(target)) === 'broken.json') throw Object.assign(new Error('io'), { code: 'EIO' });
+    return realOpen.call(fs.promises, target, ...rest);
+  });
+
+  const result = await deleteSession(fixture.service, 'sess_diag');
+
+  assert.equal(result.cleanup_status, 'complete', 'an unreadable file of another chat cannot degrade this delete');
+  assert.equal(fs.existsSync(path.join(diagnostics, 'mine.json')), true, 'the delete itself does not scan');
+  await drainTurnDiagnosticsPurges(fixture.service);
+  assert.equal(fs.existsSync(path.join(diagnostics, 'mine.json')), false);
+  assert.equal(fs.existsSync(path.join(diagnostics, 'theirs.json')), true);
+  assert.equal(fs.existsSync(path.join(diagnostics, 'broken.json')), true);
 });

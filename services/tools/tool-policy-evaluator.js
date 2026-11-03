@@ -8,6 +8,11 @@ const {
 const crypto = require('node:crypto');
 const path = require('node:path');
 const { isSafeDocument } = require('./plan-artifact-policy');
+const {
+  commandMatchesExact,
+  commandMatchesPrefix,
+  normalizeCommandMatchKeys,
+} = require('./command-prefix');
 
 /**
  * Pure policy evaluator for tool execution decisions.
@@ -38,6 +43,8 @@ const DEFAULT_TOOL_DEFAULTS = Object.freeze({
   // Exact-content consent is owned by the Electron tool, even in Auto mode.
   session_message: 'auto',
   exit_plan_mode: 'ask',
+  // Draws a card under the reply and nothing else; the user's click is an ordinary chat message.
+  suggest_next_step: 'auto',
   read_file: 'auto',
   glob_files: 'auto',
   grep_search: 'auto',
@@ -98,6 +105,27 @@ const DEFAULT_TOOL_DEFAULTS = Object.freeze({
   session_status: 'auto',
   session_transcript: 'auto',
   session_stop: 'ask',
+  // Row 88: reading the allowlisted settings is free; every change shows the user a card.
+  settings_get: 'auto',
+  settings_change: 'ask',
+  // Row 94 P1: every change to another chat asks; chat_configure also shows its card in Auto (sidecar).
+  chat_organize: 'ask',
+  chat_configure: 'ask',
+  // Row 94 P2: listing projects is free; creating one binds a folder, so it shows its card even in Auto (sidecar).
+  project_create: 'ask',
+  projects_list: 'auto',
+  // Row 94 P3: moving the view writes nothing; the renderer asks with a chip while the user is busy.
+  app_view: 'auto',
+  // Row 94 P4: an export writes a new file and terminal_run types into the user's terminal: both show their card
+  // even in Auto (sidecar). Reading the terminal is free.
+  session_export: 'ask',
+  terminal_read: 'auto',
+  terminal_run: 'ask',
+  // Row 85: listing scheduled checks is free; every change asks, with its card even in Auto (sidecar).
+  schedule_list: 'auto',
+  schedule_change: 'ask',
+  // Row 86: reading the facts since the user was last present is free.
+  away_digest: 'auto',
   // Row 69 W4b: reads the bundled app guide only.
   jenny_help: 'auto',
   conversation_open: 'auto',
@@ -221,22 +249,26 @@ function normalizeRuleList(value) {
       action = boundedPolicyText(actionValue, MAX_POLICY_TOOL_NAME_CHARS, '');
       if (!action) continue;
     }
+    const toolId = normalizeOptionalMatchText(match.tool_id, MAX_POLICY_TOOL_NAME_CHARS);
+    const pathPrefix = normalizeOptionalPathMatchText(match.path_prefix, MAX_POLICY_MATCH_TEXT_CHARS);
+    // A malformed command key drops the rule: ignoring the key would widen a
+    // scoped run_command grant to the whole tool.
+    const commandKeys = normalizeCommandMatchKeys(match, { toolId, action, pathPrefix });
+    if (!commandKeys) continue;
     out.push(
       freezeRule({
         id,
         decision,
         reason: boundedPolicyMetadataText(entry.reason, MAX_POLICY_REASON_CHARS, 'Rule matched'),
         match: {
-          tool_id: normalizeOptionalMatchText(match.tool_id, MAX_POLICY_TOOL_NAME_CHARS),
+          tool_id: toolId,
           action,
           tool_family: normalizeOptionalMatchText(match.tool_family, 80),
           source_kind: normalizeOptionalMatchText(match.source_kind, 80),
           mode: normalizePolicyModeList(match.mode),
-          path_prefix: normalizeOptionalPathMatchText(
-            match.path_prefix,
-            MAX_POLICY_MATCH_TEXT_CHARS
-          ),
+          path_prefix: pathPrefix,
           mcp_server: normalizeOptionalMatchText(match.mcp_server, MAX_POLICY_TOOL_NAME_CHARS),
+          ...commandKeys,
         },
       })
     );
@@ -644,6 +676,13 @@ function ruleMatches(rule, { descriptor, args, mode }) {
     const rawPath = args.path == null ? args.file_path : args.path;
     const pathArg = String(rawPath ?? '').trim();
     if (!pathPrefixMatches(pathArg, m.path_prefix)) return false;
+  }
+  // Same as policy.py: a command rule only ever matches run_command's own
+  // `command` argument (row 103).
+  if (m.command_prefix || m.command_exact) {
+    if (descriptor.name !== 'run_command') return false;
+    if (m.command_prefix && !commandMatchesPrefix(args.command, m.command_prefix)) return false;
+    if (m.command_exact && !commandMatchesExact(args.command, m.command_exact)) return false;
   }
   return true;
 }

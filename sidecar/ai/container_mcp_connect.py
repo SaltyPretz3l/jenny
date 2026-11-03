@@ -32,6 +32,7 @@ class MCPConnectPlan:
     sse_enabled: bool
     resources_enabled: bool
     allow_private_addresses: bool
+    allow_loopback: bool = False
 
 
 class MCPConnectTask:
@@ -57,6 +58,7 @@ class MCPConnectTask:
                 sse_enabled=self.plan.sse_enabled,
                 resources_enabled=self.plan.resources_enabled,
                 allow_private_addresses=self.plan.allow_private_addresses,
+                allow_loopback=self.plan.allow_loopback,
                 reuse_from=reuse_from,
             )
         except BaseException as error:  # noqa: BLE001 - re-raised by result() in the joining thread

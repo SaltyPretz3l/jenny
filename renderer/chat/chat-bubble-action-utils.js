@@ -39,7 +39,21 @@
   // The anchor of an app-started turn is an app label (services/backend/session-handoff-context.js
   // and application-turns.js), so Retry and Edit would replay it as an ordinary prompt: only the
   // proposal card runs a preparation turn again, and a wake or auto-resume continues with a message.
-  const APPLICATION_TURNS = new Set(['handoff_preparation', 'wake', 'auto_resume']);
+  const APPLICATION_TURNS = new Set(['handoff_preparation', 'wake', 'auto_resume', 'scheduled_check', 'digest']);
+  // The quiet line an app-started turn draws (owner pick C1 for row 85): a fired scheduled check names
+  // its title (its label is "Scheduled check: <title>", primary-scheduled-check.js); a row 86 digest reads
+  // "While you were away"; an auto-resume keeps its sentence. Wake and preparation turns draw nothing
+  // (their card says why they ran).
+  function applicationTurnNoteText(message) {
+    const kind = applicationTurnOf(message);
+    if (kind === 'digest') return jt('chat.applicationTurn.digest', 'While you were away');
+    if (kind !== 'scheduled_check') {
+      return jt('chat.applicationTurn.autoResumed', 'Resumed automatically after a turn-budget stop');
+    }
+    const title = normalizeString(message?.content).replace(/^Scheduled check:\s*/, '');
+    return jt('chat.applicationTurn.scheduledCheck', 'Scheduled check · {title}', { title });
+  }
+
   function applicationTurnOf(message) {
     const kind = normalizeString(message?.application_turn);
     return normalizeString(message?.role) === 'user' && APPLICATION_TURNS.has(kind) ? kind : '';
@@ -383,6 +397,7 @@
     REGENERATE_MISSING_SOURCE_REASON,
     REGENERATE_TEXT_ATTACHMENTS_REASON,
     EDIT_DISABLED_REASON_DURING_EDIT,
+    applicationTurnNoteText,
     applicationTurnOf,
     buildMessageActionModel,
     getLatestReplyAssistantMessageId,

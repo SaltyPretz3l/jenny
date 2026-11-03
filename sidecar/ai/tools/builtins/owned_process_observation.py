@@ -167,9 +167,27 @@ def observe_owned_process_invocation(
         _current_observation.reset(token)
 
 
+@contextmanager
+def detached_from_owned_process_invocation() -> Iterator[None]:
+    """Run work that outlives the calling tool outside its cleanup proof.
+
+    A tool lease whose cleanup is still pending at return is quarantined, and
+    no late verdict releases it before a backend restart, so every later
+    workspace tool in the turn is refused. Background cache upkeep (the
+    manifest stale-while-revalidate refresh) is owned by the cache, not the
+    call, and must not register as the call's child.
+    """
+    token = _current_observation.set(None)
+    try:
+        yield
+    finally:
+        _current_observation.reset(token)
+
+
 __all__ = [
     "MAX_OBSERVED_CHILDREN",
     "OwnedProcessInvocationObservation",
     "create_process_cleanup_observer",
+    "detached_from_owned_process_invocation",
     "observe_owned_process_invocation",
 ]

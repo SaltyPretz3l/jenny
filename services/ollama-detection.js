@@ -91,6 +91,7 @@ async function detectOllama(deps, { baseUrl, timeout }) {
     try {
       const response = await deps.fetchImpl(`${baseUrl}/api/version`, {
         method: 'GET',
+        redirect: 'error',
         ...(controller ? { signal: controller.signal } : {}),
       });
       if (response && response.ok === true) {

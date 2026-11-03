@@ -68,7 +68,8 @@
         } else {
           return `<div class="diff-line diff-line-meta"><span class="diff-gutter diff-gutter-old"></span><span class="diff-gutter diff-gutter-new"></span><span class="diff-marker"></span><span class="diff-content"${highlightAttrs}>${escape(text)}</span></div>`;
         }
-        return `<div class="diff-line ${lineClass}"><span class="diff-gutter diff-gutter-old">${escape(gutterOld)}</span><span class="diff-gutter diff-gutter-new">${escape(gutterNew)}</span><span class="diff-marker">${markerChar}</span><span class="diff-content"${highlightAttrs}>${escape(content)}</span></div>`;
+        const lineAttrs = (gutterOld ? ` data-old-line="${escape(gutterOld)}"` : '') + (gutterNew ? ` data-new-line="${escape(gutterNew)}"` : '');
+        return `<div class="diff-line ${lineClass}"${lineAttrs}><span class="diff-gutter diff-gutter-old">${escape(gutterOld)}</span><span class="diff-gutter diff-gutter-new">${escape(gutterNew)}</span><span class="diff-marker">${markerChar}</span><span class="diff-content"${highlightAttrs}>${escape(content)}</span></div>`;
       }).join('');
       const separator = hunkIdx > 0 ? '<div class="diff-hunk-separator">...</div>' : '';
       return `${separator}<div class="diff-hunk"><div class="diff-hunk-header">${escape(hunkHeader)}</div>${linesHtml}</div>`;

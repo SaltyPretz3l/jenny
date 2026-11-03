@@ -47,6 +47,8 @@ Messages may carry a code of the form CMP-DOMAIN-NNNN (a domain name and a four-
 
 Windows %APPDATA%\jenny, macOS ~/Library/Application Support/jenny, Linux ~/.config/jenny. Runtime data sits under ~/.companion.
 
+Inside the data folder, sessions holds one file per chat (sess_ID.json, with short-lived .journal files beside it) and sessions/_index.json lists every chat with its title and date. The exports folder holds the transcript copies that Reset and Forget on the Jenny chat save (jenny-reset-DATE-TIME.json). The logs folder holds the app log and diagnostics holds per-reply timing dumps. These are working files: to back up or move chats, use the archive below rather than copying files while Jenny runs.
+
 Settings > Profile, data and updates > Data and removal creates a verified archive without removing anything. By default it is encrypted with a passphrase of 12 to 1024 characters that Jenny never stores; a readable plain archive requires an explicit choice. It includes chats, preferences, personality, memory, reminders and calendar data; it excludes secrets, logs, caches, shared models and ordinary project files. The default folder is Documents/Jenny Archives. A full restore is offered only into a fresh profile; for a profile that already has chats, import individual sessions instead. Jenny never removes live data unless it can read back and verify the archive first.
 
 ## Uninstall

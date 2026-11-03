@@ -56,17 +56,29 @@ test('preload exposes the bounded data lifecycle bridge and disposable progress 
   const lifecycle = captured.api.api.dataLifecycle;
   assert.deepEqual(Object.keys(lifecycle).sort(), [
     'chooseArchiveDestination',
+    'clearCategory',
     'createArchive',
     'findRestoreCandidates',
     'getOverview',
+    'getStorageUsage',
     'launchUninstallAssistant',
     'onProgress',
+    'previewClear',
     'previewWorkspaceArchive',
     'previewWorkspaceRestore',
     'restoreWorkspace',
+    'revealCategory',
     'stageRestore',
     'syncPortablePreferences',
   ]);
+  await lifecycle.getStorageUsage();
+  assert.equal(captured.invokeCalls.at(-1).channel, 'data-lifecycle:get-storage-usage');
+  await lifecycle.previewClear({ categoryId: 'logs' });
+  assert.equal(captured.invokeCalls.at(-1).channel, 'data-lifecycle:preview-clear');
+  await lifecycle.clearCategory({ categoryId: 'logs', previewToken: 'token' });
+  assert.equal(captured.invokeCalls.at(-1).channel, 'data-lifecycle:clear-category');
+  await lifecycle.revealCategory({ categoryId: 'logs' });
+  assert.equal(captured.invokeCalls.at(-1).channel, 'data-lifecycle:reveal-category');
   await lifecycle.createArchive({ encrypted: false });
   assert.equal(captured.invokeCalls.at(-1).channel, 'data-lifecycle:create-archive');
   await lifecycle.previewWorkspaceArchive();
@@ -454,6 +466,7 @@ test('preload exposes the primary chat bridge with only its closed methods and a
   const primaryChat = captured.api.api.primaryChat;
   assert.deepEqual(Object.keys(primaryChat).sort(), [
     'activity',
+    'addRule',
     'forgetPreview',
     'getState',
     'grantLaunch',
@@ -463,6 +476,9 @@ test('preload exposes the primary chat bridge with only its closed methods and a
     'reset',
     'resume',
     'revokeLaunch',
+    'revokeRule',
+    'undoChatChange',
+    'undoSettingChange',
   ]);
   await primaryChat.getState({ schema_version: 1 });
   await primaryChat.activity({ schema_version: 1, limit: 10 });

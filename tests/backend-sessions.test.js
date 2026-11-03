@@ -574,6 +574,7 @@ test('managed deleteSession resets usage rows only after a successful delete', a
     deleted: true,
     cleanup_status: 'complete',
     cleanup_errors: [],
+    freed: { files: 0, bytes: 0 },
   });
   assert.deepEqual(resetCalls, ['sess_deleted']);
 });
@@ -743,6 +744,7 @@ test('managed deleteSession reports independent post-delete cleanup failures wit
       { step: 'artifacts', code: 'cleanup_failed' },
       { step: 'usage', code: 'cleanup_failed' },
     ],
+    freed: { files: 0, bytes: 0 },
   });
   assert.equal(JSON.stringify({ result, logs }).includes(privatePath), false);
   assert.deepEqual(

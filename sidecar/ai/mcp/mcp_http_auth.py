@@ -55,10 +55,12 @@ class ClientCredentialsTokenSource:
         *,
         server_name: str,
         allow_private_addresses: bool = False,
+        allow_loopback: bool = False,
     ) -> None:
         self._auth = auth
         self._server_name = server_name
         self._allow_private_addresses = bool(allow_private_addresses)
+        self._allow_loopback = bool(allow_loopback)
         self._lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._cache_generation = 0
@@ -153,14 +155,15 @@ class ClientCredentialsTokenSource:
         # request connects to it (no DNS rebinding) and refuse any redirect the
         # server tries -- following a 3xx would bypass this validation entirely
         # (the classic metadata-endpoint SSRF pivot). The redirect refusal holds
-        # regardless of ``allow_private_addresses``, which only relaxes the
-        # address-class check so an owner-configured self-hosted issuer on a
-        # LAN / tailnet / CGNAT address can mint (same single opt-in as the
-        # fetch and search paths).
+        # regardless of ``allow_private_addresses`` / ``allow_loopback``, which only
+        # relax the address-class check so an owner-configured self-hosted issuer
+        # on a LAN / tailnet / CGNAT address (private flag) or on this machine
+        # (loopback flag) can mint.
         try:
             validated = validate_public_url(
                 token_url,
                 allow_private=self._allow_private_addresses,
+                allow_loopback=self._allow_loopback,
                 deadline=deadline,
             )
         except (ValueError, PermissionError, TimeoutError) as error:

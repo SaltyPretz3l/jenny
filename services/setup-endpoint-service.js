@@ -211,6 +211,8 @@ class SetupEndpointService {
     try {
       const response = await this.fetchImpl(checkedUrl, {
         method: 'GET',
+        // The host check covers only the first URL; a redirect must not leave it.
+        redirect: 'error',
         headers: { Accept: 'application/json', ...this._managedAuthorizationFor(checkedUrl) },
         ...(controller ? { signal: controller.signal } : {}),
       });
@@ -263,5 +265,6 @@ module.exports = {
   SetupEndpointService,
   endpointUrlFor,
   isLocalEndpointHost,
+  isLoopbackHost,
   normalizeEngineType,
 };

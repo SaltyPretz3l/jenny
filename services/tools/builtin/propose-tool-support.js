@@ -10,6 +10,7 @@ const { PROPOSAL_ERROR_CODES: SHARED_PROPOSAL_ERROR_CODES } = require('../../bac
 // command text, the summary or the paths back to the model or into a log.
 const { getTrustedExecutionBinding } = require('../../backend/session-execution-authority');
 const { normalizeProposalResultMetadata } = require('../../backend/proposal-result-metadata');
+const { RULE_DENIED_MESSAGE } = require('../../primary-action-rules');
 
 const PROPOSAL_ERROR_CODES = Object.freeze(Object.fromEntries(
   Object.entries(SHARED_PROPOSAL_ERROR_CODES).map(([key, code]) => [key.toLowerCase(), code]),
@@ -143,6 +144,10 @@ async function publishProposal(toolName, spec, input, binding, live, context) {
     });
   } catch (_error) {
     return proposalFailure(toolName, 'unavailable');
+  }
+  if (published?.reason === 'rule_denied') {
+    // Row 87: the user's standing rule, relayed in plain words.
+    return { ...proposalFailure(toolName, 'authorization_required'), content: `${toolName} did not record a proposal. ${RULE_DENIED_MESSAGE}` };
   }
   if (!published || published.ok !== true) {
     return proposalFailure(toolName, published?.reason || 'unavailable');

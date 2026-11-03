@@ -1,0 +1,158 @@
+/* styles/settings-data-storage.css - Settings > Profile, data & updates > "Your data" (row 95).
+ * Rows are the shared .settings-field--row; this sheet adds only the total line, the
+ * folder link, the end cluster (meter, size, action), the status line and the clear
+ * confirm's list and typed count. Flat: no cards, no side accents, no decoration that
+ * carries no information. Foundation tokens only, so both palettes follow. */
+
+.settings-group[data-storage-group][hidden] {
+  display: none;
+}
+
+.data-storage-total {
+  margin: var(--space-5) 0 var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--font-size-body);
+}
+
+.data-storage-total:empty {
+  display: none;
+}
+
+.data-storage-total strong {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.data-storage-where {
+  display: inline;
+  color: var(--text-muted);
+}
+
+.data-storage-path {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-link);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-footnote);
+  text-align: start; /* a button centers by default; a wrapped path reads from the left */
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.data-storage-path:hover {
+  text-decoration: underline;
+}
+
+.data-storage-path:focus-visible {
+  outline: 2px solid var(--settings-shell-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+.data-storage-end {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-inline-start: auto;
+}
+
+.data-storage-size {
+  min-width: 6.5ch;
+  color: var(--text-primary);
+  font-size: var(--font-size-body);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+
+.data-storage-size[data-measuring] {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.data-storage-meter-slot {
+  display: inline-flex;
+}
+
+.data-storage-meter {
+  width: 72px;
+}
+
+.data-storage-meter .inv-progress-track {
+  background: var(--settings-shell-muted-border);
+}
+
+.data-storage-meter .inv-progress-fill {
+  background: color-mix(in srgb, var(--accent-primary) 70%, transparent);
+}
+
+.data-storage-action,
+.data-storage-kept {
+  min-width: 84px;
+}
+
+.data-storage-kept {
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+  text-align: end;
+}
+
+.data-storage-status {
+  margin: var(--space-3) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-footnote);
+}
+
+.data-storage-status[data-tone="ok"]::before,
+.data-storage-status[data-tone="warn"]::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-inline-end: var(--space-3);
+  border-radius: 50%;
+  vertical-align: middle;
+}
+
+.data-storage-status[data-tone="ok"]::before {
+  background: var(--state-success);
+}
+
+.data-storage-status[data-tone="warn"]::before {
+  background: var(--state-warning);
+}
+
+/* The confirm's list, kept note and typed count (inside .inv-step-modal-body). */
+.data-clear-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--font-size-body);
+}
+
+.data-clear-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.data-clear-list li > span:last-child {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.data-clear-keep {
+  margin: var(--space-4) 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-footnote);
+  line-height: 1.5;
+}
+
+.data-storage-typed {
+  margin-top: var(--space-4);
+  max-width: 160px;
+}

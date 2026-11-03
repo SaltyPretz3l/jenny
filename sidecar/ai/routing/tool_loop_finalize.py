@@ -418,6 +418,9 @@ class _FinalResponseMixin:
             and not self.post_tool_continuation_attempted
             and _iteration < self.iteration_total
         ):
+            # Open todo items: spend the one-shot continuation, tools kept.
+            if _tl_hub.pending_todos.continue_pending_todos(self, _iteration):
+                return None
             return recovery.empty_final_wind_down(self)
 
         runtime = self.runtime
@@ -803,29 +806,9 @@ class _FinalResponseMixin:
                 not self.post_tool_continuation_attempted
                 and _iteration < self.iteration_total
             ):
-                self.post_tool_continuation_attempted = True
-                fire(runtime, "post_tool_recovery", trigger=recovery_trigger, action="retry")
-                _tl_hub.loop_event_emit.emit_stream_reset_for_retry(
-                    runtime,
-                    self.streamed_event_types,
-                    reason="post_tool_restart",
-                )
-                _tl_hub.log_event(
-                    logger,
-                    logging.WARNING,
-                    component="ai.router",
-                    event="ai.router.post_tool_recovery_retry",
-                    message=(
-                        "Post-tool response needs recovery "
-                        f"({recovery_trigger}); retrying once with "
-                        "continuation guidance."
-                    ),
-                    status="retry",
-                    data=recovery_log_data,
-                    request_id=request_id,
-                )
-                self.working_messages.append(
-                    {"role": "user", "content": recovery_nudge}
+                _tl_hub.pending_todos.queue_post_tool_retry(
+                    self, trigger=recovery_trigger, nudge=recovery_nudge,
+                    log_data=recovery_log_data,
                 )
                 return None
             if fallback_text:

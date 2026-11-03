@@ -15,6 +15,12 @@
  * from transcript text a person can type.
  */
 
+const { ruleIdFromConsent } = require('./chat-messaging-contract');
+const { RULE_HISTORY_KINDS, isRuleId } = require('./shell-config-primary-chat');
+
+// Row 87: the rule behind a rule-authorized send, or null.
+const ruleIdOf = (auth) => { const id = ruleIdFromConsent(auth.consent_event_id); return isRuleId(id) ? id : null; };
+
 const PREVIEW_CODE_POINTS = 160;
 const DEFAULT_LIMIT = 60;
 const MAX_LIMIT = 200;
@@ -22,10 +28,14 @@ const WORK_PAGES = 3;
 const WORK_PAGE_ROWS = 100;
 const STANDING_PREFIX = 'standing.';
 const WAKE_KEY_PREFIX = 'wake_';
+const SCHEDULE_KEY_PREFIX = 'sched_'; // row 85: a fired scheduled check (primary-scheduled-check.js)
+const DIGEST_KEY_PREFIX = 'digest_'; // row 86: a "While you were away" digest turn (primary-digest.js)
 const UNKNOWN_CHAT = 'another chat';
 const UNKNOWN_PROJECT = 'a project';
 const EVERY_PROJECT = 'Every project';
 const HISTORY_KINDS = new Set(['paused', 'resumed', 'reset', 'forgot']);
+const SCHEDULE_HISTORY_KINDS = new Set(['schedule_created', 'schedule_updated', 'schedule_enabled', 'schedule_disabled',
+  'schedule_cancelled', 'schedule_skipped', 'schedule_missed']);
 
 const isRecord = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 const isText = (value) => typeof value === 'string' && value.length > 0;
@@ -136,7 +146,8 @@ function createPrimaryActivityLog({
 
   function authorizationOf(auth) {
     if (auth.kind === 'agent_directional') return 'grant';
-    if (auth.kind === 'agent_once') return 'approval';
+    // Row 87: an agent_once whose consent id is 'rule:<rule_id>' was minted by an allow rule.
+    if (auth.kind === 'agent_once') return ruleIdFromConsent(auth.consent_event_id) !== null ? 'rule' : 'approval';
     if (auth.kind === 'user_send') return 'user';
     return null;
   }
@@ -164,6 +175,7 @@ function createPrimaryActivityLog({
         status: denied ? 'denied' : record.state ?? null, title: ctx.chatTitle(envelope.destination_session_id),
         detail: report ? clip(envelope.report?.outcome) : clip(envelope.body),
         session_id: envelope.destination_session_id ?? null, authorization: auth ? authorizationOf(auth) : null,
+        ...(auth && authorizationOf(auth) === 'rule' ? { rule_id: ruleIdOf(auth) } : {}),
       }));
     }
     for (const record of asArray(mail.inbox)) {
@@ -245,7 +257,7 @@ function createPrimaryActivityLog({
 
   // ---------- runtime work (wakes) ----------
 
-  // Newest-first work rows for the primary whose key marks a wake; at most three pages.
+  // Newest-first work rows for the primary whose key marks a wake, a fired scheduled check or a digest; at most three pages.
   function wakeRows(ctx, sessionId, store) {
     const rows = [];
     let cursor = null;
@@ -256,7 +268,8 @@ function createPrimaryActivityLog({
       if (!isRecord(result)) break;
       for (const row of asArray(result.items)) {
         if (isRecord(row) && row.session_id === sessionId && isText(row.work_id)
-          && typeof row.idempotency_key === 'string' && row.idempotency_key.startsWith(WAKE_KEY_PREFIX)) rows.push(row);
+          && typeof row.idempotency_key === 'string'
+          && [WAKE_KEY_PREFIX, SCHEDULE_KEY_PREFIX, DIGEST_KEY_PREFIX].some((prefix) => row.idempotency_key.startsWith(prefix))) rows.push(row);
       }
       cursor = isText(result.next_cursor) ? result.next_cursor : null;
       if (!cursor) break;
@@ -269,7 +282,9 @@ function createPrimaryActivityLog({
     const store = ctx.run('runtime', () => runtimeStore());
     if (!store || typeof store.listSummaries !== 'function') return [];
     return wakeRows(ctx, sessionId, store).map((row) => {
-      const wake = entry({ id: `wake:${row.work_id}`, kind: 'woken', at: isoOf(row.created_at), status: row.status ?? null });
+      const [prefix, kind] = row.idempotency_key.startsWith(SCHEDULE_KEY_PREFIX) ? ['sched', 'schedule_fired']
+        : row.idempotency_key.startsWith(DIGEST_KEY_PREFIX) ? ['digest', 'digest'] : ['wake', 'woken'];
+      const wake = entry({ id: `${prefix}:${row.work_id}`, kind, at: isoOf(row.created_at), status: row.status ?? null });
       wake.resolve = () => {
         const record = ctx.run('runtime', () => store.get(row.work_id));
         wake.title = clip(record?.input?.request?.visiblePrompt);
@@ -331,9 +346,51 @@ function createPrimaryActivityLog({
         out.push(entry({ id: `perm:${permission.permission_id}:revoked`, kind: 'permission_revoked', at: isoOf(permission.revoked_at), ...base }));
       }
     }
-    for (const row of asArray(state.history)) {
-      if (!isRecord(row) || !HISTORY_KINDS.has(row.kind)) continue;
-      out.push(entry({ id: `hist:${row.kind}:${row.at}`, kind: row.kind, at: isoOf(row.at) }));
+    const history = asArray(state.history).filter(isRecord);
+    const rulesById = new Map(asArray(state.rules).filter((rule) => isRecord(rule) && isText(rule.rule_id)).map((rule) => [rule.rule_id, rule]));
+    const undoneAt = new Map(history.filter((row) => row.kind === 'setting_undone' || row.kind === 'chat_change_undone')
+      .map((row) => [row.change_id, isoOf(row.at)]));
+    for (const row of history) {
+      if (HISTORY_KINDS.has(row.kind)) out.push(entry({ id: `hist:${row.kind}:${row.at}`, kind: row.kind, at: isoOf(row.at) }));
+      // Row 87: a rule created or revoked, or a deny rule that refused an action; the record is ids and enums only.
+      if (RULE_HISTORY_KINDS.includes(row.kind) && isRuleId(row.rule_id)) {
+        out.push(entry({
+          id: `rule:${row.rule_id}:${row.kind}:${row.at}`, kind: row.kind, at: isoOf(row.at), rule_id: row.rule_id,
+          rule: rulesById.get(row.rule_id) ?? null,
+        }));
+      }
+      // Row 85: a scheduled check's lifecycle; the reminder's label as stored, a reason token, and who made the change.
+      if (SCHEDULE_HISTORY_KINDS.has(row.kind) && isText(row.reminder_id)) {
+        out.push(entry({
+          id: `hist:${row.kind}:${row.at}:${row.reminder_id}`, kind: row.kind, at: isoOf(row.at), title: clip(row.label),
+          reminder_id: row.reminder_id, reason: isText(row.reason) ? row.reason : null, by: isText(row.by) ? row.by : null,
+        }));
+      }
+      // Row 86: a digest that was due but held back, with its reason token.
+      if (row.kind === 'digest_skipped' && isText(row.reason)) {
+        out.push(entry({ id: `hist:digest_skipped:${row.at}`, kind: 'digest_skipped', at: isoOf(row.at), reason: row.reason }));
+      }
+      // Row 88: one entry per Jenny-made settings batch; values are the stored ones (labels are the renderer's).
+      if (row.kind === 'setting_changed' && isText(row.change_id)) {
+        out.push(entry({
+          id: `set:${row.change_id}`, kind: 'setting_changed', at: isoOf(row.at), change_id: row.change_id,
+          changes: asArray(row.changes).map(({ key, before, after, before_label, after_label }) => ({
+            key, before, after, ...(before_label ? { before_label } : {}), ...(after_label ? { after_label } : {}),
+          })),
+          undone_at: undoneAt.get(row.change_id) ?? null,
+        }));
+      }
+      // Row 94: one entry per Jenny-made change to another chat; the target's current title and, for a move, its project.
+      if (row.kind === 'chat_changed' && isText(row.change_id) && isText(row.session_id)) {
+        out.push(entry({
+          id: `chat:${row.change_id}`, kind: 'chat_changed', at: isoOf(row.at), change_id: row.change_id,
+          // Row 94 P2: a created project sits on the Jenny chat itself, so it carries the project, not a chat title.
+          session_id: row.session_id, title: row.field === 'project' ? null : ctx.chatTitle(row.session_id), action: row.action, field: row.field,
+          before: row.before ?? null, after: row.after ?? null,
+          project: row.field === 'project_id' || row.field === 'project' ? ctx.project(row.after) : null,
+          undone_at: undoneAt.get(row.change_id) ?? null,
+        }));
+      }
     }
     return out;
   }
@@ -409,10 +466,12 @@ function createPrimaryActivityLog({
         created_at: grant.created_at ?? null, expires_at: grant.expires_at ?? null, remaining: grant.remaining ?? 0,
         revoked_at: grant.revoked_at ?? null, live: launchStatus(grant) === 'live',
       }));
-    return { ok: true, schema_version: 1, launch, message_grants: messageGrants, turn_grants: turnGrants };
+    // Row 87: every stored rule (revoked ones too), newest first.
+    const rules = asArray(state?.rules).filter((rule) => isRecord(rule) && isText(rule.rule_id)).sort(byCreated);
+    return { ok: true, schema_version: 1, launch, message_grants: messageGrants, turn_grants: turnGrants, rules };
   }
 
   return { list, permissions };
 }
 
-module.exports = { createPrimaryActivityLog, PREVIEW_CODE_POINTS };
+module.exports = { createPrimaryActivityLog, PREVIEW_CODE_POINTS, SCHEDULE_HISTORY_KINDS };

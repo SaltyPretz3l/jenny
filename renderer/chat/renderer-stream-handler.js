@@ -68,6 +68,11 @@
     throw new Error('renderer-stream-image-render-progress must load before renderer/chat/renderer-stream-handler.js');
   }
   const { createImageRenderProgress } = _imageRenderUtils;
+  const _testProgressUtils = resolveDependencyModule('rendererStreamTestProgress', './renderer-stream-test-progress');
+  if (!_testProgressUtils || typeof _testProgressUtils.createToolTestProgress !== 'function') {
+    throw new Error('renderer-stream-test-progress must load before renderer/chat/renderer-stream-handler.js');
+  }
+  const { createToolTestProgress } = _testProgressUtils;
   const _terminalSettleUtils = resolveDependencyModule('rendererStreamHandlerTerminalSettle', './renderer-stream-handler-terminal-settle');
   if (!_terminalSettleUtils || typeof _terminalSettleUtils.createTerminalSettleHandlers !== 'function') {
     throw new Error('renderer-stream-handler-terminal-settle must load before renderer/chat/renderer-stream-handler.js');
@@ -434,6 +439,13 @@
     // Live image render progress (ephemeral DOM patches of the pending figure).
     // Like the live tail, only the visible session's figure is patched.
     const imageRenderProgress = createImageRenderProgress({ getChatTimeline: () => chatTimeline });
+    // Live test-run progress (row 96): bar, counts, grid and failures under a running test command.
+    const toolTestProgress = createToolTestProgress({ getChatTimeline: () => chatTimeline });
+    const handleToolTestProgress = async (payload) => {
+      if (!isPaneZeroSession(payload?.sessionId)) return { buffered: false, terminal: false };
+      try { toolTestProgress.apply(payload); } catch (_error) { /* ephemeral UI only */ }
+      return { buffered: false, terminal: false };
+    };
     const handleToolProgress = async (payload) => {
       if (!isPaneZeroSession(payload?.sessionId)) return { buffered: false, terminal: false };
       try { imageRenderProgress.apply(payload); } catch (_error) { /* ephemeral UI only */ }
@@ -442,6 +454,7 @@
     const clearTerminalStreamState = (streamId) => {
       toolLiveTail.settleStream(streamId);
       imageRenderProgress.settleStream(streamId);
+      toolTestProgress.settleStream(streamId);
       runtime.clearTerminalStreamState?.(approvalToastSessionIds, streamSegmentState, streamPhaseState, streamId);
     };
     const finalizeTerminalStream = runtime.finalizeTerminalStream
@@ -617,6 +630,7 @@
       settleToolLiveOutput: (identity) => {
         toolLiveTail.settle(identity);
         imageRenderProgress.settle(identity);
+        toolTestProgress.settle(identity);
       },
     });
     const handleToolUse = toolHandlers.handleToolUse || (async function noopHandleToolUse() {
@@ -739,6 +753,7 @@
         // The away digest goes first: it only arms a coalesced read and never throws.
         state.awayDigestReader?.onRunSettled?.(event);
         state.desktopNotificationsController?.onTerminal?.(event);
+        state.imagePromptController?.onTerminal?.(event);
       },
     });
 
@@ -811,6 +826,7 @@
         handleUserQuestionsRequested,
         handleToolOutputChunk,
         handleToolProgress,
+        handleToolTestProgress,
         handleToolResult,
         handleStreamReset,
         handleContextCompacted,

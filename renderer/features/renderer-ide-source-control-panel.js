@@ -111,6 +111,10 @@
     const onResolve = typeof options.onResolve === 'function' ? options.onResolve : async () => null;
     const onResolveDelete = typeof options.onResolveDelete === 'function' ? options.onResolveDelete : noop;
     const onOpenFile = typeof options.onOpenFile === 'function' ? options.onOpenFile : noop;
+    // Row 103: onProbeConflicts(paths, rerender) sizes the conflicted files;
+    // isConflictTooLarge(path) marks a row whose markers cannot be checked.
+    const onProbeConflicts = typeof options.onProbeConflicts === 'function' ? options.onProbeConflicts : noop;
+    const isConflictTooLarge = typeof options.isConflictTooLarge === 'function' ? options.isConflictTooLarge : () => false;
     // Jenny marker: getJennyChange(path) -> { turnId, fileKey } | null (her latest
     // ledger change to that workspace-relative path); onOpenJennyChange opens it.
     const getJennyChange = typeof options.getJennyChange === 'function' ? options.getJennyChange : null;
@@ -281,7 +285,7 @@
       return commitHint || (conflictCount > 0 ? conflictUtils.conflictHint(conflictCount) : '');
     }
 
-    function buildCommitMarkup(stagedCount, conflictCount) {
+    function buildCommitMarkup(stagedCount, conflictCount, mergeInProgress) {
       if (!textField || !actionButton) {
         return '';
       }
@@ -299,7 +303,7 @@
         label: jt('ide.sourceControl.commit', 'Commit'),
         variant: 'primary',
         className: 'ide-scm-commit-button',
-        disabled: commitDisabled(stagedCount, conflictCount),
+        disabled: commitDisabled(stagedCount, conflictCount, mergeInProgress),
         dataset: { 'ide-scm-action': 'commit' },
       });
       const writeButton = writeMessageEnabled
@@ -323,9 +327,10 @@
       return `<div class="ide-scm-commit">${field}${rowActions.commitOptionsMarkup()}${hint}<div class="ide-scm-commit-actions">${writeButton}${commitButton}</div></div>`;
     }
 
-    // An amend may reword with nothing staged (row 82 G1).
-    function commitDisabled(stagedCount, conflictCount) {
-      return (stagedCount === 0 && !rowActions.allowsEmptyCommit()) || conflictCount > 0 || committing;
+    // An amend may reword with nothing staged (row 82 G1), and a merge whose
+    // resolutions all match HEAD stages nothing yet still commits (MERGE_HEAD).
+    function commitDisabled(stagedCount, conflictCount, mergeInProgress) {
+      return (stagedCount === 0 && !rowActions.allowsEmptyCommit() && !mergeInProgress) || conflictCount > 0 || committing;
     }
 
     // The branch header distinguishes three HEAD states the status store already
@@ -398,7 +403,9 @@
         resolveConfirm = null;
       }
       const conflictRow = (file) => conflictUtils.buildConflictRowMarkup(file, { escapeHtml, actionButton, actionBtn },
-        resolveConfirm && resolveConfirm.path === file.path ? resolveConfirm.count : 0);
+        resolveConfirm && resolveConfirm.path === file.path ? resolveConfirm.count : 0, snapshot.operation === 'rebase',
+        isConflictTooLarge(file.path));
+      const mergeInProgress = snapshot.operation === 'merge';
       const branchLine = buildBranchLine(snapshot);
       const notices = buildTruncationNotice(snapshot) + buildOmittedNotice(omitted);
       let body;
@@ -414,12 +421,14 @@
       // and a History refresh stay independent).
       const historyMount = history ? '<div class="ide-scm-history" data-ide-scm-history></div>' : '';
       const listMarkup = `${branchLine}${notices}${body}`;
-      const commitMarkup = buildCommitMarkup(staged.length, conflicts.length);
+      const commitMarkup = buildCommitMarkup(staged.length, conflicts.length, mergeInProgress);
       return {
         markup: `<div class="ide-scm">${listMarkup}${commitMarkup}${historyMount}</div>`,
         listMarkup: commitMarkup ? listMarkup : null,
         stagedCount: staged.length,
         conflictCount: conflicts.length,
+        conflictPaths: conflicts.map((file) => file.path),
+        mergeInProgress,
       };
     }
 
@@ -427,7 +436,7 @@
     // value is written only when it differs from the draft (generated message,
     // commit clear, root reset) and never mid-composition; typing keeps them
     // equal, so the caret is untouched.
-    function patchCommitBox(commitEl, stagedCount, conflictCount) {
+    function patchCommitBox(commitEl, stagedCount, conflictCount, mergeInProgress) {
       const input = commitEl.querySelector('[data-ide-scm-input="commit"]');
       if (input && !composing && input.value !== commitMessage) input.value = commitMessage;
       const hintText = effectiveHint(conflictCount);
@@ -439,7 +448,7 @@
       if (hintEl && !hintText) hintEl.remove();
       else if (hintEl && hintEl.textContent !== hintText) hintEl.textContent = hintText;
       const commitButton = commitEl.querySelector('[data-ide-scm-action="commit"]');
-      if (commitButton) commitButton.disabled = commitDisabled(stagedCount, conflictCount);
+      if (commitButton) commitButton.disabled = commitDisabled(stagedCount, conflictCount, mergeInProgress);
       rowActions.syncCommitOptions(commitEl);
       const writeButton = commitEl.querySelector('[data-ide-scm-action="write-message"]');
       if (!writeButton) return;
@@ -456,6 +465,7 @@
       }
       const view = buildPanelView();
       const markup = view.markup;
+      if (view.conflictPaths && view.conflictPaths.length) onProbeConflicts(view.conflictPaths, renderSourceControlPanel);
       if (panel.__jennyIdeRailMarkup === markup) {
         return;
       }
@@ -471,7 +481,7 @@
           commitEl.insertAdjacentHTML('beforebegin', view.listMarkup);
           paintedList = view.listMarkup;
         }
-        patchCommitBox(commitEl, view.stagedCount, view.conflictCount);
+        patchCommitBox(commitEl, view.stagedCount, view.conflictCount, view.mergeInProgress);
       } else {
         panel.innerHTML = markup;
         paintedRoot = typeof view.listMarkup === 'string' ? panel.firstElementChild : null;

@@ -56,11 +56,17 @@
     function renderMessageAttachments(message) {
       const attachments = Array.isArray(message?.attachments) ? message.attachments : [];
       const skillName = String(message?.skill_invocation?.name || '').trim();
-      if (!attachments.length && !skillName) {
+      // Row 91: a /image message says it was drawn as written.
+      const imagePrompt = message?.role === 'user' && message?.image_prompt_pin ? globalThis.rendererImagePrompt : null;
+      const imagePromptPill = imagePrompt
+        ? `<span class="message-skill-pill message-image-prompt-pill">${imagePrompt.IMAGE_ICON}${escapeHtml(jt('composer.imagePrompt.chip', 'Image · drawn as written'))}</span>`
+        : '';
+      if (!attachments.length && !skillName && !imagePromptPill) {
         return '';
       }
       return `
         <div class="message-attachments">
+          ${imagePromptPill}
           ${skillName ? `<span class="message-skill-pill">${escapeHtml(skillName)}</span>` : ''}
           ${attachments
             .map((attachment) => {

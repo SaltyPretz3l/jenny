@@ -115,11 +115,19 @@ def test_the_overlay_is_static_registered_and_bounded() -> None:
     assert PRIMARY_CHAT_OVERLAY_HEADING == "## Primary Chat"
     assert PRIMARY_CHAT_OVERLAY_HEADING in RUNTIME_SYSTEM_MESSAGE_HEADINGS
     assert PRIMARY_CHAT_OVERLAY_HEADING not in tc.TRAILING_RUNTIME_HEADINGS
-    assert 900 <= len(overlay) <= 1700, len(overlay)
+    # Row 88 raised the cap from 1,700 for the settings tools sentence (no behavioural line was cut);
+    # row 94 P1 raised it again for the chat_organize / chat_configure sentence, row 85 for scheduled checks;
+    # row 86's away_digest line fits under the same cap; row 94 P2 raised it for the projects and fork sentence,
+    # P3 for the app_view clause, P4 for the export and terminal clause, the terminal_run exception and the
+    # suggest_next_step line.
+    assert 900 <= len(overlay) <= 3000, len(overlay)
     for tool in ("sessions_list", "session_status", "session_transcript", "conversations_search", "propose_session",
-                 "session_message", "session_stop", "jenny_help", "## Profile Overview"):
+                 "session_message", "session_stop", "jenny_help", "schedule_list", "schedule_change", "away_digest",
+                 "projects_list", "project_create", "fork_of_session_id", "app_view", "session_export",
+                 "terminal_read", "terminal_run", "suggest_next_step", "## Profile Overview"):
         assert tool in overlay, tool
     assert not any(char.isdigit() for char in overlay), "no per-turn values in a static overlay"
+    assert "full path in inline code" in overlay, "file links in the primary need absolute paths"
 
 
 def test_append_mode_runtime_overlays_renders_it_once_and_first() -> None:

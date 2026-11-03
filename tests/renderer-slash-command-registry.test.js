@@ -208,7 +208,8 @@ test('/help works without a session and lists only active built-ins', async () =
   });
   assert.equal((await registry.execute('/help').completion).ok, true);
   assert.match(calls.toasts[0][0], /Available now: \/help, \/note/);
-  assert.match(calls.toasts[0][0], /Start a conversation for: \/context, \/compact, \/linked, \/handoff, \/remember, \/forget, \/memory, \/activity\./);
+  // Row 90: /activity, /reset and /forget-chat are listed only while the Jenny chat is current.
+  assert.match(calls.toasts[0][0], /Start a conversation for: \/context, \/compact, \/linked, \/handoff, \/remember, \/forget, \/memory\./);
   assert.doesNotMatch(calls.toasts[0][0], /research/i);
   assert.equal(registry.listCommands().length, 10);
   const byName = Object.fromEntries(registry.listCommands().map((entry) => [entry.name, entry]));
@@ -217,11 +218,17 @@ test('/help works without a session and lists only active built-ins', async () =
   assert.equal(byName['/forget'].action, 'insert');
   assert.equal(byName['/memory'].action, 'run');
   assert.equal(byName['/memory'].description, 'List what Jenny remembers here');
-  assert.equal(byName['/activity'].description, 'What the Jenny chat did and may do');
+  assert.equal(byName['/activity'], undefined);
+  assert.equal(byName['/image'].action, 'insert');
+  assert.equal(byName['/image'].description, 'Draw exactly what you write');
 });
 
 test('/activity is registered with requiresSession and reaches the activity handler', async () => {
-  const { registry } = buildHarness();
+  const { registry } = buildHarness({ state: {
+    currentSessionId: 'session_1',
+    sessions: [{ id: 'session_1', session_role: 'primary' }],
+    composerSessionState: new Map([['session_1', { generation: 2 }]]),
+  } });
   const calls = [];
   registerBuiltInSlashCommands({ registry, activityHandler: (invocation) => { calls.push(invocation); return { ok: true }; } });
   assert.equal(registry.listCommands().find((entry) => entry.name === '/activity').available, true);
@@ -230,7 +237,26 @@ test('/activity is registered with requiresSession and reaches the activity hand
   assert.equal(calls[0].sessionId, 'session_1');
   const bare = buildHarness({ state: { currentSessionId: '' } });
   registerBuiltInSlashCommands({ registry: bare.registry, activityHandler: () => ({ ok: true }) });
-  assert.equal(bare.registry.listCommands().find((entry) => entry.name === '/activity').available, false);
+  assert.equal(bare.registry.listCommands().find((entry) => entry.name === '/activity'), undefined);
+});
+
+test('primaryOnly commands are listed only while the Jenny chat is current (row 90)', () => {
+  const state = {
+    currentSessionId: 'session_1',
+    sessions: [{ id: 'session_1' }, { id: 'jenny', session_role: 'primary' }],
+    composerSessionState: new Map([['session_1', { generation: 1 }], ['jenny', { generation: 1 }]]),
+  };
+  const { registry } = buildHarness({ state });
+  registerBuiltInSlashCommands({ registry });
+  const names = () => registry.listCommands().map((entry) => entry.name);
+  for (const name of ['/activity', '/reset', '/forget-chat']) assert.equal(names().includes(name), false, name);
+  assert.equal(names().includes('/forget'), true);
+  state.currentSessionId = 'jenny';
+  for (const name of ['/activity', '/reset', '/forget-chat']) assert.equal(names().includes(name), true, name);
+  const byName = Object.fromEntries(registry.listCommands().map((entry) => [entry.name, entry]));
+  assert.equal(byName['/reset'].description, 'Clear the Jenny chat (asks first)');
+  assert.equal(byName['/forget-chat'].description, 'Clear the Jenny chat and what Jenny learned in it (asks first)');
+  assert.equal(byName['/reset'].action, 'run');
 });
 
 test('/help groups attachable skills before ordinary commands', async () => {

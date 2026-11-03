@@ -164,6 +164,25 @@ def test_default_tools_apply_full_web_configuration() -> None:
     assert web_module._search_provider == "bing"
 
 
+def test_default_tools_apply_the_loopback_flag_separately() -> None:
+    # Row 103: the builtin subprocess carries the loopback-only flag on its own.
+    builtin_server._default_tools(
+        {"tools_web_enabled": True, "tools_web_allow_loopback": True}
+    )
+    assert web_module._allow_loopback is True
+    assert web_module._allow_private_addresses is False
+    builtin_server._default_tools({"tools_web_enabled": True})
+    assert web_module._allow_loopback is False
+
+
+def test_cli_accepts_the_loopback_flag() -> None:
+    from sidecar.ai.mcp.builtin_server_cli import build_argument_parser
+
+    parsed = build_argument_parser().parse_args(["--web-allow-loopback", "1"])
+    assert parsed.web_allow_loopback == "1"
+    assert build_argument_parser().parse_args([]).web_allow_loopback == "0"
+
+
 def test_safe_json_dumps_replaces_lone_surrogates() -> None:
     serialized = builtin_server._safe_json_dumps({"text": "bad\udc8fvalue"})
 

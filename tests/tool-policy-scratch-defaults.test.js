@@ -48,6 +48,32 @@ describe('built-in defaults for the model\'s own scratch state', () => {
     }
   });
 
+  test('a revision is inert exactly when the replaced file is an inert document', () => {
+    const edits = [{ old_string: '# Plan', new_string: '# Plan v2' }];
+    const decide = args => evaluatePolicy({
+      descriptor: manifestDescriptor('create_artifact'),
+      args: { artifact_kind: 'document', title: 'Plan', ...args },
+      snapshot: normalizePolicySnapshot({}),
+    }).decision;
+    for (const args of [
+      { replaces: '.jenny/artifacts/s-1/plan.md', edits },
+      { replaces: 'notes.txt', content: 'v2' },
+    ]) assert.equal(decide(args), 'auto', JSON.stringify(args));
+    for (const args of [
+      // The replaced file's own suffix classifies the write, not the defaults.
+      { replaces: '.jenny/artifacts/s-1/page.html', content: '<p>v2</p>' },
+      { replaces: 'page.html', edits },
+      { replaces: 'no-suffix', edits },
+      { replaces: 7, edits },
+      { replaces: 'notes.txt', file_name: 'notes.md', content: 'v2' },
+      { edits },
+      { replaces: 'plan.md', edits: [] },
+      { replaces: 'plan.md', edits: [{ old_string: 'a' }] },
+      { replaces: 'plan.md', edits: [{ old_string: 'a', new_string: 'x'.repeat(512 * 1024 + 1) }] },
+      { replaces: 'plan.md', edits, content: 'both' },
+    ]) assert.equal(decide(args), 'ask', JSON.stringify(args));
+  });
+
   test('an explicit user policy still overrides the default', () => {
     for (const [name, args] of [
       ['todo_write', { todos: [] }],

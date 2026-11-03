@@ -406,15 +406,32 @@ describe('panel wiring — Wrap, More and non-artifact modes', () => {
     }
   });
 
-  test('non-artifact modes keep the shared header with Close but hide Copy, Wrap and More', (t) => {
+  test('non-artifact modes keep the shared header with Close but hide the artifact actions', (t) => {
     const h = makePanel(t);
+    // Copy stays for the file preview's text and Wrap for the Changes diffs.
+    const shown = { file_preview: ['[data-artifact-panel-v2-copy]'], code_review: ['[data-artifact-panel-wrap]'] };
     for (const mode of ['tasks', 'code_review', 'file_preview', 'subagents', 'notes']) {
       h.state.ui.artifactReview.mode = mode;
       h.controller.afterRender(toolOutput);
       for (const selector of ['[data-artifact-panel-v2-copy]', '[data-artifact-panel-wrap]', '[data-artifact-panel-overflow]', '[data-artifact-panel-maximize]']) {
-        assert.equal(h.panelEl.querySelector(selector).classList.contains('hidden'), true, mode + ':' + selector);
+        const visible = (shown[mode] || []).includes(selector);
+        assert.equal(h.panelEl.querySelector(selector).classList.contains('hidden'), !visible, mode + ':' + selector);
       }
       assert.equal(h.panelEl.querySelector('#artifactReviewCollapseButton').classList.contains('hidden'), false, mode + ': Close stays');
     }
+  });
+
+  test('the file preview Copy follows its loaded text and leaves the click to the preview', (t) => {
+    const h = makePanel(t);
+    h.state.ui.artifactReview.mode = 'file_preview';
+    h.controller.afterRender(null);
+    const copy = h.panelEl.querySelector('[data-artifact-panel-v2-copy]');
+    assert.equal(copy.disabled, true, 'nothing loaded yet');
+    assert.equal(copy.getAttribute('aria-label'), 'Copy file contents');
+    const list = h.dom.window.document.createElement('ol');
+    list.className = 'artifact-file-preview-code';
+    h.panelEl.appendChild(list);
+    h.controller.afterRender(null);
+    assert.equal(copy.disabled, false);
   });
 });

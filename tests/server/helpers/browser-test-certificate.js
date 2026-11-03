@@ -70,8 +70,17 @@ function createTestCertificate() {
     fs.rmSync(directory, { recursive: true, force: true });
   };
   try {
-    if (process.platform === 'win32') writeWindowsCertificate(directory, certificatePath, keyPath);
-    else writeUnixCertificate(certificatePath, keyPath);
+    if (process.platform !== 'win32') {
+      writeUnixCertificate(certificatePath, keyPath);
+    } else {
+      try {
+        writeWindowsCertificate(directory, certificatePath, keyPath);
+      } catch (error) {
+        // A Windows host without PowerShell 7 can still have OpenSSL (Git for Windows ships one).
+        if (error?.code !== 'ENOENT') throw error;
+        writeUnixCertificate(certificatePath, keyPath);
+      }
+    }
     const certificate = fs.readFileSync(certificatePath, 'utf8');
     const key = fs.readFileSync(keyPath, 'utf8');
     if (!certificate.includes('BEGIN CERTIFICATE') || !key.includes('BEGIN PRIVATE KEY')) {

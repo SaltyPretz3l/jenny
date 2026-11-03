@@ -38,12 +38,8 @@
       label: jt('setup.capabilities.pythonRuntime', 'Python runtime'), description: jt('setup.capabilities.pythonRuntimeDescription', 'Local · Runs Python for data work and quick scripts.') },
     { id: 'capImageReadToggle', key: 'imageRead', target: 'tools', section: 'local', defaultChecked: true,
       label: jt('setup.capabilities.imageReading', 'Image reading'), description: jt('setup.capabilities.imageReadingDescription', 'Local · Lets Jenny inspect images you share.') },
-    { id: 'capTodoToggle', key: 'todo', target: 'tools', section: 'local', defaultChecked: true,
-      label: jt('setup.capabilities.todoTracking', 'To-do tracking'), description: jt('setup.capabilities.todoTrackingDescription', 'Local · Tracks multi-step work as a checklist.') },
     { id: 'capWebToggle', key: 'web', target: 'tools', section: 'network', defaultChecked: false,
       label: jt('setup.capabilities.webSearch', 'Web search'), description: jt('setup.capabilities.webSearchDescription', 'Network · Sends your query to a search service.') },
-    { id: 'capBrowserToggle', key: 'browser', target: 'tools', section: 'network', defaultChecked: false,
-      label: jt('setup.capabilities.webBrowsing', 'Web browsing'), description: jt('setup.capabilities.webBrowsingDescription', 'Network · Opens and reads web pages.') },
   ];
 
   var SECTIONS = [
@@ -95,7 +91,6 @@
     var draft = {};
     var loading = false;
     var loadError = '';
-    var revisit = d.state && d.state.steps && d.state.steps.capabilities === 'done';
 
     var modalId = 'setup-capabilities';
     var rootEl = null;
@@ -243,7 +238,7 @@
         // Inventory owns the document-level click handler; a local handler
         // would flip every click twice. Only observe its semantic event here.
         rootEl.addEventListener('inv-toggle-change', handleToggle);
-        if (revisit) loadSettings();
+        loadSettings();
       },
       dispose: function dispose() {
         fence.dispose();

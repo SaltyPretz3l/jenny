@@ -538,5 +538,5 @@
     return buildProposalCardMarkup({ sessionId, proposalId: identity.proposalId, kind: identity.kind, lookup }, deps);
   }
 
-  return { buildProposalCardMarkup, buildProposalRowMarkup, buildGroupHeaderMarkup, resolveProposalIdentity, deriveStatus, targetLine };
+  return { buildProposalCardMarkup, buildProposalRowMarkup, buildGroupHeaderMarkup, resolveProposalIdentity, deriveStatus, targetLine, findResultMetadata };
 });

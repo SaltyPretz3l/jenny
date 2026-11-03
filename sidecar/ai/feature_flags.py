@@ -25,15 +25,21 @@ FEATURE_SHELL_NONINTERACTIVE_ENV = "shell_noninteractive_env"
 FEATURE_SHELL_HEAD_TAIL_OUTPUT = "shell_head_tail_output"
 FEATURE_LOOP_RESULT_AWARE_SIGNATURE = "loop_result_aware_signature"
 FEATURE_EDIT_MATCH_FALLBACKS = "edit_match_fallbacks"
+# Row 96: live test-run progress for run_command; JENNY_ENABLE_TEST_PROGRESS=0 turns it off.
+FEATURE_TEST_PROGRESS = "test_progress"
 FEATURE_COMPACTION_REJECT_TRUNCATED_SUMMARY = "compaction_reject_truncated_summary"
 FEATURE_COMPACTION_MICRO_FIRST = "compaction_micro_first"
 FEATURE_COMPACTION_RECALL_TOOL = "compaction_recall_tool"
 FEATURE_COMPACTION_TOUCHED_FILES = "compaction_touched_files"
+# Row 102: read-only run_command calls skip the approval card;
+# JENNY_ENABLE_READ_ONLY_COMMANDS=0 turns it off.
+FEATURE_READ_ONLY_COMMANDS = "read_only_commands"
 # Default-on flags the builtin tool subprocess consumes; forwarded on its argv.
 BUILTIN_DEFAULT_ON_FLAGS = (
     FEATURE_SHELL_NONINTERACTIVE_ENV,
     FEATURE_SHELL_HEAD_TAIL_OUTPUT,
     FEATURE_EDIT_MATCH_FALLBACKS,
+    FEATURE_TEST_PROGRESS,
 )
 
 
@@ -72,6 +78,24 @@ def recall_tool_enabled(config: Any) -> bool:
     if not isinstance(config, Mapping):
         flags = getattr(config, "feature_flags", None)
     return is_default_on_flag_enabled(flags, FEATURE_COMPACTION_RECALL_TOOL)
+
+
+def read_only_commands_enabled(config: Any) -> bool:
+    """Whether read-only ``run_command`` calls skip approval (and run in Plan/Propose).
+
+    Default ON; needs the shell tool and never applies to a hosted (``server``) host.
+    ``config`` is a mapping or a config object.
+    """
+    def _get(key: str, default: Any) -> Any:
+        if isinstance(config, Mapping):
+            return config.get(key, default)
+        return getattr(config, key, default)
+
+    return (
+        is_default_on_flag_enabled(_get("feature_flags", None), FEATURE_READ_ONLY_COMMANDS)
+        and _get("tools_shell_enabled", True) is not False
+        and _get("host_mode", "desktop") != "server"
+    )
 
 
 def is_resource_discipline_enabled(flags: Mapping[str, bool] | None) -> bool:

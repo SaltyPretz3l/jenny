@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import Callable, cast
 
 from sidecar.ai.tools.builtins import owned_process_observation as _owned_process_observation
-from sidecar.ai.tools.builtins import owned_process_settlement as _owned_process_settlement
 from sidecar.ai.tools.builtins.git_process import (
     git_environment,
     neutralizing_config_arguments,
@@ -74,12 +73,6 @@ MANIFEST_GIT_BUDGET_SECONDS = 4.0
 # reason reports the neutral cause rather than guessing.
 GIT_REASON_BUDGET_EXHAUSTED = "budget_exhausted"
 GIT_REASON_COMMAND_FAILED = "command_failed"
-_REFRESH_COMPLETE = _owned_process_settlement.OwnedProcessCleanupVerdict(
-    cleanup="confirmed",
-    process_tree_terminated=True,
-    output_readers_terminated=True,
-    reason="workspace_manifest_refresh_complete",
-)
 
 
 @dataclass(frozen=True)
@@ -170,30 +163,26 @@ class WorkspaceManifestCache:
         if key in self._refreshing:
             return
         self._refreshing.add(key)
-        refresh_cleanup = _owned_process_observation.create_process_cleanup_observer()
         refresh_context = copy_context()
         thread = threading.Thread(
             target=refresh_context.run,
-            args=(self._refresh_worker, root, key, refresh_cleanup),
+            args=(self._refresh_worker, root, key),
             name="workspace-manifest-refresh",
             daemon=True,
         )
         thread.start()
 
-    def _refresh_worker(
-        self,
-        root: Path,
-        key: str,
-        refresh_cleanup: _owned_process_settlement.CleanupObserver | None,
-    ) -> None:
+    def _refresh_worker(self, root: Path, key: str) -> None:
+        # Detached like the context-assembly reads of this cache: a refresh
+        # reported as the tool call's pending child quarantined its workspace
+        # lease and refused every later file tool in the turn (2026-10-31).
         try:
-            payload = _safe_generate(self._generator, root)
+            with _owned_process_observation.detached_from_owned_process_invocation():
+                payload = _safe_generate(self._generator, root)
             self._store(key, payload)
         finally:
             with self._lock:
                 self._refreshing.discard(key)
-            if refresh_cleanup is not None:
-                refresh_cleanup(_REFRESH_COMPLETE)
 
     def _store(self, key: str, payload: dict[str, object]) -> None:
         with self._lock:

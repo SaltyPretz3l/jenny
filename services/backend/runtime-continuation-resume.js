@@ -133,6 +133,7 @@ function hydrateRuntimeContinuation({ work, checkpointStore, conversationStore, 
       contextPreferences: { history_scope: captured.historySelector.history_scope },
       // The persisted user row holds the resolved skill, as the live send did.
       skillInvocation: users[0].skill_invocation,
+      imagePromptPin: users[0].image_prompt_pin,
       // Keep admitted mail rows; the managed send drops them again when not negotiated.
       sessionMessages: true,
     });

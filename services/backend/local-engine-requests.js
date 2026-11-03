@@ -23,6 +23,7 @@ const { resolveSkillsAuthority } = require('../skills-project-scope');
 const { normalizeHandoffPreparation, normalizeSessionHandoff } = require('./session-handoff-context');
 const { normalizeRequestApplicationTurn } = require('./application-turns');
 const { resolveDefaultChatModel } = require('./backend-chat-model-resolution');
+const { normalizeImagePromptPin, storedImagePromptPin } = require('./image-prompt-pin');
 const LOCAL_INFERENCE_ENGINE_TYPES = new Set(['ollama', 'vllm']);
 const SKILL_INVOCATION_ID_PATTERN = /^(bundled|user|project)\/[A-Za-z0-9_][A-Za-z0-9._-]*(\/[A-Za-z0-9_][A-Za-z0-9._-]*){0,7}$/;
 
@@ -75,6 +76,23 @@ function sessionSkillsState(service, sessionKey) {
   return service.skillsService?.getState?.({
     authority: resolveSkillsAuthority(service.projectAuthority, { sessionId: sessionKey }),
   });
+}
+
+// Row 91: a malformed pin is refused rather than dropped, so a /image message is never drawn
+// from the model's prompt. An edit or regenerate that sends no pin keeps the stored one.
+function resolveImagePromptPin(service, pin, sessionKey, editedMessageId) {
+  if (pin === undefined) {
+    return storedImagePromptPin(service.sessionStore, sessionKey, editedMessageId);
+  }
+  if (pin === null) return null;
+  const normalized = normalizeImagePromptPin(pin);
+  if (!normalized) {
+    const error = new Error('The image prompt options are not valid.');
+    error.code = 'IMAGE_PROMPT_PIN_INVALID';
+    error.retryable = false;
+    throw error;
+  }
+  return normalized;
 }
 
 function resolveSkillInvocation(service, invocation, sessionKey = '') {
@@ -162,6 +180,7 @@ async function prepareLocalEngineChatRequest(service, {
   debugOptions,
   clientTiming,
   skillInvocation,
+  imagePromptPin,
   editedMessageId,
   failureRetry,
   proposalDecision,
@@ -194,6 +213,7 @@ async function prepareLocalEngineChatRequest(service, {
   const handoffFields = normalizeInternalHandoffFields({ sessionHandoffPreparation, sessionHandoff });
   const normalizedApplicationTurn = normalizeRequestApplicationTurn(applicationTurn);
   const normalizedSkillInvocation = resolveSkillInvocation(service, skillInvocation, sessionKey);
+  const normalizedImagePromptPin = resolveImagePromptPin(service, imagePromptPin, sessionKey, editedMessageId);
   const normalizedContextPreferences = normalizeContextPreferences(
     typeof contextPreferences !== 'undefined'
       ? contextPreferences
@@ -246,6 +266,7 @@ async function prepareLocalEngineChatRequest(service, {
     debugOptions,
     clientTiming,
     skillInvocation: normalizedSkillInvocation,
+    ...(normalizedImagePromptPin !== undefined ? { imagePromptPin: normalizedImagePromptPin } : {}),
     editedMessageId,
     failureRetry,
     ...(normalizedProposalDecision ? { proposalDecision: normalizedProposalDecision } : {}),

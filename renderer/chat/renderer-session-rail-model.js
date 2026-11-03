@@ -10,7 +10,8 @@
    - A summary that belongs to another session is never shown (it reads as checking).
    - Disclosure defaults apply only where the persisted disclosure is null: Environment open;
      Outputs when it has items; Background tasks when anything is active; Context and Changes
-     closed.
+     closed. Inside Background tasks, finished work sits under a "finished" divider that is its
+     own disclosure (background_tasks_finished, open by default).
    - Docking: docked at >= 920px of pane, or >= 640px while a side panel is open or moving and
      the rail was already docked (a rail that was not docked does not dock when a panel opens).
 
@@ -30,6 +31,9 @@
   const DOCK_MIN_WIDTH_WITH_PANEL_PX = 640;
   const CONTEXT_WARN_RATIO = 0.8;
   const MAX_BACKGROUND_ROWS = 5;
+  const MAX_FINISHED_ROWS = 20;
+  const FINISHED_DISCLOSURE = 'background_tasks_finished';
+  const DISCLOSURE_KEYS = Object.freeze([...SECTION_KEYS, FINISHED_DISCLOSURE]);
 
   function fallbackJt(key, fallback, params) {
     return params
@@ -113,7 +117,7 @@
   }
 
   const TASK_STATES = Object.freeze({
-    running: ['running', 'active', 'in_progress', 'started'],
+    running: ['running', 'active', 'in_progress', 'started', 'killing'],
     waiting: ['waiting', 'queued', 'pending', 'paused'],
     failed: ['failed', 'error', 'errored', 'timed_out'],
     attention: ['needs_attention', 'attention'],
@@ -294,6 +298,40 @@
     return null;
   }
 
+  /* mm:ss, or h:mm:ss past an hour: a running job's elapsed time and a finished one's duration. */
+  function formatElapsed(ms) {
+    const total = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+    const hours = Math.floor(total / 3600);
+    const pad = (value) => String(value).padStart(2, '0');
+    const clock = `${pad(Math.floor((total % 3600) / 60))}:${pad(total % 60)}`;
+    return hours > 0 ? `${hours}:${clock}` : clock;
+  }
+
+  /* A run_command background job: live (dot, ticking elapsed, Stop) or finished (duration, exit code or
+     Stopped; the row opens its output). */
+  function jobRow(item, phase, jt, nowMs) {
+    const jobId = text(item.job_id);
+    const command = text(item.command) || jt('chat.backgroundJobs.backgroundJob', 'background job');
+    const started = Number(item.started_at_ms) || 0;
+    if (phase === 'running') {
+      return { kind: 'job', key: `job:${jobId}`, jobId, dot: taskDot('running'), text: command, title: command,
+        meta: formatElapsed(nowMs - started), startedAtMs: started, stopping: text(item.state) === 'killing',
+        progressPercent: Number.isFinite(item.progress_percent) ? item.progress_percent : null, // row 96 live test run
+        progressMarks: Array.isArray(item.progress_marks) ? item.progress_marks.filter(Number.isFinite) : [],
+        stopLabel: jt('chat.backgroundJobs.stop', 'Stop'), stopTitle: jt('chat.backgroundJobs.stopTitle', 'Stop this background job'),
+        stopAria: jt('chat.backgroundJobs.stopAriaLabel', 'Stop background job: {command}', { command }) };
+    }
+    const failed = phase === 'failed';
+    let meta = formatElapsed((Number(item.ended_at_ms) || started) - started);
+    if (item.stop_requested === true) meta = jt('chat.sessionRail.tasks.stopped', 'Stopped');
+    else if (failed) {
+      meta = Number.isInteger(item.exit_code)
+        ? jt('chat.sessionRail.tasks.exitCode', 'Exit {code}', { code: item.exit_code }) : taskPhaseLabel('failed', jt);
+    }
+    return { kind: 'job_done', key: `job:${jobId}`, jobId, dot: failed && item.stop_requested !== true ? taskDot('failed') : null,
+      text: command, meta, title: `${command} (${taskPhaseLabel(phase, jt)})` };
+  }
+
   function buildBackgroundTasks(data, jt) {
     const counts = isObject(data.counts) ? data.counts : {};
     const active = count(counts.active);
@@ -327,26 +365,35 @@
         : jt('chat.sessionRail.outputs.none', 'None yet');
     }
     const rows = [];
+    const finishedRows = [];
     const seen = new Set();
+    const nowMs = Date.now();
     items.forEach((item, index) => {
-      if (rows.length >= MAX_BACKGROUND_ROWS) return;
       const id = text(item.operation_id) || `row-${index}`;
       if (seen.has(id)) return;
-      seen.add(id);
       const phase = itemPhases[index];
+      const finished = phase === 'finished' || phase === 'failed';
+      const target = finished ? finishedRows : rows;
+      if (target.length >= (finished ? MAX_FINISHED_ROWS : MAX_BACKGROUND_ROWS)) return;
+      seen.add(id);
+      if (text(item.source_kind) === 'background_job') return void target.push(jobRow(item, phase, jt, nowMs));
       const label = taskSourceLabel(item.source_kind, jt);
       const stateWord = taskPhaseLabel(phase, jt);
       /* A linked chat's turn shows the child's title and opens that chat (sessionRef); the surface
          stays background_tasks so a rail without an openSession dependency opens the task detail. */
       const linked = text(item.source_kind) === 'linked_chat_turn' && text(item.session_id);
       const name = linked ? text(item.title) : '';
-      rows.push({
+      target.push({
         kind: 'action', key: `task:${id}`, icon: '', dot: taskDot(phase), surface: 'background_tasks', resourceRef: '',
         text: name || label, meta: stateWord, title: name ? `${label}: ${name} (${stateWord})` : `${label} (${stateWord})`,
         ...(linked ? { sessionRef: text(item.session_id) } : {}),
       });
     });
-    if (completed !== null && completed > 0) {
+    if (finishedRows.length) {
+      // The divider is the finished group's own disclosure; buildRailViewModel resolves it.
+      rows.push({ kind: 'divider', key: 'finished', text: jt('chat.sessionRail.tasks.finished', '{count} finished', { count: finishedRows.length }) });
+      for (const row of finishedRows) rows.push({ ...row, group: 'finished' });
+    } else if (completed !== null && completed > 0) {
       rows.push({
         kind: 'action', key: 'finished', icon: 'list', surface: 'background_tasks', resourceRef: '',
         text: jt('chat.sessionRail.tasks.finished', '{count} finished', { count: completed }), meta: '', title: '',
@@ -410,6 +457,24 @@
     return unavailableSection(key, jt, state === 'not_applicable' ? 'not_applicable' : 'unavailable', text(wrapper.reason));
   }
 
+  /* The finished divider's own disclosure (open unless persisted or toggled closed); a closed
+     group keeps only its divider. */
+  function withFinishedDisclosure(section, persisted, override) {
+    if (!section.rows.some((row) => row.kind === 'divider')) return section;
+    const value = override === true || override === false ? override : persisted[FINISHED_DISCLOSURE];
+    const open = value !== false;
+    const rows = section.rows.filter((row) => open || row.group !== 'finished')
+      .map((row) => (row.kind === 'divider' ? { ...row, open } : row));
+    return { ...section, rows };
+  }
+
+  /* Whether a disclosure (a section, or the finished divider) shows open in a built view model. */
+  function isDisclosureOpen(vm, key) {
+    const tasks = vm.sections.find((entry) => entry.key === 'background_tasks');
+    if (key === FINISHED_DISCLOSURE) return Boolean(tasks?.rows.find((row) => row.kind === 'divider')?.open);
+    return Boolean(vm.sections.find((entry) => entry.key === key)?.open);
+  }
+
   /* Persisted disclosure where set, the section's default otherwise. */
   function resolveOpen(section, persisted, override) {
     if (override === true || override === false) return override;
@@ -434,13 +499,16 @@
       if (belongs) section = buildSection(key, summary[key], jt);
       else if (status === 'unavailable') section = unavailableSection(key, jt, 'unavailable', '');
       else section = checkingSection(key, jt);
-      return { ...section, open: resolveOpen(section, disclosures, pending[key]) };
+      const resolved = { ...section, open: resolveOpen(section, disclosures, pending[key]) };
+      return key === 'background_tasks' ? withFinishedDisclosure(resolved, disclosures, pending[FINISHED_DISCLOSURE]) : resolved;
     });
     return { sessionId: text(sessionId), status: belongs ? 'ready' : status, sections };
   }
 
   return {
     SECTION_KEYS,
+    DISCLOSURE_KEYS,
+    FINISHED_DISCLOSURE,
     defaultJt,
     RAIL_WIDTH_PX,
     DOCK_MIN_WIDTH_PX,
@@ -451,6 +519,8 @@
     formatTokens,
     contextPercent,
     taskPhase,
+    formatElapsed,
+    isDisclosureOpen,
     buildSection,
     buildRailViewModel,
   };

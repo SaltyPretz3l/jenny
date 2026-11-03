@@ -165,8 +165,9 @@
   /* Chat reading-measure axis (independent of palette, typography, and the
      chat zoom factor). `standard` (the default, owner 2026-10-02) raises the
      transcript + composer line-length cap from 68ch (`narrow`) to 92ch of the
-     prose font by swapping --chat-measure-cap-ch; the geometry lives in
-     styles/foundation.css under :root[data-chat-width="standard"] and the
+     prose font by swapping --chat-measure-cap-ch; `full` (labelled Wide, row 92)
+     lifts the cap so the column spans the pane minus its gutter. The geometry
+     lives in styles/foundation.css under :root[data-chat-width] and the
      pane-relative measure in styles/chat-panes.css. Palette files set only color
      tokens, so this axis is palette-agnostic by construction. */
   var CHAT_WIDTH_PRESETS = {
@@ -180,10 +181,16 @@
       label: jt('appearance.typography.chatWidth.standard.name', 'Standard'),
       description: jt('appearance.typography.chatWidth.standard.description', 'Roomy reading measure, about 90+ characters per line.'),
     },
+    full: {
+      id: 'full',
+      label: jt('appearance.typography.chatWidth.full.name', 'Wide'),
+      description: jt('appearance.typography.chatWidth.full.description', 'Uses the full width of the window.'),
+    },
   };
   /* Ids stored before the 2026-10-02 rename. `default` was written for every
      profile whether or not the user chose it, so both old ids land on the new
-     Standard default; Narrow is one click away. */
+     Standard default; Narrow is one click away. The Wide preset added later
+     (row 92) is stored as `full`, so an old `wide` never turns it on. */
   var LEGACY_CHAT_WIDTH_IDS = { default: 'standard', wide: 'standard' };
   var SURFACE_EFFECT_PRESETS = {
     none: {

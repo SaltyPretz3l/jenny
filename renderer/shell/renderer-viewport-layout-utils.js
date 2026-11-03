@@ -222,6 +222,8 @@
       layoutRuntime.safeOffset = nextSafeOffset;
       chatView.style.setProperty('--composer-safe-offset', `${nextSafeOffset}px`);
       chatView.style.setProperty('--empty-hero-stage-bottom', `${nextSafeOffset}px`);
+      // Row 101 live box: the reasoning box fills the visible thread height.
+      chatView.style.setProperty('--chat-thread-viewport-h', `${layoutRuntime.stageHeight}px`);
       // Widened render gate (ide_chat_dock): viewport sync also runs while the
       // Workspace dock is the live chat surface (falls back flag-off).
       const chatSurfaceLive = (globalThis.rendererChatSurfaceLiveUtils || {}).isChatSurfaceLive?.(state)

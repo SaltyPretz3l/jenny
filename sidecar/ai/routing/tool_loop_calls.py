@@ -670,6 +670,9 @@ class _ToolCallPhasesMixin:
             request_disabled_tools=self.request_disabled_tools,
             policy_snapshot=getattr(execution_context, "tool_policy_snapshot", None),
         )
+        policy_filter = _tl_hub.verify_after_write.escalate_after_writes(
+            policy_filter, outcomes=self.outcomes, tool_contract=self.tool_contract
+        )
         audit_metadata_by_call = policy_filter.audit_metadata_by_call
         if policy_filter.denied:
             _tl_hub.log_event(
@@ -879,6 +882,9 @@ class _ToolCallPhasesMixin:
         if boundary is not None:  # a session proposal ended the turn: no further generation
             return _tl_hub.finish_loop_at_boundary(
                 self, boundary, raw_content=str(result.content or ""))
+        if _tl_hub.ends_turn_at_next_step(
+                self.outcomes[outcomes_len_before_tool_phase:], tool_calls_to_execute):
+            return _tl_hub.finish_loop_at_next_step(self, raw_content=str(result.content or ""))
         self._refund_failed_web_outcomes(
             outcomes_len_before_tool_phase, tool_contract=self.tool_contract)
 

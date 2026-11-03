@@ -144,6 +144,16 @@ def _build_valid_bundle(target: Path) -> tuple[Path, Path]:
     return embed, wheelhouse
 
 
+def test_bundle_keep_file_is_written_with_lf_endings(tmp_path: Path) -> None:
+    builder = _load_script("scripts/build-python-runtime-bundle.py", "builder_keep_file")
+    builder._copy_keep_file(tmp_path / "vendor")
+    written = (tmp_path / "vendor" / ".gitignore").read_bytes()
+    # The Docker packaged smoke snapshots on-disk bytes; a CRLF keep file made its sidecar "dirty".
+    assert written == b"*\n!.gitignore\n"
+    tracked = (ROOT / "vendor" / "python-embed" / ".gitignore").read_bytes()
+    assert tracked == written
+
+
 def test_bundle_contract_pins_cpython_and_build_backend() -> None:
     contract = json.loads(
         (ROOT / "config" / "python-runtime-bundle-lock.json").read_text(encoding="utf-8")

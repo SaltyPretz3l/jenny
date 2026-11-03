@@ -12,6 +12,7 @@ from sidecar.ai.error_codes import (
     CMP_TOOL_EXECUTION_FAILED,
     CMP_TOOL_INVALID_PATH,
 )
+from sidecar.ai.tools.builtins import artifact_replace
 from sidecar.ai.tools.builtins.filesystem import encode_utf8_text
 from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
 from sidecar.ai.tools.workspace import WorkspaceGuard
@@ -316,16 +317,36 @@ def _persist_text_artifact(  # noqa: PLR0913 - normalized text artifact inputs.
         file_extension,
         encoded_content,
     )
-    relative_path = target.display_path
+    return _text_artifact_metadata(
+        session_id,
+        target,
+        title=title,
+        size_bytes=len(encoded_content),
+        language=language,
+        artifact_kind=artifact_kind,
+    )
+
+
+def _text_artifact_metadata(  # noqa: PLR0913 - one generated_artifacts entry.
+    session_id: str,
+    target: StoredObject,
+    *,
+    title: str,
+    size_bytes: int,
+    language: str,
+    artifact_kind: str,
+) -> dict[str, object]:
+    # A fresh id per write, revisions included: the renderer's deleted-artifact
+    # set is keyed by id, so reusing one would hide a later artifact at that path.
     return {
         "artifact_id": f"artifact_file_{session_id}_{_slugify(target.name, 'file')}_{secrets.token_hex(4)}",
         "artifact_kind": artifact_kind,
         "title": str(title or "").strip() or Path(target.name).stem,
         "file_name": target.name,
-        "display_path": relative_path,
+        "display_path": target.display_path,
         "absolute_path": target.absolute_path,
         "language": language,
-        "editable": len(encoded_content) <= MAX_EDITABLE_BYTES,
+        "editable": size_bytes <= MAX_EDITABLE_BYTES,
         "status": "available",
     }
 
@@ -371,12 +392,7 @@ def build_text_artifact_metadata(  # noqa: PLR0913 - stable shared artifact faca
     )
 
 
-def create_artifact_tool(
-    arguments: dict[str, object], workspace: WorkspaceGuard
-) -> ToolHandlerResult:
-    session_id = _normalize_session_id(_string_arg(arguments, "_jenny_session_id", required=True))
-    artifact_kind = _normalize_artifact_kind(_string_arg(arguments, "artifact_kind"))
-    title = _string_arg(arguments, "title", required=True)
+def _encoded_content_arg(arguments: dict[str, object]) -> bytes:
     content = arguments.get("content")
     if not isinstance(content, str):
         raise ToolExecutionFailure(
@@ -385,13 +401,94 @@ def create_artifact_tool(
             retryable=False,
         )
     try:
-        encoded_content = encode_utf8_text(content)
+        return encode_utf8_text(content)
     except ToolExecutionFailure as error:
         raise ToolExecutionFailure(
             code=CMP_TOOL_EXECUTION_FAILED,
             message=error.message,
             retryable=False,
         ) from error
+
+
+def _refuse_rename(arguments: dict[str, object], file_name: str) -> None:
+    requested_name = _string_arg(arguments, "file_name")
+    extension = _normalize_extension(_string_arg(arguments, "extension"))
+    if (requested_name and Path(requested_name).name.casefold() != file_name.casefold()) or (
+        extension and extension != Path(file_name).suffix.lower()
+    ):
+        raise ToolExecutionFailure(
+            code=CMP_TOOL_INVALID_PATH,
+            message=(
+                "an artifact keeps its name when revised; drop file_name and extension, "
+                "or create a new artifact instead"
+            ),
+            retryable=False,
+        )
+
+
+def _revise_artifact(
+    arguments: dict[str, object],
+    workspace: WorkspaceGuard,
+    *,
+    session_id: str,
+    artifact_kind: str,
+    title: str,
+) -> ToolHandlerResult:
+    replaces = _string_arg(arguments, "replaces")
+    has_content = arguments.get("content") is not None
+    has_edits = arguments.get("edits") is not None
+    if not replaces:
+        message = "tool argument 'edits' requires 'replaces', the path of the artifact to revise"
+    elif has_content and has_edits:
+        message = "pass either 'content' or 'edits' with 'replaces', not both"
+    elif not has_content and not has_edits:
+        message = "'replaces' needs the new full 'content' or a list of 'edits'"
+    else:
+        message = ""
+    if message:
+        raise ToolExecutionFailure(code=CMP_TOOL_INVALID_PATH, message=message, retryable=False)
+    store, artifact_parent = _artifact_parent(workspace, session_id)
+    ref = artifact_replace.resolve_replace_target(
+        store, artifact_parent, replaces=replaces
+    )
+    file_name = ref.parts[-1]
+    _refuse_rename(arguments, file_name)
+    if has_edits:
+        revision = artifact_replace.revise_with_edits(
+            store, ref, arguments.get("edits"), max_bytes=MAX_EDITABLE_BYTES
+        )
+        encoded_content, edit_count = revision.encoded_content, revision.edit_count
+    else:
+        encoded_content, edit_count = _encoded_content_arg(arguments), 0
+    target = store.write_bytes_atomic(ref, encoded_content)
+    language = _normalize_language(_string_arg(arguments, "language"))
+    metadata = _text_artifact_metadata(
+        session_id,
+        target,
+        title=title,
+        size_bytes=len(encoded_content),
+        language=_infer_language(file_name, language),
+        artifact_kind=artifact_kind,
+    )
+    applied = f" ({edit_count} edit{'' if edit_count == 1 else 's'} applied)" if edit_count else ""
+    return ToolHandlerResult(
+        output=f'Updated {artifact_kind} "{title}" at {target.display_path}{applied}',
+        success=True,
+        generated_artifacts=(metadata,),
+    )
+
+
+def create_artifact_tool(
+    arguments: dict[str, object], workspace: WorkspaceGuard
+) -> ToolHandlerResult:
+    session_id = _normalize_session_id(_string_arg(arguments, "_jenny_session_id", required=True))
+    artifact_kind = _normalize_artifact_kind(_string_arg(arguments, "artifact_kind"))
+    title = _string_arg(arguments, "title", required=True)
+    if _string_arg(arguments, "replaces") or arguments.get("edits") is not None:
+        return _revise_artifact(
+            arguments, workspace, session_id=session_id, artifact_kind=artifact_kind, title=title
+        )
+    encoded_content = _encoded_content_arg(arguments)
     requested_file_name = _string_arg(arguments, "file_name")
     language = _normalize_language(_string_arg(arguments, "language"))
     extension = _string_arg(arguments, "extension")

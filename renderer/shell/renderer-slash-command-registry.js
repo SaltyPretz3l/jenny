@@ -11,6 +11,7 @@
 
   const jt = (globalThis.jennyI18n && globalThis.jennyI18n.t) || globalThis.jennyI18nFallback || function (k, d, p) { return p ? String(d).replace(/\{(\w+)\}/g, function (m, n) { return Object.prototype.hasOwnProperty.call(p, n) ? String(p[n]) : m; }) : d; };
   const COMMAND_NAME_PATTERN = /^\/[a-z][a-z0-9_-]*$/;
+  const { isPrimarySessionId = () => false } = (globalThis.stringUtils || (typeof require === 'function' ? require('../shared/string-utils') : null)) || {};
 
   function noop() {}
 
@@ -115,6 +116,8 @@
         ...(typeof config.tag === 'string' && config.tag.trim() ? { tag: config.tag.trim().slice(0, 32) } : {}),
         handler,
         requiresSession: config.requiresSession === undefined ? action !== 'attach' : config.requiresSession !== false,
+        // Row 90: listed only while the Jenny chat is current (the handler still refuses a typed one elsewhere).
+        primaryOnly: config.primaryOnly === true,
         action,
         skill,
         clearPolicy: action === 'attach' || config.clearPolicy === 'never' ? 'never' : 'on_success',
@@ -131,8 +134,10 @@
     }
 
     function listCommands() {
-      const hasSession = Boolean(String(state.currentSessionId || '').trim());
-      return [...commands.entries()].map(([name, entry]) => {
+      const currentSessionId = String(state.currentSessionId || '').trim();
+      const hasSession = Boolean(currentSessionId);
+      const isPrimary = isPrimarySessionId(state.sessions, currentSessionId);
+      return [...commands.entries()].filter(([, entry]) => !entry.primaryOnly || isPrimary).map(([name, entry]) => {
         const available = !entry.requiresSession || hasSession;
         return {
           name,
@@ -358,9 +363,19 @@
     registry.register('/forget', jt('composer.slash.forgetDescription', 'Forget a memory by id or by its words'),
       config.forgetHandler || unavailable, { action: 'insert' });
     registry.register('/memory', jt('composer.slash.memoryDescription', 'List what Jenny remembers here'), config.memoryHandler || unavailable);
-    // Row 76: the Jenny chat's Activity dialog (primary chat only; the handler refuses other chats).
+    // Row 76: the Jenny chat's Activity dialog; row 90: its Reset and Forget confirms. Listed in the
+    // Jenny chat only; the handlers refuse a command typed in another chat.
     registry.register('/activity', jt('composer.slash.activityDescription', 'What the Jenny chat did and may do'),
-      config.activityHandler || unavailable, { requiresSession: true });
+      config.activityHandler || unavailable, { requiresSession: true, primaryOnly: true });
+    registry.register('/reset', jt('composer.slash.resetDescription', 'Clear the Jenny chat (asks first)'),
+      config.resetHandler || unavailable, { requiresSession: true, primaryOnly: true });
+    registry.register('/forget-chat', jt('composer.slash.forgetChatDescription', 'Clear the Jenny chat and what Jenny learned in it (asks first)'),
+      config.forgetChatHandler || unavailable, { requiresSession: true, primaryOnly: true });
+    // Row 91: the send path arms "/image" itself; the handler runs only while image generation is off.
+    registry.register('/image', jt('composer.slash.imageDescription', 'Draw exactly what you write'), () => {
+      showToastMessage(jt('composer.imagePrompt.unavailable', 'Image generation is turned off.'), { tone: 'warning' });
+      return { ok: false, handled: true, code: 'image_generation_off' };
+    }, { action: 'insert', requiresSession: false });
     return true;
   }
 

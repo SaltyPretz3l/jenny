@@ -97,9 +97,9 @@ class MCPClient(client_prompts.ClientPromptsMixin):
         self._server_configs: dict[str, MCPServerConfig] = {}
         self._sse_enabled = False
         self._resources_enabled = False
-        # Mirrors the owner's tools_web_allow_private_addresses decision; relaxes
-        # only the SSRF address-class check on sse transport / oauth token URLs.
-        self._allow_private_addresses = False
+        # Mirror tools_web_allow_private_addresses / tools_web_allow_loopback; they
+        # relax only the SSRF address-class check on sse transport / oauth token URLs.
+        self._allow_private_addresses = self._allow_loopback = False
         self._connected: list[str] = []
         self._failures: list[MCPServerFailure] = []
         self._request_timeout_seconds = request_timeout_seconds
@@ -122,19 +122,19 @@ class MCPClient(client_prompts.ClientPromptsMixin):
             self._server_configs.clear()
             self._sse_enabled = False
             self._resources_enabled = False
-            self._allow_private_addresses = False
+            self._allow_private_addresses = self._allow_loopback = False
             self._connected = []
             self._failures = []
             self._cooldowns.clear_namespace(MCP_COOLDOWN_NAMESPACE)
             self._reuse = client_reuse.ReuseState()
 
-    def configure(
+    def configure(  # noqa: PLR0913 - keyword-only transport inputs.
         self,
         servers: tuple[MCPServerConfig, ...],
         *,
         sse_enabled: bool,
         resources_enabled: bool = False,
-        allow_private_addresses: bool = False,
+        allow_private_addresses: bool = False, allow_loopback: bool = False,
         reuse_from: MCPClient | None = None,
     ) -> None:
         """Connect ``servers``; adopt ``reuse_from``'s live transports whose reuse
@@ -145,6 +145,7 @@ class MCPClient(client_prompts.ClientPromptsMixin):
             self._sse_enabled = sse_enabled
             self._resources_enabled = resources_enabled
             self._allow_private_addresses = bool(allow_private_addresses)
+            self._allow_loopback = bool(allow_loopback)
             client_reuse.connect_servers(self, servers, reuse_from=reuse_from)
 
     @property
@@ -993,8 +994,7 @@ class MCPClient(client_prompts.ClientPromptsMixin):
         )
         if server.transport == "stdio":
             return transport_stdio.StdioMCPTransport(
-                server,
-                request_timeout_seconds=effective_request_timeout,
+                server, request_timeout_seconds=effective_request_timeout
             )
         if server.transport == "sse":
             if not sse_enabled:
@@ -1004,9 +1004,9 @@ class MCPClient(client_prompts.ClientPromptsMixin):
                     retryable=False,
                 )
             return transport_sse.SSEMCPTransport(
-                server,
-                request_timeout_seconds=effective_request_timeout,
+                server, request_timeout_seconds=effective_request_timeout,
                 allow_private_addresses=self._allow_private_addresses,
+                allow_loopback=self._allow_loopback,
             )
         raise MCPError(
             code=CMP_MCP_CONFIG_INVALID,

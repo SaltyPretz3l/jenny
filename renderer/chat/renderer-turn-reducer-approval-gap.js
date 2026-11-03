@@ -121,6 +121,8 @@
       if (body.one_off_only === true || body.oneOffOnly === true || callPayload.one_off_only === true) payload.one_off_only = true;
       if (isPlainObject(body.session_message_approval)) payload.session_message_approval = body.session_message_approval;
       if (isPlainObject(body.session_stop_approval)) payload.session_stop_approval = body.session_stop_approval;
+      if (isPlainObject(body.settings_change_approval)) payload.settings_change_approval = body.settings_change_approval;
+      if (isPlainObject(body.schedule_change_approval)) payload.schedule_change_approval = body.schedule_change_approval;
       const toolName = normalizeId(body.tool_name) || normalizeId(callPayload.tool_name);
       if (toolName) {
         payload.tool_name = toolName;
@@ -268,6 +270,7 @@
         gapRow.payload.status = 'pending';
         delete gapRow.payload.decision;
         delete gapRow.payload.approval_scope;
+        delete gapRow.payload.always_allow_prefix;
       }
       const body = event && event.payload && typeof event.payload === 'object' ? event.payload : {};
       const approvalId = normalizeId(body.approval_id || body.approvalId);
@@ -311,6 +314,12 @@
       }
       if (!gapRow.payload.session_stop_approval && isPlainObject(body.session_stop_approval)) {
         gapRow.payload.session_stop_approval = body.session_stop_approval;
+      }
+      if (!gapRow.payload.settings_change_approval && isPlainObject(body.settings_change_approval)) {
+        gapRow.payload.settings_change_approval = body.settings_change_approval;
+      }
+      if (!gapRow.payload.schedule_change_approval && isPlainObject(body.schedule_change_approval)) {
+        gapRow.payload.schedule_change_approval = body.schedule_change_approval;
       }
       // The plan variant usually arrives on the tool_approval_needed event
       // AFTER the pending tool_use created the gap row — stamp it on sync too

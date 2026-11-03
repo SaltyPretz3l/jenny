@@ -360,3 +360,23 @@ test('a view change reaches every pane reasoning controller, not only the app-le
   controller.setView('s1', 'everything');
   assert.deepEqual(calls.map((call) => call[0]), ['app', 'app', 'render']);
 });
+
+test('adoptDefault folds an externally committed default without writing back, and ignores an echo', (t) => {
+  const { controller, state, journal, patches } = makeHarness(t, {
+    reasoning: { s1: { 'm1::p1': true } },
+  });
+  controller.setView('own', 'answers');
+  journal.length = 0;
+
+  assert.equal(controller.adoptDefault('everything', 'external'), 'everything');
+  assert.equal(state.transcriptViewDefault, 'everything');
+  assert.equal(state.ui.reasoningPhaseExpansionBySession.has('s1'), false, 'inheriting sessions reset');
+  assert.equal(state.ui.transcriptViewBySession.get('own'), 'answers', 'explicit choices stay');
+  assert.ok(journal.some((entry) => entry[0] === 'render'), 'the change is announced');
+  assert.deepEqual(patches, [], 'never writes back to main');
+
+  journal.length = 0;
+  assert.equal(controller.adoptDefault('Everything'), 'everything');
+  assert.deepEqual(journal, [], 'an equal value changes and announces nothing');
+  assert.deepEqual(patches, []);
+});

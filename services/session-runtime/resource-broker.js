@@ -49,6 +49,22 @@ function normalizeFilesystemResource(resource) {
   return Object.freeze({ type: 'filesystem', identity });
 }
 
+// Row 100 work leases: cross-process resources (`tests@tree:...`, `git-write@repo`)
+// whose admission belongs to the injected work-lease adapter, not to this broker.
+function normalizeWorkResource(resource) {
+  const leaseRoot = boundedToken(resource.leaseRoot, MAX_RESOURCE_KEY_CHARS);
+  const key = boundedToken(resource.key, 512);
+  const units = resource.units;
+  const capacity = resource.capacity ?? null;
+  if (!leaseRoot || !key || (units !== 'all' && (!Number.isSafeInteger(units) || units < 1))
+    || (capacity !== null && (!Number.isSafeInteger(capacity) || capacity < 1))) {
+    throw new Error('Work resource is invalid.');
+  }
+  return Object.freeze({ type: 'work', leaseRoot, key, units, capacity,
+    label: typeof resource.label === 'string' ? resource.label.slice(0, 120) : '',
+    sessionId: boundedToken(resource.sessionId, MAX_OWNER_CHARS) || null });
+}
+
 function normalizeResources(resources, limits) {
   if (!Array.isArray(resources) || !resources.length
     || resources.length > MAX_RESOURCES_PER_REQUEST) {
@@ -56,7 +72,13 @@ function normalizeResources(resources, limits) {
   }
   const capacity = new Map();
   const filesystem = new Map();
+  const work = new Map();
   for (const resource of resources) {
+    if (resource?.type === 'work') {
+      const normalized = normalizeWorkResource(resource);
+      work.set(`${normalized.leaseRoot}\n${normalized.key}`, normalized);
+      continue;
+    }
     if (resource?.type === 'capacity') {
       const key = boundedToken(resource.key, MAX_RESOURCE_KEY_CHARS);
       const units = resource.units === undefined ? 1 : resource.units;
@@ -76,11 +98,16 @@ function normalizeResources(resources, limits) {
         return Object.freeze({ type: 'capacity', key, units });
       }),
     ...filesystem.values(),
+    ...work.values(),
   ];
   if (!normalized.length || normalized.length > MAX_RESOURCES_PER_REQUEST) {
     throw new Error('Normalized resource request exceeds its bound.');
   }
   return Object.freeze(normalized);
+}
+
+function workOf(resources) {
+  return resources.filter((resource) => resource.type === 'work');
 }
 
 function capacityResource(key, units = 1) {
@@ -131,12 +158,19 @@ class ResourceBroker {
     maxLeases = 512,
     createId = randomUUID,
     now = Date.now,
+    workLeases = null,
   } = {}) {
     this._limits = normalizeLimits(limits);
     if (!Number.isSafeInteger(maxWaiters) || maxWaiters < 1
       || !Number.isSafeInteger(maxLeases) || maxLeases < 1) {
       throw new Error('Resource broker record bounds are invalid.');
     }
+    if (workLeases !== null && ['resourcesFor', 'wouldBlock', 'hold', 'release', 'transferToJob',
+      'onChange', 'describeHolders'].some((name) => typeof workLeases?.[name] !== 'function')) {
+      throw new TypeError('work_leases_adapter_invalid');
+    }
+    this.workLeases = workLeases;
+    this._unsubscribeWork = workLeases ? workLeases.onChange(() => this._notifyAvailability()) : null;
     this._maxWaiters = maxWaiters;
     this._maxLeases = maxLeases;
     this._createId = createId;
@@ -171,6 +205,10 @@ class ResourceBroker {
     const normalized = normalizeResources(resources, this._limits);
     const resourceClass = this._blockingResource(normalized);
     if (!resourceClass) return Object.freeze({ resource_class: resourceClass, holders: Object.freeze([]) });
+    if (resourceClass === 'work') {
+      return Object.freeze({ resource_class: resourceClass,
+        holders: Object.freeze(this.workLeases.describeHolders(workOf(normalized))) });
+    }
     const holders = [];
     for (const record of this._leases.values()) {
       const inTheWay = resourceClass === 'filesystem'
@@ -204,6 +242,9 @@ class ResourceBroker {
       return Promise.reject(error);
     }
     if (signal?.aborted) return Promise.reject(abortError(signal.reason));
+    // Work leases are held through tryAcquire only; a queued waiter would mint a
+    // lease from _drain without the adapter's cross-process hold.
+    if (workOf(normalized).length) return Promise.reject(new Error('Work resources require tryAcquire.'));
     if (this._waiters.length >= this._maxWaiters) {
       return Promise.reject(new Error('Resource waiter capacity is exhausted.'));
     }
@@ -264,12 +305,26 @@ class ResourceBroker {
     if (!id || this._leases.has(id)) {
       return Object.freeze({ status: 'rejected', reason: 'resource_lease_identity' });
     }
+    const label = boundedToken(sessionId, MAX_OWNER_CHARS) || null;
+    // The cross-process hold is the last step: every in-memory check passed, so
+    // a granted hold is never abandoned for an in-process reason.
+    let workHandle = null;
+    const work = workOf(normalized);
+    if (work.length) {
+      const held = this.workLeases ? this.workLeases.hold({ sessionId: label, resources: work })
+        : { status: 'granted', handle: null };
+      if (held?.status !== 'granted') {
+        return Object.freeze({ status: 'waiting', reason: 'resource_capacity',
+          ...(includeWaitingResource === true ? { resource_class: 'work', dependency_id: null } : {}) });
+      }
+      workHandle = held.handle || null;
+    }
     const lease = Object.freeze({ id, owner_id: owner, resources: normalized,
       acquired_at: this._now() });
     const holder = { state: 'active', signal, abortListener: null };
     const record = { id, owner, resources: normalized, status: 'active', waiter: holder,
-      lease, quarantinedAt: null, sessionId: boundedToken(sessionId, MAX_OWNER_CHARS) || null,
-      restartReclaimable: restartReclaimable === true };
+      lease, quarantinedAt: null, sessionId: label,
+      restartReclaimable: restartReclaimable === true, workHandle };
     if (signal && typeof signal.addEventListener === 'function') {
       holder.abortListener = () => {
         if (this._recordForLease(lease) !== record) return;
@@ -298,6 +353,15 @@ class ResourceBroker {
 
   confirmCleanup(lease) {
     return this.release(lease, { producerSettled: true });
+  }
+
+  // A started background job outlives its call: the caller takes the work
+  // handle out of the lease before settling it and hands it to the job.
+  detachWork(lease) {
+    const record = this._recordForLease(lease);
+    const handle = record?.workHandle || null;
+    if (record) record.workHandle = null;
+    return handle;
   }
 
   isHeld(lease) {
@@ -421,7 +485,8 @@ class ResourceBroker {
         }
       }
     }
-    return null;
+    const work = workOf(resources);
+    return work.length && this.workLeases?.wouldBlock(work) === true ? 'work' : null;
   }
 
   _drain() {
@@ -479,6 +544,10 @@ class ResourceBroker {
   _deleteLease(record) {
     this._leases.delete(record.id);
     this._leaseTokens.delete(record.lease);
+    if (record.workHandle) {
+      try { this.workLeases?.release(record.workHandle); } catch (_error) { /* the adapter fails open */ }
+      record.workHandle = null;
+    }
     this._detachAbort(record.waiter);
     record.waiter.state = 'released';
     this._notifyAvailability();

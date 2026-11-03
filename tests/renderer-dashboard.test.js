@@ -8,6 +8,7 @@ const dashboardRegistryModule = require('../renderer/features/renderer-dashboard
 const dashboardCalendarModule = require('../renderer/features/renderer-dashboard-calendar.js');
 const dashboardLoopsModule = require('../renderer/features/renderer-dashboard-loops.js');
 const dashboardAwayDigestModule = require('../renderer/features/renderer-dashboard-widget-away-digest.js');
+const dashboardUsageStatsModule = require('../renderer/features/renderer-dashboard-widget-usage-stats.js');
 const inventoryActionButton = require('../renderer/inventory/action-button.js');
 
 function createDom() {
@@ -92,6 +93,22 @@ test('dashboard registry renders registered widgets as cards in registration ord
   assert.equal(cards[0].querySelector('.dashboard-card__title').textContent, 'Alpha');
   assert.equal(cards[0].querySelector('.dashboard-card__body').textContent, 'a');
   assert.deepEqual(log.entries, []);
+});
+
+test('dashboard registry headerless widgets skip the card header but keep their title for list()', () => {
+  const { documentRef, grid } = createDom();
+  const registry = createDashboardRegistry({ documentRef });
+  registry.register({ id: 'plain', title: 'Plain', render: (body) => { body.textContent = 'p'; } });
+  registry.register({ id: 'own-header', title: 'Own', headerless: true, render: (body) => { body.textContent = 'o'; } });
+  registry.register({ id: 'typo', title: 'Typo', headerless: 'yes', render: () => {} });
+
+  registry.renderInto(grid, { state: {} });
+  const [plain, own, typo] = Array.from(grid.children);
+  assert.ok(plain.querySelector(':scope > .dashboard-card__header'));
+  assert.equal(own.querySelector('.dashboard-card__header'), null);
+  assert.equal(own.querySelector(':scope > .dashboard-card__body').textContent, 'o');
+  assert.ok(typo.querySelector(':scope > .dashboard-card__header'), 'only a literal true opts out');
+  assert.deepEqual(registry.list().map((widget) => [widget.id, widget.title]), [['plain', 'Plain'], ['own-header', 'Own'], ['typo', 'Typo']]);
 });
 
 test('dashboard registry renderOne repaints only the named placed card', () => {
@@ -386,4 +403,42 @@ test('dashboard manager registers and owns the away digest Home widget', async (
 
   await manager.dispose();
   assert.equal(state.awayDigestReader, null);
+});
+
+test('dashboard manager registers the Usage widget after the away digest; home_usage_stats=false hides it at paint time', async () => {
+  const build = (featureFlags) => {
+    const { documentRef, grid, infoStrip } = createDom();
+    const state = { ui: { activeView: 'home' }, features: { featureFlags } };
+    const manager = createDashboardManager({
+      state,
+      documentRef,
+      shell: null,
+      dom: { homeInfoStrip: infoStrip, homeDashboardGrid: grid },
+      modules: {
+        dashboardRegistry: dashboardRegistryModule,
+        dashboardCalendar: dashboardCalendarModule,
+        dashboardAwayDigest: dashboardAwayDigestModule,
+        dashboardUsageStats: dashboardUsageStatsModule,
+        dashboardLoops: dashboardLoopsModule,
+      },
+      actionButton: inventoryActionButton,
+      callbacks: { appendClientLog: () => {} },
+    });
+    return { manager, grid, state };
+  };
+
+  const on = build({});
+  assert.deepEqual(on.manager.registry.list().map((widget) => widget.id), ['calendar', 'away-digest', 'usage-stats', 'open-loops']);
+  assert.equal(on.manager.registry.list()[2].title, 'Usage');
+  await on.manager.dispose();
+
+  // Flags hydrate after boot, so the switch is read on every paint, not at registration.
+  const off = build({ home_usage_stats: false });
+  assert.ok(off.manager.registry.list().some((widget) => widget.id === 'usage-stats'));
+  off.manager.render();
+  assert.equal(off.grid.querySelector('[data-widget-id="usage-stats"]'), null, 'killed: not painted');
+  off.state.features.featureFlags.home_usage_stats = true;
+  off.manager.render();
+  assert.ok(off.grid.querySelector('[data-widget-id="usage-stats"]'), 'flag on after hydration: painted');
+  await off.manager.dispose();
 });

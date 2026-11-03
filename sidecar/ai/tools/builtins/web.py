@@ -76,6 +76,8 @@ _FETCH_CACHE_MAX_BYTES = 50 * 1024 * 1024
 
 _rate_limiter = WebRateLimiter(requests_per_minute=30)
 _allow_private_addresses = False
+# Loopback-only opt-in for search providers (a local SearXNG); fetch_url ignores it.
+_allow_loopback = False
 _max_fetch_bytes = 1_048_576
 _search_provider = "duckduckgo"
 _searxng_url: str | None = None
@@ -164,7 +166,8 @@ _fetch_cache = _FetchResponseCache(
 
 def configure_web_tools(config: Any) -> None:
     """Apply runtime configuration to web tool module state."""
-    global _rate_limiter, _allow_private_addresses, _max_fetch_bytes, _search_provider
+    global _rate_limiter, _allow_private_addresses, _allow_loopback, _max_fetch_bytes
+    global _search_provider
     global _searxng_url, _provider_keys, _provider_dispatch
     if config is None:
         return
@@ -173,6 +176,7 @@ def configure_web_tools(config: Any) -> None:
     if isinstance(config, dict):
         rate = config.get("tools_web_rate_limit_per_min", 30)
         _allow_private_addresses = bool(config.get("tools_web_allow_private_addresses", False))
+        _allow_loopback = bool(config.get("tools_web_allow_loopback", False))
         _max_fetch_bytes = int(config.get("tools_web_max_fetch_bytes", 1_048_576))
         _search_provider = str(config.get("tools_web_search_provider", "duckduckgo"))
         raw_searxng_url = config.get("tools_web_searxng_url")
@@ -180,6 +184,7 @@ def configure_web_tools(config: Any) -> None:
     else:
         rate = getattr(config, "tools_web_rate_limit_per_min", 30)
         _allow_private_addresses = bool(getattr(config, "tools_web_allow_private_addresses", False))
+        _allow_loopback = bool(getattr(config, "tools_web_allow_loopback", False))
         _max_fetch_bytes = int(getattr(config, "tools_web_max_fetch_bytes", 1_048_576))
         _search_provider = str(getattr(config, "tools_web_search_provider", "duckduckgo"))
         raw_searxng_url = getattr(config, "tools_web_searxng_url", None)
@@ -332,6 +337,7 @@ def _rebuild_provider_dispatch() -> dict[str, WebSearchProvider]:
         searxng_url=_searxng_url,
         provider_keys=_provider_keys,
         allow_private_addresses=_allow_private_addresses,
+        allow_loopback=_allow_loopback,
         result_url_is_safe=_is_safe_metadata_url,
     )
 

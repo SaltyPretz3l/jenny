@@ -8,8 +8,9 @@
   'use strict';
 
   // Tool rows that render as an interactive card instead of the generic tool row:
-  // the ask_user question block and receipt, and the session proposal cards
-  // (propose_git_action, propose_command, propose_session; renderer-proposal-cards.js). Split out of
+  // the ask_user question block and receipt, the session proposal cards
+  // (propose_git_action, propose_command, propose_session; renderer-proposal-cards.js) and the
+  // suggest_next_step card (renderer-next-step-card.js). Split out of
   // renderer-turn-row-render-utils.js, which sits at the file-size cap.
   function createInteractiveCards(deps) {
     const { escapeHtml, normalizeId, renderUserQuestionsBlock, renderUserQuestionsReceipt } = deps;
@@ -69,11 +70,19 @@
       return cards ? cards.buildProposalRowMarkup(row, messages, renderOptions, { escapeHtml, isPrimarySession: deps.isPrimarySession, launchPermissionEnabled: flags.primary_launch_permission !== false }) : '';
     }
 
-    function buildInteractiveCardMarkup(toolCallMessage, row, messages, renderOptions) {
-      return buildUserQuestionsMarkup(toolCallMessage, row) || buildProposalMarkup(row, messages, renderOptions);
+    // A successful suggest_next_step result becomes the next-step card; anything else keeps the tool row.
+    function buildNextStepMarkup(row, messages, renderOptions) {
+      const card = (typeof globalThis !== 'undefined' && globalThis.rendererNextStepCard)
+        || (typeof require === 'function' ? (() => { try { return require('./renderer-next-step-card'); } catch (_error) { return null; } })() : null);
+      return card ? card.buildNextStepMarkup(row, messages, renderOptions, { escapeHtml }) : '';
     }
 
-    return { buildUserQuestionsMarkup, buildProposalMarkup, buildInteractiveCardMarkup };
+    function buildInteractiveCardMarkup(toolCallMessage, row, messages, renderOptions) {
+      return buildUserQuestionsMarkup(toolCallMessage, row) || buildProposalMarkup(row, messages, renderOptions)
+        || buildNextStepMarkup(row, messages, renderOptions);
+    }
+
+    return { buildUserQuestionsMarkup, buildProposalMarkup, buildNextStepMarkup, buildInteractiveCardMarkup };
   }
 
   return { createInteractiveCards };

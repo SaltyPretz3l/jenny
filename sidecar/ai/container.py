@@ -218,6 +218,7 @@ def _mcp_connect_plan(config: RuntimeConfig, workspace_root: Path | None) -> MCP
         sse_enabled=config.mcp_sse_enabled,
         resources_enabled=config.tools_mcp_resources_enabled,
         allow_private_addresses=config.tools_web_allow_private_addresses,
+        allow_loopback=config.tools_web_allow_loopback,
     )
 
 

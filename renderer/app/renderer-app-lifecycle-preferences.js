@@ -424,6 +424,14 @@
         appendClientLog('WARN', 'chat.transcript_view_default_failed', { view: nextView, message: String(error?.message || error) });
         throw error;
       }
+      return adoptDefault(nextView, source);
+    }
+
+    // The renderer half of a default change, shared by the confirmed save above and by
+    // a change another writer committed in main (row 88 D6): never writes back.
+    function adoptDefault(view, source = 'external') {
+      const nextView = normalizeTranscriptView(view);
+      if (nextView === normalizeTranscriptView(state.transcriptViewDefault)) return nextView;
       state.transcriptViewDefault = nextView;
       // Sessions without an explicit view follow the default: reset every one the
       // renderer knows (loaded list, plus any with saved reasoning prefs on disk).
@@ -462,7 +470,7 @@
     state.ui = state.ui && typeof state.ui === 'object' ? state.ui : {};
     state.ui.transcriptViewBySession = loadViews();
 
-    return { cycle, forgetSession, getView, rekeySession, setDefault, setView };
+    return { adoptDefault, cycle, forgetSession, getView, rekeySession, setDefault, setView };
   }
 
   function createStartupAuditRuntime({

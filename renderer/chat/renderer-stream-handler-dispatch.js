@@ -252,6 +252,7 @@
       // passed by the time a replay could run.
       const isEphemeralOutputChunk = payload.type === 'tool_output_chunk'
         || payload.type === 'tool_progress'
+        || payload.type === 'tool_test_progress'
         || payload.type === 'context_usage'
         || payload.type === 'context_compacting'
         || payload.type === 'tool_input_delta'
@@ -342,6 +343,12 @@
           // paired tool_use already flipped the turn into tool work).
           return typeof handlers.handleToolOutputChunk === 'function'
             ? await handlers.handleToolOutputChunk(payload)
+            : { buffered: false, terminal: false };
+        }
+        if (payload.type === 'tool_test_progress') {
+          // Row 96 live test-run progress: DOM-patch only, like the live tail.
+          return typeof handlers.handleToolTestProgress === 'function'
+            ? await handlers.handleToolTestProgress(payload)
             : { buffered: false, terminal: false };
         }
         if (payload.type === 'tool_progress') {

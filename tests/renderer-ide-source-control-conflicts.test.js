@@ -221,6 +221,49 @@ test('clicking a conflicted row opens the file itself, not the HEAD compare', ()
   assert.deepEqual(calls.diff, []);
 });
 
+test('during a rebase the deletion-conflict wording flips (git swaps ours and theirs)', () => {
+  const snapshot = {
+    available: true,
+    isRepo: true,
+    branch: '(detached)',
+    operation: 'rebase',
+    files: [
+      // Upstream deleted it, your replayed commit edited it: git reports DU.
+      { path: 'docs/upstream-deleted.md', index: 'D', worktree: 'U', state: 'conflicted', staged: true },
+      { path: 'docs/you-deleted.md', index: 'U', worktree: 'D', state: 'conflicted', staged: true },
+    ],
+  };
+  const { panelEl } = setup(snapshot);
+  const upstream = rowsFor(panelEl, 'docs/upstream-deleted.md')[0];
+  const mine = rowsFor(panelEl, 'docs/you-deleted.md')[0];
+  assert.equal(upstream.querySelector('.ide-scm-row-kind').textContent, 'they deleted');
+  assert.match(upstream.querySelector('.ide-scm-file').title, /You edited this file; the other branch deleted it/);
+  assert.equal(mine.querySelector('.ide-scm-row-kind').textContent, 'you deleted');
+  for (const row of [upstream, mine]) {
+    assert.ok(action(row, 'keep') && action(row, 'delete-resolve'), 'Keep and Delete stay on both');
+  }
+});
+
+test('a merge with nothing left to stage can still be committed; outside a merge it cannot', async () => {
+  const snapshot = { available: true, isRepo: true, branch: 'main', operation: '', files: [] };
+  const { panelEl, panel, calls } = setup(snapshot);
+  const commit = () => panelEl.querySelector('[data-ide-scm-action="commit"]');
+  assert.equal(commit().disabled, true, 'nothing staged and no merge');
+
+  snapshot.operation = 'merge';
+  panel.renderSourceControlPanel();
+  assert.equal(commit().disabled, false, 'MERGE_HEAD: the commit concludes the merge (patched in place)');
+  panelEl.querySelector('[data-ide-scm-input="commit"]').value = 'Merge branch other';
+  commit().click();
+  await settle();
+  assert.deepEqual(calls.commit, ['Merge branch other']);
+
+  snapshot.operation = 'merge';
+  snapshot.files = [{ path: 'a.js', index: 'U', worktree: 'U', state: 'conflicted', staged: true }];
+  panel.renderSourceControlPanel();
+  assert.equal(commit().disabled, true, 'unresolved conflicts still block the merge commit');
+});
+
 test('without conflicts the panel renders exactly as before (no new group, no hint)', () => {
   const snapshot = conflictRepo();
   snapshot.files = snapshot.files.filter((file) => file.state !== 'conflicted');

@@ -109,8 +109,13 @@
       injectOutput: (...a) => slashCommandRegistry.injectOutput(...a), showToastMessage: toast, appendClientLog: log }) || {};
     const activityHandler = (factories.createActivityCommandHandler || windowRef.rendererSlashActivityCommand?.createActivityCommandHandler)?.({ state, showToast: toast,
       open: (args) => state.features?.featureFlags?.primary_activity_log !== false && windowRef.rendererPrimaryActivity?.getDefaultPrimaryActivity?.({ documentRef: windowRef.document, stepModal: windowRef.inventoryStepModal, state, getBridge: () => windowRef.jennyShell?.primaryChat || null, appendClientLog: log }).open(args) });
+    // Row 90: the dialog instance the chat row menu built (it carries the after-reset reload).
+    const createResetHandler = factories.createPrimaryResetCommandHandler || windowRef.rendererSlashActivityCommand?.createPrimaryResetCommandHandler;
+    const getResetDialog = () => windowRef.rendererPrimaryResetDialog?.getDefaultPrimaryResetDialog?.() || null;
+    const resetHandler = createResetHandler?.({ state, showToast: toast, getDialog: getResetDialog });
+    const forgetChatHandler = createResetHandler?.({ state, showToast: toast, getDialog: getResetDialog, forget: true });
     registerBuiltInSlashCommands({
-      registry: slashCommandRegistry, contextHandler, noteHandler, linkedHandler, handoffHandler, activityHandler, ...memoryHandlers, compact: (sessionId) => compactionCoordinator?.invoke?.(sessionId, { source: 'slash' }),
+      registry: slashCommandRegistry, contextHandler, noteHandler, linkedHandler, handoffHandler, activityHandler, resetHandler, forgetChatHandler, ...memoryHandlers, compact: (sessionId) => compactionCoordinator?.invoke?.(sessionId, { source: 'slash' }),
       showToastMessage: toast,
     });
     const promptCommands = promptSlashUtils?.createMcpPromptSlashCommands?.({
@@ -657,6 +662,11 @@
           return state.currentSessionId === sessionId ? handleRegenerateMessage(messageId, { failureRetry: true }) : null;
         },
         isPrimarySession: (id) => isPrimarySessionId(state.sessions, id), launchPermissionEnabled: () => state.features?.featureFlags?.primary_launch_permission !== false,
+      }) || (() => {}));
+      // suggest_next_step card (row 97): a button sends its message as this pane's chat message, leaving the composer draft alone.
+      addCleanup(globalThis.rendererNextStepCard?.bindNextStepActions?.(dom.chatTimeline, {
+        sendPrompt: (message) => startPromptSend(message, { sessionIdOverride: sessionContext.getSessionId(), preserveComposerDraft: true, replayImageAttachments: [] }),
+        appendClientLog: (...args) => callbacks.appendClientLog(...args), showToastMessage: toast,
       }) || (() => {}));
       addCleanup(globalThis.rendererSessionMessageRows?.bindSessionMessageCards?.(dom.chatTimeline, {
         openSession: (sessionId) => activateWorkspaceSession(sessionId, { mode: 'replace' }),

@@ -109,3 +109,11 @@ test('review fixes: needs_attention, a denied or stopped turn, a nested chat, an
   tracker.touch('unknown');
   assert.deepEqual(changed, ['top', 'mid', 'mid']);
 });
+
+test('a fork: the copied history before its first turn is not the child\'s work', () => {
+  const copied = [user('old'), reply('old', { resumable_stop: 'budget' })];
+  assert.equal(deriveChildView({ summary: summary(), rows: [...copied, user('t1')], firstTurnId: 't1' }).phase, 'starting');
+  const done = deriveChildView({ summary: summary(), work: { status: 'completed', turn_id: 't1' },
+    rows: [...copied, user('t1'), reply('t1')], firstTurnId: 't1' });
+  assert.equal(done.phase, 'reported');
+});

@@ -122,15 +122,17 @@
       // Read as pane 0's session: a skill no pane shows is dropped (one pane: a switch drops it, as before).
       const pendingSkill = skillState?.getPendingSkillInvocation?.(state, { getSessionId: getPaneZeroSessionId }) || null;
       const pendingPrompt = skillState?.getPendingPromptBlock?.(state, { getSessionId: getPaneZeroSessionId }) || null;
+      const imagePromptHtml = imagePromptChipsHtml(getPaneZeroSessionId());
       getPaneZeroRoot().classList.toggle('chat-drop-active', state.attachments.dragDepth > 0);
-      attachmentTray.classList.toggle('hidden', queuedAttachments.length === 0 && !pendingSkill && !pendingPrompt);
+      attachmentTray.classList.toggle('hidden', queuedAttachments.length === 0 && !pendingSkill && !pendingPrompt && !imagePromptHtml);
       attachmentNotice.classList.add('hidden');
       attachmentNotice.textContent = '';
-      if (!queuedAttachments.length && !pendingSkill && !pendingPrompt) {
+      if (!queuedAttachments.length && !pendingSkill && !pendingPrompt && !imagePromptHtml) {
         attachmentTray.innerHTML = '';
         return;
       }
-      attachmentTray.innerHTML = skillChipHtml(pendingSkill, 'composerSkillChip') + promptChipHtml(pendingPrompt) + queuedAttachments.map(attachmentChipHtml).join('');
+      attachmentTray.innerHTML = imagePromptHtml + skillChipHtml(pendingSkill, 'composerSkillChip') + promptChipHtml(pendingPrompt) + queuedAttachments.map(attachmentChipHtml).join('');
+      bindImagePromptChips(attachmentTray, getPaneZeroSessionId(), () => renderAttachmentTray());
       attachmentTray.querySelector('[data-inv-chip="prompt_pending"]')?.addEventListener('click', () => {
         if (skillState?.clearPendingPromptBlock?.(state)) renderAttachmentTray();
       });
@@ -140,6 +142,17 @@
       if (queuedAttachments.length > 1) {
         attachmentTray.insertAdjacentHTML('beforeend', clearAllButtonHtml());
       }
+    }
+
+    // Row 91: the /image chips of a chat (image, size, optional seed); '' when it is not armed.
+    function imagePromptChipsHtml(sessionId) {
+      const imagePrompt = globalThis.rendererImagePrompt;
+      return imagePrompt && sessionId ? imagePrompt.chipsHtml(imagePrompt.peek(state, sessionId)) : '';
+    }
+
+    function bindImagePromptChips(tray, sessionId, rerender) {
+      globalThis.rendererImagePrompt?.bindChips(tray, { state, sessionId, rerender,
+        focusInput: () => tray.closest?.('.composer-wrap')?.querySelector?.('textarea')?.focus?.() });
     }
 
     function getSkillState() {
@@ -209,17 +222,19 @@
       const pendingSkill = sessionId ? skillState?.peekPendingSkillInvocation?.(state, sessionId) || null : null;
       const composer = skillState?.ensureComposerV2State?.(state);
       const pendingPrompt = sessionId && composer?.pendingPromptBlockSessionId === sessionId ? composer.pendingPromptBlock : null;
+      const imagePromptHtml = imagePromptChipsHtml(sessionId);
       paneView?.classList?.toggle('chat-drop-active', depth > 0);
-      tray.classList.toggle('hidden', queuedAttachments.length === 0 && !pendingSkill && !pendingPrompt);
+      tray.classList.toggle('hidden', queuedAttachments.length === 0 && !pendingSkill && !pendingPrompt && !imagePromptHtml);
       if (notice) {
         notice.classList.add('hidden');
         notice.textContent = '';
       }
-      const signature = `${queuedAttachments.map((entry) => String(entry?.id || '')).join('\u0000')}|${depth}|${pendingSkill ? pendingSkill.id : ''}|${JSON.stringify(pendingPrompt)}`;
+      const signature = `${queuedAttachments.map((entry) => String(entry?.id || '')).join('\u0000')}|${depth}|${pendingSkill ? pendingSkill.id : ''}|${JSON.stringify(pendingPrompt)}|${imagePromptHtml}`;
       if (paneTraySignatures.get(tray) === signature) return;
       paneTraySignatures.set(tray, signature);
-      tray.innerHTML = skillChipHtml(pendingSkill, '') + promptChipHtml(pendingPrompt) + queuedAttachments.map(attachmentChipHtml).join('')
+      tray.innerHTML = imagePromptHtml + skillChipHtml(pendingSkill, '') + promptChipHtml(pendingPrompt) + queuedAttachments.map(attachmentChipHtml).join('')
         + (queuedAttachments.length > 1 ? clearAllButtonHtml() : '');
+      bindImagePromptChips(tray, sessionId, () => { paneTraySignatures.delete(tray); renderPaneAttachmentTray(target); });
       tray.querySelector('[data-inv-chip="attached-skill"]')?.addEventListener('click', () => {
         if (skillState?.clearPendingSkillInvocation?.(state)) renderPaneAttachmentTray(target);
       });

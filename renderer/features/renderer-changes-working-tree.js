@@ -184,7 +184,8 @@
       if (!bodyEl) return;
       const working = scope === 'working_tree';
       bodyEl.hidden = !working;
-      if (!working) return;
+      // The hidden page keeps no diff rows for the panel's text actions and find to reach.
+      if (!working) { bodyEl.querySelector('[data-changes-wt-region="content"]')?.replaceChildren(); return; }
       const doc = bodyEl.ownerDocument;
       const key = doc && bodyEl.contains(doc.activeElement) ? focusKeyOf(doc.activeElement) : null;
       const holder = doc.createElement('div');
@@ -561,6 +562,7 @@
       setScope,
       setReviewFindings,
       getScope: () => scope,
+      getFileHunks: (path) => (diffs.get(path)?.state === 'ready' ? diffs.get(path).hunks : null),
       refresh: load,
       getState: () => ({ status, scope, files: files.map((file) => file.path), expanded: Array.from(expanded), filter, filterOpen }),
     };

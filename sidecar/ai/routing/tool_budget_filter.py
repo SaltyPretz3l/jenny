@@ -306,6 +306,7 @@ def _budget_pressure_for_tool_filter(
         history=context.semantic_history,
         turn_context_row=build_turn_context_row_for_statuses(context, result.tool_statuses),
         execution_context=getattr(context.request_context, "execution_context", None),
+        latest_user_content=context.latest_user_content,
     )
     kernel = context.kernel
     num_tools = count_full_tool_schemas(result.tool_payload) if kernel._config.tools_enabled else 0

@@ -2,6 +2,10 @@
 
 // `tool.output_chunk` notifications are forward-only and ephemeral: they are
 // not persisted or journaled, while the paired tool.result remains durable.
+// A batch may also carry `test_progress` (row 96); it is split out into its
+// own `tool_test_progress` event and is equally ephemeral.
+
+const { normalizeTestProgress } = require('./chat-stream-test-progress');
 
 const MAX_CHUNK_LINES = 50;
 const MAX_CHUNK_LINE_CHARS = 4000;
@@ -42,21 +46,29 @@ function handleToolOutputChunkNotification(service, context, notification) {
   // Snapshot of the current unterminated line (prompts, \r progress bars);
   // a batch may carry ONLY a partial and still be worth forwarding.
   const partial = String(params.partial || '').slice(0, MAX_CHUNK_LINE_CHARS);
-  if (!lines.length && !partial) {
+  const testProgress = normalizeTestProgress(params.test_progress);
+  if (!lines.length && !partial && !testProgress) {
     return true;
   }
-  service.emit('chat-stream', {
-    type: 'tool_output_chunk',
-    ...eventBase,
-    callId,
-    toolName: String(params.tool_name || '').trim(),
-    sequence: Number(params.sequence) || 0,
-    lines,
-    partial,
-    emittedLines: Number(params.emitted_lines) || 0,
-    droppedLines: Number(params.dropped_lines) || 0,
-    elapsedMs: Number(params.elapsed_ms) || 0,
-  });
+  const toolName = String(params.tool_name || '').trim();
+  const sequence = Number(params.sequence) || 0;
+  if (lines.length || partial) {
+    service.emit('chat-stream', {
+      type: 'tool_output_chunk',
+      ...eventBase,
+      callId,
+      toolName,
+      sequence,
+      lines,
+      partial,
+      emittedLines: Number(params.emitted_lines) || 0,
+      droppedLines: Number(params.dropped_lines) || 0,
+      elapsedMs: Number(params.elapsed_ms) || 0,
+    });
+  }
+  if (testProgress) {
+    service.emit('chat-stream', { type: 'tool_test_progress', ...eventBase, callId, toolName, sequence, ...testProgress });
+  }
   return true;
 }
 

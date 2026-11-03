@@ -195,6 +195,22 @@ test('subscribers are notified when only ahead and behind metadata changes', asy
   assert.equal(store.getSnapshot().behind, 2);
 });
 
+test('the in-progress operation reaches the snapshot and a change alone notifies', async () => {
+  const client = fakeClient([
+    repoResult({ files: [], summary: {}, operation: 'merge' }),
+    repoResult({ files: [], summary: {} }),
+  ]);
+  const store = createIdeGitStatusStore({ client });
+  let notifications = 0;
+  store.subscribe(() => { notifications += 1; });
+
+  await store.refreshNow();
+  assert.equal(store.getSnapshot().operation, 'merge');
+  await store.refreshNow();
+  assert.equal(store.getSnapshot().operation, '', 'an older sidecar without the field reads as none');
+  assert.equal(notifications, 2);
+});
+
 test('an overlapping refresh re-runs exactly once and the fresher snapshot wins', async () => {
   const client = fakeClient([repoResult({ branch: 'first' }), repoResult({ branch: 'second' })]);
   const store = createIdeGitStatusStore({ client });

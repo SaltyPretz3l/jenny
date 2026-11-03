@@ -35,6 +35,7 @@
       "debugOptions",
       "clientTiming",
       "skillInvocation",
+      "imagePromptPin",
       "editedMessageId",
       "failureRetry"
     ],
@@ -47,7 +48,8 @@
       "toolPreferences",
       "debugOptions",
       "clientTiming",
-      "skillInvocation"
+      "skillInvocation",
+      "imagePromptPin"
     ],
     "array_fields": ["attachments", "mentionContents"]
   },

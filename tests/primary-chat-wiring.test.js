@@ -88,3 +88,18 @@ test('the kill switch turns both services off without throwing', (t) => {
   assert.deepEqual(backendService.primaryChatControls.pause(), { ok: false, reason: 'disabled' });
   assert.deepEqual(backendService.primaryActivityLog.list(), { ok: false, reason: 'disabled' });
 });
+
+test('row 87: the rules wake check counts wake turns, mail-admitted turns and a missing turn id as wakes', (t) => {
+  const { backendService } = setup(t);
+  const mailTurns = new Set(['turn-mail']);
+  backendService.chatMessages.wakeDepth = (turnId) => (turnId === 'turn-wake' ? 1 : 0);
+  backendService.chatMessages.mailTurn = (turnId) => mailTurns.has(turnId);
+  const controls = backendService.primaryChatControls; // per-test instance, so the overrides below need no restore
+  const listed = [{ rule_id: `ar_${'a'.repeat(32)}`, action: 'message', target: { kind: 'any' }, effect: 'allow', run_modes: null, created_at: '2026-11-02T00:00:00.000Z', revoked_at: null }];
+  Object.assign(controls, { actionRulesEnabled: () => true, isPrimary: () => true, listActionRules: () => listed });
+  const match = (turnId) => backendService.primaryActionRules.match({ action: 'message', sessionId: 'p', turnId, target: { session_id: 'x' }, runMode: 'ask' });
+  assert.equal(match('turn-user')?.effect, 'allow');
+  assert.equal(match('turn-wake'), null);
+  assert.equal(match('turn-mail'), null);
+  assert.equal(match(null), null);
+});

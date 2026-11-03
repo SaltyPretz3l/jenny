@@ -23,18 +23,21 @@
 
 const { envelopeSha256 } = require('./backend/session-message-envelope');
 const { authorizationBlocked, inboxCapacity, pruneMail } = require('./backend/session-mail-records');
-const { lastError } = require('./chat-messaging-contract');
+const { lastError, ruleIdFromConsent } = require('./chat-messaging-contract');
 
 const TRANSIENT_REASONS = new Set(['io_failed']);
 
 function createMessageDelivery({
   mailStore, getSessionSummary = () => null, isContinuable = () => true, now = () => new Date(),
-  createId, changed = () => {}, log = () => {},
+  createId, changed = () => {}, log = () => {}, isRuleLive = () => false,
 }) {
   const stamp = () => now().toISOString();
   const findOp = (mail, operationId) => mail.outbox.find((record) => record.operation_id === operationId) || null;
   const continuable = (summary) => {
     try { return summary && isContinuable(summary) !== false; } catch { return false; }
+  };
+  const ruleLive = (ruleId) => {
+    try { return isRuleLive(ruleId) === true; } catch { return false; }
   };
   const sameMessage = (envelope) => (record) => (record.envelope?.message_id || record.message_id) === envelope.message_id;
 
@@ -65,6 +68,10 @@ function createMessageDelivery({
     const checked = auth ? ['agent_directional', 'agent_once'].includes(auth.kind) : envelope.kind === 'agent_message';
     if (!checked || destinationReceipt(envelope).state !== 'none') return false;
     if (!auth) return true; // an agent operation with no authorization record fails closed
+    // Row 87 D3: a send under a Jenny-chat allow rule is re-checked like a grant: a revoked rule (or rules
+    // turned off) fails it as revoked.
+    const ruleId = auth.kind === 'agent_once' ? ruleIdFromConsent(auth.consent_event_id) : null;
+    if (ruleId !== null && !ruleLive(ruleId)) return true;
     const destination = mailStore.read(envelope.destination_session_id);
     return authorizationBlocked(auth, envelope, {
       source: { session_incarnation: read.session_incarnation, project_id: read.project_id },

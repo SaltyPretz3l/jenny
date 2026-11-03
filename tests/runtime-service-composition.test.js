@@ -370,3 +370,24 @@ test('createStatsWatchCadence re-times a bare monitor without a pause wrapper', 
   assert.deepEqual(emitted, [['stats', { cpuPercent: 1 }]]);
   assert.deepEqual(cadence.sources(), ['titlebar']);
 });
+
+// Row 100 P2: the session directory reads `waiting_for` from the session runtime's wait notices,
+// not from the runtime application service that its `runtime` getter returns.
+test('the session directory reaches the session runtime wait notices for waiting_for', (t) => {
+  const { deps, tmpDir } = buildDeps();
+  const work = { work_id: 'w1', session_id: 'b', status: 'paused', updated_at: '2026-11-02T10:00:00.000Z' };
+  const chat = (id, extra = {}) => ({ id, project_id: 'p', title: `Chat ${id}`, session_type: 'chat', updated_at: work.updated_at, ...extra });
+  const backend = {
+    sessionStore: { listSessionRecords: () => [chat('a', { session_role: 'primary' }), chat('b'), chat('c')] },
+    runtimeApplicationService: { getSnapshot: () => ({ ok: true, work: [work], next_cursor: null }) },
+    sessionRuntime: { waitNotices: { waitFor: (id) => (id === 'w1' ? { what: 'tests', holder: 'chat', session_id: 'c',
+      command: 'npm test', pid: 7, count: 1, since: work.updated_at } : null) } },
+    featureFlags: {},
+  };
+  const services = createRuntimeServicesWithDeps({ ...deps, getBackendService: () => backend });
+  t.after(() => { services.systemStats?.stop?.(); fs.rmSync(tmpDir, { recursive: true, force: true }); });
+  const directory = services.toolExecutor._sessionDirectoryService();
+  const row = directory.list({ callerSessionId: 'a', scope: 'all' }).rows.find((entry) => entry.session_id === 'b');
+  assert.equal(row.status, 'queued');
+  assert.deepEqual([row.waiting_for?.holder, row.waiting_for?.title], ['chat', 'Chat c']);
+});

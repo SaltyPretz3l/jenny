@@ -10,6 +10,8 @@ const {
   normalizeToolSettings,
 } = require('./tool-config-schema');
 const { isEngineTuningValueInRange } = require('../renderer/shared/engine-tuning-schema');
+// Row 86 digest quiet hours: one normalizer shared with the renderer.
+const { normalizeDigestQuietStart, normalizeDigestQuietEnd } = require('../renderer/shared/string-utils');
 // The split-view pane rules live in ONE place (UMD, loads under Node); the
 // workspace normalizer derives the persisted layout through it.
 const {
@@ -454,6 +456,8 @@ module.exports = {
   normalizeSafetyMode,
   normalizeUiLanguage,
   normalizeUnattendedGuardMinutes,
+  normalizeDigestQuietStart,
+  normalizeDigestQuietEnd,
   normalizeValidWorkspaceSessionIds,
   normalizeWorkspaceRoot,
   normalizeWorkspaceSessionId,

@@ -181,6 +181,11 @@ class DataLifecycleService extends EventEmitter {
     }
   }
 
+  // The current workspace root when it is a plain directory (the "Your data" artifacts category reads it).
+  getWorkspaceRoot() {
+    return this._workspaceRoot();
+  }
+
   _result(operationId, status, fields = {}) {
     return dataLifecycleResult(status, fields, operationId);
   }
@@ -272,11 +277,12 @@ class DataLifecycleService extends EventEmitter {
     });
   }
 
-  _assertArchiveDestinationRetained(destinationRoot, removeWorkspaceData) {
+  _assertArchiveDestinationRetained(destinationRoot, removeWorkspaceData, removeSkills = false) {
     const archiveRoot = destinationRoot || buildDefaultArchiveRoot(this.documentsPath);
     const cleanupRoots = [this.userDataPath];
     if (this.runtimePath) {
       cleanupRoots.push(...KNOWN_RUNTIME_CHILDREN.map((name) => path.join(this.runtimePath, name)));
+      if (removeSkills) cleanupRoots.push(path.join(this.runtimePath, 'skills'));
     }
     const workspaceRoot = this._workspaceRoot();
     if (removeWorkspaceData && workspaceRoot) cleanupRoots.push(path.join(workspaceRoot, '.jenny'));
@@ -564,9 +570,11 @@ class DataLifecycleService extends EventEmitter {
         : choice === REMOVAL_CHOICES.ARCHIVE_AND_REMOVE
           && options.archive?.includeWorkspace === true
           && requestedWorkspaceRemoval;
+      // The user's own skills go only on an explicit choice (row 103).
+      const removeSkills = choice !== REMOVAL_CHOICES.APP_ONLY && options.removeSkills === true;
       let archiveResult = null;
       if (choice === REMOVAL_CHOICES.ARCHIVE_AND_REMOVE) {
-        this._assertArchiveDestinationRetained(options.archive?.destinationRoot, removeWorkspaceData);
+        this._assertArchiveDestinationRetained(options.archive?.destinationRoot, removeWorkspaceData, removeSkills);
         archiveResult = await this._createArchive(operation, options.archive || {});
       }
       if (choice === REMOVAL_CHOICES.PERMANENT && options.confirmation !== 'REMOVE JENNY') {
@@ -581,6 +589,7 @@ class DataLifecycleService extends EventEmitter {
         choice,
         operationId: operation.id,
         removeWorkspaceData,
+        removeSkills,
         // Only a permanent removal may take all of .jenny; an archived removal
         // deletes just the children the archive carries.
         workspaceRemovalScope: choice === REMOVAL_CHOICES.PERMANENT ? 'all' : 'archived',

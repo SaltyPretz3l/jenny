@@ -27,6 +27,11 @@ test('dictation (row 84) defaults on, follows the Settings switch, and the env O
   assert.equal(buildFeatureFlags({ JENNY_ENABLE_DICTATION: '0' }).dictation, false);
   assert.equal(buildFeatureFlags({ JENNY_ENABLE_DICTATION: '0' }, { dictation: true }).dictation, false);
   assert.equal(FORCE_DENY_ENV_KEYS.dictation, 'JENNY_ENABLE_DICTATION');
+  // Row 86 digests: off for everyone until the user turns them on; =0 force-denies a stored opt-in.
+  assert.ok(FEATURE_OVERRIDE_KEYS.includes('primary_digests'));
+  assert.equal(buildFeatureFlags({}).primary_digests, false);
+  assert.equal(buildFeatureFlags({}, { primary_digests: true }).primary_digests, true);
+  assert.equal(buildFeatureFlags({ JENNY_ENABLE_PRIMARY_DIGESTS: '0' }, { primary_digests: true }).primary_digests, false);
 });
 
 test('isFeatureEnabledByDefault falls back to the provided default for empty values', () => {
@@ -119,6 +124,30 @@ test('workspace_test_runner is an internal default-on flag that can be disabled 
   assert.equal(disabled.workspace_test_runner, false);
   assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('workspace_test_runner'));
   assert.ok(!FEATURE_OVERRIDE_KEYS.includes('workspace_test_runner'));
+});
+
+test('home_usage_stats is an internal default-on flag that can be disabled from env', () => {
+  const defaults = buildFeatureFlags({});
+  const disabled = buildFeatureFlags({
+    JENNY_ENABLE_HOME_USAGE_STATS: '0',
+  });
+
+  assert.equal(defaults.home_usage_stats, true);
+  assert.equal(disabled.home_usage_stats, false);
+  assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('home_usage_stats'));
+  assert.ok(!FEATURE_OVERRIDE_KEYS.includes('home_usage_stats'));
+});
+
+test('read_only_commands is an internal default-on flag that can be disabled from env', () => {
+  const defaults = buildFeatureFlags({});
+  const disabled = buildFeatureFlags({
+    JENNY_ENABLE_READ_ONLY_COMMANDS: '0',
+  });
+
+  assert.equal(defaults.read_only_commands, true);
+  assert.equal(disabled.read_only_commands, false);
+  assert.ok(INTERNAL_FEATURE_FLAG_KEYS.includes('read_only_commands'));
+  assert.ok(!FEATURE_OVERRIDE_KEYS.includes('read_only_commands'));
 });
 
 test('web_search_providers is an internal default-on flag that can be disabled from env', () => {
@@ -675,6 +704,16 @@ test('tools_project_notes_enabled is internal, default-on, and rolls back by env
   assert.equal(INTERNAL_FEATURE_FLAG_KEYS.includes('tools_project_notes_enabled'), true);
   assert.equal(FEATURE_OVERRIDE_KEYS.includes('tools_project_notes_enabled'), false);
   assert.deepEqual(normalizeFeatureOverrides({ tools_project_notes_enabled: false }), {});
+});
+
+test('data_usage_page (row 95) is internal, default-on, and rolls back by env', () => {
+  assert.equal(buildFeatureFlags({}).data_usage_page, true);
+  assert.equal(buildFeatureFlagDefaults({}).data_usage_page, true);
+  assert.equal(buildFeatureFlags({ JENNY_ENABLE_DATA_USAGE_PAGE: '0' }).data_usage_page, false);
+  assert.equal(buildFeatureFlags({ JENNY_ENABLE_DATA_USAGE_PAGE: '1' }).data_usage_page, true);
+  assert.equal(INTERNAL_FEATURE_FLAG_KEYS.includes('data_usage_page'), true);
+  assert.equal(FEATURE_OVERRIDE_KEYS.includes('data_usage_page'), false);
+  assert.deepEqual(normalizeFeatureOverrides({ data_usage_page: false }), {});
 });
 
 test('memory_v2_enabled is internal, default-on, and rolls back by env', () => {

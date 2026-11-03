@@ -270,6 +270,7 @@
     'Local computer': function () { return jt('approval.scope.localComputer', 'Local computer'); },
     'Requested tool': function () { return jt('approval.scope.requestedTool', 'Requested tool'); },
     'Another chat': function () { return jt('approval.scope.anotherChat', 'Another chat'); },
+    'App settings': function () { return jt('approval.scope.appSettings', 'App settings'); },
   });
 
   var APPROVAL_CONSEQUENCE_BY_TEXT = Object.freeze({

@@ -373,3 +373,137 @@ test('dispose() removes the click listener and stops enhancing', () => {
   anchor.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
   assert.deepEqual(opens, []);
 });
+
+// ---------------------------------------------------------------------------
+// Row 95 phase 3: absolute in-workspace paths in prose (absolute_path_links)
+// ---------------------------------------------------------------------------
+
+const pathResolve = require('../renderer/shared/workspace-path-resolve');
+
+function withAbsoluteLinks(t, enabled, workspaceRoot) {
+  pathResolve.setContextProvider(() => ({ enabled, workspaceRoot }));
+  t.after(() => pathResolve.setContextProvider(null));
+}
+
+function chips(dom) {
+  return Array.from(dom.window.document.querySelectorAll('[data-chat-path-open]'));
+}
+
+test('prose absolute paths inside the workspace become path chips with their line and column', (t) => {
+  withAbsoluteLinks(t, true, 'G:\\ws');
+  const dom = buildDom(assistantBubble('<p>Edited G:\\ws\\src\\a.js:42:7 and G:/ws/lib/ today.</p>'));
+  assert.equal(makeController(dom).enhanceAll(), 1);
+  const found = chips(dom);
+  assert.equal(found.length, 2);
+  assert.equal(found[0].getAttribute('data-chat-path-open'), 'src/a.js');
+  assert.equal(found[0].getAttribute('data-chat-path-line'), '42');
+  assert.equal(found[0].getAttribute('data-chat-path-column'), '7');
+  assert.equal(found[0].textContent, 'G:\\ws\\src\\a.js:42:7');
+  assert.equal(found[1].getAttribute('data-chat-path-open'), 'lib');
+  assert.equal(found[1].getAttribute('data-chat-path-kind'), 'dir');
+  assert.equal(dom.window.document.querySelector('p').textContent, 'Edited G:\\ws\\src\\a.js:42:7 and G:/ws/lib/ today.');
+});
+
+test('paths outside the workspace, escapes and UNC paths stay plain text', (t) => {
+  withAbsoluteLinks(t, true, 'G:\\ws');
+  const dom = buildDom(assistantBubble('<p>See C:\\Users\\me\\x.txt, G:\\ws\\..\\..\\secret.txt and \\\\srv\\share\\a.js.</p>'));
+  makeController(dom).enhanceAll();
+  assert.equal(chips(dom).length, 0);
+});
+
+test('absolute linking is independent of the codebase-context flag and runs when only it is on', (t) => {
+  withAbsoluteLinks(t, true, '/home/dev/ws');
+  const dom = buildDom(assistantBubble('<p>Wrote /home/dev/ws/out/r.md and src/app.js:3.</p>'));
+  makeController(dom, { isEnabled() { return false; } }).enhanceAll();
+  assert.deepEqual(chips(dom).map((el) => el.getAttribute('data-chat-path-open')), ['out/r.md']);
+  assert.equal(dom.window.document.querySelectorAll('a.codebase-cite-link').length, 0, 'the relative cite rule stays gated');
+});
+
+test('with the codebase flag on, relative cites and absolute chips link side by side', (t) => {
+  withAbsoluteLinks(t, true, 'G:\\ws');
+  const dom = buildDom(assistantBubble('<p>Compare src/app.js:3 with G:\\ws\\lib\\b.js:9.</p>'));
+  makeController(dom).enhanceAll();
+  assert.equal(dom.window.document.querySelectorAll('a.codebase-cite-link').length, 1);
+  assert.deepEqual(chips(dom).map((el) => el.getAttribute('data-chat-path-open')), ['lib/b.js']);
+});
+
+test('absolute chips are not made inside fenced code, inline code, existing chips or streaming bubbles', (t) => {
+  withAbsoluteLinks(t, true, 'G:\\ws');
+  const html = '<pre><code>G:\\ws\\a.js</code></pre><p><code>G:\\ws\\b.js</code></p>'
+    + '<p><span data-chat-path-open="c.js">G:\\ws\\c.js</span></p>';
+  const dom = buildDom(assistantBubble(html));
+  makeController(dom).enhanceAll();
+  assert.equal(chips(dom).length, 1, 'only the pre-existing chip');
+  const streaming = buildDom(assistantBubble('<p>G:\\ws\\d.js</p>', 'streaming'));
+  makeController(streaming).enhanceAll();
+  assert.equal(chips(streaming).length, 0);
+});
+
+test('absolute linking is off without a published context or a bound root', (t) => {
+  const bubble = assistantBubble('<p>Edited G:\\ws\\src\\a.js</p>');
+  const none = buildDom(bubble);
+  makeController(none).enhanceAll();
+  assert.equal(chips(none).length, 0, 'no provider: the pre-row-93 behavior');
+  withAbsoluteLinks(t, false, 'G:\\ws');
+  const off = buildDom(bubble);
+  makeController(off).enhanceAll();
+  assert.equal(chips(off).length, 0, 'flag off');
+  withAbsoluteLinks(t, true, '');
+  const rootless = buildDom(bubble);
+  makeController(rootless).enhanceAll();
+  assert.equal(chips(rootless).length, 0, 'no root');
+});
+
+test('a bubble settled before the workspace context existed still gets its absolute chips later', (t) => {
+  const dom = buildDom(assistantBubble('<p>Wrote G:\\ws\\src\\a.js:3 and src/app.js:9.</p>'));
+  const controller = makeController(dom);
+  assert.equal(controller.enhanceAll(), 1, 'the relative cite still links with no context');
+  assert.equal(chips(dom).length, 0, 'restored history rendered before the root was hydrated');
+  withAbsoluteLinks(t, true, 'G:\\ws');
+  assert.equal(controller.enhanceAll(), 1, 'the absolute pass runs once the context is available');
+  assert.deepEqual(chips(dom).map((el) => el.getAttribute('data-chat-path-open')), ['src/a.js']);
+  assert.equal(dom.window.document.querySelectorAll('a.codebase-cite-link').length, 1, 'the cite is not linked twice');
+  assert.equal(controller.enhanceAll(), 0, 'both passes are stamped now');
+  assert.equal(chips(dom).length, 1);
+});
+
+test('project folders arriving after a root-only pass make settled bubbles due again', (t) => {
+  let projectRoots = [];
+  pathResolve.setContextProvider(() => ({ enabled: true, workspaceRoot: 'G:\\ws', projectRoots }));
+  t.after(() => pathResolve.setContextProvider(null));
+  const dom = buildDom(assistantBubble('<p>Edited G:\\ws\\src\\a.js and D:\\notes\\plan.md today.</p>'));
+  const controller = makeController(dom);
+  assert.equal(controller.enhanceAll(), 1);
+  assert.deepEqual(chips(dom).map((el) => el.getAttribute('data-chat-path-open')), ['src/a.js']);
+  projectRoots = [{ id: 'p-notes', rootPath: 'D:\\notes' }];
+  assert.equal(controller.enhanceAll(), 1, 'the new folders re-open the absolute pass');
+  assert.deepEqual(chips(dom).map((el) => el.getAttribute('data-chat-path-open')), ['src/a.js', 'D:\\notes\\plan.md'],
+    'the project path is chipped and the workspace chip is not doubled');
+  assert.equal(controller.enhanceAll(), 0, 'stamped with the new generation');
+});
+
+test('publishing the context re-runs the absolute pass over settled bubbles without a new mutation', async (t) => {
+  const dom = buildDom(assistantBubble('<p>Wrote G:\\ws\\src\\a.js:3.</p>'));
+  const controller = makeController(dom);
+  const detach = controller.attach();
+  t.after(() => { detach(); dom.window.close(); });
+  assert.equal(chips(dom).length, 0);
+  withAbsoluteLinks(t, true, 'G:\\ws');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(chips(dom).map((el) => el.getAttribute('data-chat-path-open')), ['src/a.js']);
+});
+
+test('a root that hydrates after the provider was set is picked up the next time the context is read', async (t) => {
+  let root = '';
+  pathResolve.setContextProvider(() => ({ enabled: true, workspaceRoot: root }));
+  t.after(() => pathResolve.setContextProvider(null));
+  const dom = buildDom(assistantBubble('<p>Wrote G:\\ws\\src\\a.js:3.</p>'));
+  const controller = makeController(dom);
+  const detach = controller.attach();
+  t.after(() => { detach(); dom.window.close(); });
+  assert.equal(chips(dom).length, 0);
+  root = 'G:\\ws';
+  pathResolve.getContext();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(chips(dom).length, 1);
+});

@@ -18,6 +18,12 @@ from sidecar.ai.tools.builtins.grep_search_file import (
     expand_brace_patterns,
     is_link_entry,
     matches_relative_glob,
+    split_top_level_commas,
+)
+from sidecar.ai.tools.builtins.search_ignore import (
+    SearchIgnoreFilter,
+    ignored_directories_note,
+    load_search_ignore_filter,
 )
 from sidecar.ai.tools.contracts import ToolExecutionFailure, ToolHandlerResult
 from sidecar.ai.tools.workspace import WorkspaceGuard
@@ -35,9 +41,8 @@ def glob_files_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> 
     pattern = _pattern_argument(arguments)
     base_root = _search_root(arguments, workspace)
     display_root = workspace_relative_path(base_root, workspace.root)
-    search_root, match_pattern = _resolve_search_plan(pattern, base_root, workspace)
-    match_patterns = _bounded_brace_patterns(match_pattern)
-    if search_root is None:
+    plans = _resolve_search_plans(pattern, base_root, workspace)
+    if not plans:
         return ToolHandlerResult(
             output=(
                 f"path: {display_root} (workspace-relative)\n\n"
@@ -50,11 +55,15 @@ def glob_files_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> 
     matched_count_scanned = 0
     truncation_reason: str | None = None
     scan_complete = False
+    # Before the clock starts: the bounded git inventory is not walk time.
+    ignore_filter = load_search_ignore_filter(base_root)
+    roots = _walk_roots(plans, ignore_filter)
     budget = _ScanBudget(started_at=monotonic())
     try:
-        for candidate in _iter_search_files(search_root, workspace, budget=budget):
-            relative_to_search = candidate.relative_to(search_root).as_posix()
-            if not any(matches_relative_glob(relative_to_search, glob) for glob in match_patterns):
+        for candidate in _iter_search_files(
+            roots, workspace, budget=budget, ignore_filter=ignore_filter
+        ):
+            if not _matches_any_plan(candidate, plans):
                 continue
             relative_path = workspace_relative_path(candidate, workspace.root)
             matched_count_scanned += 1
@@ -80,17 +89,19 @@ def glob_files_tool(arguments: dict[str, object], workspace: WorkspaceGuard) -> 
         scan_complete=scan_complete,
         total_matches=matched_count_scanned,
     )
+    ignored_directories = ignore_filter.skipped_directories if ignore_filter else 0
+    if ignored_directories and (not ordered_matches or truncation_reason is not None):
+        output = f"{output}\n{ignored_directories_note(ignored_directories)}"
     output = f"path: {display_root} (workspace-relative)\n\n{output}"
-    return ToolHandlerResult(
-        output=output,
-        metadata=_metadata(
-            len(ordered_matches),
-            budget,
-            matched_count_scanned,
-            scan_complete,
-            truncation_reason,
-        ),
+    metadata = _metadata(
+        len(ordered_matches),
+        budget,
+        matched_count_scanned,
+        scan_complete,
+        truncation_reason,
     )
+    metadata["ignored_directories_skipped"] = ignored_directories
+    return ToolHandlerResult(output=output, metadata=metadata)
 
 
 def _metadata(
@@ -108,6 +119,7 @@ def _metadata(
         "matched_count_scanned": matched_count_scanned,
         "scan_complete": scan_complete,
         "truncation_reason": truncation_reason,
+        "ignored_directories_skipped": 0,
     }
 
 
@@ -140,18 +152,61 @@ def _search_root(arguments: dict[str, object], workspace: WorkspaceGuard) -> Pat
     return resolved
 
 
-def _resolve_search_plan(
+@dataclass(frozen=True)
+class _SearchPlan:
+    """One comma alternative: its literal base directory and its expanded globs."""
+
+    root: Path
+    patterns: tuple[str, ...]
+
+
+def _resolve_search_plans(
     pattern: str,
     base_root: Path,
     workspace: WorkspaceGuard,
-) -> tuple[Path | None, str]:
-    base_dir, relative_pattern = _extract_glob_base_directory(pattern)
-    if not base_dir:
-        return base_root, relative_pattern
-    candidate_root = workspace.ensure_within_root(base_root / Path(base_dir))
-    if not candidate_root.exists() or not candidate_root.is_dir():
-        return None, relative_pattern
-    return candidate_root, relative_pattern
+) -> list[_SearchPlan]:
+    """One plan per top-level comma alternative whose base directory exists.
+
+    Each alternative keeps the meaning it has alone: its literal prefix narrows
+    its own root, then its braces expand relative to that root.
+    """
+    plans: list[_SearchPlan] = []
+    expansions = 0
+    for alternative in split_top_level_commas(pattern):
+        base_dir, relative_pattern = _extract_glob_base_directory(alternative)
+        patterns = _bounded_brace_patterns(relative_pattern)
+        expansions += len(patterns)
+        if expansions > MAX_BRACE_EXPANSIONS:
+            raise _brace_limit_failure()
+        if not base_dir:
+            plans.append(_SearchPlan(base_root, patterns))
+            continue
+        candidate_root = workspace.ensure_within_root(base_root / Path(base_dir))
+        if candidate_root.exists() and candidate_root.is_dir():
+            plans.append(_SearchPlan(candidate_root, patterns))
+    return plans
+
+
+def _walk_roots(plans: list[_SearchPlan], ignore_filter: SearchIgnoreFilter | None) -> list[Path]:
+    """Distinct plan roots, dropping any inside another and any git ignores."""
+    roots: list[Path] = []
+    for plan in sorted(plans, key=lambda item: tuple(part.lower() for part in item.root.parts)):
+        if any(plan.root == root or plan.root.is_relative_to(root) for root in roots):
+            continue
+        if ignore_filter is None or ignore_filter.allows_directory_chain(plan.root):
+            roots.append(plan.root)
+    return roots
+
+
+def _matches_any_plan(candidate: Path, plans: list[_SearchPlan]) -> bool:
+    for plan in plans:
+        try:
+            relative = candidate.relative_to(plan.root).as_posix()
+        except ValueError:
+            continue
+        if any(matches_relative_glob(relative, glob) for glob in plan.patterns):
+            return True
+    return False
 
 
 def _extract_glob_base_directory(pattern: str) -> tuple[str, str]:
@@ -179,14 +234,18 @@ def _bounded_brace_patterns(pattern: str) -> tuple[str, ...]:
     try:
         return expand_brace_patterns(pattern)
     except BraceExpansionLimitError as error:
-        raise ToolExecutionFailure(
-            code=CMP_TOOL_INVALID_PATH,
-            message=(
-                "tool argument 'pattern' exceeds the bounded brace expansion limit "
-                f"of {MAX_BRACE_EXPANSIONS}"
-            ),
-            retryable=False,
-        ) from error
+        raise _brace_limit_failure() from error
+
+
+def _brace_limit_failure() -> ToolExecutionFailure:
+    return ToolExecutionFailure(
+        code=CMP_TOOL_INVALID_PATH,
+        message=(
+            "tool argument 'pattern' exceeds the bounded brace expansion limit "
+            f"of {MAX_BRACE_EXPANSIONS}"
+        ),
+        retryable=False,
+    )
 
 
 class _ScanBudgetExceeded(Exception):
@@ -223,14 +282,15 @@ class _ScanBudget:
 
 
 def _iter_search_files(
-    search_root: Path,
+    roots: list[Path],
     workspace: WorkspaceGuard,
     *,
     budget: _ScanBudget,
+    ignore_filter: SearchIgnoreFilter | None = None,
 ) -> Iterator[Path]:
-    pending = [search_root]
+    pending = list(reversed(roots))
     # Backstop against any link shape the entry check misses.
-    seen = {os.path.normcase(str(search_root))}
+    seen = {os.path.normcase(str(root)) for root in roots}
     while pending:
         current_path = pending.pop()
         budget.enter_directory()
@@ -251,7 +311,11 @@ def _iter_search_files(
                     if is_link:
                         _log_skip("symlink_dir" if is_directory else "symlink_file", candidate)
                         continue
-                    if is_directory and not _ignored_directory_name(entry.name):
+                    if (
+                        is_directory
+                        and not _ignored_directory_name(entry.name)
+                        and _git_allows(ignore_filter, candidate, directory=True)
+                    ):
                         # Containment is resolved once per directory; a regular
                         # non-link file inside a verified directory is contained.
                         try:
@@ -265,7 +329,7 @@ def _iter_search_files(
                         seen.add(os.path.normcase(str(resolved)))
                         budget.discover_directory()
                         child_directories.append(resolved)
-                    elif is_file:
+                    elif is_file and _git_allows(ignore_filter, candidate, directory=False):
                         budget.scan_file()
                         yield candidate
         except _ScanBudgetExceeded:
@@ -274,6 +338,16 @@ def _iter_search_files(
             _log_skip("directory_scan_failed", current_path)
             continue
         pending.extend(sorted(child_directories, key=lambda path: path.name.lower(), reverse=True))
+
+
+def _git_allows(
+    ignore_filter: SearchIgnoreFilter | None, candidate: Path, *, directory: bool
+) -> bool:
+    if ignore_filter is None:
+        return True
+    if directory:
+        return ignore_filter.allows_directory(candidate)
+    return ignore_filter.allows_file(candidate)
 
 
 def _ignored_directory_name(name: str) -> bool:

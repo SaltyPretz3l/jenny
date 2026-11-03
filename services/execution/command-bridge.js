@@ -7,9 +7,11 @@ const { createToolResourceClaim, projectToolResourceWait } = require('../tools/t
 const { getTrustedExecutionBinding } = require('../backend/session-execution-authority');
 // Electron-owned tools that touch no host shell pass through the sandbox bridge unchanged.
 // Seam 17 for a new manifest tool: tests/desktop-command-sandbox-approval.test.js pins this set.
-const ALLOWED = new Set(['run_command', 'ask_user', 'exit_plan_mode', 'home', 'task_board', 'project_notes', 'propose_command',
+const ALLOWED = new Set(['run_command', 'ask_user', 'suggest_next_step', 'exit_plan_mode', 'home', 'task_board', 'project_notes', 'propose_command',
   'propose_session', 'complete_session_handoff', 'conversations_recent', 'conversation_open', 'conversations_search',
-  'sessions_list', 'session_status', 'session_transcript', 'session_stop', 'jenny_help']);
+  'sessions_list', 'session_status', 'session_transcript', 'session_stop', 'jenny_help',
+  'settings_get', 'settings_change', 'chat_organize', 'chat_configure', 'project_create', 'projects_list', 'app_view', 'schedule_list', 'schedule_change', 'away_digest',
+  'session_export', 'terminal_read']); // row 94 P4: not terminal_run, which types into a real shell
 function sandboxEnabled(service) {
   return service?.commandSandbox?.enabled === true
     || service?.configService?.getState?.()?.commandSandbox?.enabled === true;

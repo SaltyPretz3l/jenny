@@ -4,6 +4,7 @@ const JSONRPC_VERSION = '2.0';
 const ENGINE_ACTIVITY_METHOD = 'engine.activity';
 const SESSION_RUN_MODE_UPDATED_METHOD = 'session.run_mode_updated';
 const SESSION_MAIL_ARRIVED_METHOD = 'session.mail_arrived';
+const SESSION_JOB_SETTLED_METHOD = 'session.job_settled';
 
 // Canonical stream_id is physical; turn_id may span multiple attempts.
 function notificationRequestId(message) {
@@ -81,9 +82,35 @@ function notifySessionMailArrived(client, { sessionId, requestId, rows } = {}) {
   return written === true && !threw;
 }
 
+// Mid-turn background-job notices (row 71): settled jobs for the live chat.send `requestId` of
+// `sessionId`. Returns true only when the frame was handed to the transport; an unacknowledged push
+// leaves the job to the post-turn wake. Never logs the jobs.
+function notifyJobSettled(client, { sessionId, requestId, jobs } = {}) {
+  const normalizedSessionId = String(sessionId || '').trim();
+  const normalizedRequestId = String(requestId || '').trim();
+  if (
+    !normalizedSessionId
+    || !normalizedRequestId
+    || !Array.isArray(jobs)
+    || jobs.length === 0
+    || !canNotify(client)
+    || client._batch4TransportEnabled() !== true
+  ) return false;
+  let threw = false;
+  const written = client._writeFrame({
+    jsonrpc: JSONRPC_VERSION,
+    method: SESSION_JOB_SETTLED_METHOD,
+    params: { session_id: normalizedSessionId, request_id: normalizedRequestId, jobs },
+  }, {
+    onThrow: () => { threw = true; },
+  });
+  return written === true && !threw;
+}
+
 module.exports = {
   notificationRequestId,
   notifyEngineActivity,
+  notifyJobSettled,
   notifySessionMailArrived,
   notifySessionRunModeUpdated,
 };

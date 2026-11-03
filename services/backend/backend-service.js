@@ -447,6 +447,7 @@ class BackendService extends EventEmitter {
     this._removeManagedListeners();
     this._abortActiveStreams(CANCEL_REASON_DISPOSE, { clear: true });
     this._clearPendingToolApprovals();
+    try { this.sessionRuntime?.workLeases?.close?.(); } catch (_) { /* best effort */ }
     this.mcpDiscoveryService?.dispose?.();
     this._disposeSidecarClient();
     // Drain any debounced writes from the chat-stream stores before any
@@ -820,7 +821,7 @@ class BackendService extends EventEmitter {
     toolPreferences,
     approvalMode,
     debugOptions,
-    clientTiming, skillInvocation, editedMessageId, failureRetry,
+    clientTiming, skillInvocation, imagePromptPin, editedMessageId, failureRetry,
     } = payload || {};
     // Runtime admission owns routed GPU/provider checks when composed. Minimal
     // embedded hosts retain the legacy entry check.
@@ -843,7 +844,7 @@ class BackendService extends EventEmitter {
       toolPreferences,
       approvalMode,
       debugOptions,
-      clientTiming, skillInvocation, editedMessageId, failureRetry,
+      clientTiming, skillInvocation, imagePromptPin, editedMessageId, failureRetry,
     }, options);
   }
 
